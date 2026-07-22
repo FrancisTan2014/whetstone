@@ -17,7 +17,12 @@ import {
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
 import { createServer } from "../../http/createServer.js";
-import { publishConvertedPdfImport, type PdfImportPublishDependencies } from "./pdfImportPublish.js";
+import Fastify from "fastify";
+import { registerPdfImportRoutes } from "./pdfImportRoutes.js";
+import {
+  publishConvertedPdfImport,
+  type PdfImportPublishDependencies
+} from "./pdfImportPublish.js";
 import type { PdfImportCommandDependencies } from "./pdfImportCommands.js";
 import { createPdfImportActiveRuns } from "./pdfImportRunner.js";
 import { createPdfImportStageStore, type PdfImportStageStore } from "./pdfImportStage.js";
@@ -57,7 +62,10 @@ function rangePayload(nativeTextPages: readonly boolean[]): RangeConversion {
   return {
     schemaVersion: RANGE_CONVERSION_SCHEMA_VERSION,
     doclingSchema,
-    pages: nativeTextPages.map((hasNativeText, index) => ({ hasNativeText, pageNumber: index + 1 })),
+    pages: nativeTextPages.map((hasNativeText, index) => ({
+      hasNativeText,
+      pageNumber: index + 1
+    })),
     body: [structuredItem("title", "The Work"), structuredItem("text", "An opening paragraph.")],
     furniture: []
   };
@@ -88,7 +96,9 @@ function publishDeps(db: DbClient): PdfImportPublishDependencies {
   };
 }
 
-function metadataHeader(metadata: Partial<PdfImportStartMetadataDto> & { fileName: string }): string {
+function metadataHeader(
+  metadata: Partial<PdfImportStartMetadataDto> & { fileName: string }
+): string {
   return Buffer.from(JSON.stringify(metadata), "utf8").toString("base64");
 }
 
@@ -186,10 +196,27 @@ describe("pdf import routes", () => {
     expect(reopened.outcome).toBe("reopened");
   });
 
+  it("reuses a pdf content-type parser a sibling feature already registered", async () => {
+    // Content routes register the same buffer parser first (createServer wires content before pdf import),
+    // so registration must detect the existing parser and not throw a duplicate-registration error.
+    const app = Fastify({ logger: false });
+    app.addContentTypeParser(pdfContentType, { parseAs: "buffer" }, (_request, body, done) =>
+      done(null, body)
+    );
+    expect(() =>
+      registerPdfImportRoutes(app, {
+        commands: commandDeps(context.db, context.stageStore),
+        uploadLimitBytes: 10_000_000
+      })
+    ).not.toThrow();
+    await app.close();
+  });
+
   it("rejects a missing metadata header, invalid base64 JSON, and an empty body with 400", async () => {
     expect((await beginUpload(Buffer.from("%PDF"), undefined)).statusCode).toBe(400);
     expect(
-      (await beginUpload(Buffer.from("%PDF"), Buffer.from("not-json").toString("base64"))).statusCode
+      (await beginUpload(Buffer.from("%PDF"), Buffer.from("not-json").toString("base64")))
+        .statusCode
     ).toBe(400);
     expect(
       (await beginUpload(Buffer.alloc(0), metadataHeader({ fileName: "empty.pdf" }))).statusCode
@@ -227,7 +254,9 @@ describe("pdf import routes", () => {
 
   it("reports the published outcome in the view after the drain loop publishes", async () => {
     const queued = parsePdfImportBeginResultDto(
-      (await beginUpload(Buffer.from("%PDF publish"), metadataHeader({ fileName: "done.pdf" }))).json()
+      (
+        await beginUpload(Buffer.from("%PDF publish"), metadataHeader({ fileName: "done.pdf" }))
+      ).json()
     );
     if (queued.outcome !== "queued") {
       throw new Error("expected queued");
@@ -236,7 +265,9 @@ describe("pdf import routes", () => {
     await publishConvertedPdfImport(publishDeps(context.db), queued.attemptId);
 
     const view = parsePdfImportViewDto(
-      (await context.server.inject({ method: "GET", url: `/api/pdf-imports/${queued.attemptId}` })).json()
+      (
+        await context.server.inject({ method: "GET", url: `/api/pdf-imports/${queued.attemptId}` })
+      ).json()
     );
     if (view.publication.status !== "published") {
       throw new Error(`expected published, got ${view.publication.status}`);
@@ -246,7 +277,9 @@ describe("pdf import routes", () => {
 
   it("cancels an in-flight attempt and returns its updated view", async () => {
     const queued = parsePdfImportBeginResultDto(
-      (await beginUpload(Buffer.from("%PDF cancel"), metadataHeader({ fileName: "cancel.pdf" }))).json()
+      (
+        await beginUpload(Buffer.from("%PDF cancel"), metadataHeader({ fileName: "cancel.pdf" }))
+      ).json()
     );
     if (queued.outcome !== "queued") {
       throw new Error("expected queued");
@@ -271,12 +304,17 @@ describe("pdf import routes", () => {
 
   it("retries a failed attempt and returns its updated view", async () => {
     const queued = parsePdfImportBeginResultDto(
-      (await beginUpload(Buffer.from("%PDF retry"), metadataHeader({ fileName: "retry.pdf" }))).json()
+      (
+        await beginUpload(Buffer.from("%PDF retry"), metadataHeader({ fileName: "retry.pdf" }))
+      ).json()
     );
     if (queued.outcome !== "queued") {
       throw new Error("expected queued");
     }
-    await context.server.inject({ method: "POST", url: `/api/pdf-imports/${queued.attemptId}/cancel` });
+    await context.server.inject({
+      method: "POST",
+      url: `/api/pdf-imports/${queued.attemptId}/cancel`
+    });
 
     const response = await context.server.inject({
       method: "POST",

@@ -103,6 +103,14 @@ describe("pdfImportSession", () => {
     expect(() => forgetActivePdfImport()).not.toThrow();
   });
 
+  it("reports no remembered import when the environment has no localStorage", () => {
+    vi.stubGlobal("localStorage", undefined);
+
+    expect(readActivePdfImport()).toBeNull();
+    expect(() => rememberActivePdfImport("attempt-1")).not.toThrow();
+    expect(() => forgetActivePdfImport()).not.toThrow();
+  });
+
   it("degrades when accessing the store itself throws", () => {
     Object.defineProperty(globalThis, "localStorage", {
       configurable: true,

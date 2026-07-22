@@ -40,7 +40,8 @@ export function describePdfImport(view: PdfImportViewDto): PdfImportProgress {
   if (view.status.state === "failed") {
     return {
       kind: "failed",
-      message: view.status.failure?.message ?? "The import could not be completed. Please try again.",
+      message:
+        view.status.failure?.message ?? "The import could not be completed. Please try again.",
       terminal: true
     };
   }

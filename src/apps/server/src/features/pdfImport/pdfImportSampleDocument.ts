@@ -14,15 +14,15 @@ import {
 
 const doclingSchema = { name: "DoclingDocument", version: "1.10.0" } as const;
 
-function item(partial: Partial<StructuredDocItem> & { label: string; text: string }): StructuredDocItem {
+function item(
+  partial: Partial<StructuredDocItem> & { label: string; text: string }
+): StructuredDocItem {
   return {
     boundingBox: { bottom: 20, left: 0, right: 100, top: 0 },
     charSpan: [0, partial.text.length],
     children: [],
     confidence: 0.98,
-    label: partial.label,
     pageNumber: 1,
-    text: partial.text,
     ...partial
   };
 }

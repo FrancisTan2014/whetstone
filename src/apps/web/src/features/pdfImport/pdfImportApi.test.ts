@@ -10,7 +10,11 @@ import {
 
 const sha = "c".repeat(64);
 
-function stubFetch(response: { ok: boolean; status?: number; body?: unknown }): ReturnType<typeof vi.fn> {
+function stubFetch(response: {
+  ok: boolean;
+  status?: number;
+  body?: unknown;
+}): ReturnType<typeof vi.fn> {
   const fetchMock = vi.fn(async () => ({
     ok: response.ok,
     status: response.status ?? 200,
@@ -23,7 +27,11 @@ function stubFetch(response: { ok: boolean; status?: number; body?: unknown }): 
 
 // jsdom's File lacks arrayBuffer() here; supply the bytes the api will POST plus a name for provenance.
 function pdfFile(bytes: Uint8Array, name = "doc.pdf"): File {
-  return { arrayBuffer: async () => bytes.buffer, name, type: "application/pdf" } as unknown as File;
+  return {
+    arrayBuffer: async () => bytes.buffer,
+    name,
+    type: "application/pdf"
+  } as unknown as File;
 }
 
 function statusDto(): PdfImportViewDto["status"] {
@@ -69,7 +77,10 @@ describe("beginPdfImport", () => {
     });
 
     expect(result).toEqual({ attemptId: "attempt-1", outcome: "queued", status: statusDto() });
-    const [path, init] = fetchMock.mock.calls[0] as [string, RequestInit & { headers: Record<string, string> }];
+    const [path, init] = fetchMock.mock.calls[0] as [
+      string,
+      RequestInit & { headers: Record<string, string> }
+    ];
     expect(path).toBe("/api/pdf-imports");
     expect(init.method).toBe("POST");
     expect(init.body).toBe(bytes.buffer);
@@ -99,9 +110,9 @@ describe("beginPdfImport", () => {
   it("throws when the server rejects the upload", async () => {
     stubFetch({ ok: false, status: 400 });
 
-    await expect(beginPdfImport(pdfFile(new Uint8Array([1])), { fileName: "doc.pdf" })).rejects.toThrow(
-      "failed with status 400"
-    );
+    await expect(
+      beginPdfImport(pdfFile(new Uint8Array([1])), { fileName: "doc.pdf" })
+    ).rejects.toThrow("failed with status 400");
   });
 });
 

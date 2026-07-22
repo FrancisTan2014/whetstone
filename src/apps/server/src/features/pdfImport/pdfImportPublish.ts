@@ -10,10 +10,7 @@ import { insertInBatches } from "../content/insertBatching.js";
 import { claimUploadedSource, findClaimedWork } from "../content/sourceClaims.js";
 import { resolveNamedAuthor } from "../library/authorResolver.js";
 import { mapStructuredDocument, type PdfBlockEvidence } from "./pdfCanonicalMapping.js";
-import {
-  startPdfImport,
-  type PdfImportCommandDependencies
-} from "./pdfImportCommands.js";
+import { startPdfImport, type PdfImportCommandDependencies } from "./pdfImportCommands.js";
 import {
   getAttemptById,
   getCommittedRanges,
@@ -105,7 +102,8 @@ export type PublishConvertedResult =
 // no cleaned document metadata through #701 — the filename stem, then a neutral default. A raw path is
 // never exposed: the stem strips any directory portion and the extension.
 function filenameStem(fileName: string): string | null {
-  const base = fileName.split(/[\\/]/).pop() ?? fileName;
+  // Strip any directory portion (never exposing a raw path) and the extension.
+  const base = fileName.replace(/^.*[\\/]/u, "");
   const stem = base.replace(/\.[^.]+$/u, "").trim();
   return stem.length > 0 ? stem : null;
 }
@@ -186,13 +184,19 @@ export async function publishConvertedPdfImport(
   const language = resolveLanguage(publication.enteredLanguage);
   const authorName = resolveAuthorName(publication.enteredAuthor);
   const sourceId = deps.createSourceId();
-  const expectedBlockCount = mapping.units.reduce((total, unit) => total + unit.docBlocks.length, 0);
+  const expectedBlockCount = mapping.units.reduce(
+    (total, unit) => total + unit.docBlocks.length,
+    0
+  );
 
   const outcome = await claimUploadedSource<undefined>(deps.db, {
     sha256: attempt.sourceHash,
     // A born-digital PDF retains no source file — the immutable provenance is the sha256 claim plus the
     // structured evidence — so there is nothing to stage or release.
     stage: async () => undefined,
+    /* v8 ignore next -- a born-digital PDF retains no source file, so releasing the stage is a no-op
+       with nothing to assert; it runs only when the claim transaction fails, a boundary path already
+       exercised by sourceClaims' Markdown/EPUB mid-stage race tests. */
     releaseStage: async () => {},
     commit: async (tx) => {
       const workEntryId = toEntryId(deps.createEntryId());

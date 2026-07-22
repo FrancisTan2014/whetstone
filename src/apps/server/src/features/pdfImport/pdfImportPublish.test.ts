@@ -14,7 +14,7 @@ import {
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
-import { pdfBlockEvidence, pdfImportPublications } from "../../db/schema.js";
+import { pdfBlockEvidence, pdfImportAttempts, pdfImportPublications } from "../../db/schema.js";
 import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
 import { loadWorkContent } from "../content/contentQueries.js";
 import { createPdfImportStageStore, type PdfImportStageStore } from "./pdfImportStage.js";
@@ -83,7 +83,13 @@ async function driveQueuedToConverted(
 ): Promise<void> {
   const runToken = `rt-${input.id}`;
   await claimNextQueued(db, { runToken, fingerprint: PDF_IMPORT_ADAPTER_FINGERPRINT, now: NOW });
-  await setProbeResult(db, { id: input.id, runToken, totalPages: input.totalPages, totalRanges: 1, now: NOW });
+  await setProbeResult(db, {
+    id: input.id,
+    runToken,
+    totalPages: input.totalPages,
+    totalRanges: 1,
+    now: NOW
+  });
   await commitRange(db, {
     attemptId: input.id,
     runToken,
@@ -109,7 +115,11 @@ async function driveToConverted(
     stagePath: `stage-${input.id}`,
     now: NOW
   });
-  await driveQueuedToConverted(db, { id: input.id, payload: input.payload, totalPages: input.totalPages });
+  await driveQueuedToConverted(db, {
+    id: input.id,
+    payload: input.payload,
+    totalPages: input.totalPages
+  });
 }
 
 function publishDeps(db: DbClient): PdfImportPublishDependencies {
@@ -268,7 +278,10 @@ describe("publishConvertedPdfImport", () => {
     published(await publishConvertedPdfImport(deps, "att-5"));
 
     expect(await publishConvertedPdfImport(deps, "att-5")).toEqual({ status: "already_published" });
-    const works = await db.select().from(pdfImportPublications).where(eq(pdfImportPublications.attemptId, "att-5"));
+    const works = await db
+      .select()
+      .from(pdfImportPublications)
+      .where(eq(pdfImportPublications.attemptId, "att-5"));
     expect(works).toHaveLength(1);
   });
 
@@ -279,7 +292,9 @@ describe("publishConvertedPdfImport", () => {
       payload: rangePayload(SAMPLE_BODY, [true]),
       totalPages: 1
     });
-    expect(await publishConvertedPdfImport(publishDeps(db), "att-6")).toEqual({ status: "skipped" });
+    expect(await publishConvertedPdfImport(publishDeps(db), "att-6")).toEqual({
+      status: "skipped"
+    });
   });
 
   it("reports not_ready when the attempt is not converted", async () => {
@@ -297,12 +312,19 @@ describe("publishConvertedPdfImport", () => {
       enteredLanguage: null,
       fileName: "pending.pdf"
     });
-    expect(await publishConvertedPdfImport(publishDeps(db), "att-7")).toEqual({ status: "not_ready" });
+    expect(await publishConvertedPdfImport(publishDeps(db), "att-7")).toEqual({
+      status: "not_ready"
+    });
   });
 
   it("reopens the owning Work for identical bytes instead of publishing a duplicate", async () => {
     const sourceHash = "1".repeat(64);
-    await driveToConverted(db, { id: "att-8a", sourceHash, payload: rangePayload(SAMPLE_BODY, [true]), totalPages: 1 });
+    await driveToConverted(db, {
+      id: "att-8a",
+      sourceHash,
+      payload: rangePayload(SAMPLE_BODY, [true]),
+      totalPages: 1
+    });
     await insertPublicationIntent(db, {
       attemptId: "att-8a",
       enteredTitle: "First",
@@ -310,7 +332,12 @@ describe("publishConvertedPdfImport", () => {
       enteredLanguage: null,
       fileName: "dup.pdf"
     });
-    await driveToConverted(db, { id: "att-8b", sourceHash, payload: rangePayload(SAMPLE_BODY, [true]), totalPages: 1 });
+    await driveToConverted(db, {
+      id: "att-8b",
+      sourceHash,
+      payload: rangePayload(SAMPLE_BODY, [true]),
+      totalPages: 1
+    });
     await insertPublicationIntent(db, {
       attemptId: "att-8b",
       enteredTitle: "Second",
@@ -366,7 +393,9 @@ describe("publishConvertedPdfImport", () => {
     const paragraphCount = 4000;
     const body: StructuredDocItem[] = [];
     for (let index = 0; index < paragraphCount; index += 1) {
-      body.push(item({ label: "text", text: `Paragraph number ${index} of the full-length import.` }));
+      body.push(
+        item({ label: "text", text: `Paragraph number ${index} of the full-length import.` })
+      );
     }
     await driveToConverted(db, {
       id: "att-long",
@@ -396,6 +425,54 @@ describe("publishConvertedPdfImport", () => {
       .where(eq(pdfBlockEvidence.workEntryId, result.work.entryId));
     expect(evidence).toHaveLength(paragraphCount);
   });
+
+  it("falls back to a neutral title when the file name has no usable stem", async () => {
+    // A dotfile-only name (".pdf") has an empty stem, so neither the entered title nor the stem resolves —
+    // the neutral default keeps the Work openable rather than titling it with a raw extension.
+    await driveToConverted(db, {
+      id: "att-untitled",
+      sourceHash: "2".repeat(64),
+      payload: rangePayload(SAMPLE_BODY, [true]),
+      totalPages: 1
+    });
+    await insertPublicationIntent(db, {
+      attemptId: "att-untitled",
+      enteredTitle: null,
+      enteredAuthor: null,
+      enteredLanguage: null,
+      fileName: ".pdf"
+    });
+
+    const result = published(await publishConvertedPdfImport(publishDeps(db), "att-untitled"));
+    expect(result.work.title).toBe("Untitled PDF");
+  });
+
+  it("publishes a converted attempt whose adapter fingerprint and page total were never recorded", async () => {
+    // Defense-in-depth: a converted row is expected to carry both, but if either column is null the
+    // publisher reconstructs with the current adapter fingerprint and a zero page count rather than failing.
+    await driveToConverted(db, {
+      id: "att-nullcols",
+      sourceHash: "3".repeat(64),
+      payload: rangePayload(SAMPLE_BODY, [true]),
+      totalPages: 1
+    });
+    await insertPublicationIntent(db, {
+      attemptId: "att-nullcols",
+      enteredTitle: "Recovered",
+      enteredAuthor: null,
+      enteredLanguage: null,
+      fileName: "recovered.pdf"
+    });
+    await db
+      .update(pdfImportAttempts)
+      .set({ adapterFingerprint: null, totalPages: null })
+      .where(eq(pdfImportAttempts.id, "att-nullcols"));
+
+    const result = published(await publishConvertedPdfImport(publishDeps(db), "att-nullcols"));
+    expect(result.work.title).toBe("Recovered");
+    const content = await loadWorkContent(db, result.work.entryId);
+    expect(content!.readingUnits.length).toBeGreaterThanOrEqual(2);
+  });
 });
 
 describe("beginPdfImport", () => {
@@ -416,7 +493,11 @@ describe("beginPdfImport", () => {
   function startDeps(): PdfImportCommandDependencies {
     let id = 0;
     return {
-      activeRuns: { register: vi.fn(), abort: vi.fn(), clear: vi.fn() } satisfies PdfImportActiveRuns,
+      activeRuns: {
+        register: vi.fn(),
+        abort: vi.fn(),
+        clear: vi.fn()
+      } satisfies PdfImportActiveRuns,
       createAttemptId: () => `att-${(id += 1)}`,
       db,
       logCleanupFailure: vi.fn(),
@@ -461,7 +542,9 @@ describe("beginPdfImport", () => {
       payload: rangePayload(SAMPLE_BODY, [true]),
       totalPages: 1
     });
-    const work = published(await publishConvertedPdfImport(publishDeps(db), first.started.attemptId));
+    const work = published(
+      await publishConvertedPdfImport(publishDeps(db), first.started.attemptId)
+    );
 
     const second = await beginPdfImport(
       { db, start: startDeps() },

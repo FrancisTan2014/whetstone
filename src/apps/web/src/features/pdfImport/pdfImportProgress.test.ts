@@ -69,7 +69,11 @@ describe("describePdfImport", () => {
       view(
         { status: "pending" },
         {
-          failure: { kind: "unreadable", message: "The converter could not read this PDF.", remedy: "Try another file." },
+          failure: {
+            kind: "unreadable",
+            message: "The converter could not read this PDF.",
+            remedy: "Try another file."
+          },
           state: "failed"
         }
       )
@@ -83,7 +87,9 @@ describe("describePdfImport", () => {
   });
 
   it("falls back to a generic failure message when the failure detail is absent", () => {
-    const progress = describePdfImport(view({ status: "pending" }, { failure: null, state: "failed" }));
+    const progress = describePdfImport(
+      view({ status: "pending" }, { failure: null, state: "failed" })
+    );
 
     if (progress.kind === "failed") {
       expect(progress.message).toBe("The import could not be completed. Please try again.");
@@ -115,7 +121,9 @@ describe("describePdfImport", () => {
   });
 
   it("labels a running attempt before the source is probed", () => {
-    const progress = describePdfImport(view({ status: "pending" }, { state: "running", totalPages: null }));
+    const progress = describePdfImport(
+      view({ status: "pending" }, { state: "running", totalPages: null })
+    );
 
     expect(progress).toEqual({ kind: "in_progress", label: "Reading the PDF…", terminal: false });
   });

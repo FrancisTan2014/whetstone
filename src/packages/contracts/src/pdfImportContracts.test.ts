@@ -111,9 +111,16 @@ describe("pdfImportStartMetadataSchema", () => {
         enteredTitle: "Chosen",
         fileName: "x.pdf"
       })
-    ).toEqual({ enteredAuthor: "Jane", enteredLanguage: "en", enteredTitle: "Chosen", fileName: "x.pdf" });
+    ).toEqual({
+      enteredAuthor: "Jane",
+      enteredLanguage: "en",
+      enteredTitle: "Chosen",
+      fileName: "x.pdf"
+    });
     expect(pdfImportStartMetadataSchema.safeParse({ fileName: "" }).success).toBe(false);
-    expect(pdfImportStartMetadataSchema.safeParse({ fileName: "x.pdf", extra: 1 }).success).toBe(false);
+    expect(pdfImportStartMetadataSchema.safeParse({ fileName: "x.pdf", extra: 1 }).success).toBe(
+      false
+    );
   });
 });
 
@@ -135,8 +142,12 @@ describe("parsePdfImportBeginResultDto", () => {
 
 describe("pdfImportPublicationOutcomeDtoSchema", () => {
   it("accepts each publication outcome variant", () => {
-    expect(pdfImportPublicationOutcomeDtoSchema.parse({ status: "none" })).toEqual({ status: "none" });
-    expect(pdfImportPublicationOutcomeDtoSchema.parse({ status: "pending" })).toEqual({ status: "pending" });
+    expect(pdfImportPublicationOutcomeDtoSchema.parse({ status: "none" })).toEqual({
+      status: "none"
+    });
+    expect(pdfImportPublicationOutcomeDtoSchema.parse({ status: "pending" })).toEqual({
+      status: "pending"
+    });
     expect(
       pdfImportPublicationOutcomeDtoSchema.parse({ status: "published", workEntryId: "work-1" })
     ).toEqual({ status: "published", workEntryId: "work-1" });
@@ -147,7 +158,8 @@ describe("pdfImportPublicationOutcomeDtoSchema", () => {
 
   it("rejects a non-positive OCR page count", () => {
     expect(
-      pdfImportPublicationOutcomeDtoSchema.safeParse({ pagesNeedingOcr: 0, status: "ocr_required" }).success
+      pdfImportPublicationOutcomeDtoSchema.safeParse({ pagesNeedingOcr: 0, status: "ocr_required" })
+        .success
     ).toBe(false);
   });
 });

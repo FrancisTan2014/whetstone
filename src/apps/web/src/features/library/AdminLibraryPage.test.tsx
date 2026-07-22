@@ -104,6 +104,8 @@ import { ToastViewport } from "../../shared/ui/toast/ToastViewport";
 import { MemoryRouter } from "react-router-dom";
 import type {
   AuthorDto,
+  PdfImportStatusDto,
+  PdfImportViewDto,
   RecitationPlanDto,
   WorkAuthorSelection,
   WorkListItemDto
@@ -826,9 +828,7 @@ describe("AdminLibraryPage", () => {
   });
 
   // A #721 execution status; overrides tailor the specific branch. `sourceHash` must be 64 hex chars.
-  function pdfStatus(
-    overrides: Partial<import("@whetstone/contracts").PdfImportStatusDto> = {}
-  ): import("@whetstone/contracts").PdfImportStatusDto {
+  function pdfStatus(overrides: Partial<PdfImportStatusDto> = {}): PdfImportStatusDto {
     return {
       adapterFingerprint: null,
       attemptId: "attempt-1",
@@ -848,9 +848,9 @@ describe("AdminLibraryPage", () => {
   }
 
   function pdfView(
-    publication: import("@whetstone/contracts").PdfImportViewDto["publication"],
-    statusOverrides: Partial<import("@whetstone/contracts").PdfImportStatusDto> = {}
-  ): import("@whetstone/contracts").PdfImportViewDto {
+    publication: PdfImportViewDto["publication"],
+    statusOverrides: Partial<PdfImportStatusDto> = {}
+  ): PdfImportViewDto {
     return { publication, status: pdfStatus(statusOverrides) };
   }
 
@@ -968,9 +968,7 @@ describe("AdminLibraryPage", () => {
     await user.type(screen.getByLabelText("New author or source name"), "Nobody");
     await user.click(screen.getByRole("button", { name: "Create work" }));
 
-    expect(
-      await screen.findByText("The converter could not read this PDF.")
-    ).toBeDefined();
+    expect(await screen.findByText("The converter could not read this PDF.")).toBeDefined();
     expect(navigateSpy).not.toHaveBeenCalledWith(expect.stringContaining("/reader"));
   });
 
@@ -983,12 +981,9 @@ describe("AdminLibraryPage", () => {
     await user.type(screen.getByLabelText("New author or source name"), "Nobody");
     await user.click(screen.getByRole("button", { name: "Create work" }));
 
-    expect(
-      await screen.findByText("Could not start the import. Please try again.")
-    ).toBeDefined();
+    expect(await screen.findByText("Could not start the import. Please try again.")).toBeDefined();
     expect(mockedForgetActivePdfImport).toHaveBeenCalled();
   });
-
 
   it("surfaces the Manage-content empty-content message when a Markdown upload has no readable text (#673)", async () => {
     const onManageContent = vi.fn();
@@ -1138,6 +1133,29 @@ describe("AdminLibraryPage", () => {
       expect(screen.queryByText("Reading the PDF…")).toBeNull();
     });
     expect(mockedForgetActivePdfImport).toHaveBeenCalled();
+  });
+
+  it("drops the session without opening the Reader when the polled attempt is gone (#702)", async () => {
+    // A stale/removed attempt returns no view: polling reports `gone`, so the terminal handler just clears
+    // the local session (no Work to open, no error toast).
+    mockedBeginPdfImport.mockResolvedValue({
+      attemptId: "attempt-1",
+      outcome: "queued",
+      status: pdfStatus()
+    });
+    mockedFetchPdfImportView.mockResolvedValue(null);
+    const user = await renderReady();
+
+    const file = new File([new Uint8Array([1])], "Report.pdf", { type: "application/pdf" });
+    await user.upload(screen.getByLabelText("Upload"), file);
+    await user.type(screen.getByLabelText("New author or source name"), "Nobody");
+    await user.click(screen.getByRole("button", { name: "Create work" }));
+
+    await waitFor(() => {
+      expect(mockedForgetActivePdfImport).toHaveBeenCalled();
+    });
+    expect(navigateSpy).not.toHaveBeenCalledWith(expect.stringContaining("/reader"));
+    expect(screen.queryByText("Your PDF is ready to read.")).toBeNull();
   });
 
   it("resumes an import left in flight when the Library is reopened (#702)", async () => {

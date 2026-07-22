@@ -362,7 +362,10 @@ const drainPdfImportQueue = async (): Promise<void> => {
     while (result.status !== "idle") {
       if (result.status === "converted") {
         const outcome = await publishConvertedPdfImport(pdfImportPublish, result.attemptId);
-        server.log.info({ attemptId: result.attemptId, outcome: outcome.status }, "pdf_import_published");
+        server.log.info(
+          { attemptId: result.attemptId, outcome: outcome.status },
+          "pdf_import_published"
+        );
       }
       result = await processNextPdfImport(pdfImportRunner);
     }

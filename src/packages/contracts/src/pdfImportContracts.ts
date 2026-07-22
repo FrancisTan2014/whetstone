@@ -116,7 +116,9 @@ export const pdfImportPublicationOutcomeDtoSchema = z.discriminatedUnion("status
   z.object({ status: z.literal("none") }).strict(),
   z.object({ status: z.literal("pending") }).strict(),
   z.object({ status: z.literal("published"), workEntryId: z.string().min(1) }).strict(),
-  z.object({ pagesNeedingOcr: z.number().int().positive(), status: z.literal("ocr_required") }).strict()
+  z
+    .object({ pagesNeedingOcr: z.number().int().positive(), status: z.literal("ocr_required") })
+    .strict()
 ]);
 
 export type PdfImportPublicationOutcomeDto = z.infer<typeof pdfImportPublicationOutcomeDtoSchema>;

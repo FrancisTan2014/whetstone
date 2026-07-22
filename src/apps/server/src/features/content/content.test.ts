@@ -33,7 +33,7 @@ import {
   workSources
 } from "../../db/schema.js";
 import { writeReadingUnits } from "./blockWriter.js";
-import { loadWorkContent } from "./contentQueries.js";
+import { loadWorkContent, loadWorkStructure } from "./contentQueries.js";
 import { createImageResourceStore } from "../../files/imageResourceStore.js";
 import { createSourceFileStore, hashBytes, hashMarkdown } from "../../files/sourceFileStore.js";
 import type { ParsedEpub, ParsedEpubImage } from "../../files/epubSource.js";
@@ -889,6 +889,52 @@ describe("EPUB ingestion routes", () => {
     // EPUB chapter now also runs jsdom-based htmlToDocument for the #311 dual-write, and this may run
     // on a shared machine, so it carries a generous wall-clock timeout rather than the default.
   }, 120000);
+
+  it("excludes an EPUB spine unit that has no mdast content from the work structure (#702)", async () => {
+    // A non-null-`source_file` unit (an EPUB spine item) with no mdast blocks is an unknown-only or
+    // unstorable-figure-only chapter; the `doc_blocks` fallback is gated to null-`source_file` units, so it
+    // must not surface. A sibling unit with real mdast still does, proving the gate is per-unit.
+    const workEntryId = "epub-structure-work";
+    const readableUnit = "epub-readable-unit";
+    const ghostUnit = "epub-ghost-unit";
+    const readableBlock = "epub-readable-block";
+
+    await context.db.insert(entries).values([
+      { id: workEntryId, type: "work" },
+      { id: readableUnit, type: "reading_unit" },
+      { id: ghostUnit, type: "reading_unit" },
+      { id: readableBlock, type: "block" }
+    ]);
+    await context.db.insert(readingUnits).values([
+      {
+        entryId: readableUnit,
+        orderIndex: 0,
+        sourceFile: "chapter-1.xhtml",
+        title: "Chapter One",
+        workEntryId
+      },
+      {
+        entryId: ghostUnit,
+        orderIndex: 1,
+        sourceFile: "chapter-2.xhtml",
+        title: "Ghost Chapter",
+        workEntryId
+      }
+    ]);
+    await context.db.insert(blocks).values({
+      blockType: "paragraph",
+      entryId: readableBlock,
+      mdastJson: { children: [{ type: "text", value: "Readable body." }], type: "paragraph" },
+      orderIndex: 0,
+      plaintext: "Readable body.",
+      readingUnitEntryId: readableUnit,
+      workEntryId
+    });
+
+    const structure = await loadWorkStructure(context.db, toEntryId(workEntryId));
+
+    expect(structure.readingUnits.map((unit) => unit.entryId)).toEqual([readableUnit]);
+  });
 
   it("round-trips a figure block's image, alt, and caption through the content query", async () => {
     const workEntryId = "fig-work";

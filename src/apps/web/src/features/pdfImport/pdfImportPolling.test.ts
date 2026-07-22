@@ -46,7 +46,10 @@ describe("pollPdfImportUntilTerminal", () => {
 
     const result = await pollPdfImportUntilTerminal("attempt-1", onProgress, deps(fetchView));
 
-    expect(result).toEqual({ kind: "terminal", progress: expect.objectContaining({ kind: "published" }) });
+    expect(result).toEqual({
+      kind: "terminal",
+      progress: expect.objectContaining({ kind: "published" })
+    });
     // The in-flight poll and the terminal poll both reported.
     expect(onProgress).toHaveBeenCalledTimes(2);
     expect(onProgress.mock.calls[0]?.[0]).toEqual(expect.objectContaining({ kind: "in_progress" }));
@@ -63,7 +66,12 @@ describe("pollPdfImportUntilTerminal", () => {
   it("aborts before the first poll when already signalled", async () => {
     const fetchView = vi.fn(async () => publishedView("work-1"));
 
-    const result = await pollPdfImportUntilTerminal("attempt-1", vi.fn(), deps(fetchView), () => true);
+    const result = await pollPdfImportUntilTerminal(
+      "attempt-1",
+      vi.fn(),
+      deps(fetchView),
+      () => true
+    );
 
     expect(result).toEqual({ kind: "aborted" });
     expect(fetchView).not.toHaveBeenCalled();
@@ -77,7 +85,12 @@ describe("pollPdfImportUntilTerminal", () => {
       return runningView();
     });
 
-    const result = await pollPdfImportUntilTerminal("attempt-1", vi.fn(), deps(fetchView), () => aborted);
+    const result = await pollPdfImportUntilTerminal(
+      "attempt-1",
+      vi.fn(),
+      deps(fetchView),
+      () => aborted
+    );
 
     expect(result).toEqual({ kind: "aborted" });
     expect(fetchView).toHaveBeenCalledTimes(1);

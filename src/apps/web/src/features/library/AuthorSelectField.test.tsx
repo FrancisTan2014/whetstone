@@ -152,7 +152,10 @@ describe("AuthorSelectField", () => {
     expect(lastSelection(onSelectionChange)).toEqual({ mode: "new", name: "Grace Hopper" });
     // The resolved display name is reported alongside the selection so a name-addressed lane (#702)
     // can forward the entered author without a second lookup.
-    expect(onSelectionChange).toHaveBeenLastCalledWith({ mode: "new", name: "Grace Hopper" }, "Grace Hopper");
+    expect(onSelectionChange).toHaveBeenLastCalledWith(
+      { mode: "new", name: "Grace Hopper" },
+      "Grace Hopper"
+    );
   });
 
   it("shows a first-run hint when the library has no authors yet", async () => {

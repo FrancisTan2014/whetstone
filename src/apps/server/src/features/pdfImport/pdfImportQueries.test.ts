@@ -6,14 +6,16 @@ import { RANGE_CONVERSION_SCHEMA_VERSION, type RangeConversion } from "@whetston
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
 import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
-import { getPdfImportStatus } from "./pdfImportQueries.js";
+import { getPdfImportStatus, buildPdfImportPublicationOutcome } from "./pdfImportQueries.js";
 import {
   PDF_IMPORT_ADAPTER_FINGERPRINT,
   claimNextQueued,
   clearStagePath,
   commitRange,
+  insertPublicationIntent,
   insertQueuedAttempt,
   markFailed,
+  markPublicationOcrRequired,
   setProbeResult
 } from "./pdfImportStore.js";
 
@@ -152,5 +154,58 @@ describe("getPdfImportStatus", () => {
   it("returns null for another user's attempt (no existence leak)", async () => {
     await seedQueued("a1");
     expect(await getPdfImportStatus(db, "someone-else", "a1")).toBeNull();
+  });
+});
+
+describe("buildPdfImportPublicationOutcome", () => {
+  let db: DbClient;
+
+  beforeEach(async () => {
+    db = await buildDb();
+  });
+
+  async function seedQueued(id: string): Promise<void> {
+    await insertQueuedAttempt(db, {
+      id,
+      userId: DEFAULT_USER_ID,
+      sourceHash: "a".repeat(64),
+      stagePath: id,
+      now: new Date()
+    });
+  }
+
+  it("reports `none` when no publication was ever recorded for the attempt", async () => {
+    await seedQueued("a1");
+    expect(await buildPdfImportPublicationOutcome(db, "a1")).toEqual({ status: "none" });
+  });
+
+  it("reports `ocr_required` with the page count once an OCR refusal is recorded", async () => {
+    await seedQueued("a1");
+    await insertPublicationIntent(db, {
+      attemptId: "a1",
+      enteredTitle: null,
+      enteredAuthor: null,
+      enteredLanguage: null,
+      fileName: "scan.pdf"
+    });
+    await markPublicationOcrRequired(db, "a1", 3, new Date());
+
+    expect(await buildPdfImportPublicationOutcome(db, "a1")).toEqual({
+      pagesNeedingOcr: 3,
+      status: "ocr_required"
+    });
+  });
+
+  it("reports `pending` once an intent exists but neither a Work nor an OCR refusal is resolved", async () => {
+    await seedQueued("a1");
+    await insertPublicationIntent(db, {
+      attemptId: "a1",
+      enteredTitle: null,
+      enteredAuthor: null,
+      enteredLanguage: null,
+      fileName: "pending.pdf"
+    });
+
+    expect(await buildPdfImportPublicationOutcome(db, "a1")).toEqual({ status: "pending" });
   });
 });

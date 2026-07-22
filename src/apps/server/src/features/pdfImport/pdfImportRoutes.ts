@@ -97,7 +97,11 @@ export function registerPdfImportRoutes(
   );
 
   server.get<{ Params: AttemptParams }>("/api/pdf-imports/:attemptId", async (request, reply) => {
-    const view = await viewFor(dependencies, request.server.currentUser.getCurrentUserId(), request.params.attemptId);
+    const view = await viewFor(
+      dependencies,
+      request.server.currentUser.getCurrentUserId(),
+      request.params.attemptId
+    );
     if (view === null) {
       return reply.code(404).send(attemptNotFoundBody);
     }

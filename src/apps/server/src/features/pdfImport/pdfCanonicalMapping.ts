@@ -222,7 +222,10 @@ function splitIntoUnits(blocks: readonly MappedBlock[]): DraftUnit[] {
 // Assign stable node ids to a unit's blocks and decompose them into persistable `doc_blocks`, collecting
 // each top-level block's evidence keyed by its assigned id. The unit doc is validated and normalized
 // through `parseDocument` first, so an invalid node shape fails loudly here rather than at persistence.
-function buildUnit(unit: DraftUnit): { persistable: PersistableReadingUnit; evidence: PdfBlockEvidence[] } {
+function buildUnit(unit: DraftUnit): {
+  persistable: PersistableReadingUnit;
+  evidence: PdfBlockEvidence[];
+} {
   const normalized = serializeDocument(
     parseDocument({ content: unit.blocks.map((block) => block.node), type: "doc" })
   );

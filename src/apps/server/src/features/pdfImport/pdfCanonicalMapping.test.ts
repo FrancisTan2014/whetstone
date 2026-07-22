@@ -32,7 +32,9 @@ function doc(
   };
 }
 
-function mapped(result: PdfCanonicalMappingResult): Extract<PdfCanonicalMappingResult, { status: "mapped" }> {
+function mapped(
+  result: PdfCanonicalMappingResult
+): Extract<PdfCanonicalMappingResult, { status: "mapped" }> {
   if (result.status !== "mapped") {
     throw new Error(`expected mapped, got ${result.status}`);
   }
@@ -40,18 +42,24 @@ function mapped(result: PdfCanonicalMappingResult): Extract<PdfCanonicalMappingR
 }
 
 // The concatenation of a unit's doc-block node types, so a test can assert the projected structure.
-function unitTypes(result: Extract<PdfCanonicalMappingResult, { status: "mapped" }>, index: number): string[] {
+function unitTypes(
+  result: Extract<PdfCanonicalMappingResult, { status: "mapped" }>,
+  index: number
+): string[] {
   return result.units[index]!.docBlocks.map((block) => block.type);
 }
 
 describe("mapStructuredDocument", () => {
   it("refuses a document with any non-native-text page as ocr_required and maps no content", () => {
     const result = mapStructuredDocument(
-      doc([item({ label: "text", text: "Body" })], [
-        { hasNativeText: true, pageNumber: 1 },
-        { hasNativeText: false, pageNumber: 2 },
-        { hasNativeText: false, pageNumber: 3 }
-      ])
+      doc(
+        [item({ label: "text", text: "Body" })],
+        [
+          { hasNativeText: true, pageNumber: 1 },
+          { hasNativeText: false, pageNumber: 2 },
+          { hasNativeText: false, pageNumber: 3 }
+        ]
+      )
     );
     expect(result).toEqual({ pagesNeedingOcr: 2, status: "ocr_required" });
   });
@@ -234,7 +242,9 @@ describe("mapStructuredDocument", () => {
   });
 
   it("falls back to an unknown node for a list group with no list items", () => {
-    const result = mapped(mapStructuredDocument(doc([item({ label: "unordered_list", text: "x" })])));
+    const result = mapped(
+      mapStructuredDocument(doc([item({ label: "unordered_list", text: "x" })]))
+    );
     expect(result.units[0]!.docBlocks[0]!.type).toBe("unknown");
   });
 

@@ -108,7 +108,9 @@ describe("assertContentPersisted", () => {
       type: "paragraph"
     };
     const docOnly: WorkContentDto = {
-      readingUnits: [{ blocks: [], docBlocks: [docBlock], entryId: toEntryId("unit-1"), orderIndex: 0 }],
+      readingUnits: [
+        { blocks: [], docBlocks: [docBlock], entryId: toEntryId("unit-1"), orderIndex: 0 }
+      ],
       workEntryId: toEntryId("work-1")
     };
     expect(assertContentPersisted(1, docOnly)).toBe(docOnly);

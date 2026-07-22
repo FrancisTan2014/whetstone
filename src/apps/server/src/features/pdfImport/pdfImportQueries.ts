@@ -1,7 +1,16 @@
-import type { PdfImportPublicationOutcomeDto, PdfImportStatusDto, PdfImportViewDto } from "@whetstone/contracts";
+import type {
+  PdfImportPublicationOutcomeDto,
+  PdfImportStatusDto,
+  PdfImportViewDto
+} from "@whetstone/contracts";
 
 import type { DbClient } from "../../db/dbClient.js";
-import { countCommittedRanges, getAttempt, getPublication, type PdfImportAttemptRecord } from "./pdfImportStore.js";
+import {
+  countCommittedRanges,
+  getAttempt,
+  getPublication,
+  type PdfImportAttemptRecord
+} from "./pdfImportStore.js";
 
 // The owner-scoped status query for a recoverable staged PDF import (#721). Progress is reported as
 // concrete page and range COUNTS derived from committed ranges (never a percentage parsed from a

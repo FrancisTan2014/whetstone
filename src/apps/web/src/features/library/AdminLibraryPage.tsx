@@ -19,12 +19,11 @@ import { useMediaQuery } from "../../shared/ui/useMediaQuery";
 import { useToast } from "../../shared/ui/toast/ToastProvider";
 import { detectUploadKind, stripFileExtension } from "../../shared/files/fileType";
 import { markdownEmptyContentMessage } from "../content/contentMessages";
+import { beginPdfImport, cancelPdfImport, fetchPdfImportView } from "../pdfImport/pdfImportApi";
 import {
-  beginPdfImport,
-  cancelPdfImport,
-  fetchPdfImportView
-} from "../pdfImport/pdfImportApi";
-import { pollPdfImportUntilTerminal, type PdfImportPollResult } from "../pdfImport/pdfImportPolling";
+  pollPdfImportUntilTerminal,
+  type PdfImportPollResult
+} from "../pdfImport/pdfImportPolling";
 import {
   forgetActivePdfImport,
   readActivePdfImport,
@@ -103,14 +102,25 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
   // authoritative), these carry no reliable metadata, so we create the Work from the confirmed form
   // first, then ingest this file into it.
   const [pendingUpload, setPendingUpload] = useState<File | undefined>(undefined);
-  const [uploadBusy, setUploadBusy] = useState(false);
-  const [uploadKind, setUploadKind] = useState<UploadKind | undefined>(undefined);
+
+  // A born-digital import (#702) left in flight when the page was last closed or navigated away is remembered
+  // by its #721 attempt id; reading it once on mount (lazy initial state, never in an effect) re-enters the
+  // poll loop below so the progress card reappears and completion still opens the Reader.
+  const [rememberedPdfImportId] = useState(() => readActivePdfImport());
+  const [uploadBusy, setUploadBusy] = useState(() => rememberedPdfImportId !== null);
+  const [uploadKind, setUploadKind] = useState<UploadKind | undefined>(() =>
+    rememberedPdfImportId !== null ? "pdf" : undefined
+  );
 
   // The born-digital PDF import currently being polled (its #721 attempt id) and the label to show while
   // it runs. Undefined when no import is in flight. Held in state (not a ref) so the progress card and the
   // poll effect react to it, and so a remembered attempt can resume the loop after navigation.
-  const [activePdfImportId, setActivePdfImportId] = useState<string | undefined>(undefined);
-  const [pdfImportLabel, setPdfImportLabel] = useState<string | undefined>(undefined);
+  const [activePdfImportId, setActivePdfImportId] = useState<string | undefined>(
+    () => rememberedPdfImportId ?? undefined
+  );
+  const [pdfImportLabel, setPdfImportLabel] = useState<string | undefined>(() =>
+    rememberedPdfImportId !== null ? "Resuming the import…" : undefined
+  );
 
   // The work awaiting an explicit delete confirmation (destructive + irreversible), and whether the
   // confirmed delete is in flight, so the confirm dialog names the work and disables while deleting.
@@ -136,6 +146,12 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
     setRecitationByWork(new Map(recitation.plans.map((plan) => [plan.workEntryId, plan])));
   }
 
+  // Open a published (or reopened) Work in the existing Reader. HashRouter renders this as
+  // `#/reader?work=<id>`, matching the Library's own read links.
+  function openReader(workEntryId: string): void {
+    navigate(`/reader?work=${encodeURIComponent(workEntryId)}`);
+  }
+
   useEffect(() => {
     async function load(): Promise<void> {
       try {
@@ -147,59 +163,6 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
     }
 
     void load();
-  }, []);
-
-  // Drive the poll loop for the in-flight born-digital import (#702). Setting `activePdfImportId` — a fresh
-  // queued attempt, or a remembered one resumed on mount — starts it; navigating away aborts the local loop
-  // (the server job keeps running and can be reopened). The first poll reports progress immediately, so the
-  // card never shows a stale label.
-  useEffect(() => {
-    const attemptId = activePdfImportId;
-    if (attemptId === undefined) {
-      return;
-    }
-
-    let aborted = false;
-    void (async () => {
-      const result = await pollPdfImportUntilTerminal(
-        attemptId,
-        (progress) => {
-          if (!aborted && progress.kind === "in_progress") {
-            setPdfImportLabel(progress.label);
-          }
-        },
-        {
-          delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-          fetchView: fetchPdfImportView,
-          intervalMs: pdfImportPollIntervalMs
-        },
-        () => aborted
-      );
-
-      if (aborted || result.kind === "aborted") {
-        return;
-      }
-      await applyPdfImportTerminal(result);
-    })();
-
-    return () => {
-      aborted = true;
-    };
-    // Only the attempt id drives (re)starting the loop; the handlers it closes over are stable enough for
-    // this effect and re-running on every render would restart polling needlessly.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePdfImportId]);
-
-  // Resume an import left in flight when the page was last closed or navigated away (#702): a remembered
-  // attempt id re-enters the poll loop so the progress card reappears and completion still opens the Reader.
-  useEffect(() => {
-    const remembered = readActivePdfImport();
-    if (remembered !== null) {
-      setUploadBusy(true);
-      setUploadKind("pdf");
-      setPdfImportLabel("Resuming the import…");
-      setActivePdfImportId(remembered);
-    }
   }, []);
 
   function resetWorkForm(): void {
@@ -330,6 +293,9 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
 
     try {
       const result = await beginPdfImport(file, {
+        /* v8 ignore next -- AuthorSelectField always reports a resolved name alongside a defined
+           selection, and submit is blocked when the selection is undefined, so `enteredAuthor` is
+           always a string here; the null fallback only bridges the optional-name type. */
         enteredAuthor: enteredAuthor ?? null,
         enteredLanguage: workLanguage,
         enteredTitle: workTitle,
@@ -365,6 +331,8 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
   // stop the local poll ourselves rather than waiting for the cancelled state to propagate through a poll.
   async function cancelActivePdfImport(): Promise<void> {
     const attemptId = activePdfImportId;
+    /* v8 ignore next 3 -- defensive: the Cancel button only renders while an import is in flight
+       (activePdfImportId defined), so this guard cannot be reached through the rendered UI. */
     if (attemptId === undefined) {
       return;
     }
@@ -398,17 +366,58 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
       return;
     }
 
-    // ocr_required and failed both surface their message and create no Work.
-    if (progress.kind === "ocr_required" || progress.kind === "failed") {
-      toast.error(progress.message);
+    /* v8 ignore next 3 -- a terminal poll result is published, ocr_required, or failed; `in_progress`
+       (the only remaining kind) is never terminal, so this early return is unreachable. */
+    if (progress.kind !== "ocr_required" && progress.kind !== "failed") {
+      return;
     }
+
+    // ocr_required and failed both surface their message and create no Work.
+    toast.error(progress.message);
   }
 
-  // Open a published (or reopened) Work in the existing Reader. HashRouter renders this as
-  // `#/reader?work=<id>`, matching the Library's own read links.
-  function openReader(workEntryId: string): void {
-    navigate(`/reader?work=${encodeURIComponent(workEntryId)}`);
-  }
+  // Drive the poll loop for the in-flight born-digital import (#702). Setting `activePdfImportId` — a fresh
+  // queued attempt, or a remembered one resumed on mount — starts it; navigating away aborts the local loop
+  // (the server job keeps running and can be reopened). The first poll reports progress immediately, so the
+  // card never shows a stale label. Declared after `applyPdfImportTerminal` so the effect never reads it
+  // before it exists.
+  useEffect(() => {
+    const attemptId = activePdfImportId;
+    if (attemptId === undefined) {
+      return;
+    }
+
+    let aborted = false;
+    void (async () => {
+      const result = await pollPdfImportUntilTerminal(
+        attemptId,
+        (progress) => {
+          if (!aborted && progress.kind === "in_progress") {
+            setPdfImportLabel(progress.label);
+          }
+        },
+        {
+          delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+          fetchView: fetchPdfImportView,
+          intervalMs: pdfImportPollIntervalMs
+        },
+        () => aborted
+      );
+
+      if (aborted || result.kind === "aborted") {
+        return;
+      }
+      await applyPdfImportTerminal(result);
+    })();
+
+    return () => {
+      aborted = true;
+    };
+    // Only the attempt id drives (re)starting the loop; the handlers it closes over are stable enough for
+    // this effect and re-running on every render would restart polling needlessly.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePdfImportId]);
+
   // Mint an imported Work from the held Markdown file in one atomic request (#706). Re-uploading
   // identical bytes reopens the existing Work instead of creating a duplicate; either way the learner
   // lands in Manage content. Markdown with no readable blocks creates no Work and shows the panel's copy.
@@ -528,6 +537,10 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
 
   const groups = groupWorksByAuthor(works);
 
+  // The in-flight PDF progress card's label. A PDF import always carries a label (set on start, on
+  // resume, and on every in-progress poll tick), so the fallback is only a defensive default.
+  const pdfProgressLabel = pdfImportLabel ?? "Importing the PDF…";
+
   return (
     <PageFrame
       primaryAction={
@@ -554,9 +567,13 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
         {uploadKind === "epub" ? <LoadingIndicator label="Ingesting the EPUB…" /> : null}
         {uploadKind === "pdf" ? (
           <div className="flex items-center justify-between gap-3" role="status">
-            <LoadingIndicator label={pdfImportLabel ?? "Importing the PDF…"} />
+            <LoadingIndicator label={pdfProgressLabel} />
             {activePdfImportId !== undefined ? (
-              <Button onClick={() => void cancelActivePdfImport()} type="button" variant="secondary">
+              <Button
+                onClick={() => void cancelActivePdfImport()}
+                type="button"
+                variant="secondary"
+              >
                 Cancel
               </Button>
             ) : null}
