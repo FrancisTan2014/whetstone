@@ -38,13 +38,15 @@ export async function insertInBatches<Row extends Record<string, unknown>>(
 // Defense-in-depth: ingestion must never report success when nothing was persisted. If a
 // non-empty decomposition (expected blocks > 0) ends up with zero persisted blocks, the
 // write silently rolled back, so throw to turn a false 201 into a 5xx instead of returning
-// an orphan work with empty content.
+// an orphan work with empty content. Counts both substrates — legacy mdast `blocks` and PM
+// `doc_blocks` — so a `doc_blocks`-only Work (a canonical PDF import #702, whose mdast blocks
+// are empty) is still guarded; the check is unchanged for Markdown/EPUB, which populate mdast.
 export function assertContentPersisted(
   expectedBlockCount: number,
   content: WorkContentDto
 ): WorkContentDto {
   const persistedBlockCount = content.readingUnits.reduce(
-    (total, unit) => total + unit.blocks.length,
+    (total, unit) => total + unit.blocks.length + (unit.docBlocks?.length ?? 0),
     0
   );
 

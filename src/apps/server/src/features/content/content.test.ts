@@ -1036,7 +1036,7 @@ describe("EPUB ingestion routes", () => {
 
   function figureChapter(html: string, images: ReadonlyArray<ParsedEpubImage>): ParsedEpub {
     return {
-      chapters: [{ html, images }],
+      chapters: [{ html, images, sourceFile: "index.xhtml" }],
       metadata: { author: "Anon", language: "en", title: "Figures" }
     };
   }

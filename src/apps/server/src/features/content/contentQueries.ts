@@ -144,24 +144,20 @@ export async function loadWorkContent(db: DbClient, workEntryId: EntryId): Promi
     .where(eq(readingUnits.workEntryId, workEntryId))
     .orderBy(asc(docBlocks.orderIndex));
 
-  // An in-app authored Work (#576) keeps its canonical content only in PM `doc_blocks` and records no
-  // provenance source, whereas an imported Markdown/EPUB Work always writes a `work_sources` row. That
-  // provenance is the reliable authored-vs-imported signal — a source file is not, since a parsed
-  // chapter may carry none.
-  const authored = !(await workHasSource(db, workEntryId));
-
   const readingUnitDtos = unitRows.flatMap((unit) => {
     const unitBlocks = blockRows.filter((block) => block.readingUnitEntryId === unit.entryId);
     const unitDocBlocks = docBlockRows.filter((block) => block.readingUnitEntryId === unit.entryId);
     const hasRenderableDocBlock = unitDocBlocks.some((block) => block.type !== "unknown");
 
     // A reading unit surfaces when it has renderable content in the substrate that owns it: non-deleted
-    // mdast blocks for an ingested Work, or — for an authored Work, whose content lives only in PM
-    // `doc_blocks` — at least one non-`unknown` `doc_blocks` row. The `authored` gate keeps this fallback
-    // to authored Works, so an imported chapter with no mdast blocks (an unknown-only chapter kept only
-    // for its `unknown` PM nodes, #311, or an unstorable-figure-only chapter) stays excluded exactly as
-    // before. A unit with neither has nothing the reader can render.
-    const surfaces = unitBlocks.length > 0 || (authored && hasRenderableDocBlock);
+    // mdast blocks for a Markdown/EPUB chapter, or — for a unit whose content lives only in PM
+    // `doc_blocks` (an authored/manual Work #576, or a canonical PDF import #702) — at least one
+    // non-`unknown` `doc_blocks` row. The gate is the unit's own `source_file`: a per-unit source file
+    // (an EPUB spine item) is an mdast chapter and never falls back to `doc_blocks`, so an EPUB chapter
+    // with no mdast blocks (an unknown-only chapter kept only for its `unknown` PM nodes, #311, or an
+    // unstorable-figure-only chapter) stays excluded exactly as before, while a null-`source_file` unit
+    // (Markdown, authored, PDF) may surface its PM content. A unit with neither has nothing to render.
+    const surfaces = unitBlocks.length > 0 || (unit.sourceFile === null && hasRenderableDocBlock);
     return surfaces
       ? [
           toReadingUnitDto(
@@ -203,14 +199,15 @@ function mdastHeadingDepth(mdast: unknown): number | undefined {
   return typeof depth === "number" ? depth : undefined;
 }
 
-// The heading each authored unit starts at, derived from its FIRST persisted PM block (order index 0) —
-// the manual-Work Reader-parity path (#697). A manual Work stores its content only in `doc_blocks` with a
-// null `reading_units.title`, so — unlike a Markdown unit whose outline heading comes from its first
-// mdast heading — its outline heading level AND title must come from that first block. Recomputed on
-// every read from the same blocks the editor persists; never a stored, second TOC copy. Scoped by the
-// caller to authored Works (no `work_sources`), so an imported chapter — whose hierarchy is its authored
-// nav and whose leading `doc_blocks` are `unknown` PM nodes — is untouched. A unit whose first block is
-// not a heading (a pre-heading lead section) contributes no entry, and the outline projection maps that
+// The heading each null-`source_file` unit starts at, derived from its FIRST persisted PM block (order
+// index 0) — the manual-Work Reader-parity path (#697), shared by a canonical PDF import (#702). A unit
+// whose content lives only in `doc_blocks` (a manual Work, or a PDF import) has a null
+// `reading_units.title`, so — unlike a Markdown unit whose outline heading comes from its first mdast
+// heading — its outline heading level AND title must come from that first block. Recomputed on every
+// read from the same blocks that were persisted; never a stored, second TOC copy. The `isNull(source_file)`
+// join scopes it to those units, so an imported EPUB chapter — whose hierarchy is its authored nav and
+// whose leading `doc_blocks` are `unknown` PM nodes — is untouched. A unit whose first block is not a
+// heading (a pre-heading lead section) contributes no entry, and the outline projection maps that
 // absence to the root "Start" label.
 async function loadDocHeadingByUnit(
   db: DbClient,
@@ -219,7 +216,14 @@ async function loadDocHeadingByUnit(
   const rows = await db
     .select({ node: docBlocks.nodeJson, readingUnitEntryId: docBlocks.readingUnitEntryId })
     .from(docBlocks)
-    .where(and(eq(docBlocks.workEntryId, workEntryId), eq(docBlocks.orderIndex, 0)));
+    .innerJoin(readingUnits, eq(docBlocks.readingUnitEntryId, readingUnits.entryId))
+    .where(
+      and(
+        eq(docBlocks.workEntryId, workEntryId),
+        eq(docBlocks.orderIndex, 0),
+        isNull(readingUnits.sourceFile)
+      )
+    );
 
   const byUnit = new Map<string, DocumentBlockHeading>();
   for (const row of rows) {
@@ -307,9 +311,10 @@ export async function loadWorkStructure(
     )
     .orderBy(asc(readingUnits.orderIndex));
 
-  // Renderable PM `doc_blocks` per unit (#576): an authored Work's canonical content lives only in
-  // `doc_blocks`, so a unit with no mdast blocks still surfaces when it has non-`unknown` PM content.
-  // `ne(type, 'unknown')` drops the `unknown` PM nodes an unknown-only EPUB chapter (#311) persists.
+  // Renderable PM `doc_blocks` per unit (#576/#702): a unit whose canonical content lives only in
+  // `doc_blocks` (an authored/manual Work, or a canonical PDF import) surfaces when it has non-`unknown`
+  // PM content. `ne(type, 'unknown')` drops the `unknown` PM nodes an unknown-only EPUB chapter (#311)
+  // persists.
   const docRows = await db
     .select({
       docCount: count(docBlocks.id),
@@ -319,13 +324,11 @@ export async function loadWorkStructure(
     .from(docBlocks)
     .where(and(eq(docBlocks.workEntryId, workEntryId), ne(docBlocks.type, "unknown")))
     .groupBy(docBlocks.readingUnitEntryId);
-  // The `doc_blocks` fallback is scoped to authored Works via their absent provenance (`work_sources`),
-  // the reliable authored-vs-imported signal — so for an imported Work `docByUnit` stays empty and its
-  // no-mdast chapters (unknown-only or unstorable-figure-only) are excluded exactly as before.
-  const authored = !(await workHasSource(db, workEntryId));
-  const docByUnit = authored
-    ? new Map(docRows.map((row) => [row.readingUnitEntryId, row]))
-    : new Map<string, (typeof docRows)[number]>();
+  // The `doc_blocks` fallback is gated per unit by its own `source_file` (applied in the projection
+  // below): a null-`source_file` unit (Markdown/authored/PDF) may use it, while an EPUB spine item
+  // (non-null `source_file`) never does, so its no-mdast chapters (unknown-only or unstorable-figure-only)
+  // are excluded exactly as before.
+  const docByUnit = new Map(docRows.map((row) => [row.readingUnitEntryId, row]));
 
   // The heading level that starts each Markdown-pipeline unit (#680): the mdast depth of its first
   // block when that block is a heading. Scoped to units with no per-unit source file, so an EPUB —
@@ -355,22 +358,21 @@ export async function loadWorkStructure(
     }
   }
 
-  // Reader parity for manual Works (#697): a manual Work's content lives only in `doc_blocks` with a null
-  // `reading_units.title`, so its outline heading level and title come from each section's first block —
-  // the same source the editor's live Outline derives from — instead of the mdast/nav path above. Scoped
-  // to authored Works (like `docByUnit`), so imported hierarchy is unchanged.
-  const docHeadingByUnit = authored
-    ? await loadDocHeadingByUnit(db, workEntryId)
-    : new Map<string, DocumentBlockHeading>();
+  // Reader parity for null-`source_file` Works (#697/#702): a manual Work or a canonical PDF import keeps
+  // its content only in `doc_blocks` with a null `reading_units.title`, so its outline heading level and
+  // title come from each section's first block — the same source the editor's live Outline derives from —
+  // instead of the mdast/nav path above. `loadDocHeadingByUnit` scopes itself to null-`source_file` units,
+  // so imported EPUB hierarchy is unchanged.
+  const docHeadingByUnit = await loadDocHeadingByUnit(db, workEntryId);
   const resolveHeadingLevel = (entryId: string): number | undefined =>
     headingLevelByUnit.get(entryId) ?? docHeadingByUnit.get(entryId)?.level;
   const resolveTitle = (entryId: string, title: string | null): string | null =>
     title ?? docHeadingByUnit.get(entryId)?.title ?? null;
 
   // A unit is readable when it has content in the substrate that owns it. Mdast is authoritative for
-  // count and substantiveness when present (EPUB/Markdown behavior unchanged). With no mdast, only an
-  // authored unit surfaces (via `docByUnit`); an imported chapter with no mdast — an unknown-only or
-  // unstorable-figure-only EPUB chapter — is absent from `docByUnit` and excluded.
+  // count and substantiveness when present (EPUB/Markdown behavior unchanged). With no mdast, only a
+  // null-`source_file` unit surfaces (via `docByUnit`); an EPUB chapter with no mdast — an unknown-only
+  // or unstorable-figure-only chapter — has a non-null `source_file` and is excluded.
   const structureUnits = rows.flatMap((row) => {
     if (row.mdastCount > 0) {
       return [
@@ -385,7 +387,7 @@ export async function loadWorkStructure(
         }
       ];
     }
-    const doc = docByUnit.get(row.entryId);
+    const doc = row.sourceFile === null ? docByUnit.get(row.entryId) : undefined;
     if (doc === undefined) {
       return [];
     }
