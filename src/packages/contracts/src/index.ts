@@ -166,6 +166,35 @@ export type {
   WorkStructureDto
 } from "./contentContracts.js";
 export {
+  concatenateRanges,
+  flattenDocItems,
+  isSupportedDoclingSchemaVersion,
+  MAX_PAGE_COUNT,
+  MAX_STAGED_BYTES,
+  parseProbePageCount,
+  parseRangeConversion,
+  PINNED_DOCLING_CORE_VERSION,
+  PINNED_DOCLING_VERSION,
+  PINNED_MODEL_REPO,
+  PINNED_MODEL_REVISION,
+  RANGE_CONVERSION_SCHEMA_VERSION,
+  STRUCTURED_DOCUMENT_SCHEMA_VERSION,
+  SUPPORTED_DOCLING_CORE_SCHEMA_VERSIONS,
+  validateStructuredDocument
+} from "./pdfStructuredContracts.js";
+export type {
+  BoundingBox,
+  DoclingSchemaRef,
+  ParseRangeResult,
+  ProbeParseResult,
+  RangeConversion,
+  StructuredDocItem,
+  StructuredDocument,
+  StructuredDocumentSource,
+  StructuredPage,
+  ValidateStructuredResult
+} from "./pdfStructuredContracts.js";
+export {
   entryDtoSchema,
   entryIdDtoSchema,
   entryLinkDtoSchema,
