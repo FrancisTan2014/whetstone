@@ -4,6 +4,7 @@ import type {
   AuthorSearchDto,
   CreateAuthorRequest,
   CreateWorkRequest,
+  ImportMarkdownWorkRequest,
   IngestEpubResultDto,
   WorkListDto,
   WorkListItemDto
@@ -79,6 +80,40 @@ export async function ingestEpub(file: File): Promise<IngestEpubResultDto> {
     headers: { "content-type": epubContentType },
     method: "POST"
   });
+}
+
+// The front-door outcome of importing an uploaded .md file (#706): `created` minted a new Work,
+// `exact_existing` reopened the Work that already owns these exact bytes, and `empty_content` is the
+// server's 422 for Markdown with no readable blocks (so the front door shows an explicit message).
+export type ImportMarkdownWorkOutcome =
+  | Readonly<{ result: IngestEpubResultDto; status: "created" | "exact_existing" }>
+  | Readonly<{ status: "empty_content" }>;
+
+// Mint an imported Work from an uploaded .md file in one request (#706): the Work, its retained source,
+// and its single-owner claim are written atomically, so re-uploading identical bytes reopens the
+// existing Work (200) instead of creating a duplicate (201).
+export async function importMarkdownWork(
+  request: ImportMarkdownWorkRequest
+): Promise<ImportMarkdownWorkOutcome> {
+  const path = apiUrl("/works/markdown");
+  const response = await fetch(path, {
+    body: JSON.stringify(request),
+    headers: jsonHeaders,
+    method: "POST"
+  });
+
+  if (response.status === 422) {
+    return { status: "empty_content" };
+  }
+
+  if (!response.ok) {
+    throw new Error(`Request to ${path} failed with status ${response.status}.`);
+  }
+
+  return {
+    result: (await response.json()) as IngestEpubResultDto,
+    status: response.status === 200 ? "exact_existing" : "created"
+  };
 }
 
 // Permanently delete a work and its content (#541). A 204 resolves; a 404 (unknown work) or any other

@@ -142,8 +142,10 @@ export { parseTranscription } from "./speechContracts.js";
 export type { TranscribedWord, Transcription } from "./speechContracts.js";
 export {
   epubContentType,
+  importMarkdownWorkRequestSchema,
   ingestMarkdownRequestSchema,
   parseIngestMarkdownRequest,
+  parseImportMarkdownWorkRequest,
   parseWorkAnchorIndex,
   pdfContentType,
   tocEntryDtoSchema,
@@ -154,6 +156,7 @@ export type {
   BlockDto,
   BlockUnitLocatorDto,
   DocBlockDto,
+  ImportMarkdownWorkRequest,
   IngestEpubResultDto,
   IngestMarkdownRequest,
   ReadingUnitContentDto,

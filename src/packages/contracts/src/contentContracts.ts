@@ -1,7 +1,8 @@
 import type { BlockType, EntryId } from "@whetstone/domain";
 import { z } from "zod";
 
-import type { WorkDto } from "./libraryContracts.js";
+import { workLanguageDtoSchema, workTypeDtoSchema } from "./entryContracts.js";
+import { workAuthorSelectionSchema, type WorkDto } from "./libraryContracts.js";
 
 function isNonBlank(value: string): boolean {
   return value.trim().length > 0;
@@ -40,6 +41,31 @@ export type IngestMarkdownRequest = z.infer<typeof ingestMarkdownRequestSchema>;
 
 export function parseIngestMarkdownRequest(value: unknown): IngestMarkdownRequest {
   return ingestMarkdownRequestSchema.parse(value);
+}
+
+// The front door mints an imported Work from an uploaded .md file in one step (#706): unlike the
+// per-work content endpoint (which edits an already-created Work), this carries the Work's metadata
+// (author/title/language/type) alongside the file's bytes so the Work, its retained source, and its
+// single-owner uploaded-source claim are written in one transaction. Re-uploading identical bytes
+// reopens the existing Work instead of creating a duplicate, exactly like the EPUB front door.
+export const importMarkdownWorkRequestSchema = z
+  .object({
+    author: workAuthorSelectionSchema,
+    fileName: z
+      .string()
+      .refine(isNonBlank, { message: "fileName must be non-empty." })
+      .refine(isMarkdownFileName, { message: "fileName must end with .md." }),
+    language: workLanguageDtoSchema,
+    markdown: z.string().refine(isNonBlank, { message: "markdown must be non-empty." }),
+    title: z.string().refine(isNonBlank, { message: "Work title must be non-empty." }),
+    workType: workTypeDtoSchema
+  })
+  .strict();
+
+export type ImportMarkdownWorkRequest = z.infer<typeof importMarkdownWorkRequestSchema>;
+
+export function parseImportMarkdownWorkRequest(value: unknown): ImportMarkdownWorkRequest {
+  return importMarkdownWorkRequestSchema.parse(value);
 }
 
 // A figure block additionally carries the shared image it renders (`imageResourceId`)

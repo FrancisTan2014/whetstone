@@ -1,8 +1,18 @@
-import { epubContentType, ingestMarkdownRequestSchema, pdfContentType } from "@whetstone/contracts";
+import {
+  epubContentType,
+  importMarkdownWorkRequestSchema,
+  ingestMarkdownRequestSchema,
+  pdfContentType
+} from "@whetstone/contracts";
 import { toEntryId } from "@whetstone/domain";
 import type { FastifyInstance } from "fastify";
 
-import { ingestMarkdown, ingestPdf, type ContentDependencies } from "./contentCommands.js";
+import {
+  createImportedMarkdownWork,
+  ingestMarkdown,
+  ingestPdf,
+  type ContentDependencies
+} from "./contentCommands.js";
 import { ingestEpub } from "./epubCommands.js";
 import {
   loadReadingUnitContent,
@@ -21,6 +31,7 @@ const invalidPdfBody = { error: "invalid_pdf" } as const;
 const pdfToolchainMissingBody = { error: "pdf_toolchain_missing" } as const;
 const workNotFoundBody = { error: "work_not_found" } as const;
 const emptyContentBody = { error: "empty_content" } as const;
+const authorNotFoundBody = { error: "author_not_found" } as const;
 // A manual-origin Work owns a canonical ProseMirror document edited only through the manual-Work editor
 // (#720); legacy Markdown/PDF ingestion into it is refused (409) so the two content formats never mix.
 const manualWorkUnsupportedBody = { error: "manual_work_unsupported" } as const;
@@ -72,6 +83,42 @@ export function registerContentRoutes(
       return reply.code(result.status === "exact_existing" ? 200 : 201).send(result.result);
     }
   );
+
+  // The front door mints an imported Work from an uploaded .md file in one step (#706): the body
+  // carries the Work's metadata plus the file's Markdown, and the Work + source + claim are written in
+  // one transaction. Re-uploading identical bytes reopens the owning Work (200) rather than creating a
+  // duplicate (201), mirroring the EPUB front door.
+  server.post("/api/works/markdown", async (request, reply) => {
+    const parsed = importMarkdownWorkRequestSchema.safeParse(request.body);
+
+    if (!parsed.success) {
+      return reply.code(400).send(invalidRequestBody);
+    }
+
+    const result = await createImportedMarkdownWork(dependencies, parsed.data);
+
+    if (result.status === "author_not_found") {
+      return reply.code(400).send({ ...authorNotFoundBody, authorId: result.authorId });
+    }
+
+    // Markdown with no readable blocks (e.g. image-only input) is unsupported content, not an empty
+    // Work — surface it so the front door can show an explicit message and no shell Work is created.
+    if (result.status === "empty_content") {
+      return reply.code(422).send(emptyContentBody);
+    }
+
+    request.log.info(
+      {
+        readingUnitCount: result.result.content.readingUnits.length,
+        route: "POST /api/works/markdown",
+        status: result.status,
+        workEntryId: result.result.work.entryId
+      },
+      "work_markdown_ingested"
+    );
+
+    return reply.code(result.status === "exact_existing" ? 200 : 201).send(result.result);
+  });
 
   server.post<{ Params: WorkParams }>("/api/works/:workEntryId/content", async (request, reply) => {
     const parsed = ingestMarkdownRequestSchema.safeParse(request.body);

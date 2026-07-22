@@ -16,6 +16,7 @@ vi.mock("./libraryApi", () => ({
   deleteWork: vi.fn(),
   fetchWorks: vi.fn(),
   fetchWorksWithReadingPosition: vi.fn(),
+  importMarkdownWork: vi.fn(),
   ingestEpub: vi.fn(),
   searchAuthors: vi.fn()
 }));
@@ -51,7 +52,6 @@ vi.mock("./AuthorSelectField", () => ({
 }));
 
 vi.mock("../content/contentApi", () => ({
-  ingestMarkdown: vi.fn(),
   ingestPdf: vi.fn()
 }));
 
@@ -72,10 +72,11 @@ import {
   deleteWork,
   fetchWorks,
   fetchWorksWithReadingPosition,
+  importMarkdownWork,
   ingestEpub,
   searchAuthors
 } from "./libraryApi";
-import { ingestMarkdown, ingestPdf } from "../content/contentApi";
+import { ingestPdf } from "../content/contentApi";
 import { enrollRecitation, listRecitationPlans } from "../recitation/recitationApi";
 import { AdminLibraryPage } from "./AdminLibraryPage";
 import { ToastProvider } from "../../shared/ui/toast/ToastProvider";
@@ -113,7 +114,7 @@ const mockedFetchWorksWithReadingPosition = vi.mocked(fetchWorksWithReadingPosit
 const mockedCreateWork = vi.mocked(createWork);
 const mockedDeleteWork = vi.mocked(deleteWork);
 const mockedIngestEpub = vi.mocked(ingestEpub);
-const mockedIngestMarkdown = vi.mocked(ingestMarkdown);
+const mockedImportMarkdownWork = vi.mocked(importMarkdownWork);
 const mockedIngestPdf = vi.mocked(ingestPdf);
 const mockedListRecitationPlans = vi.mocked(listRecitationPlans);
 const mockedEnrollRecitation = vi.mocked(enrollRecitation);
@@ -671,12 +672,17 @@ describe("AdminLibraryPage", () => {
     expect(mockedIngestEpub).not.toHaveBeenCalled();
   });
 
-  it("prefills the Add-work sheet from a Markdown filename, then creates and ingests it", async () => {
+  it("prefills the Add-work sheet from a Markdown filename, then mints the Work in one atomic import (#706)", async () => {
     const onManageContent = vi.fn();
-    mockedCreateWork.mockResolvedValue(essayWorkItem);
-    mockedIngestMarkdown.mockResolvedValue({
-      content: { readingUnits: [], workEntryId: essayWorkItem.work.entryId },
-      status: "ingested"
+    // The front-door Markdown lane now mints the Work, its retained source, and its single-owner claim
+    // in one request (#706) rather than createWork + a separate ingest, so a re-upload can reopen the
+    // existing Work instead of orphaning an empty shell. createWork must not be touched for Markdown.
+    mockedImportMarkdownWork.mockResolvedValue({
+      result: {
+        content: { readingUnits: [], workEntryId: essayWorkItem.work.entryId },
+        work: essayWorkItem.work
+      },
+      status: "created"
     });
     mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
     const user = await renderReady(onManageContent);
@@ -688,31 +694,58 @@ describe("AdminLibraryPage", () => {
 
     const titleInput = (await screen.findByLabelText("Title")) as HTMLInputElement;
     expect(titleInput.value).toBe("Politics and the English Language");
-    expect(mockedCreateWork).not.toHaveBeenCalled();
+    expect(mockedImportMarkdownWork).not.toHaveBeenCalled();
 
     await user.type(screen.getByLabelText("New author or source name"), "George Orwell");
     await user.click(screen.getByRole("button", { name: "Create work" }));
 
     await waitFor(() => {
-      expect(mockedCreateWork).toHaveBeenCalledWith({
+      expect(mockedImportMarkdownWork).toHaveBeenCalledWith({
         author: { mode: "new", name: "George Orwell" },
+        fileName: "Politics and the English Language.md",
         language: "en",
-        origin: "imported",
+        markdown: "# Politics",
         title: "Politics and the English Language",
         workType: "book"
       });
     });
-    await waitFor(() => {
-      expect(mockedIngestMarkdown).toHaveBeenCalledWith("work-1", {
-        fileName: "Politics and the English Language.md",
-        kind: "upload",
-        markdown: "# Politics"
-      });
-    });
+    expect(mockedCreateWork).not.toHaveBeenCalled();
     await waitFor(() => {
       expect(onManageContent).toHaveBeenCalledWith("work-1");
     });
     expect(await screen.findByText("Imported “Politics and the English Language”.")).toBeDefined();
+  });
+
+  it("reopens the existing Work when identical Markdown bytes are re-uploaded (#706)", async () => {
+    const onManageContent = vi.fn();
+    // Re-uploading the same bytes returns the already-claimed Work (exact_existing); the learner is told
+    // it is already in the library and dropped straight into Manage content, with no duplicate created.
+    mockedImportMarkdownWork.mockResolvedValue({
+      result: {
+        content: { readingUnits: [], workEntryId: essayWorkItem.work.entryId },
+        work: essayWorkItem.work
+      },
+      status: "exact_existing"
+    });
+    mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
+    const user = await renderReady(onManageContent);
+
+    const file = new File(["# Politics"], "Politics and the English Language.md", {
+      type: "text/markdown"
+    });
+    await user.upload(screen.getByLabelText("Upload"), file);
+    await user.type(screen.getByLabelText("New author or source name"), "George Orwell");
+    await user.click(screen.getByRole("button", { name: "Create work" }));
+
+    await waitFor(() => {
+      expect(onManageContent).toHaveBeenCalledWith("work-1");
+    });
+    expect(
+      await screen.findByText(
+        "“Politics and the English Language” is already in your library — opened it."
+      )
+    ).toBeDefined();
+    expect(mockedCreateWork).not.toHaveBeenCalled();
   });
 
   it("prefills from a PDF filename, then creates, ingests, and opens Manage content", async () => {
@@ -813,9 +846,11 @@ describe("AdminLibraryPage", () => {
   });
 
   it("surfaces the Manage-content empty-content message when a Markdown upload has no readable text (#673)", async () => {
-    mockedCreateWork.mockResolvedValue(essayWorkItem);
-    mockedIngestMarkdown.mockResolvedValue({ status: "empty_content" });
-    const user = await renderReady();
+    const onManageContent = vi.fn();
+    // The combined import endpoint reports empty_content and creates no Work (#706), so no orphan shell
+    // is opened; the learner just sees the panel's Markdown copy and can pick a different file.
+    mockedImportMarkdownWork.mockResolvedValue({ status: "empty_content" });
+    const user = await renderReady(onManageContent);
 
     const file = new File(["![only image](x.png)"], "images.md", { type: "text/markdown" });
     await user.upload(screen.getByLabelText("Upload"), file);
@@ -835,6 +870,8 @@ describe("AdminLibraryPage", () => {
         "This document has no readable text to add. Images on their own aren’t supported yet."
       )
     ).toBeNull();
+    // No Work is minted for empty Markdown, so Manage content is never opened.
+    expect(onManageContent).not.toHaveBeenCalled();
   });
 
   it("shows a generic error toast but still opens the new Work when the ingest throws", async () => {
@@ -882,7 +919,7 @@ describe("AdminLibraryPage", () => {
       expect(screen.queryByLabelText("Title")).toBeNull();
     });
 
-    // A fresh, purely-manual Add work must not ingest the previously held file.
+    // A fresh, purely-manual Add work must not import the previously held Markdown file.
     const menu = await openAddMenu(user);
     await user.click(within(menu).getByRole("menuitem", { name: "Add work manually" }));
     await screen.findByLabelText("Title");
@@ -893,7 +930,7 @@ describe("AdminLibraryPage", () => {
     await waitFor(() => {
       expect(navigateSpy).toHaveBeenCalledWith("/library/works/work-1/edit");
     });
-    expect(mockedIngestMarkdown).not.toHaveBeenCalled();
+    expect(mockedImportMarkdownWork).not.toHaveBeenCalled();
   });
 
   it("shows the EPUB progress indicator while an EPUB ingests", async () => {

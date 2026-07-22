@@ -18,13 +18,14 @@ import { Sheet } from "../../shared/ui/Sheet";
 import { useMediaQuery } from "../../shared/ui/useMediaQuery";
 import { useToast } from "../../shared/ui/toast/ToastProvider";
 import { detectUploadKind, stripFileExtension } from "../../shared/files/fileType";
-import { ingestMarkdown, ingestPdf } from "../content/contentApi";
+import { ingestPdf } from "../content/contentApi";
 import { markdownEmptyContentMessage } from "../content/contentMessages";
 import {
   createWork,
   deleteWork,
   fetchWorks,
   fetchWorksWithReadingPosition,
+  importMarkdownWork,
   ingestEpub
 } from "./libraryApi";
 import { AuthorSelectField } from "./AuthorSelectField";
@@ -205,6 +206,18 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
       // `manual` (owned, editable from the Library), while a held file is an `imported` shell that
       // ingestion then fills. The server stamps origin (and, for manual, the ownership facet); the client
       // only declares which path this is.
+
+      // A held Markdown file mints its imported Work atomically through the front-door import endpoint
+      // (#706): the Work, its source, and its single-owner claim are written in one transaction, so
+      // re-uploading identical bytes reopens the existing Work instead of leaving an orphan shell.
+      if (heldUpload !== undefined && detectUploadKind(heldUpload) === "markdown") {
+        resetWorkForm();
+        setPendingUpload(undefined);
+        setAddOpen(false);
+        await importHeldMarkdown(heldUpload, author, trimmedTitle);
+        return;
+      }
+
       const origin = heldUpload === undefined ? "manual" : "imported";
       const created = await createWork({ author, language, origin, title: trimmedTitle, workType });
       resetWorkForm();
@@ -220,7 +233,7 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
         return;
       }
 
-      // The Work now exists; ingest the held file into it. `ingestUploadIntoWork` owns its own
+      // The Work now exists; ingest the held PDF into it. `ingestUploadIntoWork` owns its own
       // failure handling (a failed ingest leaves the empty Work in place, retryable from Manage
       // content), so it never throws back into this create-scoped catch.
       await ingestUploadIntoWork(heldUpload, created.work.entryId, trimmedTitle);
@@ -231,17 +244,19 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
     }
   }
 
+  // A held PDF is ingested into the just-created Work (#706 routes Markdown through the atomic import
+  // endpoint instead, so this lane is PDF-only). The canonical PDF front door is #702's; until then a
+  // PDF still creates a shell Work first, so a failed ingest leaves it retryable from Manage content.
   async function ingestUploadIntoWork(
     file: File,
     workEntryId: string,
     workTitle: string
   ): Promise<void> {
-    const pdf = detectUploadKind(file) === "pdf";
     setUploadBusy(true);
-    setUploadKind(pdf ? "pdf" : "markdown");
+    setUploadKind("pdf");
 
     try {
-      const failureMessage = await ingestHeldFile(pdf, file, workEntryId);
+      const failureMessage = await ingestHeldPdf(file, workEntryId);
 
       if (failureMessage === undefined) {
         toast.success(`Imported “${workTitle}”.`);
@@ -261,42 +276,67 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
     }
   }
 
-  // Ingest the held PDF/Markdown into the just-created Work, returning a user-facing message when the
-  // server reports a handled failure (unreadable PDF, no readable text) or `undefined` on success.
-  async function ingestHeldFile(
-    pdf: boolean,
-    file: File,
-    workEntryId: string
-  ): Promise<string | undefined> {
-    if (pdf) {
-      const outcome = await ingestPdf(workEntryId, file);
+  // Ingest the held PDF into the just-created Work, returning a user-facing message when the server
+  // reports a handled failure (unreadable PDF, missing toolchain, no readable text) or `undefined` on
+  // success.
+  async function ingestHeldPdf(file: File, workEntryId: string): Promise<string | undefined> {
+    const outcome = await ingestPdf(workEntryId, file);
 
-      if (outcome.status === "invalid_pdf") {
-        return invalidPdfMessage;
-      }
-
-      if (outcome.status === "pdf_toolchain_missing") {
-        return pdfToolchainMissingMessage;
-      }
-
-      if (outcome.status === "empty_content") {
-        return emptyPdfContentMessage;
-      }
-
-      return undefined;
+    if (outcome.status === "invalid_pdf") {
+      return invalidPdfMessage;
     }
 
-    const outcome = await ingestMarkdown(workEntryId, {
-      fileName: file.name,
-      kind: "upload",
-      markdown: await file.text()
-    });
+    if (outcome.status === "pdf_toolchain_missing") {
+      return pdfToolchainMissingMessage;
+    }
 
     if (outcome.status === "empty_content") {
-      return markdownEmptyContentMessage;
+      return emptyPdfContentMessage;
     }
 
     return undefined;
+  }
+
+  // Mint an imported Work from the held Markdown file in one atomic request (#706). Re-uploading
+  // identical bytes reopens the existing Work instead of creating a duplicate; either way the learner
+  // lands in Manage content. Markdown with no readable blocks creates no Work and shows the panel's copy.
+  async function importHeldMarkdown(
+    file: File,
+    author: CreateWorkRequest["author"],
+    workTitle: string
+  ): Promise<void> {
+    setUploadBusy(true);
+    setUploadKind("markdown");
+
+    try {
+      const outcome = await importMarkdownWork({
+        author,
+        fileName: file.name,
+        language,
+        markdown: await file.text(),
+        title: workTitle,
+        workType
+      });
+
+      if (outcome.status === "empty_content") {
+        await reload();
+        toast.error(markdownEmptyContentMessage);
+        return;
+      }
+
+      await reload();
+      toast.success(
+        outcome.status === "exact_existing"
+          ? `“${outcome.result.work.title}” is already in your library — opened it.`
+          : `Imported “${workTitle}”.`
+      );
+      onManageContent(outcome.result.work.entryId);
+    } catch {
+      toast.error("Could not ingest the file. Please try again.");
+    } finally {
+      setUploadBusy(false);
+      setUploadKind(undefined);
+    }
   }
 
   async function onSelectUpload(event: ChangeEvent<HTMLInputElement>): Promise<void> {
