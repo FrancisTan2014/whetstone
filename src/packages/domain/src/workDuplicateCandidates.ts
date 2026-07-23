@@ -1,4 +1,4 @@
-import damerauLevenshtein from "talisman/metrics/damerau-levenshtein";
+import damerauLevenshtein from "talisman/metrics/damerau-levenshtein.js";
 
 import type { AuthorId } from "./author.js";
 import type { EntryId } from "./entry.js";
