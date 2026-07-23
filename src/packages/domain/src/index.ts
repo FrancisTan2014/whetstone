@@ -147,6 +147,23 @@ export {
 export type { PdfImportAttemptState } from "./pdfImportAttempt.js";
 export { buildSearchSnippet, SEARCH_SNIPPET_MAX_CODE_POINTS } from "./searchSnippet.js";
 export type { BuildSearchSnippetInput, SearchSnippet } from "./searchSnippet.js";
+export {
+  classifyOcrRouting,
+  OCR_GEOMETRY_TOLERANCE_PT,
+  ocrTesseractLanguage,
+  requiredTesseractTraineddata,
+  resolveOcrLanguage,
+  validateNativeTextPreserved,
+  validateOcrGeometry
+} from "./pdfOcr.js";
+export type {
+  NativeTextValidation,
+  OcrGeometryValidation,
+  OcrPageClassification,
+  OcrPageGeometry,
+  OcrRoutingDecision,
+  OcrRoutingKind
+} from "./pdfOcr.js";
 export { planSectionRepartition } from "./workRepartition.js";
 export type {
   PlannedUnit,
