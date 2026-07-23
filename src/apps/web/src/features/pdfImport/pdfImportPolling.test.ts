@@ -32,8 +32,17 @@ function publishedView(workEntryId: string): PdfImportViewDto {
   return { ...runningView(), publication: { status: "published", workEntryId } };
 }
 
-function deps(fetchView: PdfImportPollDeps["fetchView"]): PdfImportPollDeps {
-  return { delay: async () => undefined, fetchView, intervalMs: 5 };
+// A view whose execution was interrupted (a crash/restart abandoned the running claim, recovered at
+// startup). The runner only advances `queued` attempts, so the poll loop must re-queue it via `resume`.
+function interruptedView(): PdfImportViewDto {
+  return { ...runningView(), status: { ...runningView().status, state: "interrupted" } };
+}
+
+function deps(
+  fetchView: PdfImportPollDeps["fetchView"],
+  resume: PdfImportPollDeps["resume"] = async () => null
+): PdfImportPollDeps {
+  return { delay: async () => undefined, fetchView, intervalMs: 5, resume };
 }
 
 describe("pollPdfImportUntilTerminal", () => {
@@ -103,5 +112,59 @@ describe("pollPdfImportUntilTerminal", () => {
 
     expect(result.kind).toBe("terminal");
     expect(fetchView).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-queues an interrupted attempt via `resume` so a recovered import resumes", async () => {
+    // A crash/restart-recovered import polls as `interrupted` and stays there until it is re-queued.
+    // The loop must call `resume` once; the retry moves it to a running state that then publishes. On the
+    // pre-fix behaviour (no resume call) this hangs on `interrupted` forever and never reaches terminal.
+    const fetchView = vi
+      .fn<(attemptId: string) => Promise<PdfImportViewDto | null>>()
+      .mockResolvedValueOnce(interruptedView())
+      .mockResolvedValueOnce(runningView())
+      .mockResolvedValueOnce(publishedView("work-3"));
+    const resume = vi.fn(async () => runningView());
+    const onProgress = vi.fn();
+
+    const result = await pollPdfImportUntilTerminal(
+      "attempt-2",
+      onProgress,
+      deps(fetchView, resume)
+    );
+
+    expect(result).toEqual({
+      kind: "terminal",
+      progress: expect.objectContaining({ kind: "published", workEntryId: "work-3" })
+    });
+    expect(resume).toHaveBeenCalledTimes(1);
+    expect(resume).toHaveBeenCalledWith("attempt-2");
+    // The refreshed view returned by `resume` is reported too, so the card leaves the paused label at once.
+    expect(onProgress).toHaveBeenCalledWith(expect.objectContaining({ needsResume: false }));
+  });
+
+  it("re-queues only once while an attempt stays interrupted", async () => {
+    // Two consecutive interrupted polls must not fire two retries; the guard holds until the attempt
+    // leaves the interrupted state.
+    const fetchView = vi
+      .fn<(attemptId: string) => Promise<PdfImportViewDto | null>>()
+      .mockResolvedValueOnce(interruptedView())
+      .mockResolvedValueOnce(interruptedView())
+      .mockResolvedValueOnce(publishedView("work-4"));
+    const resume = vi.fn(async () => interruptedView());
+
+    const result = await pollPdfImportUntilTerminal("attempt-5", vi.fn(), deps(fetchView, resume));
+
+    expect(result.kind).toBe("terminal");
+    expect(resume).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops with `gone` when the interrupted attempt vanishes on resume", async () => {
+    const fetchView = vi.fn(async () => interruptedView());
+    const resume = vi.fn(async () => null);
+
+    const result = await pollPdfImportUntilTerminal("attempt-6", vi.fn(), deps(fetchView, resume));
+
+    expect(result).toEqual({ kind: "gone" });
+    expect(resume).toHaveBeenCalledTimes(1);
   });
 });

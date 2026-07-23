@@ -141,15 +141,21 @@ describe("describePdfImport", () => {
   it("labels a queued attempt", () => {
     const progress = describePdfImport(view({ status: "pending" }, { state: "queued" }));
 
-    expect(progress).toEqual({ kind: "in_progress", label: "Queued for import…", terminal: false });
+    expect(progress).toEqual({
+      kind: "in_progress",
+      label: "Queued for import…",
+      needsResume: false,
+      terminal: false
+    });
   });
 
-  it("labels an interrupted attempt as paused/resuming", () => {
+  it("flags an interrupted attempt for resume so the poll loop re-queues it", () => {
     const progress = describePdfImport(view({ status: "pending" }, { state: "interrupted" }));
 
     expect(progress).toEqual({
       kind: "in_progress",
       label: "Import paused — resuming…",
+      needsResume: true,
       terminal: false
     });
   });
@@ -157,7 +163,12 @@ describe("describePdfImport", () => {
   it("labels a converted attempt as finishing up", () => {
     const progress = describePdfImport(view({ status: "pending" }, { state: "converted" }));
 
-    expect(progress).toEqual({ kind: "in_progress", label: "Finishing up…", terminal: false });
+    expect(progress).toEqual({
+      kind: "in_progress",
+      label: "Finishing up…",
+      needsResume: false,
+      terminal: false
+    });
   });
 
   it("labels a running attempt before the source is probed", () => {
@@ -165,7 +176,12 @@ describe("describePdfImport", () => {
       view({ status: "pending" }, { state: "running", totalPages: null })
     );
 
-    expect(progress).toEqual({ kind: "in_progress", label: "Reading the PDF…", terminal: false });
+    expect(progress).toEqual({
+      kind: "in_progress",
+      label: "Reading the PDF…",
+      needsResume: false,
+      terminal: false
+    });
   });
 
   it("reports concrete page progress once the source has been probed", () => {
@@ -176,6 +192,7 @@ describe("describePdfImport", () => {
     expect(progress).toEqual({
       kind: "in_progress",
       label: "Converting page 5 of 10…",
+      needsResume: false,
       terminal: false
     });
   });

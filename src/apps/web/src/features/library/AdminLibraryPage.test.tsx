@@ -61,7 +61,8 @@ vi.mock("./AuthorSelectField", () => ({
 vi.mock("../pdfImport/pdfImportApi", () => ({
   beginPdfImport: vi.fn(),
   cancelPdfImport: vi.fn(),
-  fetchPdfImportView: vi.fn()
+  fetchPdfImportView: vi.fn(),
+  retryPdfImport: vi.fn()
 }));
 
 vi.mock("../pdfImport/pdfImportSession", () => ({
@@ -91,7 +92,12 @@ import {
   ingestEpub,
   searchAuthors
 } from "./libraryApi";
-import { beginPdfImport, cancelPdfImport, fetchPdfImportView } from "../pdfImport/pdfImportApi";
+import {
+  beginPdfImport,
+  cancelPdfImport,
+  fetchPdfImportView,
+  retryPdfImport
+} from "../pdfImport/pdfImportApi";
 import {
   forgetActivePdfImport,
   readActivePdfImport,
@@ -140,6 +146,7 @@ const mockedImportMarkdownWork = vi.mocked(importMarkdownWork);
 const mockedBeginPdfImport = vi.mocked(beginPdfImport);
 const mockedCancelPdfImport = vi.mocked(cancelPdfImport);
 const mockedFetchPdfImportView = vi.mocked(fetchPdfImportView);
+const mockedRetryPdfImport = vi.mocked(retryPdfImport);
 const mockedRememberActivePdfImport = vi.mocked(rememberActivePdfImport);
 const mockedForgetActivePdfImport = vi.mocked(forgetActivePdfImport);
 const mockedReadActivePdfImport = vi.mocked(readActivePdfImport);
@@ -1218,6 +1225,28 @@ describe("AdminLibraryPage", () => {
     mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
     await renderReady();
 
+    await waitFor(() => {
+      expect(navigateSpy).toHaveBeenCalledWith("/reader?work=work-1");
+    });
+    expect(mockedForgetActivePdfImport).toHaveBeenCalled();
+  });
+
+  it("re-queues an interrupted import on reopen so a crash-recovered import resumes (#702)", async () => {
+    // A server restart/crash mid-conversion leaves the attempt `interrupted`; startup recovery parks it
+    // there and the runner only advances `queued`. Reopening the Library must call the retry API to
+    // requeue it — otherwise it shows "Import paused — resuming…" forever. Pre-fix, retry is never called
+    // and the poll never reaches the published Work.
+    mockedReadActivePdfImport.mockReturnValue("attempt-1");
+    mockedFetchPdfImportView
+      .mockResolvedValueOnce(pdfView({ status: "pending" }, { state: "interrupted" }))
+      .mockResolvedValue(pdfView({ status: "published", workEntryId: "work-1" }));
+    mockedRetryPdfImport.mockResolvedValue(pdfView({ status: "pending" }, { state: "queued" }));
+    mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
+    await renderReady();
+
+    await waitFor(() => {
+      expect(mockedRetryPdfImport).toHaveBeenCalledWith("attempt-1");
+    });
     await waitFor(() => {
       expect(navigateSpy).toHaveBeenCalledWith("/reader?work=work-1");
     });

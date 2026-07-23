@@ -24,7 +24,12 @@ import { useMediaQuery } from "../../shared/ui/useMediaQuery";
 import { useToast } from "../../shared/ui/toast/ToastProvider";
 import { detectUploadKind, stripFileExtension } from "../../shared/files/fileType";
 import { markdownEmptyContentMessage } from "../content/contentMessages";
-import { beginPdfImport, cancelPdfImport, fetchPdfImportView } from "../pdfImport/pdfImportApi";
+import {
+  beginPdfImport,
+  cancelPdfImport,
+  fetchPdfImportView,
+  retryPdfImport
+} from "../pdfImport/pdfImportApi";
 import {
   pollPdfImportUntilTerminal,
   type PdfImportPollResult
@@ -427,7 +432,8 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
         {
           delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
           fetchView: fetchPdfImportView,
-          intervalMs: pdfImportPollIntervalMs
+          intervalMs: pdfImportPollIntervalMs,
+          resume: retryPdfImport
         },
         () => aborted
       );

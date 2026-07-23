@@ -28,7 +28,7 @@ function ocrRequiredMessage(pagesNeedingOcr: number): string {
 // or a message. Keeping this a pure projection means the Library flow only wires timers and navigation,
 // and every phrase/branch is unit-tested without a component or the network.
 export type PdfImportProgress =
-  | Readonly<{ kind: "in_progress"; label: string; terminal: false }>
+  | Readonly<{ kind: "in_progress"; label: string; needsResume: boolean; terminal: false }>
   | Readonly<{ kind: "published"; workEntryId: string; terminal: true }>
   | Readonly<{ kind: "ocr_required"; message: string; terminal: true }>
   | Readonly<{ kind: "no_content"; message: string; terminal: true }>
@@ -40,7 +40,9 @@ export type PdfImportProgress =
 // refusal (no Work; empty-document copy), an unsupported-image refusal (no Work; unpreservable-image
 // copy), or a failed conversion (the adapter's named failure). Otherwise the label reflects the #721
 // execution phase — reading the source, converting a known page range, resuming after an interruption, or
-// finishing publication.
+// finishing publication. An `interrupted` attempt (a run abandoned by a crash/restart and recovered at
+// startup) is flagged `needsResume`: the runner only picks up `queued`, so the poll loop must re-queue it
+// via the retry API — otherwise the import sits paused forever.
 export function describePdfImport(view: PdfImportViewDto): PdfImportProgress {
   if (view.publication.status === "published") {
     return { kind: "published", terminal: true, workEntryId: view.publication.workEntryId };
@@ -75,7 +77,12 @@ export function describePdfImport(view: PdfImportViewDto): PdfImportProgress {
     };
   }
 
-  return { kind: "in_progress", label: inProgressLabel(view), terminal: false };
+  return {
+    kind: "in_progress",
+    label: inProgressLabel(view),
+    needsResume: view.status.state === "interrupted",
+    terminal: false
+  };
 }
 
 function inProgressLabel(view: PdfImportViewDto): string {
