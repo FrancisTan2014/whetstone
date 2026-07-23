@@ -16,7 +16,13 @@ describe("searchLibrary", () => {
         {
           authorName: "George Orwell",
           blockEntryId: "block-1",
-          plaintext: "The dog barked.",
+          snippet: {
+            text: "The dog barked.",
+            matchStart: 4,
+            matchEnd: 7,
+            hasLeadingEllipsis: false,
+            hasTrailingEllipsis: false
+          },
           workEntryId: "work-1",
           workTitle: "Animal Farm"
         }

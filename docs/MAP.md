@@ -551,9 +551,14 @@ can navigate them from another package.
   rendered substrate — the PM `doc_blocks` for a unit that has any (EPUB), else the legacy mdast
   `blocks` (Markdown) — as a `UNION` whose legacy half excludes units that already have `doc_blocks`
   (a `NOT EXISTS` guard), so a hit's `blockEntryId` equals the reader's rendered `data-block-id` and
-  deep-links to the right block (#312). Joined to work + author, ordered by reading order, capped at
-  `searchResultLimit`, LIKE wildcards escaped; v0 is a substring scan, not ranked FTS
-  (PRODUCT.md "v0 search").
+  deep-links to the right block (#312). Joined to work + author, ordered by reading order, a per-Work
+  `row_number()` window caps each Work at `perWorkHitCap` (5) hits BEFORE the global `searchResultLimit`
+  so no Work starves the page (#726), LIKE wildcards escaped; v0 is a substring scan, not ranked FTS
+  (PRODUCT.md "v0 search"). Each hit ships a bounded snippet: SQL derives the first match's code-point
+  position with the same case semantics (`strpos(lower(plaintext), lower(q))`) and the pure
+  `buildSearchSnippet` (`@whetstone/domain`) windows ±220 code points of source plaintext around it with
+  canonical UTF-16 match offsets and ellipsis flags (#726). The web `SearchPage` renders that snippet
+  with a highlighted `<mark>` and clipped-end ellipses.
   `today/` composes the Today board (#610): `todayQueries.loadTodayBoard` fetches each source guarded by
   its own try/catch (so one throwing marks only that source failed, never blanking the board) — the
   recitation routine from `recitationReviewQueries.loadRecitationRoutineSummary`, the note-review routine from

@@ -458,9 +458,15 @@ export {
   parseSearchResults,
   searchRequestSchema,
   searchResultDtoSchema,
-  searchResultsDtoSchema
+  searchResultsDtoSchema,
+  searchSnippetSchema
 } from "./searchContracts.js";
-export type { SearchRequest, SearchResultDto, SearchResultsDto } from "./searchContracts.js";
+export type {
+  SearchRequest,
+  SearchResultDto,
+  SearchResultsDto,
+  SearchSnippetDto
+} from "./searchContracts.js";
 export {
   parseTodayBoardResponse,
   todayBoardDtoSchema,

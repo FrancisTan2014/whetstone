@@ -23,6 +23,14 @@ describe("searchRequestSchema", () => {
 });
 
 describe("searchResultsDtoSchema", () => {
+  const snippet = {
+    text: "The dog barked.",
+    matchStart: 4,
+    matchEnd: 7,
+    hasLeadingEllipsis: false,
+    hasTrailingEllipsis: false
+  };
+
   it("parses a well-formed results payload", () => {
     const payload: SearchResultsDto = {
       query: "dog",
@@ -30,7 +38,7 @@ describe("searchResultsDtoSchema", () => {
         {
           authorName: "George Orwell",
           blockEntryId: "block-1",
-          plaintext: "The dog barked.",
+          snippet,
           workEntryId: "work-1",
           workTitle: "Animal Farm"
         }
@@ -52,6 +60,23 @@ describe("searchResultsDtoSchema", () => {
       parseSearchResults({
         query: "dog",
         results: [{ authorName: "A", blockEntryId: "b", workEntryId: "w", workTitle: "t" }]
+      })
+    ).toThrow();
+  });
+
+  it("throws when a snippet is missing a field", () => {
+    expect(() =>
+      parseSearchResults({
+        query: "dog",
+        results: [
+          {
+            authorName: "A",
+            blockEntryId: "b",
+            snippet: { text: "dog", matchStart: 0, matchEnd: 3, hasLeadingEllipsis: false },
+            workEntryId: "w",
+            workTitle: "t"
+          }
+        ]
       })
     ).toThrow();
   });

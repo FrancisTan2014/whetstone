@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 
-import type { SearchResultDto } from "@whetstone/contracts";
+import type { SearchResultDto, SearchSnippetDto } from "@whetstone/contracts";
 
 import { Button } from "../../shared/ui/Button";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
@@ -100,10 +100,29 @@ function renderState(state: SearchState): React.JSX.Element | null {
             <span className="text-sm text-text-muted">
               {result.authorName} · {result.workTitle}
             </span>
-            <p className="mt-1 text-text">{result.plaintext}</p>
+            <SnippetText snippet={result.snippet} />
           </a>
         </li>
       ))}
     </ol>
+  );
+}
+
+// Render a bounded snippet: the matched characters (the canonical UTF-16 range the query derived) are
+// highlighted with the indigo interaction/selection channel, and an ellipsis stands in for each end
+// that was clipped. The three slices come straight from the offsets, so the highlight never guesses.
+function SnippetText({ snippet }: { snippet: SearchSnippetDto }): React.JSX.Element {
+  const before = snippet.text.slice(0, snippet.matchStart);
+  const match = snippet.text.slice(snippet.matchStart, snippet.matchEnd);
+  const after = snippet.text.slice(snippet.matchEnd);
+
+  return (
+    <p className="mt-1 text-text">
+      {snippet.hasLeadingEllipsis ? "…" : null}
+      {before}
+      <mark className="rounded-sm bg-accent-selection px-0.5 text-accent">{match}</mark>
+      {after}
+      {snippet.hasTrailingEllipsis ? "…" : null}
+    </p>
   );
 }
