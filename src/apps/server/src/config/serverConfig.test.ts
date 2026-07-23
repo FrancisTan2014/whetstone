@@ -27,3 +27,17 @@ describe("readServerConfig PDF upload limit", () => {
     );
   });
 });
+
+describe("readServerConfig work-creation stage directory", () => {
+  it("defaults the creation-review stage to a dedicated non-backed-up data path", () => {
+    // The stage lives under .data (like the PDF import stage) and is deliberately outside the backed-up
+    // source/image roots, so a cancelled or expired attempt's bytes are freed without entering a backup.
+    expect(readServerConfig({}).workCreationStageDir).toBe("./.data/work-creation-stages");
+  });
+
+  it("honors a WORK_CREATION_STAGE_DIR override", () => {
+    expect(
+      readServerConfig({ WORK_CREATION_STAGE_DIR: "/srv/stage" }).workCreationStageDir
+    ).toBe("/srv/stage");
+  });
+});

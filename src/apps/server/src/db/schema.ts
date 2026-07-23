@@ -922,3 +922,100 @@ export const pdfBlockEvidence = pgTable(
   },
   (table) => [index("pdf_block_evidence_work_idx").on(table.workEntryId)]
 );
+
+// One durable, owner-scoped Work CREATION-REVIEW attempt (#725). Duplicate review is operational state,
+// not Work identity: an attempt holds the learner's proposed metadata, the reviewed duplicate-candidate
+// evidence snapshot (+ its fingerprint), the source kind/hash under review, and — for an ordinary upload
+// (markdown/epub) — the staged bytes, until one serialized decision commits or discards it. It stores NO
+// Work, ReadingUnit, Block, or source-claim row and has NO foreign key into content, so restoring an
+// operational dump of this table creates no live Work/content. Source-processing features keep their own
+// stages: a `pdf` attempt references `pdf_import_attempts`, which stays the sole owner of the PDF stages,
+// so this table's `stage_path` is only ever an ordinary upload's. `state` walks pending -> finalizing ->
+// completed, with `cancelled` (owner-abandoned) and `expired` (TTL swept). `revision` is the compare-and-
+// set fence: a decision applies only while the row is still at the revision the client loaded, so a stale
+// client can never commit and a replayed decision is rejected. The enum literals are duplicated here (not
+// imported from `domain`) so migration generation never depends on the domain build.
+export const workCreationAttempts = pgTable(
+  "work_creation_attempts",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id").notNull(),
+    // The learner's proposal. `proposed_author_id` is set only when an existing Library author was chosen
+    // (exact identity reuse); a brand-new author is carried by name alone until the decision creates it.
+    proposedTitle: text("proposed_title").notNull(),
+    proposedAuthorId: text("proposed_author_id"),
+    proposedAuthorName: text("proposed_author_name").notNull(),
+    proposedLanguage: text("proposed_language", {
+      enum: ["zh-CN", "zh-TW", "en"] as const
+    }).notNull(),
+    proposedWorkType: text("proposed_work_type", {
+      enum: ["book", "essay", "blog_post", "classical_text"] as const
+    }).notNull(),
+    // The source under review. `source_hash` (sha256 of the uploaded bytes) is null for a metadata-only
+    // manual proposal, which never reopens an exact source.
+    sourceKind: text("source_kind", {
+      enum: ["manual", "markdown", "epub", "pdf"] as const
+    }).notNull(),
+    sourceHash: text("source_hash"),
+    // The reviewed candidate EVIDENCE the learner was shown (identity + displayed metadata), and its
+    // fingerprint, stored together or not at all. Comparing the fingerprint to a freshly-computed one
+    // detects changed evidence — not only new ids — and forces a fresh review. Never Work content.
+    candidateSnapshot: jsonb("candidate_snapshot").$type<
+      ReadonlyArray<{
+        entryId: string;
+        title: string;
+        authorId: string;
+        authorName: string;
+        language: string;
+        workType: string;
+      }>
+    >(),
+    candidateFingerprint: text("candidate_fingerprint"),
+    state: text("state", {
+      enum: ["pending", "finalizing", "completed", "cancelled", "expired"] as const
+    }).notNull(),
+    revision: integer("revision").notNull().default(0),
+    // The attempt-owned ordinary upload stage (relative, server-generated), null for manual/pdf and once
+    // the stage is transferred to provenance or removed. Kept set until the filesystem removal succeeds,
+    // so a failed cleanup stays visible and retryable rather than orphaning the staged bytes.
+    stagePath: text("stage_path"),
+    expiresAt: timestamp("expires_at", { mode: "date", withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    index("work_creation_attempts_user_idx").on(table.userId),
+    // At most ONE active (pending/finalizing) creation attempt per owner: a partial unique index enforces
+    // the "one owner-scoped creation attempt" invariant in the database, so a client cannot bypass it by
+    // racing two concurrent creates and end up with double-owned staged files or half-created Works.
+    uniqueIndex("work_creation_attempts_single_active")
+      .on(table.userId)
+      .where(sql`${table.state} in ('pending', 'finalizing')`),
+    // Enforce the closed state set in the database so no writer (or restored dump) can land an unknown
+    // attempt state.
+    check(
+      "work_creation_attempts_state_ck",
+      sql`${table.state} in ('pending', 'finalizing', 'completed', 'cancelled', 'expired')`
+    ),
+    // Enforce the closed source-kind set in the database.
+    check(
+      "work_creation_attempts_source_kind_ck",
+      sql`${table.sourceKind} in ('manual', 'markdown', 'epub', 'pdf')`
+    ),
+    // A stage may only ever belong to an ORDINARY upload (markdown/epub). A manual proposal has no bytes,
+    // and a pdf attempt's stage is owned by `pdf_import_attempts`, so a `stage_path` on either would be a
+    // double-owned or phantom file — forbidden by construction.
+    check(
+      "work_creation_attempts_stage_kind_ck",
+      sql`${table.stagePath} is null or ${table.sourceKind} in ('markdown', 'epub')`
+    ),
+    // The reviewed evidence and its fingerprint are stored together or not at all, so a fingerprint can
+    // never claim to summarize an absent snapshot (and vice versa).
+    check(
+      "work_creation_attempts_snapshot_ck",
+      sql`(${table.candidateSnapshot} is null) = (${table.candidateFingerprint} is null)`
+    ),
+    // The revision fence is monotonic and never negative.
+    check("work_creation_attempts_revision_ck", sql`${table.revision} >= 0`)
+  ]
+);
