@@ -225,7 +225,13 @@ describe("searchBlocks", () => {
     expect(results[0]).toEqual({
       authorName: "George Orwell",
       blockEntryId: "b-1",
-      plaintext: "The dog barked loudly.",
+      snippet: {
+        text: "The dog barked loudly.",
+        matchStart: 4,
+        matchEnd: 7,
+        hasLeadingEllipsis: false,
+        hasTrailingEllipsis: false
+      },
       workEntryId: "work-1",
       workTitle: "Animal Farm"
     });
@@ -269,14 +275,18 @@ describe("searchBlocks", () => {
     expect(await searchBlocks(db, "unicorn")).toEqual([]);
   });
 
-  it("renders a list hit's snippet with a boundary between items instead of running them together (#503)", async () => {
+  it("returns a snippet of the source plaintext for a list hit, with UTF-16 offsets over the first match", async () => {
     const results = await searchBlocks(db, "falcon");
 
     expect(results.map((result) => result.blockEntryId)).toEqual(["b-9"]);
-    // The stored plaintext (which backs the match) still runs the items together; the returned
-    // snippet reinserts a single space so `valley.` and `Second` no longer collide.
-    expect(results[0]?.plaintext).toBe(falconListItems.join(" "));
-    expect(results[0]?.plaintext).not.toContain("valley.Second");
+    // The snippet preserves the SOURCE plaintext (the reader-aligned stream, #344) so its match
+    // offsets stay canonical for highlighting/deep-linking; unlike the retired whole-block readable
+    // projection (#503), it does not reinsert a boundary between the run-together list items.
+    const snippet = results[0]?.snippet;
+    expect(snippet?.text).toBe(falconListItems.join(""));
+    expect(snippet?.text.slice(snippet.matchStart, snippet.matchEnd)).toBe("falcon");
+    expect(snippet?.hasLeadingEllipsis).toBe(false);
+    expect(snippet?.hasTrailingEllipsis).toBe(false);
   });
 });
 
@@ -417,12 +427,12 @@ describe("searchBlocks over PM-backed (EPUB) units", () => {
 
     expect(ids).toContain(docBlockRow?.id);
     expect(ids).not.toContain(legacyRow?.entryId);
-    expect(results.find((result) => result.blockEntryId === docBlockRow?.id)?.plaintext).toBe(
+    expect(results.find((result) => result.blockEntryId === docBlockRow?.id)?.snippet.text).toBe(
       "The quick brown fox."
     );
   });
 
-  it("renders a PM (doc_block) list hit's snippet with a boundary between items (#503)", async () => {
+  it("returns a PM (doc_block) list hit's snippet as the source plaintext, without a reinserted boundary (#503 retired)", async () => {
     const response = await epub.server.inject({
       headers: { "content-type": epubContentType },
       method: "POST",
@@ -431,8 +441,8 @@ describe("searchBlocks over PM-backed (EPUB) units", () => {
     });
     expect(response.statusCode).toBe(201);
 
-    // The hit resolves to the rendered PM list doc_block; its snippet keeps a space between the two
-    // items rather than running `valley.` straight into `A turtle`.
+    // The hit resolves to the rendered PM list doc_block; its snippet is the source plaintext window
+    // (items run together), and the match offsets pick out `falcon`.
     const [results, listRow] = [
       await searchBlocks(epub.db, "falcon"),
       (await epub.db.select().from(docBlocks)).find((row) => row.plaintext.includes("falcon"))
@@ -440,8 +450,151 @@ describe("searchBlocks over PM-backed (EPUB) units", () => {
 
     expect(listRow?.plaintext).toContain("valley.A turtle");
     expect(results.map((result) => result.blockEntryId)).toContain(listRow?.id);
-    expect(results.find((result) => result.blockEntryId === listRow?.id)?.plaintext).toBe(
-      "A falcon glides above the valley. A turtle walks the sandy shore."
+    const snippet = results.find((result) => result.blockEntryId === listRow?.id)?.snippet;
+    expect(snippet?.text).toBe(listRow?.plaintext);
+    expect(snippet?.text.slice(snippet.matchStart, snippet.matchEnd)).toBe("falcon");
+  });
+});
+
+// Boundedness + diversity (#726): the per-Work cap runs BEFORE the global limit, and each hit ships a
+// bounded snippet around its first match. These build their own db so the fixtures are unambiguous.
+describe("searchBlocks boundedness and per-Work diversity (#726)", () => {
+  async function freshDb(): Promise<DbClient> {
+    const pglite = new PGlite();
+    await runMigrations(pglite);
+    return createDbClient(pglite);
+  }
+
+  // Insert one work with `texts.length` paragraph blocks in reading order (unit order 0, block ids
+  // `${prefix}-b-1..`). Block/unit/work ids are namespaced by `prefix` so multiple works coexist.
+  async function insertWork(
+    database: DbClient,
+    prefix: string,
+    title: string,
+    authorName: string,
+    texts: readonly string[]
+  ): Promise<void> {
+    const workId = `${prefix}-work`;
+    const unitId = `${prefix}-unit`;
+    const authorId = `${prefix}-author`;
+    const blockIds = texts.map((_, index) => `${prefix}-b-${index + 1}`);
+
+    await database
+      .insert(entries)
+      .values([
+        { id: workId, type: "work" },
+        { id: unitId, type: "reading_unit" },
+        ...blockIds.map((id) => ({ id, type: "block" as const }))
+      ]);
+    await database.insert(authors).values([{ id: authorId, name: authorName }]);
+    await database.insert(workMeta).values([
+      {
+        authorId,
+        entryId: workId,
+        language: "en",
+        origin: "imported",
+        title,
+        workType: "book"
+      }
+    ]);
+    await database
+      .insert(readingUnits)
+      .values([{ entryId: unitId, orderIndex: 0, title: null, workEntryId: workId }]);
+    await database.insert(blocks).values(
+      texts.map((text, index) => ({
+        blockType: "paragraph" as const,
+        entryId: blockIds[index] as string,
+        mdastJson: { children: [{ type: "text", value: text }], type: "paragraph" },
+        orderIndex: index,
+        plaintext: text,
+        readingUnitEntryId: unitId,
+        workEntryId: workId
+      }))
     );
+  }
+
+  it("caps a common-term Work at five hits before the global limit, so it cannot starve other Works", async () => {
+    const db = await freshDb();
+    // "AAA" sorts first and has EIGHT matching blocks; "BBB" and "CCC" each have two. Without the cap
+    // the first Work would dominate the leading rows; with it, every Work is represented.
+    await insertWork(
+      db,
+      "aaa",
+      "AAA Repeated",
+      "Author A",
+      Array.from({ length: 8 }, (_, index) => `header line ${index + 1}`)
+    );
+    await insertWork(db, "bbb", "BBB Other", "Author B", ["header two-one", "header two-two"]);
+    await insertWork(db, "ccc", "CCC Third", "Author C", ["header three-one", "header three-two"]);
+
+    const results = await searchBlocks(db, "header");
+
+    const perWork = new Map<string, number>();
+    for (const result of results) {
+      perWork.set(result.workEntryId, (perWork.get(result.workEntryId) ?? 0) + 1);
+    }
+
+    expect(perWork.get("aaa-work")).toBe(5);
+    expect(perWork.get("bbb-work")).toBe(2);
+    expect(perWork.get("ccc-work")).toBe(2);
+    // The five retained AAA rows are the FIRST five in reading order, not an arbitrary subset.
+    expect(
+      results.filter((result) => result.workEntryId === "aaa-work").map((r) => r.blockEntryId)
+    ).toEqual(["aaa-b-1", "aaa-b-2", "aaa-b-3", "aaa-b-4", "aaa-b-5"]);
+  });
+
+  it("keeps deterministic global order across the capped rows", async () => {
+    const db = await freshDb();
+    await insertWork(db, "aaa", "AAA First", "Author A", ["term a1", "term a2"]);
+    await insertWork(db, "bbb", "BBB Second", "Author B", ["term b1", "term b2"]);
+
+    const results = await searchBlocks(db, "term");
+
+    // Ordered by work title, then reading order within the work.
+    expect(results.map((result) => result.blockEntryId)).toEqual([
+      "aaa-b-1",
+      "aaa-b-2",
+      "bbb-b-1",
+      "bbb-b-2"
+    ]);
+  });
+
+  it("clips a long block to 220 code points around the first match with both ellipses", async () => {
+    const db = await freshDb();
+    const text = `${"x".repeat(400)}target${"y".repeat(400)}`;
+    await insertWork(db, "long", "Long", "Author L", [text]);
+
+    const [result] = await searchBlocks(db, "target");
+    const snippet = result?.snippet;
+
+    expect(snippet && Array.from(snippet.text)).toHaveLength(220);
+    expect(snippet?.hasLeadingEllipsis).toBe(true);
+    expect(snippet?.hasTrailingEllipsis).toBe(true);
+    expect(snippet?.text.slice(snippet.matchStart, snippet.matchEnd)).toBe("target");
+  });
+
+  it("derives canonical UTF-16 offsets across astral characters before the match", async () => {
+    const db = await freshDb();
+    // Each 😀 is one code point but two UTF-16 units; the offset must count units, not code points.
+    await insertWork(db, "astral", "Astral", "Author U", ["😀😀😀target after"]);
+
+    const [result] = await searchBlocks(db, "target");
+    const snippet = result?.snippet;
+
+    expect(snippet?.matchStart).toBe(6);
+    expect(snippet?.text.slice(snippet.matchStart, snippet.matchEnd)).toBe("target");
+  });
+
+  it("anchors the snippet on the FIRST match when a term repeats, case-insensitively", async () => {
+    const db = await freshDb();
+    await insertWork(db, "rep", "Repeat", "Author R", ["Dog then dog then dog"]);
+
+    const [result] = await searchBlocks(db, "dog");
+    const snippet = result?.snippet;
+
+    // First (source-cased) match is the leading "Dog"; the offset comes from the database, not a JS
+    // case-fold, so it agrees with the case-insensitive match.
+    expect(snippet?.matchStart).toBe(0);
+    expect(snippet?.text.slice(snippet.matchStart, snippet.matchEnd)).toBe("Dog");
   });
 });

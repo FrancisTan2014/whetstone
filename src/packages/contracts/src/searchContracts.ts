@@ -14,13 +14,30 @@ export function parseSearchRequest(value: unknown): SearchRequest {
   return searchRequestSchema.parse(value);
 }
 
-// One block-level search hit: enough to show the match (author, work title, the block's text) and
+// One search hit's bounded display payload: the clipped source text around the first match, the
+// match's canonical UTF-16 range within that text (so the client highlights exactly the matched
+// characters), and whether either end was clipped (the UI shows an ellipsis only then). See
+// `buildSearchSnippet` in `@whetstone/domain` for how it is derived; ellipsis characters are not baked
+// into `text`, so the offsets index `text` directly.
+export const searchSnippetSchema = z
+  .object({
+    text: z.string(),
+    matchStart: z.number().int().nonnegative(),
+    matchEnd: z.number().int().nonnegative(),
+    hasLeadingEllipsis: z.boolean(),
+    hasTrailingEllipsis: z.boolean()
+  })
+  .strict();
+
+export type SearchSnippetDto = z.infer<typeof searchSnippetSchema>;
+
+// One block-level search hit: enough to show the match (author, work title, the bounded snippet) and
 // to deep-link the reader to the exact block (`workEntryId` + `blockEntryId`).
 export const searchResultDtoSchema = z
   .object({
     authorName: z.string(),
     blockEntryId: z.string(),
-    plaintext: z.string(),
+    snippet: searchSnippetSchema,
     workEntryId: z.string(),
     workTitle: z.string()
   })

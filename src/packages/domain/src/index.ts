@@ -145,6 +145,8 @@ export {
   pdfImportAttemptStates
 } from "./pdfImportAttempt.js";
 export type { PdfImportAttemptState } from "./pdfImportAttempt.js";
+export { buildSearchSnippet, SEARCH_SNIPPET_MAX_CODE_POINTS } from "./searchSnippet.js";
+export type { BuildSearchSnippetInput, SearchSnippet } from "./searchSnippet.js";
 export { planSectionRepartition } from "./workRepartition.js";
 export type {
   PlannedUnit,

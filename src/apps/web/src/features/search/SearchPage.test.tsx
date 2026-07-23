@@ -19,14 +19,26 @@ const twoHits: SearchResultsDto = {
     {
       authorName: "George Orwell",
       blockEntryId: "block-1",
-      plaintext: "The dog barked loudly.",
+      snippet: {
+        text: "The dog barked loudly.",
+        matchStart: 4,
+        matchEnd: 7,
+        hasLeadingEllipsis: false,
+        hasTrailingEllipsis: false
+      },
       workEntryId: "work-1",
       workTitle: "Animal Farm"
     },
     {
       authorName: "Aesop",
       blockEntryId: "block-2",
-      plaintext: "The Dog and the Bone.",
+      snippet: {
+        text: "The Dog and the Bone.",
+        matchStart: 4,
+        matchEnd: 7,
+        hasLeadingEllipsis: false,
+        hasTrailingEllipsis: false
+      },
       workEntryId: "work-2",
       workTitle: "Fables"
     }
@@ -70,13 +82,77 @@ describe("SearchPage", () => {
 
     const list = await screen.findByRole("list", { name: "Search results" });
     expect(list).toBeDefined();
-    expect(screen.getByText("The dog barked loudly.")).toBeDefined();
+    // The snippet renders as before/match/after slices; the matched term is highlighted in a <mark>.
+    const marks = list.querySelectorAll("mark");
+    expect(Array.from(marks).map((mark) => mark.textContent)).toEqual(["dog", "Dog"]);
     expect(screen.getByText("George Orwell · Animal Farm")).toBeDefined();
     expect(mockedSearchLibrary).toHaveBeenCalledWith("dog");
 
     const links = screen.getAllByRole("link");
     expect(links[0]?.getAttribute("href")).toBe("#/reader?work=work-1&block=block-1");
     expect(links[1]?.getAttribute("href")).toBe("#/reader?work=work-2&block=block-2");
+    // The full snippet text is present around the highlight.
+    expect(links[0]?.textContent).toContain("The dog barked loudly.");
+  });
+
+  it("shows ellipses only on clipped ends and highlights the matched term", async () => {
+    mockedSearchLibrary.mockResolvedValue({
+      query: "dog",
+      results: [
+        {
+          authorName: "George Orwell",
+          blockEntryId: "block-1",
+          snippet: {
+            text: "context dog trailing",
+            matchStart: 8,
+            matchEnd: 11,
+            hasLeadingEllipsis: true,
+            hasTrailingEllipsis: true
+          },
+          workEntryId: "work-1",
+          workTitle: "Animal Farm"
+        }
+      ]
+    });
+    const user = userEvent.setup();
+    render(<SearchPage />);
+
+    await user.type(screen.getByRole("searchbox", { name: "Search query" }), "dog");
+    await user.click(screen.getByRole("button", { name: "Search" }));
+
+    const link = await screen.findByRole("link");
+    expect(link.querySelector("mark")?.textContent).toBe("dog");
+    // Leading and trailing ellipses wrap the clipped snippet, once each.
+    const snippetParagraph = link.querySelectorAll("p");
+    expect(snippetParagraph[snippetParagraph.length - 1]?.textContent).toBe(
+      "…context dog trailing…"
+    );
+  });
+
+  it("omits ellipses when neither end is clipped", async () => {
+    mockedSearchLibrary.mockResolvedValue(twoHits);
+    const user = userEvent.setup();
+    render(<SearchPage />);
+
+    await user.type(screen.getByRole("searchbox", { name: "Search query" }), "dog");
+    await user.click(screen.getByRole("button", { name: "Search" }));
+
+    const links = await screen.findAllByRole("link");
+    expect(links[0]?.textContent).not.toContain("…");
+  });
+
+  it("keeps each result a keyboard-focusable link", async () => {
+    mockedSearchLibrary.mockResolvedValue(twoHits);
+    const user = userEvent.setup();
+    render(<SearchPage />);
+
+    await user.type(screen.getByRole("searchbox", { name: "Search query" }), "dog");
+    await user.click(screen.getByRole("button", { name: "Search" }));
+
+    await screen.findByRole("list", { name: "Search results" });
+    const links = screen.getAllByRole("link");
+    links[0]?.focus();
+    expect(document.activeElement).toBe(links[0]);
   });
 
   it("shows an explicit no-matches state echoing the query", async () => {

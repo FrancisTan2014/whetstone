@@ -505,7 +505,12 @@ scope.
 Search performs a case-insensitive literal substring match over the same block plaintext the Reader
 renders, caps results at 50, and returns Work/author context plus an exact block deep link. It searches
 the ProseMirror substrate where present and the legacy mdast substrate only for units without
-ProseMirror blocks, so duplicates cannot appear.
+ProseMirror blocks, so duplicates cannot appear. Each Work contributes at most five hits (a database
+window over Work id and reading order) before the global cap, so one Work full of a repeated header or
+common term cannot starve the results. Every hit ships a bounded snippet — at most 220 Unicode code
+points of source text around the first match, with an ellipsis only where clipped and the match's
+canonical UTF-16 range for highlighting — rather than the whole block; the match offset is derived with
+the same database case semantics the query matched with.
 
 Ranked PostgreSQL FTS, CJK segmentation indexes, and semantic search are later improvements, not
 claims about current behavior.
