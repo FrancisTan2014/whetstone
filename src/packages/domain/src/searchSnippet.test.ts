@@ -114,6 +114,18 @@ describe("buildSearchSnippet", () => {
     expect(result.text).toBe("short");
   });
 
+  it("clamps a negative match position to the start of the source", () => {
+    const result = buildSearchSnippet({
+      plaintext: "hello",
+      matchStartCodePoint: -5,
+      matchLengthCodePoints: 2
+    });
+
+    expect(result.matchStart).toBe(0);
+    expect(result.matchEnd).toBe(2);
+    expect(result.text).toBe("hello");
+  });
+
   it("defaults to the shared 220 code-point budget", () => {
     const plaintext = `${"a".repeat(400)}dog${"b".repeat(400)}`;
     const result = snippetFor(plaintext, "dog");

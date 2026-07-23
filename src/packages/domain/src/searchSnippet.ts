@@ -104,9 +104,6 @@ function windowAroundMatch(
     startCp -= endCp - total;
     endCp = total;
   }
-  if (startCp < 0) {
-    startCp = 0;
-  }
 
   return { startCp, endCp };
 }

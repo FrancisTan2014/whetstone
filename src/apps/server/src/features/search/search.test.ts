@@ -479,11 +479,13 @@ describe("searchBlocks boundedness and per-Work diversity (#726)", () => {
     const authorId = `${prefix}-author`;
     const blockIds = texts.map((_, index) => `${prefix}-b-${index + 1}`);
 
-    await database.insert(entries).values([
-      { id: workId, type: "work" },
-      { id: unitId, type: "reading_unit" },
-      ...blockIds.map((id) => ({ id, type: "block" as const }))
-    ]);
+    await database
+      .insert(entries)
+      .values([
+        { id: workId, type: "work" },
+        { id: unitId, type: "reading_unit" },
+        ...blockIds.map((id) => ({ id, type: "block" as const }))
+      ]);
     await database.insert(authors).values([{ id: authorId, name: authorName }]);
     await database.insert(workMeta).values([
       {

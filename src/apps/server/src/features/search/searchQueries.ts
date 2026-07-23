@@ -116,7 +116,9 @@ export async function searchBlocks(db: DbClient, query: string): Promise<SearchR
       blockEntryId: ranked.blockEntryId,
       // 1-based code-point index of the first match, or 0 when (impossibly) absent. Same case
       // semantics as the ILIKE match above, so the offset agrees with what matched.
-      matchStart: sql<number>`strpos(lower(${ranked.plaintext}), lower(${query}))`.as("match_start"),
+      matchStart: sql<number>`strpos(lower(${ranked.plaintext}), lower(${query}))`.as(
+        "match_start"
+      ),
       plaintext: ranked.plaintext,
       unitOrderIndex: ranked.unitOrderIndex,
       orderIndex: ranked.orderIndex,
