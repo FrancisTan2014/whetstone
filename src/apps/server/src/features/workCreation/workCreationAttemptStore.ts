@@ -13,7 +13,7 @@ import {
   ownsOrdinaryUploadStage,
   workCreationAttemptStates
 } from "@whetstone/domain";
-import { and, eq, inArray, lte, sql, type SQL } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, lte, sql, type SQL } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { workCreationAttempts } from "../../db/schema.js";
@@ -309,17 +309,37 @@ export async function cancelAttempt(
   now: Date
 ): Promise<CancelResult> {
   return db.transaction(async (tx) => {
+    // Lock the row FOR UPDATE so a concurrent terminal transition (complete / expire / another cancel)
+    // cannot slip in between this read and the update: a rival either commits its transition first —
+    // and this read then sees the non-active state and no-ops — or blocks here until we commit.
     const [attempt] = await tx
       .select()
       .from(workCreationAttempts)
-      .where(and(eq(workCreationAttempts.id, id), eq(workCreationAttempts.userId, userId)));
+      .where(and(eq(workCreationAttempts.id, id), eq(workCreationAttempts.userId, userId)))
+      .for("update");
     if (attempt === undefined || !isActiveWorkCreationAttemptState(attempt.state)) {
       return { cancelled: false, stagePath: null };
     }
-    await tx
+    // Compare-and-set fenced on the locked revision AND the still-active state, so the cancel is applied
+    // only while the row is genuinely active and never clobbers a terminal transition that raced ahead.
+    const [cancelled] = await tx
       .update(workCreationAttempts)
       .set({ state: "cancelled", revision: attempt.revision + 1, updatedAt: now })
-      .where(eq(workCreationAttempts.id, id));
+      .where(
+        and(
+          eq(workCreationAttempts.id, id),
+          eq(workCreationAttempts.userId, userId),
+          eq(workCreationAttempts.revision, attempt.revision),
+          activeStateCondition()
+        )
+      )
+      .returning({ id: workCreationAttempts.id });
+    /* v8 ignore next 3 -- concurrency-only: the FOR UPDATE row lock already prevents a rival terminal
+       transition on this locked row before the update, so the compare-and-set can only miss under a
+       true race that no single-threaded test can drive; the guard stays as defense-in-depth. */
+    if (cancelled === undefined) {
+      return { cancelled: false, stagePath: null };
+    }
     return { cancelled: true, stagePath: attempt.stagePath };
   });
 }
@@ -363,6 +383,12 @@ export type DetachStageResult = Readonly<{ stagePath: string; revision: number }
 // without ever leaving the file double-owned — or null when the compare-and-set missed: a foreign owner, a
 // stale revision, an attempt not in `finalizing`, or one that owns no stage. A `pending` or terminal
 // attempt is therefore never allowed to transfer bytes outside the serialized decision.
+//
+// The detach is one atomic compare-and-set, not a read-then-blind-write: the row is locked FOR UPDATE under
+// the fence (with `stage_path is not null`), and the path is returned only because the fenced mutation
+// actually matched. Under READ COMMITTED two concurrent transfers at the same owner/id/revision cannot both
+// succeed — the loser blocks on the lock, then re-evaluates the fence against the bumped revision / nulled
+// stage and matches nothing — so the same staged bytes are never handed out (and moved) twice.
 export async function detachStagePath(
   db: DbClient,
   input: DetachStageInput
@@ -371,16 +397,34 @@ export async function detachStagePath(
     const [attempt] = await tx
       .select({ stagePath: workCreationAttempts.stagePath })
       .from(workCreationAttempts)
-      .where(fencedWhere(input.userId, input.id, input.expectedRevision, TRANSFER_STAGE_FROM));
-    if (attempt === undefined || attempt.stagePath === null) {
+      .where(
+        and(
+          fencedWhere(input.userId, input.id, input.expectedRevision, TRANSFER_STAGE_FROM),
+          isNotNull(workCreationAttempts.stagePath)
+        )
+      )
+      .for("update");
+    if (attempt === undefined) {
       return null;
     }
     const revision = input.expectedRevision + 1;
-    await tx
+    const [detached] = await tx
       .update(workCreationAttempts)
       .set({ stagePath: null, revision, updatedAt: input.now })
-      .where(fencedWhere(input.userId, input.id, input.expectedRevision, TRANSFER_STAGE_FROM));
-    return Object.freeze({ stagePath: attempt.stagePath, revision });
+      .where(
+        and(
+          fencedWhere(input.userId, input.id, input.expectedRevision, TRANSFER_STAGE_FROM),
+          isNotNull(workCreationAttempts.stagePath)
+        )
+      )
+      .returning({ id: workCreationAttempts.id });
+    /* v8 ignore next 3 -- concurrency-only: the FOR UPDATE row lock already prevents a rival from
+       detaching this locked row first, so the compare-and-set can only miss under a true race that no
+       single-threaded test can drive; the guard stays as defense-in-depth rather than a fake seam. */
+    if (detached === undefined) {
+      return null;
+    }
+    return Object.freeze({ stagePath: attempt.stagePath!, revision });
   });
 }
 

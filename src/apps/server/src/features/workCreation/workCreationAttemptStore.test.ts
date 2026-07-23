@@ -309,6 +309,30 @@ describe("workCreationAttemptStore", () => {
         stagePath: null
       });
     });
+
+    it("does not clobber an attempt that already completed (fenced on the active state)", async () => {
+      await insertPendingAttempt(db, pendingInput({ id: "a1", stagePath: "stage-a1" }));
+      await beginFinalizeAttempt(db, {
+        userId: DEFAULT_USER_ID,
+        id: "a1",
+        expectedRevision: 0,
+        now: LATER
+      });
+      await completeAttempt(db, {
+        userId: DEFAULT_USER_ID,
+        id: "a1",
+        expectedRevision: 1,
+        now: LATER
+      });
+
+      // A cancel arriving after the attempt already reached a terminal state must be a no-op — it can
+      // never overwrite `completed` with `cancelled`, the race the read-then-blind-write update allowed.
+      expect(await cancelAttempt(db, DEFAULT_USER_ID, "a1", LATER)).toEqual({
+        cancelled: false,
+        stagePath: null
+      });
+      expect((await getAttempt(db, DEFAULT_USER_ID, "a1"))?.state).toBe("completed");
+    });
   });
 
   describe("expiry sweep", () => {
@@ -435,6 +459,40 @@ describe("workCreationAttemptStore", () => {
           now: LATER
         })
       ).toBeNull();
+    });
+
+    it("returns null on a replayed transfer after the first detach (never re-transfers the same bytes)", async () => {
+      await finalizing();
+
+      const first = await detachStagePath(db, {
+        userId: DEFAULT_USER_ID,
+        id: "a1",
+        expectedRevision: 1,
+        now: LATER
+      });
+      expect(first).toEqual({ stagePath: "stage-a1", revision: 2 });
+
+      // A replayed/concurrent transfer still holding revision 1 must not hand back the same bytes: the
+      // fenced compare-and-set no longer matches (revision bumped, stage nulled), so it returns null
+      // instead of the stale path a naive read-then-write would have surfaced.
+      expect(
+        await detachStagePath(db, {
+          userId: DEFAULT_USER_ID,
+          id: "a1",
+          expectedRevision: 1,
+          now: LATER
+        })
+      ).toBeNull();
+      // And a transfer at the bumped revision finds no stage bound (already detached), so it too misses.
+      expect(
+        await detachStagePath(db, {
+          userId: DEFAULT_USER_ID,
+          id: "a1",
+          expectedRevision: 2,
+          now: LATER
+        })
+      ).toBeNull();
+      expect((await getAttempt(db, DEFAULT_USER_ID, "a1"))?.revision).toBe(2);
     });
 
     it("clears a terminal attempt's stage for its owner after removal is confirmed", async () => {
