@@ -77,16 +77,38 @@ export function parsePdfImportStartedDto(value: unknown): PdfImportStartedDto {
   return pdfImportStartedDtoSchema.parse(value);
 }
 
+// Reduce an upload-time file name to a safe basename at the boundary. The client only ever sends the
+// picked file's name, but a direct API client could send a full path (`C:\\...\\secret.pdf` or
+// `/home/.../secret.pdf`); this strips any directory component (POSIX or Windows separators) and
+// control characters so a raw filesystem path can never be persisted as provenance, reflected into
+// `work_sources.file_name`, or used to derive the title stem.
+export function toSafeFileName(value: string): string {
+  return (
+    value
+      .replace(/^.*[\\/]/u, "")
+      // eslint-disable-next-line no-control-regex -- strip control chars an OS path never legitimately holds.
+      .replace(/[\u0000-\u001f]/gu, "")
+      .trim()
+  );
+}
+
 // The learner's upload-time intent that accompanies a born-digital PDF upload (#702). All three metadata
 // fields are optional: publication resolves a missing title from the filename stem and a missing
 // author/language from neutral defaults. `fileName` is required (its stem is the title fallback and it is
-// recorded as provenance) and never a filesystem path — the client sends only the picked file's name.
+// recorded as provenance) and never a filesystem path: it is sanitized to a safe basename at this
+// boundary and rejected when nothing usable remains (empty, `.`, or `..`).
 export const pdfImportStartMetadataSchema = z
   .object({
     enteredAuthor: z.string().nullable().default(null),
     enteredLanguage: z.string().nullable().default(null),
     enteredTitle: z.string().nullable().default(null),
-    fileName: z.string().min(1)
+    fileName: z
+      .string()
+      .min(1)
+      .transform(toSafeFileName)
+      .refine((name) => name.length > 0 && name !== "." && name !== "..", {
+        message: "fileName must reduce to a usable file name, not a path."
+      })
   })
   .strict();
 

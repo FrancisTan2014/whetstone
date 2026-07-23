@@ -122,6 +122,29 @@ describe("pdfImportStartMetadataSchema", () => {
       false
     );
   });
+
+  it("sanitizes a file name to a safe basename, stripping any directory path", () => {
+    expect(
+      pdfImportStartMetadataSchema.parse({ fileName: "C:\\Users\\me\\secret.pdf" }).fileName
+    ).toBe("secret.pdf");
+    expect(pdfImportStartMetadataSchema.parse({ fileName: "/home/me/secret.pdf" }).fileName).toBe(
+      "secret.pdf"
+    );
+    expect(pdfImportStartMetadataSchema.parse({ fileName: "a/../b/reading.pdf" }).fileName).toBe(
+      "reading.pdf"
+    );
+    // Control characters an OS path never legitimately holds are stripped.
+    expect(pdfImportStartMetadataSchema.parse({ fileName: "read\u0007ing.pdf" }).fileName).toBe(
+      "reading.pdf"
+    );
+  });
+
+  it("rejects a file name that reduces to nothing usable (a bare path or separator)", () => {
+    expect(pdfImportStartMetadataSchema.safeParse({ fileName: "/home/me/" }).success).toBe(false);
+    expect(pdfImportStartMetadataSchema.safeParse({ fileName: ".." }).success).toBe(false);
+    expect(pdfImportStartMetadataSchema.safeParse({ fileName: "a/b/.." }).success).toBe(false);
+    expect(pdfImportStartMetadataSchema.safeParse({ fileName: "." }).success).toBe(false);
+  });
 });
 
 describe("parsePdfImportBeginResultDto", () => {

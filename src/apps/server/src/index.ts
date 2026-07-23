@@ -263,7 +263,7 @@ const server = createServer({
   },
   pdfImport: {
     commands: pdfImportCommands,
-    uploadLimitBytes: config.epubUploadLimitBytes
+    uploadLimitBytes: config.pdfUploadLimitBytes
   },
   readingPosition: { db },
   preferences: { db },
