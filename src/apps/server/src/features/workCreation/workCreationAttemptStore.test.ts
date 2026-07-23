@@ -344,29 +344,143 @@ describe("workCreationAttemptStore", () => {
   });
 
   describe("stage cleanup", () => {
-    it("detaches a stage atomically, then reports none once cleared", async () => {
-      await insertPendingAttempt(db, pendingInput({ id: "a1", stagePath: "stage-a1" }));
+    async function finalizing(id = "a1", stagePath: string | null = "stage-a1"): Promise<void> {
+      await insertPendingAttempt(db, pendingInput({ id, stagePath }));
+      await beginFinalizeAttempt(db, {
+        userId: DEFAULT_USER_ID,
+        id,
+        expectedRevision: 0,
+        now: LATER
+      });
+    }
 
-      expect(await detachStagePath(db, "a1", LATER)).toBe("stage-a1");
-      expect((await getAttempt(db, DEFAULT_USER_ID, "a1"))?.stagePath).toBeNull();
-      // A second detach finds nothing to transfer.
-      expect(await detachStagePath(db, "a1", LATER)).toBeNull();
+    it("transfers a stage during finalizing, fenced by owner and revision", async () => {
+      await finalizing();
+
+      // Finalizing sits at revision 1; the transfer applies at that revision and bumps it.
+      expect(
+        await detachStagePath(db, {
+          userId: DEFAULT_USER_ID,
+          id: "a1",
+          expectedRevision: 1,
+          now: LATER
+        })
+      ).toEqual({ stagePath: "stage-a1", revision: 2 });
+
+      const record = await getAttempt(db, DEFAULT_USER_ID, "a1");
+      expect(record?.stagePath).toBeNull();
+      // Still finalizing at the bumped revision, so the caller completes at revision 2.
+      expect(record?.state).toBe("finalizing");
+      expect(record?.revision).toBe(2);
+      const completed = await completeAttempt(db, {
+        userId: DEFAULT_USER_ID,
+        id: "a1",
+        expectedRevision: 2,
+        now: LATER
+      });
+      expect(completed?.state).toBe("completed");
     });
 
-    it("detaching a missing attempt returns null", async () => {
-      expect(await detachStagePath(db, "missing", LATER)).toBeNull();
+    it("refuses to transfer a stage for a forged owner or a stale revision", async () => {
+      await finalizing();
+
+      // Forged owner.
+      expect(
+        await detachStagePath(db, { userId: OTHER_USER, id: "a1", expectedRevision: 1, now: LATER })
+      ).toBeNull();
+      // Stale revision (the begin-finalize already moved it to revision 1).
+      expect(
+        await detachStagePath(db, {
+          userId: DEFAULT_USER_ID,
+          id: "a1",
+          expectedRevision: 0,
+          now: LATER
+        })
+      ).toBeNull();
+      // Neither miss touched the stage.
+      expect((await getAttempt(db, DEFAULT_USER_ID, "a1"))?.stagePath).toBe("stage-a1");
     });
 
-    it("clears a stage binding only after removal is confirmed", async () => {
+    it("refuses to transfer outside finalizing (pending or terminal) or when no stage is bound", async () => {
+      // Pending: the decision slot was never claimed.
+      await insertPendingAttempt(db, pendingInput({ id: "pend", stagePath: "stage-pend" }));
+      expect(
+        await detachStagePath(db, {
+          userId: DEFAULT_USER_ID,
+          id: "pend",
+          expectedRevision: 0,
+          now: LATER
+        })
+      ).toBeNull();
+      expect((await getAttempt(db, DEFAULT_USER_ID, "pend"))?.stagePath).toBe("stage-pend");
+
+      // Terminal: a cancelled attempt has already resolved.
+      await cancelAttempt(db, DEFAULT_USER_ID, "pend", LATER);
+      expect(
+        await detachStagePath(db, {
+          userId: DEFAULT_USER_ID,
+          id: "pend",
+          expectedRevision: 1,
+          now: LATER
+        })
+      ).toBeNull();
+
+      // Finalizing but owning no stage: nothing to transfer.
+      await finalizing("nostage", null);
+      expect(
+        await detachStagePath(db, {
+          userId: DEFAULT_USER_ID,
+          id: "nostage",
+          expectedRevision: 1,
+          now: LATER
+        })
+      ).toBeNull();
+    });
+
+    it("clears a terminal attempt's stage for its owner after removal is confirmed", async () => {
       await insertPendingAttempt(db, pendingInput({ id: "a1", stagePath: "stage-a1" }));
       await cancelAttempt(db, DEFAULT_USER_ID, "a1", LATER);
 
-      await clearStagePath(db, "a1", LATER);
+      expect(await clearStagePath(db, { userId: DEFAULT_USER_ID, id: "a1", now: LATER })).toEqual({
+        cleared: true
+      });
       const row = await db
         .select()
         .from(workCreationAttempts)
         .where(eq(workCreationAttempts.id, "a1"));
       expect(row[0]?.stagePath).toBeNull();
+    });
+
+    it("refuses to clear a forged owner's stage or a still-active attempt", async () => {
+      // Forged owner on a terminal attempt.
+      await insertPendingAttempt(db, pendingInput({ id: "term", stagePath: "stage-term" }));
+      await cancelAttempt(db, DEFAULT_USER_ID, "term", LATER);
+      expect(await clearStagePath(db, { userId: OTHER_USER, id: "term", now: LATER })).toEqual({
+        cleared: false
+      });
+      expect((await getAttempt(db, DEFAULT_USER_ID, "term"))?.stagePath).toBe("stage-term");
+
+      // Still-active pending attempt: its bytes are not leftover cleanup.
+      await insertPendingAttempt(
+        db,
+        pendingInput({ id: "pend", userId: OTHER_USER, stagePath: "stage-pend" })
+      );
+      expect(await clearStagePath(db, { userId: OTHER_USER, id: "pend", now: LATER })).toEqual({
+        cleared: false
+      });
+      expect((await getAttempt(db, OTHER_USER, "pend"))?.stagePath).toBe("stage-pend");
+
+      // Still-active finalizing attempt is likewise refused.
+      await beginFinalizeAttempt(db, {
+        userId: OTHER_USER,
+        id: "pend",
+        expectedRevision: 0,
+        now: LATER
+      });
+      expect(await clearStagePath(db, { userId: OTHER_USER, id: "pend", now: LATER })).toEqual({
+        cleared: false
+      });
+      expect((await getAttempt(db, OTHER_USER, "pend"))?.stagePath).toBe("stage-pend");
     });
   });
 });

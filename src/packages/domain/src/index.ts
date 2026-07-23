@@ -167,6 +167,7 @@ export type {
 export {
   canBeginFinalize,
   canCompleteFinalize,
+  canTransferStage,
   fingerprintReviewedCandidates,
   isActiveWorkCreationAttemptState,
   isTerminalWorkCreationAttemptState,

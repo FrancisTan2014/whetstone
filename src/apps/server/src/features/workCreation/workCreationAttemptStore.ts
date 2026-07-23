@@ -6,12 +6,14 @@ import type {
 import {
   canBeginFinalize,
   canCompleteFinalize,
+  canTransferStage,
   fingerprintReviewedCandidates,
   isActiveWorkCreationAttemptState,
+  isTerminalWorkCreationAttemptState,
   ownsOrdinaryUploadStage,
   workCreationAttemptStates
 } from "@whetstone/domain";
-import { and, eq, lte, sql, type SQL } from "drizzle-orm";
+import { and, eq, inArray, lte, sql, type SQL } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { workCreationAttempts } from "../../db/schema.js";
@@ -90,6 +92,12 @@ function soleStateMatching(
 
 const BEGIN_FINALIZE_FROM = soleStateMatching(canBeginFinalize);
 const COMPLETE_FINALIZE_FROM = soleStateMatching(canCompleteFinalize);
+const TRANSFER_STAGE_FROM = soleStateMatching(canTransferStage);
+
+// The terminal states, derived from the pure state machine so the clear-stage cleanup gate can never drift
+// from the domain's definition of "done". A terminal attempt's state never changes again, so its leftover
+// stage is cleanup to confirm — not input to a live decision.
+const TERMINAL_STATES = workCreationAttemptStates.filter(isTerminalWorkCreationAttemptState);
 
 export type ProposedMetadataInput = Readonly<{
   title: string;
@@ -175,6 +183,13 @@ export async function getAttempt(
 // the expiry sweep so both agree with the partial-unique index on exactly which rows are live.
 function activeStateCondition(): SQL {
   return sql`${workCreationAttempts.state} in ('pending', 'finalizing')`;
+}
+
+// The predicate for a terminal (`completed`/`cancelled`/`expired`) attempt, built from the domain terminal
+// set so `clearStagePath` gates on exactly the states whose stage is leftover cleanup — never a still-active
+// attempt whose bytes a live decision may still transfer.
+function terminalStateCondition(): SQL {
+  return inArray(workCreationAttempts.state, TERMINAL_STATES);
 }
 
 // The owner's single active (`pending`/`finalizing`) attempt, if any — the row the partial-unique index
@@ -331,33 +346,74 @@ export async function expireAttempts(db: DbClient, now: Date): Promise<readonly 
   );
 }
 
-// Detach the ordinary upload stage from an attempt inside a transaction: return the current stage path and
-// clear the binding atomically, so the caller can move those bytes to immutable provenance without ever
-// leaving the file double-owned. Returns null when the attempt owns no stage.
-export async function detachStagePath(db: DbClient, id: string, now: Date): Promise<string | null> {
+export type DetachStageInput = Readonly<{
+  userId: string;
+  id: string;
+  expectedRevision: number;
+  now: Date;
+}>;
+
+export type DetachStageResult = Readonly<{ stagePath: string; revision: number }>;
+
+// Transfer this owner's ordinary upload stage to immutable provenance as part of the serialized decision.
+// Fenced exactly like the other decision transitions: it applies only while THIS owner's attempt still
+// holds the live decision slot (`finalizing`) at the revision the begin-finalize returned, and it bumps the
+// revision so a stale committer is fenced out of the rest of the decision. Returns the detached stage path
+// and the new revision (feed it to `completeAttempt`) so the caller can move those bytes to provenance
+// without ever leaving the file double-owned — or null when the compare-and-set missed: a foreign owner, a
+// stale revision, an attempt not in `finalizing`, or one that owns no stage. A `pending` or terminal
+// attempt is therefore never allowed to transfer bytes outside the serialized decision.
+export async function detachStagePath(
+  db: DbClient,
+  input: DetachStageInput
+): Promise<DetachStageResult | null> {
   return db.transaction(async (tx) => {
     const [attempt] = await tx
       .select({ stagePath: workCreationAttempts.stagePath })
       .from(workCreationAttempts)
-      .where(eq(workCreationAttempts.id, id));
+      .where(fencedWhere(input.userId, input.id, input.expectedRevision, TRANSFER_STAGE_FROM));
     if (attempt === undefined || attempt.stagePath === null) {
       return null;
     }
+    const revision = input.expectedRevision + 1;
     await tx
       .update(workCreationAttempts)
-      .set({ stagePath: null, updatedAt: now })
-      .where(eq(workCreationAttempts.id, id));
-    return attempt.stagePath;
+      .set({ stagePath: null, revision, updatedAt: input.now })
+      .where(fencedWhere(input.userId, input.id, input.expectedRevision, TRANSFER_STAGE_FROM));
+    return Object.freeze({ stagePath: attempt.stagePath, revision });
   });
 }
 
-// Clear the stage binding ONLY after the staged bytes were actually removed from disk. Cancel/expiry keep
-// `stage_path` set until the filesystem removal succeeds, so a failed cleanup leaves the attempt bound
-// (visible and retryable) instead of forgetting the path and orphaning the bytes. Scoped by id: the caller
-// has already owner-checked and terminal/swept the attempt.
-export async function clearStagePath(db: DbClient, id: string, now: Date): Promise<void> {
-  await db
+export type ClearStageInput = Readonly<{
+  userId: string;
+  id: string;
+  now: Date;
+}>;
+
+export type ClearStageResult = Readonly<{ cleared: boolean }>;
+
+// Clear the stage binding ONLY after the staged bytes were actually removed from disk, and ONLY for a
+// terminal attempt owned by this user. Cancel/expiry leave `stage_path` set until the filesystem removal
+// succeeds, so a failed cleanup stays visible and retryable; this confirms it. Scoped by owner and gated to
+// terminal states so a route holding or forging an id can neither clear another owner's stage nor discard
+// the bytes of a still-active (`pending`/`finalizing`) attempt out from under its live decision. A terminal
+// attempt's state can never change again, so the owner + terminal gate is the whole fence — there is no
+// concurrent transition to race, so no revision counter is needed. Returns whether a matching terminal
+// attempt was cleared.
+export async function clearStagePath(
+  db: DbClient,
+  input: ClearStageInput
+): Promise<ClearStageResult> {
+  const rows = await db
     .update(workCreationAttempts)
-    .set({ stagePath: null, updatedAt: now })
-    .where(eq(workCreationAttempts.id, id));
+    .set({ stagePath: null, updatedAt: input.now })
+    .where(
+      and(
+        eq(workCreationAttempts.id, input.id),
+        eq(workCreationAttempts.userId, input.userId),
+        terminalStateCondition()
+      )
+    )
+    .returning({ id: workCreationAttempts.id });
+  return Object.freeze({ cleared: rows.length > 0 });
 }

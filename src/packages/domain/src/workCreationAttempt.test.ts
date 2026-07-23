@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   canBeginFinalize,
   canCompleteFinalize,
+  canTransferStage,
   fingerprintReviewedCandidates,
   isActiveWorkCreationAttemptState,
   isTerminalWorkCreationAttemptState,
@@ -44,6 +45,11 @@ describe("workCreationAttempt states", () => {
     const completeFrom = workCreationAttemptStates.filter(canCompleteFinalize);
     expect(beginFrom).toEqual(["pending"]);
     expect(completeFrom).toEqual(["finalizing"]);
+  });
+
+  it("permits transferring a stage only from finalizing (inside the serialized decision)", () => {
+    const transferFrom = workCreationAttemptStates.filter(canTransferStage);
+    expect(transferFrom).toEqual(["finalizing"]);
   });
 });
 

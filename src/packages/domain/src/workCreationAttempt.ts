@@ -60,6 +60,17 @@ export function canCompleteFinalize(state: WorkCreationAttemptState): boolean {
   return state === "finalizing";
 }
 
+// A staged ordinary upload's bytes may be TRANSFERRED to immutable provenance only while the attempt holds
+// the live decision slot (`finalizing`): the transfer is part of the serialized decision that commits the
+// Work, so it is gated to exactly the same state as completion. Transferring from `pending` would move
+// bytes before any decision claimed the slot; transferring from a terminal attempt would move bytes the
+// decision already resolved — both are rejected, so a stage never leaves the attempt outside the decision.
+// Distinct from `canCompleteFinalize` on purpose: the stage-transfer rule and the completion rule have
+// separate product reasons to change even though they share a source state today.
+export function canTransferStage(state: WorkCreationAttemptState): boolean {
+  return state === "finalizing";
+}
+
 // The source that produced an attempt. `manual` carries no uploaded bytes (metadata only, so never an
 // exact-source reopen); `markdown`/`epub` are ORDINARY uploads whose staged bytes this attempt owns until
 // the decision transfers them to provenance or discards them; `pdf` references its own #721 execution
