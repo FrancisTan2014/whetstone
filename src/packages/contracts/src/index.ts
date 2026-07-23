@@ -256,6 +256,26 @@ export type {
 export { createHealthResponse, healthEndpointPath, healthResponseJsonSchema } from "./health.js";
 export type { HealthResponse } from "./health.js";
 export {
+  parseProposedWorkMetadataDto,
+  parseWorkCreationAttemptDto,
+  proposedWorkMetadataSchema,
+  reviewedCandidateSchema,
+  reviewedCandidateSnapshotSchema,
+  workCreationAttemptDtoSchema,
+  workCreationAttemptStateSchema,
+  workCreationSourceKindSchema,
+  workCreationStageDtoSchema
+} from "./workCreationContracts.js";
+export type {
+  ProposedWorkMetadataDto,
+  ReviewedCandidateDto,
+  ReviewedCandidateSnapshotDto,
+  WorkCreationAttemptDto,
+  WorkCreationAttemptStateDto,
+  WorkCreationSourceKindDto,
+  WorkCreationStageDto
+} from "./workCreationContracts.js";
+export {
   defaultWebHostRuntimeConfig,
   hostPlatforms,
   hostPlatformSchema,

@@ -813,7 +813,25 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   five credible existing-Work duplicate candidates for proposed manual/imported metadata — bounded
   complete pool by title-key length, authored Works excluded, scored by the pure
   `domain/workDuplicateCandidates.ts` (pinned Damerau-Levenshtein), factual evidence only, writes
-  nothing (#724). Creating a work auto-opens
+  nothing (#724). **Durable creation-review attempt foundation (#725, foundation only — no live
+  creation route uses it yet; first consumer #747):** `features/workCreation/workCreationAttemptStore.ts`
+  persists one owner-scoped `work_creation_attempts` row holding the proposed title/author/language/type,
+  the source kind/hash, the reviewed duplicate-candidate evidence snapshot + its fingerprint (so changed
+  evidence — not only a new candidate id — forces a fresh review), and an ordinary markdown/EPUB upload
+  stage, until one serialized Keep-separate/Open-existing decision commits or discards it. It stores NO
+  Work/ReadingUnit/Block/source-claim row and has no FK into content, so a restored operational dump
+  creates no live Work/content. `revision` is a compare-and-set fence (`beginFinalizeAttempt` claims the
+  single `finalizing` decision slot; `completeAttempt`, `updateAttemptReview` reject a stale/replayed
+  revision); a partial-unique index enforces at most one active (`pending`/`finalizing`) attempt per
+  owner; DB checks pin the state/source-kind sets, keep a stage only on an ordinary upload, and store the
+  snapshot + fingerprint together. Cleanup is explicit and retryable — `cancelAttempt`/`expireAttempts`
+  return the exact owned stage paths and `clearStagePath`/`detachStagePath` free them only after the
+  filesystem removal succeeds, never by age. Ordinary upload stages live under the config
+  `workCreationStageDir`, deliberately NOT a backed-up data root (`resolveDataRoots`). The pure state
+  machine + evidence fingerprint are `@whetstone/domain` `workCreationAttempt.ts`; DTOs (attempt view
+  exposes stage presence only, never a filesystem path) in `@whetstone/contracts`
+  `workCreationContracts.ts`. It never absorbs `pdf_import_attempts` — a `pdf` attempt references that
+  execution attempt, which keeps sole ownership of the PDF stages. Creating a work auto-opens
   its Manage-content sheet (add content right after create); an EPUB import does not. Authored-document
   creation moved out of Library to the Write home (#679): the minimal title/type/language sheet now lives
   in `WritingHomePage` (**New essay**), which calls `authoredWorks/authoredWorkApi.createAuthoredWork`

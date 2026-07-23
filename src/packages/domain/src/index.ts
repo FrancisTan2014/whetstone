@@ -164,6 +164,23 @@ export type {
   OcrRoutingDecision,
   OcrRoutingKind
 } from "./pdfOcr.js";
+export {
+  canBeginFinalize,
+  canCompleteFinalize,
+  canTransferStage,
+  fingerprintReviewedCandidates,
+  isActiveWorkCreationAttemptState,
+  isTerminalWorkCreationAttemptState,
+  ownsOrdinaryUploadStage,
+  workCreationAttemptStates,
+  workCreationSourceKinds
+} from "./workCreationAttempt.js";
+export type {
+  ReviewedCandidateSnapshot,
+  ReviewedCandidateSnapshotEntry,
+  WorkCreationAttemptState,
+  WorkCreationSourceKind
+} from "./workCreationAttempt.js";
 export { planSectionRepartition } from "./workRepartition.js";
 export type {
   PlannedUnit,

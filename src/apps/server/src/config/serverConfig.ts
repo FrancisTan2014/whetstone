@@ -27,6 +27,12 @@ export type ServerConfig = Readonly<{
   pdfImportFixtureConversion: boolean;
   port: number;
   sourceFilesDir: string;
+  // Ordinary Work-creation upload stages (#725): transient per-attempt staged markdown/EPUB bytes held by
+  // a `work_creation_attempts` row while duplicate review is pending, SEPARATE from immutable source
+  // provenance under sourceFilesDir. Like `pdfImportStageDir` it is deliberately NOT a backed-up data root
+  // (see `resolveDataRoots`), so a cancelled/expired attempt's bytes are freed without touching provenance
+  // and a restore recreates no live stage. Env-overridable.
+  workCreationStageDir: string;
   webDir: string | undefined;
 }>;
 
@@ -56,6 +62,7 @@ const defaultServerConfig: ServerConfig = {
   pdfImportFixtureConversion: false,
   port: 3000,
   sourceFilesDir: "./.data/sources",
+  workCreationStageDir: "./.data/work-creation-stages",
   webDir: undefined
 };
 
@@ -94,6 +101,7 @@ export function readServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
       defaultServerConfig.pdfImportFixtureConversion,
     port,
     sourceFilesDir: env.SOURCE_FILES_DIR ?? defaultServerConfig.sourceFilesDir,
+    workCreationStageDir: env.WORK_CREATION_STAGE_DIR ?? defaultServerConfig.workCreationStageDir,
     webDir: env.WEB_DIR ?? defaultServerConfig.webDir
   };
 }
