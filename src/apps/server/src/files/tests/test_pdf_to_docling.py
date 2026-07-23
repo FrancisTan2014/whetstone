@@ -84,6 +84,42 @@ class FakeGrade:
         self.layout_score = layout_score
 
 
+class FakeTableCell:
+    """A docling TableCell: text plus its grid offsets and header flags (no children/prov)."""
+
+    def __init__(
+        self,
+        text,
+        start_row_offset_idx=0,
+        start_col_offset_idx=0,
+        column_header=False,
+        row_header=False,
+        bbox=None,
+    ):
+        self.text = text
+        self.start_row_offset_idx = start_row_offset_idx
+        self.start_col_offset_idx = start_col_offset_idx
+        self.column_header = column_header
+        self.row_header = row_header
+        self.bbox = bbox
+
+
+class FakeTableData:
+    def __init__(self, table_cells):
+        self.table_cells = table_cells
+
+
+class FakeTableItem:
+    """A docling TableItem: carries NO children; its cells live in ``data.table_cells``."""
+
+    def __init__(self, table_cells, prov=None):
+        self.label = "table"
+        self.text = ""
+        self.prov = [prov] if prov is not None else []
+        self.children = []
+        self.data = FakeTableData(table_cells)
+
+
 class FakeDoc:
     def __init__(self, version=SUPPORTED, body=None, furniture=None, confidence=None):
         self.version = version
@@ -149,7 +185,45 @@ class MappingTests(unittest.TestCase):
         self.assertEqual(mapped["charSpan"], [0, 0])
         self.assertEqual(mapped["children"], [])
 
-    def test_char_span_is_normalized_to_ascending_order(self):
+    def test_map_item_projects_a_docling_table_grid_into_rows_and_cells(self):
+        # A real docling TableItem carries no children; its cells live in data.table_cells keyed by
+        # grid offset. The worker must project that grid into the table_row -> cell contract shape the
+        # canonical mapper turns into a PM table block (pre-fix it emitted no rows and fell back to an
+        # `unknown` node, so a born-digital table never became a canonical table).
+        cells = [
+            FakeTableCell("Term", 0, 0, column_header=True, bbox=FakeBBox(40, 120, 300, 160)),
+            FakeTableCell("Definition", 0, 1, column_header=True),
+            FakeTableCell("Whetstone", 1, 0, row_header=True),
+            FakeTableCell("A sharpening stone", 1, 1),
+        ]
+        # Deliberately scrambled so the assertions prove row-then-column ordering, not input order.
+        scrambled = [cells[3], cells[0], cells[2], cells[1]]
+        item = FakeTableItem(scrambled, prov=FakeProv(bbox=FakeBBox(40, 120, 560, 300), page_no=1))
+        mapped = map_item(item, FakeDoc(), identity_resolve, {}, inherited_page=1)
+
+        self.assertEqual(mapped["label"], "table")
+        self.assertEqual([row["label"] for row in mapped["children"]], ["table_row", "table_row"])
+        header_cells = mapped["children"][0]["children"]
+        self.assertEqual([c["label"] for c in header_cells], ["column_header", "column_header"])
+        self.assertEqual([c["text"] for c in header_cells], ["Term", "Definition"])
+        # A header cell keeps its own geometry; a cell without a bbox defaults to the zero box.
+        self.assertEqual(
+            header_cells[0]["boundingBox"],
+            {"left": 40.0, "top": 120.0, "right": 300.0, "bottom": 160.0},
+        )
+        self.assertEqual(
+            header_cells[1]["boundingBox"], {"left": 0.0, "top": 0.0, "right": 0.0, "bottom": 0.0}
+        )
+        body_cells = mapped["children"][1]["children"]
+        self.assertEqual([c["label"] for c in body_cells], ["row_header", "table_cell"])
+        self.assertEqual([c["text"] for c in body_cells], ["Whetstone", "A sharpening stone"])
+
+    def test_map_item_falls_back_to_children_for_a_table_with_no_cells(self):
+        # An empty grid yields no rows, so map_item maps the (empty) children normally.
+        item = FakeTableItem([], prov=FakeProv(page_no=1))
+        mapped = map_item(item, FakeDoc(), identity_resolve, {}, inherited_page=1)
+        self.assertEqual(mapped["label"], "table")
+        self.assertEqual(mapped["children"], [])
         item = FakeItem(prov=FakeProv(charspan=(9, 5)))
         mapped = map_item(item, FakeDoc(), identity_resolve, {}, inherited_page=1)
         self.assertEqual(mapped["charSpan"], [5, 9])
