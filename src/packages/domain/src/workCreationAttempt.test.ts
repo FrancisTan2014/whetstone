@@ -75,7 +75,9 @@ describe("fingerprintReviewedCandidates", () => {
 
   it("gives the empty snapshot a stable fingerprint distinct from any non-empty one", () => {
     expect(fingerprintReviewedCandidates([])).toBe(fingerprintReviewedCandidates([]));
-    expect(fingerprintReviewedCandidates([])).not.toBe(fingerprintReviewedCandidates([candidate()]));
+    expect(fingerprintReviewedCandidates([])).not.toBe(
+      fingerprintReviewedCandidates([candidate()])
+    );
   });
 
   it("cannot be collided by smuggling a separator into a field value", () => {
@@ -87,7 +89,9 @@ describe("fingerprintReviewedCandidates", () => {
     expect(withRowSeparator).not.toBe(fingerprintReviewedCandidates([candidate({ title: "XY" })]));
 
     const withBackslash = fingerprintReviewedCandidates([candidate({ title: "A\\u" })]);
-    expect(withBackslash).not.toBe(fingerprintReviewedCandidates([candidate({ title: "A\u001f" })]));
+    expect(withBackslash).not.toBe(
+      fingerprintReviewedCandidates([candidate({ title: "A\u001f" })])
+    );
   });
 });
 

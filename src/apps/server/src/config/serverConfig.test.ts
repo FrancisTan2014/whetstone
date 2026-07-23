@@ -36,8 +36,8 @@ describe("readServerConfig work-creation stage directory", () => {
   });
 
   it("honors a WORK_CREATION_STAGE_DIR override", () => {
-    expect(
-      readServerConfig({ WORK_CREATION_STAGE_DIR: "/srv/stage" }).workCreationStageDir
-    ).toBe("/srv/stage");
+    expect(readServerConfig({ WORK_CREATION_STAGE_DIR: "/srv/stage" }).workCreationStageDir).toBe(
+      "/srv/stage"
+    );
   });
 });

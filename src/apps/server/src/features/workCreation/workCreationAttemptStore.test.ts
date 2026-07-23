@@ -108,9 +108,7 @@ describe("workCreationAttemptStore", () => {
 
   it("enforces at most one active attempt per owner", async () => {
     await insertPendingAttempt(db, pendingInput({ id: "a1" }));
-    await expect(
-      insertPendingAttempt(db, pendingInput({ id: "a2" }))
-    ).rejects.toThrow();
+    await expect(insertPendingAttempt(db, pendingInput({ id: "a2" }))).rejects.toThrow();
     // A different owner is unaffected by the per-owner active constraint.
     await insertPendingAttempt(db, pendingInput({ id: "a3", userId: OTHER_USER }));
   });
@@ -330,9 +328,7 @@ describe("workCreationAttemptStore", () => {
       );
 
       const expired = await expireAttempts(db, LATER);
-      expect(expired).toEqual([
-        { id: "past", userId: DEFAULT_USER_ID, stagePath: "stage-past" }
-      ]);
+      expect(expired).toEqual([{ id: "past", userId: DEFAULT_USER_ID, stagePath: "stage-past" }]);
 
       expect((await getAttempt(db, DEFAULT_USER_ID, "past"))?.state).toBe("expired");
       expect((await getAttempt(db, OTHER_USER, "future"))?.state).toBe("pending");

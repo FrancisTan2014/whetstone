@@ -77,7 +77,12 @@ describe("0067 work creation attempts migration", () => {
 
   it("allows a stage only for an ordinary upload kind", async () => {
     await insertAttempt(pglite, { id: "md", sourceKind: "markdown", stagePath: "stage-md" });
-    await insertAttempt(pglite, { id: "ep", userId: "u2", sourceKind: "epub", stagePath: "stage-ep" });
+    await insertAttempt(pglite, {
+      id: "ep",
+      userId: "u2",
+      sourceKind: "epub",
+      stagePath: "stage-ep"
+    });
     await expect(
       insertAttempt(pglite, { id: "man", sourceKind: "manual", stagePath: "stage-man" })
     ).rejects.toThrow();
@@ -87,12 +92,8 @@ describe("0067 work creation attempts migration", () => {
   });
 
   it("requires a fingerprint exactly when a snapshot is present", async () => {
-    await expect(
-      insertAttempt(pglite, { id: "leak", snapshot: "[]" })
-    ).rejects.toThrow();
-    await expect(
-      insertAttempt(pglite, { id: "orphan", fingerprint: "fp" })
-    ).rejects.toThrow();
+    await expect(insertAttempt(pglite, { id: "leak", snapshot: "[]" })).rejects.toThrow();
+    await expect(insertAttempt(pglite, { id: "orphan", fingerprint: "fp" })).rejects.toThrow();
     await insertAttempt(pglite, { id: "ok", snapshot: "[]", fingerprint: "fp" });
   });
 

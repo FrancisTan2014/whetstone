@@ -72,7 +72,10 @@ export type WorkCreationSourceKind = (typeof workCreationSourceKinds)[number];
 // `markdown` and `epub` stage through this foundation; `manual` has no bytes and `pdf` stages through
 // `pdf_import_attempts`. The store and the DB check both consult this so a stage can never be bound to an
 // attempt that must not own one.
-const ordinaryUploadSourceKinds: ReadonlySet<WorkCreationSourceKind> = new Set(["markdown", "epub"]);
+const ordinaryUploadSourceKinds: ReadonlySet<WorkCreationSourceKind> = new Set([
+  "markdown",
+  "epub"
+]);
 
 export function ownsOrdinaryUploadStage(sourceKind: WorkCreationSourceKind): boolean {
   return ordinaryUploadSourceKinds.has(sourceKind);
@@ -96,7 +99,7 @@ export type ReviewedCandidateSnapshot = ReadonlyArray<ReviewedCandidateSnapshotE
 // Escape the field/row separators so two distinct snapshots can never serialize to the same fingerprint by
 // smuggling a separator into a value (e.g. a title containing a unit-separator character).
 function escapeField(value: string): string {
-  return value.replace(/\\/gu, "\\\\").replace(/\u001f/gu, "\\u").replace(/\u001e/gu, "\\r");
+  return value.replaceAll("\\", "\\\\").replaceAll("\u001f", "\\u").replaceAll("\u001e", "\\r");
 }
 
 // A deterministic fingerprint of the reviewed candidate evidence. Two snapshots fingerprint equal IFF they
@@ -106,14 +109,7 @@ function escapeField(value: string): string {
 // stable empty-set fingerprint distinct from every non-empty one.
 export function fingerprintReviewedCandidates(snapshot: ReviewedCandidateSnapshot): string {
   const rows = snapshot.map((entry) =>
-    [
-      entry.entryId,
-      entry.title,
-      entry.authorId,
-      entry.authorName,
-      entry.language,
-      entry.workType
-    ]
+    [entry.entryId, entry.title, entry.authorId, entry.authorName, entry.language, entry.workType]
       .map(escapeField)
       .join("\u001f")
   );

@@ -49,9 +49,7 @@ describe("proposedWorkMetadataSchema", () => {
   });
 
   it("rejects extra fields", () => {
-    expect(() =>
-      parseProposedWorkMetadataDto({ ...proposed, extra: "nope" })
-    ).toThrow();
+    expect(() => parseProposedWorkMetadataDto({ ...proposed, extra: "nope" })).toThrow();
   });
 });
 
@@ -64,9 +62,7 @@ describe("workCreationAttemptDtoSchema", () => {
     expect(
       parseWorkCreationAttemptDto({ ...attemptDto, sourceHash: "a".repeat(64) }).sourceHash
     ).toBe("a".repeat(64));
-    expect(() =>
-      parseWorkCreationAttemptDto({ ...attemptDto, sourceHash: "not-hex" })
-    ).toThrow();
+    expect(() => parseWorkCreationAttemptDto({ ...attemptDto, sourceHash: "not-hex" })).toThrow();
     expect(() =>
       parseWorkCreationAttemptDto({ ...attemptDto, sourceHash: "A".repeat(64) })
     ).toThrow();
@@ -79,7 +75,9 @@ describe("workCreationAttemptDtoSchema", () => {
 
   it("exposes the stage only as presence, never a filesystem path", () => {
     expect(() => workCreationStageDtoSchema.parse({ bound: true, path: "/srv/x" })).toThrow();
-    expect(() => parseWorkCreationAttemptDto({ ...attemptDto, stage: { path: "/srv/x" } })).toThrow();
+    expect(() =>
+      parseWorkCreationAttemptDto({ ...attemptDto, stage: { path: "/srv/x" } })
+    ).toThrow();
   });
 
   it("rejects extra top-level fields", () => {

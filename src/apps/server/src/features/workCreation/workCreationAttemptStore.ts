@@ -334,11 +334,7 @@ export async function expireAttempts(db: DbClient, now: Date): Promise<readonly 
 // Detach the ordinary upload stage from an attempt inside a transaction: return the current stage path and
 // clear the binding atomically, so the caller can move those bytes to immutable provenance without ever
 // leaving the file double-owned. Returns null when the attempt owns no stage.
-export async function detachStagePath(
-  db: DbClient,
-  id: string,
-  now: Date
-): Promise<string | null> {
+export async function detachStagePath(db: DbClient, id: string, now: Date): Promise<string | null> {
   return db.transaction(async (tx) => {
     const [attempt] = await tx
       .select({ stagePath: workCreationAttempts.stagePath })

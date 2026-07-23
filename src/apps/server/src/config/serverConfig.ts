@@ -101,8 +101,7 @@ export function readServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
       defaultServerConfig.pdfImportFixtureConversion,
     port,
     sourceFilesDir: env.SOURCE_FILES_DIR ?? defaultServerConfig.sourceFilesDir,
-    workCreationStageDir:
-      env.WORK_CREATION_STAGE_DIR ?? defaultServerConfig.workCreationStageDir,
+    workCreationStageDir: env.WORK_CREATION_STAGE_DIR ?? defaultServerConfig.workCreationStageDir,
     webDir: env.WEB_DIR ?? defaultServerConfig.webDir
   };
 }
