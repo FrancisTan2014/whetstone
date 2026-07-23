@@ -96,7 +96,12 @@ export function classifyOcrRouting(pages: readonly OcrPageClassification[]): Ocr
   const kind: OcrRoutingKind =
     ocrPageCount === 0 ? "native" : nativePageCount === 0 ? "scanned" : "mixed";
 
-  return Object.freeze({ kind, nativePageCount, ocrPageCount, pageNumbersNeedingOcr });
+  return Object.freeze({
+    kind,
+    nativePageCount,
+    ocrPageCount,
+    pageNumbersNeedingOcr: Object.freeze(pageNumbersNeedingOcr)
+  });
 }
 
 // Per-page geometry that an OCR pass must not alter: the page's box dimensions and its rotation. OCR
@@ -130,11 +135,11 @@ export function validateOcrGeometry(
   options?: Readonly<{ tolerancePt?: number }>
 ): OcrGeometryValidation {
   if (before.length !== after.length) {
-    return {
+    return Object.freeze({
       ok: false,
       reason: "page_count_changed",
       detail: `expected ${before.length} pages, OCR output has ${after.length}.`
-    };
+    });
   }
 
   const tolerance = options?.tolerancePt ?? OCR_GEOMETRY_TOLERANCE_PT;
@@ -143,32 +148,32 @@ export function validateOcrGeometry(
   for (const original of before) {
     const ocred = afterByPage.get(original.pageNumber);
     if (ocred === undefined) {
-      return {
+      return Object.freeze({
         ok: false,
         reason: "page_missing",
         detail: `OCR output is missing page ${original.pageNumber}.`
-      };
+      });
     }
     if (
       Math.abs(ocred.width - original.width) > tolerance ||
       Math.abs(ocred.height - original.height) > tolerance
     ) {
-      return {
+      return Object.freeze({
         ok: false,
         reason: "dimensions_changed",
         detail: `page ${original.pageNumber} box changed beyond ${tolerance}pt tolerance.`
-      };
+      });
     }
     if (ocred.rotation !== original.rotation) {
-      return {
+      return Object.freeze({
         ok: false,
         reason: "rotation_changed",
         detail: `page ${original.pageNumber} rotation changed from ${original.rotation} to ${ocred.rotation}.`
-      };
+      });
     }
   }
 
-  return { ok: true };
+  return Object.freeze({ ok: true });
 }
 
 export type NativeTextValidation =
@@ -186,8 +191,8 @@ export function validateNativeTextPreserved(
   const afterByPage = new Map(after.map((page) => [page.pageNumber, page.hasNativeText]));
   for (const page of before) {
     if (page.hasNativeText && afterByPage.get(page.pageNumber) !== true) {
-      return { ok: false, pageNumber: page.pageNumber };
+      return Object.freeze({ ok: false, pageNumber: page.pageNumber });
     }
   }
-  return { ok: true };
+  return Object.freeze({ ok: true });
 }

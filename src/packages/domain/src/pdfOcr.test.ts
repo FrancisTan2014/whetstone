@@ -202,6 +202,69 @@ describe("native text preservation", () => {
   });
 });
 
+describe("immutability of public results", () => {
+  it("returns a frozen routing decision whose page list cannot be mutated", () => {
+    const decision = classifyOcrRouting([
+      { pageNumber: 2, hasNativeText: false },
+      { pageNumber: 1, hasNativeText: true }
+    ]);
+    expect(Object.isFrozen(decision)).toBe(true);
+    expect(Object.isFrozen(decision.pageNumbersNeedingOcr)).toBe(true);
+    expect(() => {
+      (decision.pageNumbersNeedingOcr as number[]).push(99);
+    }).toThrow(TypeError);
+    expect(() => {
+      (decision as { nativePageCount: number }).nativePageCount = 99;
+    }).toThrow(TypeError);
+    expect(decision.pageNumbersNeedingOcr).toEqual([2]);
+    expect(decision.nativePageCount).toBe(1);
+  });
+
+  it("returns a frozen geometry validation for both the ok and failure results", () => {
+    const ok = validateOcrGeometry(
+      [{ pageNumber: 1, width: 612, height: 792, rotation: 0 }],
+      [{ pageNumber: 1, width: 612, height: 792, rotation: 0 }]
+    );
+    expect(Object.isFrozen(ok)).toBe(true);
+    expect(() => {
+      (ok as { ok: boolean }).ok = false;
+    }).toThrow(TypeError);
+    expect(ok).toEqual({ ok: true });
+
+    const failure = validateOcrGeometry(
+      [{ pageNumber: 1, width: 612, height: 792, rotation: 0 }],
+      [{ pageNumber: 1, width: 900, height: 792, rotation: 0 }]
+    );
+    expect(Object.isFrozen(failure)).toBe(true);
+    expect(() => {
+      (failure as { reason: string }).reason = "rotation_changed";
+    }).toThrow(TypeError);
+    expect(failure).toMatchObject({ ok: false, reason: "dimensions_changed" });
+  });
+
+  it("returns a frozen native-text validation for both the ok and failure results", () => {
+    const ok = validateNativeTextPreserved(
+      [{ pageNumber: 1, hasNativeText: false }],
+      [{ pageNumber: 1, hasNativeText: false }]
+    );
+    expect(Object.isFrozen(ok)).toBe(true);
+    expect(() => {
+      (ok as { ok: boolean }).ok = false;
+    }).toThrow(TypeError);
+    expect(ok).toEqual({ ok: true });
+
+    const failure = validateNativeTextPreserved(
+      [{ pageNumber: 1, hasNativeText: true }],
+      [{ pageNumber: 1, hasNativeText: false }]
+    );
+    expect(Object.isFrozen(failure)).toBe(true);
+    expect(() => {
+      (failure as { pageNumber: number }).pageNumber = 99;
+    }).toThrow(TypeError);
+    expect(failure).toEqual({ ok: false, pageNumber: 1 });
+  });
+});
+
 describe("work language coverage", () => {
   it("has a language and pack mapping for every supported Work language", () => {
     const languages: readonly WorkLanguage[] = workLanguages;
