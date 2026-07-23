@@ -463,6 +463,13 @@
       "when": 1784761373320,
       "tag": "0065_third_shotgun",
       "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1784775314081,
+      "tag": "0066_flawless_the_professor",
+      "breakpoints": true
     }
   ]
 }

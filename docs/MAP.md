@@ -800,7 +800,15 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   SQL functions (NFKC + whitespace-collapse + case-fold) back a partial unique index on `authors.name_key`,
   `library/authorResolver.ts` `resolveNamedAuthor` resolves every writer (manual create, Work create, EPUB
   ingest) to one row via `ON CONFLICT`, and `library/libraryQueries.ts` `searchAuthors` returns matches plus
-  the exact-match id and cleaned query; the client never canonicalizes. Creating a work auto-opens
+  the exact-match id and cleaned query; the client never canonicalizes. Work titles have a parallel
+  server-owned canonical key: the `work_title_key` SQL function (NFKC + Unicode lowercase + whitespace
+  removal, punctuation/CJK/edition preserved) backs a **generated** non-unique `work_meta.title_key`
+  column (PostgreSQL derives it from the title on every write, so no Work writer can desync it), and
+  `library/workDuplicateCandidatesQueries.ts` `findWorkDuplicateCandidates` returns up to
+  five credible existing-Work duplicate candidates for proposed manual/imported metadata — bounded
+  complete pool by title-key length, authored Works excluded, scored by the pure
+  `domain/workDuplicateCandidates.ts` (pinned Damerau-Levenshtein), factual evidence only, writes
+  nothing (#724). Creating a work auto-opens
   its Manage-content sheet (add content right after create); an EPUB import does not. Authored-document
   creation moved out of Library to the Write home (#679): the minimal title/type/language sheet now lives
   in `WritingHomePage` (**New essay**), which calls `authoredWorks/authoredWorkApi.createAuthoredWork`
