@@ -79,13 +79,28 @@ describe("ocr page routing", () => {
     expect(decision.ocrPageCount).toBe(2);
   });
 
-  it("de-duplicates repeated page numbers when listing pages needing OCR", () => {
+  it("keeps a duplicated text-less page scanned with zero native pages", () => {
     const decision = classifyOcrRouting([
       { pageNumber: 1, hasNativeText: false },
       { pageNumber: 1, hasNativeText: false }
     ]);
+    expect(decision.kind).toBe("scanned");
     expect(decision.pageNumbersNeedingOcr).toEqual([1]);
     expect(decision.ocrPageCount).toBe(1);
+    expect(decision.nativePageCount).toBe(0);
+  });
+
+  it("counts each page once when native and text-less pages are duplicated", () => {
+    const decision = classifyOcrRouting([
+      { pageNumber: 1, hasNativeText: true },
+      { pageNumber: 1, hasNativeText: true },
+      { pageNumber: 2, hasNativeText: false },
+      { pageNumber: 2, hasNativeText: false }
+    ]);
+    expect(decision.kind).toBe("mixed");
+    expect(decision.pageNumbersNeedingOcr).toEqual([2]);
+    expect(decision.ocrPageCount).toBe(1);
+    expect(decision.nativePageCount).toBe(1);
   });
 
   it("treats an empty document as native", () => {

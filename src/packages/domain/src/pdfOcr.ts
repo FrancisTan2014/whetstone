@@ -72,12 +72,26 @@ export type OcrRoutingDecision = Readonly<{
 // when the adapter reported it has no native text. Pure and total — the caller (server runner) uses it
 // to skip OCR entirely for a born-digital document and to report scanned/mixed counts.
 export function classifyOcrRouting(pages: readonly OcrPageClassification[]): OcrRoutingDecision {
-  const pageNumbersNeedingOcr = Array.from(
-    new Set(pages.filter((page) => !page.hasNativeText).map((page) => page.pageNumber))
-  ).sort((left, right) => left - right);
+  // Collapse to one decision per page number before counting, so duplicate classifications for the same
+  // page can never inflate the counts (raw `pages.length` would report a phantom native page and mislabel
+  // a duplicated text-less page as `mixed` instead of `scanned`). A page counts as native only when every
+  // classification of it reports native text; if duplicate classifications for a page disagree, OCR wins,
+  // because `--skip-text` preserves any native text while skipping a scanned page would lose content.
+  const needsOcrByPage = new Map<number, boolean>();
+  for (const page of pages) {
+    needsOcrByPage.set(
+      page.pageNumber,
+      (needsOcrByPage.get(page.pageNumber) ?? false) || !page.hasNativeText
+    );
+  }
+
+  const pageNumbersNeedingOcr = Array.from(needsOcrByPage.entries())
+    .filter(([, needsOcr]) => needsOcr)
+    .map(([pageNumber]) => pageNumber)
+    .sort((left, right) => left - right);
 
   const ocrPageCount = pageNumbersNeedingOcr.length;
-  const nativePageCount = pages.length - ocrPageCount;
+  const nativePageCount = needsOcrByPage.size - ocrPageCount;
 
   const kind: OcrRoutingKind =
     ocrPageCount === 0 ? "native" : nativePageCount === 0 ? "scanned" : "mixed";
