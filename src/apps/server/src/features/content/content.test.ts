@@ -33,10 +33,9 @@ import {
   workSources
 } from "../../db/schema.js";
 import { writeReadingUnits } from "./blockWriter.js";
-import { loadWorkContent } from "./contentQueries.js";
+import { loadWorkContent, loadWorkStructure } from "./contentQueries.js";
 import { createImageResourceStore } from "../../files/imageResourceStore.js";
 import { createSourceFileStore, hashBytes, hashMarkdown } from "../../files/sourceFileStore.js";
-import { PdfToolchainMissingError } from "../../files/pdfToolchain.js";
 import type { ParsedEpub, ParsedEpubImage } from "../../files/epubSource.js";
 import { createServer } from "../../http/createServer.js";
 import { createImportedMarkdownWork, type ContentDependencies } from "./contentCommands.js";
@@ -479,103 +478,21 @@ describe("content routes", () => {
     expect(onDisk).toBe(markdown);
   });
 
-  it("ingests a PDF to identical blocks as the equivalent Markdown upload (golden)", async () => {
-    const pdfMarkdown = "Intro.\n\n# Chapter One\n\n- a\n- b\n\n> quote";
-    pdfResponder = async () => pdfMarkdown;
-
-    const pdfWork = await createWork();
-    expect((await ingestPdf(pdfWork, Buffer.from("%PDF-1.7 bytes"))).statusCode).toBe(201);
-
-    const mdWork = await createWork();
-    await ingest(mdWork, { kind: "manual", markdown: pdfMarkdown });
-
-    const fromPdf = await getContent(pdfWork);
-    const fromMd = await getContent(mdWork);
-    const plaintexts = (content: WorkContentDto): string[] =>
-      content.readingUnits.flatMap((unit) => unit.blocks.map((block) => block.plaintext));
-    expect(plaintexts(fromPdf)).toEqual(plaintexts(fromMd));
-    expect(fromPdf.readingUnits.map((unit) => unit.title)).toEqual(
-      fromMd.readingUnits.map((unit) => unit.title)
-    );
-  });
-
-  it("retains the uploaded PDF source with a .pdf path and the PDF byte hash, not Markdown", async () => {
-    pdfResponder = async () => "Intro.\n\n# Chapter\n\n- a";
+  it("deactivates the legacy PDF content route, reporting OCR support is not available yet (#702)", async () => {
+    // The Docling-to-Markdown lane is retired: born-digital PDFs create their own Work through the
+    // structured /api/pdf-imports lane, and scanned/mixed PDFs have no lane until language-aware OCR
+    // lands (#704). This route never persists mdast content again; it reports the sequenced limitation
+    // and writes nothing.
     const workEntryId = await createWork();
-    const pdfBytes = Buffer.from("%PDF-1.7 original bytes");
-
-    expect((await ingestPdf(workEntryId, pdfBytes)).statusCode).toBe(201);
-
-    const sources = await context.db
-      .select()
-      .from(workSources)
-      .where(eq(workSources.workEntryId, workEntryId));
-    const source = sources[0];
-    expect(source?.kind).toBe("upload");
-    expect(source?.fileName).toBe("upload.pdf");
-    expect(source?.filePath?.endsWith(".pdf")).toBe(true);
-    expect(source?.sourceText).toBeNull();
-    // Provenance hashes the original PDF payload, not the converted Markdown.
-    expect(source?.sha256).toBe(hashBytes(new Uint8Array(pdfBytes)));
-    expect(source?.sha256).not.toBe(hashMarkdown("Intro.\n\n# Chapter\n\n- a"));
-  });
-
-  it("re-uploading an equivalent PDF is a no-op that leaves one source and no orphan file", async () => {
-    pdfResponder = async () => "Intro.\n\n# Chapter\n\n- a";
-    const workEntryId = await createWork();
-
-    expect((await ingestPdf(workEntryId, Buffer.from("%PDF first"))).statusCode).toBe(201);
-    // A different PDF payload converting to the same Markdown re-ingests to identical blocks: a no-op.
-    expect((await ingestPdf(workEntryId, Buffer.from("%PDF second"))).statusCode).toBe(201);
-
-    const sources = await context.db
-      .select()
-      .from(workSources)
-      .where(eq(workSources.workEntryId, workEntryId));
-    expect(sources).toHaveLength(1);
-    expect(
-      (await readdir(context.sourcesDir)).filter((name) => name.endsWith(".pdf"))
-    ).toHaveLength(1);
-  });
-
-  it("returns 422 when the PDF worker fails to convert", async () => {
-    pdfResponder = async () => Promise.reject(new Error("docling absent"));
-    const workEntryId = await createWork();
-
-    const response = await ingestPdf(workEntryId, Buffer.from("%PDF"));
-    expect(response.statusCode).toBe(422);
-    expect(response.json()).toEqual({ error: "invalid_pdf" });
-  });
-
-  it("returns 503 pdf_toolchain_missing when the PDF toolchain is not installed (#510)", async () => {
-    // A missing toolchain is a provisioning gap, not a bad file: it must be distinguishable from
-    // invalid_pdf so the client can point at `pnpm setup:pdf`.
-    pdfResponder = async () =>
-      Promise.reject(new PdfToolchainMissingError("Run `pnpm setup:pdf`."));
-    const workEntryId = await createWork();
-
-    const response = await ingestPdf(workEntryId, Buffer.from("%PDF-1.6 valid"));
+    const response = await ingestPdf(workEntryId, Buffer.from("%PDF-1.7 born-digital"));
     expect(response.statusCode).toBe(503);
-    expect(response.json()).toEqual({ error: "pdf_toolchain_missing" });
-    // A capability gap must not orphan a source file for an otherwise-valid PDF.
-    expect((await readdir(context.sourcesDir)).filter((name) => name.endsWith(".pdf"))).toEqual([]);
-  });
+    expect(response.json()).toEqual({ error: "ocr_support_unavailable" });
 
-  it("rejects an empty PDF body with 400", async () => {
-    const workEntryId = await createWork();
-    expect((await ingestPdf(workEntryId, Buffer.alloc(0))).statusCode).toBe(400);
-  });
-
-  it("returns 422 for a PDF whose Markdown has no readable blocks", async () => {
-    pdfResponder = async () => "![only image](x.png)";
-    const workEntryId = await createWork();
-    expect((await ingestPdf(workEntryId, Buffer.from("%PDF"))).statusCode).toBe(422);
-    // No work_sources row would exist, so no PDF file may be orphaned on disk.
-    expect((await readdir(context.sourcesDir)).filter((name) => name.endsWith(".pdf"))).toEqual([]);
-  });
-
-  it("returns 404 ingesting a PDF into a missing work", async () => {
-    expect((await ingestPdf("missing-work", Buffer.from("%PDF"))).statusCode).toBe(404);
+    const sources = await context.db
+      .select()
+      .from(workSources)
+      .where(eq(workSources.workEntryId, workEntryId));
+    expect(sources).toHaveLength(0);
     expect((await readdir(context.sourcesDir)).filter((name) => name.endsWith(".pdf"))).toEqual([]);
   });
 
@@ -826,10 +743,13 @@ describe("EPUB ingestion routes", () => {
   });
 
   it("persists an unknown-only chapter's PM node in doc_blocks while keeping it out of the mdast reader", async () => {
+    // Each chapter carries its spine href (`ParsedEpubChapter.sourceFile`), as a real EPUB always does,
+    // so the unknown-only chapter is excluded by the per-unit `source_file` gate — an EPUB spine item is
+    // an mdast chapter and never falls back to `doc_blocks`, unlike a null-`source_file` PDF unit.
     epubResponder = async () => ({
       chapters: [
-        { html: "<canvas></canvas>", images: [] },
-        { html: "<h1>Real</h1><p>Body.</p>", images: [] }
+        { html: "<canvas></canvas>", images: [], sourceFile: "chapter-1.xhtml" },
+        { html: "<h1>Real</h1><p>Body.</p>", images: [], sourceFile: "chapter-2.xhtml" }
       ],
       metadata: { author: "Anon", language: "en", title: "Mixed" }
     });
@@ -868,10 +788,12 @@ describe("EPUB ingestion routes", () => {
   });
 
   it("persists every chapter's unknown PM node when all chapters lack supported blocks (no 500)", async () => {
+    // Both chapters carry their spine href, as a real EPUB always does, so each unknown-only chapter is
+    // excluded by the per-unit `source_file` gate while its `unknown` PM node is still persisted (#311).
     epubResponder = async () => ({
       chapters: [
-        { html: "<canvas></canvas>", images: [] },
-        { html: "<canvas></canvas>", images: [] }
+        { html: "<canvas></canvas>", images: [], sourceFile: "chapter-1.xhtml" },
+        { html: "<canvas></canvas>", images: [], sourceFile: "chapter-2.xhtml" }
       ],
       metadata: { author: "Anon", language: "en", title: "All empty" }
     });
@@ -973,6 +895,98 @@ describe("EPUB ingestion routes", () => {
     // on a shared machine, so it carries a generous wall-clock timeout rather than the default.
   }, 120000);
 
+  it("excludes an EPUB spine unit that has no mdast content from the work structure (#702)", async () => {
+    // A non-null-`source_file` unit (an EPUB spine item) with no mdast blocks is an unknown-only or
+    // unstorable-figure-only chapter; the `doc_blocks` fallback is gated to null-`source_file` units, so it
+    // must not surface. A sibling unit with real mdast still does, proving the gate is per-unit.
+    const workEntryId = "epub-structure-work";
+    const readableUnit = "epub-readable-unit";
+    const ghostUnit = "epub-ghost-unit";
+    const readableBlock = "epub-readable-block";
+
+    await context.db.insert(entries).values([
+      { id: workEntryId, type: "work" },
+      { id: readableUnit, type: "reading_unit" },
+      { id: ghostUnit, type: "reading_unit" },
+      { id: readableBlock, type: "block" }
+    ]);
+    await context.db.insert(readingUnits).values([
+      {
+        entryId: readableUnit,
+        orderIndex: 0,
+        sourceFile: "chapter-1.xhtml",
+        title: "Chapter One",
+        workEntryId
+      },
+      {
+        entryId: ghostUnit,
+        orderIndex: 1,
+        sourceFile: "chapter-2.xhtml",
+        title: "Ghost Chapter",
+        workEntryId
+      }
+    ]);
+    await context.db.insert(blocks).values({
+      blockType: "paragraph",
+      entryId: readableBlock,
+      mdastJson: { children: [{ type: "text", value: "Readable body." }], type: "paragraph" },
+      orderIndex: 0,
+      plaintext: "Readable body.",
+      readingUnitEntryId: readableUnit,
+      workEntryId
+    });
+
+    const structure = await loadWorkStructure(context.db, toEntryId(workEntryId));
+
+    expect(structure.readingUnits.map((unit) => unit.entryId)).toEqual([readableUnit]);
+  });
+
+  it("surfaces a null-source_file unit built only of unknown doc blocks through the reader (#702)", async () => {
+    // A canonical PDF import (null `source_file`, content only in `doc_blocks`) whose page maps entirely
+    // to `unknown` nodes must still surface — the reader renders those `unknown` nodes inertly so an
+    // unmapped construct fails visibly rather than being dropped. Contrast the EPUB test above: an
+    // unknown-only spine item (non-null `source_file`) stays excluded.
+    const workEntryId = "pdf-unknown-only-work";
+    const unitEntryId = "pdf-unknown-only-unit";
+    const blockEntryId = "pdf-unknown-only-block";
+    const unknownNode = {
+      attrs: { html: "<chart/>", id: blockEntryId, tag: "chart" },
+      type: "unknown"
+    };
+
+    await context.db.insert(entries).values([
+      { id: workEntryId, type: "work" },
+      { id: unitEntryId, type: "reading_unit" },
+      { id: blockEntryId, type: "block" }
+    ]);
+    await context.db
+      .insert(readingUnits)
+      .values({ entryId: unitEntryId, orderIndex: 0, sourceFile: null, title: null, workEntryId });
+    await context.db.insert(docBlocks).values({
+      id: blockEntryId,
+      nodeJson: unknownNode,
+      orderIndex: 0,
+      plaintext: "",
+      readingUnitEntryId: unitEntryId,
+      type: "unknown",
+      workEntryId
+    });
+
+    // Content: the unit surfaces with its single unknown doc block intact (id preserved, markup verbatim).
+    const content = await loadWorkContent(context.db, toEntryId(workEntryId));
+    expect(content.readingUnits.map((unit) => unit.entryId)).toEqual([unitEntryId]);
+    const served = content.readingUnits[0]?.docBlocks ?? [];
+    expect(served.map((block) => block.type)).toEqual(["unknown"]);
+    expect(served[0]?.entryId).toBe(blockEntryId);
+    expect(String((served[0]?.node as PmNode).attrs?.["html"])).toContain("<chart");
+
+    // Structure: the unknown-only unit is counted and listed, not filtered out.
+    const structure = await loadWorkStructure(context.db, toEntryId(workEntryId));
+    expect(structure.readingUnits.map((unit) => unit.entryId)).toEqual([unitEntryId]);
+    expect(structure.readingUnits[0]?.blockCount).toBe(1);
+    expect(structure.readingUnits[0]?.hasSubstantiveText).toBe(false);
+  });
+
   it("round-trips a figure block's image, alt, and caption through the content query", async () => {
     const workEntryId = "fig-work";
     const unitEntryId = "fig-unit";
@@ -1036,7 +1050,7 @@ describe("EPUB ingestion routes", () => {
 
   function figureChapter(html: string, images: ReadonlyArray<ParsedEpubImage>): ParsedEpub {
     return {
-      chapters: [{ html, images }],
+      chapters: [{ html, images, sourceFile: "index.xhtml" }],
       metadata: { author: "Anon", language: "en", title: "Figures" }
     };
   }
@@ -2282,21 +2296,6 @@ describe("heading-derived table of contents (#680)", () => {
     expect(structure.readingUnits.map((unit) => unit.headingLevel)).toEqual([undefined]);
   });
 
-  it("derives the outline for a PDF-converted work through the same Markdown pipeline", async () => {
-    pdfResponder = async () => "# Chapter One\n\n## Section A\n\n# Chapter Two";
-    const workEntryId = await createWork();
-    const response = await ingestPdf(workEntryId, Buffer.from("pdf-bytes"));
-    expect(response.statusCode).toBe(201);
-
-    const toc = (await getStructure(workEntryId)).tableOfContents ?? [];
-
-    expect(toc.map((entry) => [entry.label, entry.depth])).toEqual([
-      ["Chapter One", 0],
-      ["Section A", 1],
-      ["Chapter Two", 0]
-    ]);
-  });
-
   it("recomputes the outline on re-ingestion and never persists toc_entries rows", async () => {
     const workEntryId = await createWork();
     await ingest(workEntryId, { kind: "manual", markdown: "# Old One\n\n## Old Section" });
@@ -2398,32 +2397,5 @@ describe("manual-origin Work rejects legacy content ingestion (#720)", () => {
 
     expect(response.statusCode).toBe(409);
     expect(response.json()).toEqual({ error: "manual_work_unsupported" });
-  });
-
-  it("refuses PDF ingestion into a manual Work with 409", async () => {
-    const workEntryId = await createManualWork();
-
-    const response = await ingestPdf(workEntryId, Buffer.from("%PDF-1.7 curated"));
-
-    expect(response.statusCode).toBe(409);
-    expect(response.json()).toEqual({ error: "manual_work_unsupported" });
-  });
-
-  it("refuses a manual Work PDF before conversion, independent of the PDF toolchain (#720)", async () => {
-    // The manual-origin rejection is a server-boundary decision that must not depend on the optional
-    // PDF toolchain: even when conversion would fail with PdfToolchainMissingError, a manual Work must
-    // still get the deterministic manual_work_unsupported/409, and the converter must never run.
-    let converterCalls = 0;
-    pdfResponder = async () => {
-      converterCalls += 1;
-      return Promise.reject(new PdfToolchainMissingError("Run `pnpm setup:pdf`."));
-    };
-    const workEntryId = await createManualWork();
-
-    const response = await ingestPdf(workEntryId, Buffer.from("%PDF-1.7 curated"));
-
-    expect(response.statusCode).toBe(409);
-    expect(response.json()).toEqual({ error: "manual_work_unsupported" });
-    expect(converterCalls).toBe(0);
   });
 });

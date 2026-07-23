@@ -1,8 +1,7 @@
 import {
   epubContentType,
   importMarkdownWorkRequestSchema,
-  ingestMarkdownRequestSchema,
-  pdfContentType
+  ingestMarkdownRequestSchema
 } from "@whetstone/contracts";
 import { toEntryId } from "@whetstone/domain";
 import type { FastifyInstance } from "fastify";
@@ -10,7 +9,6 @@ import type { FastifyInstance } from "fastify";
 import {
   createImportedMarkdownWork,
   ingestMarkdown,
-  ingestPdf,
   type ContentDependencies
 } from "./contentCommands.js";
 import { ingestEpub } from "./epubCommands.js";
@@ -24,11 +22,11 @@ import {
 
 const invalidRequestBody = { error: "invalid_request" } as const;
 const invalidEpubBody = { error: "invalid_epub" } as const;
-const invalidPdfBody = { error: "invalid_pdf" } as const;
-// The PDF toolchain (Python/Docling/OCRmyPDF) is not provisioned on this host — a capability gap,
-// not a bad file. 503 (Service Unavailable) + a distinct body so the client points at `pnpm
-// setup:pdf` instead of blaming the PDF (#510).
-const pdfToolchainMissingBody = { error: "pdf_toolchain_missing" } as const;
+// The born-digital PDF lane (#702) is authoritative and the legacy Docling-to-Markdown route is
+// deactivated; scanned/mixed PDFs (and any legacy content/pdf caller) get this sequenced limitation until
+// language-aware OCR lands (#704). 503 (Service Unavailable) + a distinct body so the client can show the
+// "OCR support is not available yet" copy rather than a generic failure.
+const ocrSupportUnavailableBody = { error: "ocr_support_unavailable" } as const;
 const workNotFoundBody = { error: "work_not_found" } as const;
 const emptyContentBody = { error: "empty_content" } as const;
 const authorNotFoundBody = { error: "author_not_found" } as const;
@@ -47,10 +45,6 @@ export function registerContentRoutes(
   dependencies: ContentDependencies
 ): void {
   server.addContentTypeParser(epubContentType, { parseAs: "buffer" }, (_request, body, done) =>
-    done(null, body)
-  );
-
-  server.addContentTypeParser(pdfContentType, { parseAs: "buffer" }, (_request, body, done) =>
     done(null, body)
   );
 
@@ -156,52 +150,16 @@ export function registerContentRoutes(
     return reply.code(201).send(result.content);
   });
 
-  // PDF upload: the doc-AI worker converts the PDF to Markdown, which is ingested through the same
-  // pipeline as a .md upload (#15) — so a born-digital PDF and the equivalent .md decompose alike.
+  // PDF upload into an existing Work is DEACTIVATED (#702): born-digital PDFs now create their own Work
+  // through the structured `/api/pdf-imports` lane (canonical blocks, no Markdown), and scanned/mixed PDFs
+  // have no lane until language-aware OCR lands (#704). This route no longer runs the legacy
+  // Docling-to-Markdown persistence; it reports the sequenced limitation explicitly rather than silently
+  // persisting incomplete or mdast content. `ingestPdf` and its pipeline stay as now-unreachable code
+  // until #705 deletes the obsolete lane.
   server.post<{ Params: WorkParams }>(
     "/api/works/:workEntryId/content/pdf",
     { bodyLimit: dependencies.epubUploadLimitBytes },
-    async (request, reply) => {
-      const body = request.body;
-
-      if (!Buffer.isBuffer(body) || body.length === 0) {
-        return reply.code(400).send(invalidRequestBody);
-      }
-
-      const workEntryId = toEntryId(request.params.workEntryId);
-      const result = await ingestPdf(dependencies, workEntryId, "upload.pdf", new Uint8Array(body));
-
-      if (result.status === "work_not_found") {
-        return reply.code(404).send(workNotFoundBody);
-      }
-
-      if (result.status === "manual_work_unsupported") {
-        return reply.code(409).send(manualWorkUnsupportedBody);
-      }
-
-      if (result.status === "invalid_pdf") {
-        return reply.code(422).send(invalidPdfBody);
-      }
-
-      if (result.status === "pdf_toolchain_missing") {
-        return reply.code(503).send(pdfToolchainMissingBody);
-      }
-
-      if (result.status === "empty_content") {
-        return reply.code(422).send(emptyContentBody);
-      }
-
-      request.log.info(
-        {
-          readingUnitCount: result.content.readingUnits.length,
-          route: "POST /api/works/:workEntryId/content/pdf",
-          workEntryId
-        },
-        "work_pdf_ingested"
-      );
-
-      return reply.code(201).send(result.content);
-    }
+    async (_request, reply) => reply.code(503).send(ocrSupportUnavailableBody)
   );
   server.get<{ Params: WorkParams }>(
     "/api/works/:workEntryId/structure",

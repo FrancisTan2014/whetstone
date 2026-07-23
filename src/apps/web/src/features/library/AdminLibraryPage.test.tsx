@@ -23,12 +23,13 @@ vi.mock("./libraryApi", () => ({
 
 // The real create-or-select combobox is exercised in AuthorSelectField.test.tsx; here we stub it to a
 // minimal control that drives `onSelectionChange` directly, so page-level tests assert the form's own
-// behavior (validation, submit payload, reset, sheet lifecycle) without the debounced search/listbox.
+// behavior (validation, submit payload, reset, sheet lifecycle) without the debounced search/listbox. It
+// reports the resolved display name as the second argument, mirroring the real field (#702).
 vi.mock("./AuthorSelectField", () => ({
   AuthorSelectField: ({
     onSelectionChange
   }: {
-    onSelectionChange: (selection: WorkAuthorSelection | undefined) => void;
+    onSelectionChange: (selection: WorkAuthorSelection | undefined, name?: string) => void;
   }) => (
     <label>
       New author or source name
@@ -36,12 +37,18 @@ vi.mock("./AuthorSelectField", () => ({
         aria-label="New author or source name"
         onChange={(event) => {
           const value = (event.target as HTMLInputElement).value;
-          onSelectionChange(value === "" ? undefined : { mode: "new", name: value });
+          onSelectionChange(
+            value === "" ? undefined : { mode: "new", name: value },
+            value === "" ? undefined : value
+          );
         }}
       />
       <button
         onClick={() =>
-          onSelectionChange({ authorId: "author-2", mode: "existing" } as WorkAuthorSelection)
+          onSelectionChange(
+            { authorId: "author-2", mode: "existing" } as WorkAuthorSelection,
+            "Charles Dickens"
+          )
         }
         type="button"
       >
@@ -51,8 +58,17 @@ vi.mock("./AuthorSelectField", () => ({
   )
 }));
 
-vi.mock("../content/contentApi", () => ({
-  ingestPdf: vi.fn()
+vi.mock("../pdfImport/pdfImportApi", () => ({
+  beginPdfImport: vi.fn(),
+  cancelPdfImport: vi.fn(),
+  fetchPdfImportView: vi.fn(),
+  retryPdfImport: vi.fn()
+}));
+
+vi.mock("../pdfImport/pdfImportSession", () => ({
+  forgetActivePdfImport: vi.fn(),
+  readActivePdfImport: vi.fn(() => null),
+  rememberActivePdfImport: vi.fn()
 }));
 
 vi.mock("../recitation/recitationApi", () => ({
@@ -76,7 +92,17 @@ import {
   ingestEpub,
   searchAuthors
 } from "./libraryApi";
-import { ingestPdf } from "../content/contentApi";
+import {
+  beginPdfImport,
+  cancelPdfImport,
+  fetchPdfImportView,
+  retryPdfImport
+} from "../pdfImport/pdfImportApi";
+import {
+  forgetActivePdfImport,
+  readActivePdfImport,
+  rememberActivePdfImport
+} from "../pdfImport/pdfImportSession";
 import { enrollRecitation, listRecitationPlans } from "../recitation/recitationApi";
 import { AdminLibraryPage } from "./AdminLibraryPage";
 import { ToastProvider } from "../../shared/ui/toast/ToastProvider";
@@ -84,6 +110,8 @@ import { ToastViewport } from "../../shared/ui/toast/ToastViewport";
 import { MemoryRouter } from "react-router-dom";
 import type {
   AuthorDto,
+  PdfImportStatusDto,
+  PdfImportViewDto,
   RecitationPlanDto,
   WorkAuthorSelection,
   WorkListItemDto
@@ -115,7 +143,13 @@ const mockedCreateWork = vi.mocked(createWork);
 const mockedDeleteWork = vi.mocked(deleteWork);
 const mockedIngestEpub = vi.mocked(ingestEpub);
 const mockedImportMarkdownWork = vi.mocked(importMarkdownWork);
-const mockedIngestPdf = vi.mocked(ingestPdf);
+const mockedBeginPdfImport = vi.mocked(beginPdfImport);
+const mockedCancelPdfImport = vi.mocked(cancelPdfImport);
+const mockedFetchPdfImportView = vi.mocked(fetchPdfImportView);
+const mockedRetryPdfImport = vi.mocked(retryPdfImport);
+const mockedRememberActivePdfImport = vi.mocked(rememberActivePdfImport);
+const mockedForgetActivePdfImport = vi.mocked(forgetActivePdfImport);
+const mockedReadActivePdfImport = vi.mocked(readActivePdfImport);
 const mockedListRecitationPlans = vi.mocked(listRecitationPlans);
 const mockedEnrollRecitation = vi.mocked(enrollRecitation);
 
@@ -204,6 +238,8 @@ beforeEach(() => {
   mockedFetchWorks.mockResolvedValue({ works: [] });
   mockedFetchWorksWithReadingPosition.mockResolvedValue(new Set());
   mockedListRecitationPlans.mockResolvedValue({ plans: [] });
+  // No in-flight PDF import to resume by default; individual reopen tests override this.
+  mockedReadActivePdfImport.mockReturnValue(null);
 });
 
 afterEach(() => {
@@ -798,13 +834,44 @@ describe("AdminLibraryPage", () => {
     expect(mockedCreateWork).not.toHaveBeenCalled();
   });
 
-  it("prefills from a PDF filename, then creates, ingests, and opens Manage content", async () => {
+  // A #721 execution status; overrides tailor the specific branch. `sourceHash` must be 64 hex chars.
+  function pdfStatus(overrides: Partial<PdfImportStatusDto> = {}): PdfImportStatusDto {
+    return {
+      adapterFingerprint: null,
+      attemptId: "attempt-1",
+      completedPages: 0,
+      completedRanges: 0,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      failure: null,
+      heartbeatAt: null,
+      sourceHash: "a".repeat(64),
+      stage: { bound: true },
+      state: "queued",
+      totalPages: null,
+      totalRanges: null,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      ...overrides
+    };
+  }
+
+  function pdfView(
+    publication: PdfImportViewDto["publication"],
+    statusOverrides: Partial<PdfImportStatusDto> = {}
+  ): PdfImportViewDto {
+    return { publication, status: pdfStatus(statusOverrides) };
+  }
+
+  it("imports a born-digital PDF: forwards the entered metadata, then opens the published Work in the Reader (#702)", async () => {
     const onManageContent = vi.fn();
-    mockedCreateWork.mockResolvedValue(essayWorkItem);
-    mockedIngestPdf.mockResolvedValue({
-      content: { readingUnits: [], workEntryId: essayWorkItem.work.entryId },
-      status: "ingested"
+    // No shell Work is created up front: the import mints its canonical Work atomically and publishes it.
+    mockedBeginPdfImport.mockResolvedValue({
+      attemptId: "attempt-1",
+      outcome: "queued",
+      status: pdfStatus()
     });
+    mockedFetchPdfImportView.mockResolvedValue(
+      pdfView({ status: "published", workEntryId: "work-1" })
+    );
     mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
     const user = await renderReady(onManageContent);
 
@@ -817,70 +884,78 @@ describe("AdminLibraryPage", () => {
     await user.type(screen.getByLabelText("New author or source name"), "Nobody");
     await user.click(screen.getByRole("button", { name: "Create work" }));
 
+    // The learner's upload-time intent (title/author/language + provenance file name) rides with the bytes.
     await waitFor(() => {
-      expect(mockedCreateWork).toHaveBeenCalledWith({
-        author: { mode: "new", name: "Nobody" },
-        language: "en",
-        origin: "imported",
-        title: "Report",
-        workType: "book"
+      expect(mockedBeginPdfImport).toHaveBeenCalledWith(file, {
+        enteredAuthor: "Nobody",
+        enteredLanguage: "en",
+        enteredTitle: "Report",
+        fileName: "Report.pdf"
       });
     });
+    // No legacy shell-Work create for a born-digital PDF.
+    expect(mockedCreateWork).not.toHaveBeenCalled();
+    // The in-flight attempt is remembered so it survives navigation, then cleared on completion.
+    expect(mockedRememberActivePdfImport).toHaveBeenCalledWith("attempt-1");
     await waitFor(() => {
-      expect(mockedIngestPdf).toHaveBeenCalledWith("work-1", file);
+      expect(navigateSpy).toHaveBeenCalledWith("/reader?work=work-1");
     });
-    await waitFor(() => {
-      expect(onManageContent).toHaveBeenCalledWith("work-1");
-    });
-    expect(await screen.findByText("Imported “Report”.")).toBeDefined();
+    expect(mockedForgetActivePdfImport).toHaveBeenCalled();
+    expect(await screen.findByText("Your PDF is ready to read.")).toBeDefined();
+    // The Reader is the destination, not the Manage-content panel.
+    expect(onManageContent).not.toHaveBeenCalled();
   });
 
-  it("surfaces the invalid-PDF message but still opens the new Work for retry", async () => {
-    const onManageContent = vi.fn();
-    mockedCreateWork.mockResolvedValue(essayWorkItem);
-    mockedIngestPdf.mockResolvedValue({ status: "invalid_pdf" });
-    const user = await renderReady(onManageContent);
+  it("reopens the existing Work when identical PDF bytes are re-uploaded, with no new attempt (#706)", async () => {
+    mockedBeginPdfImport.mockResolvedValue({ outcome: "reopened", workEntryId: "work-1" });
+    mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
+    const user = await renderReady();
+
+    const file = new File([new Uint8Array([1])], "Report.pdf", { type: "application/pdf" });
+    await user.upload(screen.getByLabelText("Upload"), file);
+    await user.type(screen.getByLabelText("New author or source name"), "Nobody");
+    await user.click(screen.getByRole("button", { name: "Create work" }));
+
+    await waitFor(() => {
+      expect(navigateSpy).toHaveBeenCalledWith("/reader?work=work-1");
+    });
+    expect(
+      await screen.findByText("“Report” is already in your library — opening it.")
+    ).toBeDefined();
+    // A reopen never polls a new attempt.
+    expect(mockedFetchPdfImportView).not.toHaveBeenCalled();
+    expect(mockedRememberActivePdfImport).not.toHaveBeenCalled();
+  });
+
+  it("refuses a scanned/mixed PDF with the sequenced OCR-limitation message and publishes no Work (#702)", async () => {
+    mockedBeginPdfImport.mockResolvedValue({
+      attemptId: "attempt-1",
+      outcome: "queued",
+      status: pdfStatus()
+    });
+    mockedFetchPdfImportView.mockResolvedValue(
+      pdfView({ pagesNeedingOcr: 2, status: "ocr_required" })
+    );
+    const user = await renderReady();
 
     const file = new File([new Uint8Array([1])], "scan.pdf", { type: "application/pdf" });
     await user.upload(screen.getByLabelText("Upload"), file);
     await user.type(screen.getByLabelText("New author or source name"), "Nobody");
     await user.click(screen.getByRole("button", { name: "Create work" }));
 
-    expect(
-      await screen.findByText("We couldn’t read this PDF. Please try a different file.")
-    ).toBeDefined();
-    // The Work was created, so it must remain visible and retryable from Manage content.
-    await waitFor(() => {
-      expect(onManageContent).toHaveBeenCalledWith("work-1");
-    });
+    expect(await screen.findByText(/OCR support is not available yet\./)).toBeDefined();
+    // No Work is published, so the Reader is never opened.
+    expect(navigateSpy).not.toHaveBeenCalledWith(expect.stringContaining("/reader"));
+    expect(mockedForgetActivePdfImport).toHaveBeenCalled();
   });
 
-  it("surfaces a distinct setup message when the PDF toolchain is missing (not a bad file) (#510)", async () => {
-    const onManageContent = vi.fn();
-    mockedCreateWork.mockResolvedValue(essayWorkItem);
-    mockedIngestPdf.mockResolvedValue({ status: "pdf_toolchain_missing" });
-    const user = await renderReady(onManageContent);
-
-    const file = new File([new Uint8Array([1])], "valid.pdf", { type: "application/pdf" });
-    await user.upload(screen.getByLabelText("Upload"), file);
-    await user.type(screen.getByLabelText("New author or source name"), "Nobody");
-    await user.click(screen.getByRole("button", { name: "Create work" }));
-
-    const message = await screen.findByText(/PDF ingestion isn’t set up on the server yet/);
-    expect(message.textContent).toContain("pnpm setup:pdf");
-    // It must NOT read as an unreadable/corrupt file.
-    expect(
-      screen.queryByText("We couldn’t read this PDF. Please try a different file.")
-    ).toBeNull();
-    // The Work was created, so it stays retryable once the lane is provisioned.
-    await waitFor(() => {
-      expect(onManageContent).toHaveBeenCalledWith("work-1");
+  it("refuses a no-readable-content PDF with the empty-document message and publishes no Work (#702)", async () => {
+    mockedBeginPdfImport.mockResolvedValue({
+      attemptId: "attempt-1",
+      outcome: "queued",
+      status: pdfStatus()
     });
-  });
-
-  it("surfaces the empty-content message when a PDF has no readable text", async () => {
-    mockedCreateWork.mockResolvedValue(essayWorkItem);
-    mockedIngestPdf.mockResolvedValue({ status: "empty_content" });
+    mockedFetchPdfImportView.mockResolvedValue(pdfView({ status: "no_content" }));
     const user = await renderReady();
 
     const file = new File([new Uint8Array([1])], "blank.pdf", { type: "application/pdf" });
@@ -888,11 +963,53 @@ describe("AdminLibraryPage", () => {
     await user.type(screen.getByLabelText("New author or source name"), "Nobody");
     await user.click(screen.getByRole("button", { name: "Create work" }));
 
-    expect(
-      await screen.findByText(
-        "This document has no readable text to add. Images on their own aren’t supported yet."
+    expect(await screen.findByText(/no readable text content to import/)).toBeDefined();
+    // No Work is published, so the Reader is never opened.
+    expect(navigateSpy).not.toHaveBeenCalledWith(expect.stringContaining("/reader"));
+    expect(mockedForgetActivePdfImport).toHaveBeenCalled();
+  });
+
+  it("surfaces the adapter's named failure when the conversion fails (#702)", async () => {
+    mockedBeginPdfImport.mockResolvedValue({
+      attemptId: "attempt-1",
+      outcome: "queued",
+      status: pdfStatus()
+    });
+    mockedFetchPdfImportView.mockResolvedValue(
+      pdfView(
+        { status: "pending" },
+        {
+          failure: {
+            kind: "unreadable_source",
+            message: "The converter could not read this PDF.",
+            remedy: "Try exporting the PDF again."
+          },
+          state: "failed"
+        }
       )
-    ).toBeDefined();
+    );
+    const user = await renderReady();
+
+    const file = new File([new Uint8Array([1])], "broken.pdf", { type: "application/pdf" });
+    await user.upload(screen.getByLabelText("Upload"), file);
+    await user.type(screen.getByLabelText("New author or source name"), "Nobody");
+    await user.click(screen.getByRole("button", { name: "Create work" }));
+
+    expect(await screen.findByText("The converter could not read this PDF.")).toBeDefined();
+    expect(navigateSpy).not.toHaveBeenCalledWith(expect.stringContaining("/reader"));
+  });
+
+  it("surfaces a start failure when the import cannot be queued (#702)", async () => {
+    mockedBeginPdfImport.mockRejectedValue(new Error("network down"));
+    const user = await renderReady();
+
+    const file = new File([new Uint8Array([1])], "Report.pdf", { type: "application/pdf" });
+    await user.upload(screen.getByLabelText("Upload"), file);
+    await user.type(screen.getByLabelText("New author or source name"), "Nobody");
+    await user.click(screen.getByRole("button", { name: "Create work" }));
+
+    expect(await screen.findByText("Could not start the import. Please try again.")).toBeDefined();
+    expect(mockedForgetActivePdfImport).toHaveBeenCalled();
   });
 
   it("surfaces the Manage-content empty-content message when a Markdown upload has no readable text (#673)", async () => {
@@ -936,24 +1053,6 @@ describe("AdminLibraryPage", () => {
 
     expect(await screen.findByText("Could not ingest the file. Please try again.")).toBeDefined();
     expect(onManageContent).not.toHaveBeenCalled();
-  });
-
-  it("shows a generic error toast but still opens the new Work when the ingest throws", async () => {
-    const onManageContent = vi.fn();
-    mockedCreateWork.mockResolvedValue(essayWorkItem);
-    mockedIngestPdf.mockRejectedValue(new Error("boom"));
-    const user = await renderReady(onManageContent);
-
-    const file = new File([new Uint8Array([1])], "doc.pdf", { type: "application/pdf" });
-    await user.upload(screen.getByLabelText("Upload"), file);
-    await user.type(screen.getByLabelText("New author or source name"), "Nobody");
-    await user.click(screen.getByRole("button", { name: "Create work" }));
-
-    expect(await screen.findByText("Could not ingest the file. Please try again.")).toBeDefined();
-    // Even on an unexpected failure the created Work is surfaced for retry.
-    await waitFor(() => {
-      expect(onManageContent).toHaveBeenCalledWith("work-1");
-    });
   });
 
   it("rejects an unsupported file type with an error and ingests nothing", async () => {
@@ -1031,16 +1130,17 @@ describe("AdminLibraryPage", () => {
     });
   });
 
-  it("shows the PDF progress indicator while a held PDF ingests", async () => {
-    let resolveIngest: (value: Awaited<ReturnType<typeof ingestPdf>>) => void = () => {};
-    mockedCreateWork.mockResolvedValue(essayWorkItem);
-    mockedIngestPdf.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          resolveIngest = resolve;
-        })
+  it("shows the born-digital import progress and lets the learner cancel it (#702)", async () => {
+    mockedBeginPdfImport.mockResolvedValue({
+      attemptId: "attempt-1",
+      outcome: "queued",
+      status: pdfStatus()
+    });
+    // The view stays in-flight so the progress card and Cancel action remain visible for the assertion.
+    mockedFetchPdfImportView.mockResolvedValue(
+      pdfView({ status: "pending" }, { state: "running", totalPages: null })
     );
-    mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
+    mockedCancelPdfImport.mockResolvedValue(null);
     const user = await renderReady();
 
     const file = new File([new Uint8Array([1])], "Report.pdf", { type: "application/pdf" });
@@ -1048,15 +1148,109 @@ describe("AdminLibraryPage", () => {
     await user.type(screen.getByLabelText("New author or source name"), "Nobody");
     await user.click(screen.getByRole("button", { name: "Create work" }));
 
-    expect(await screen.findByText("Converting the PDF…")).toBeDefined();
+    // The poll's projected label appears, and the escape hatch is offered.
+    expect(await screen.findByText("Reading the PDF…")).toBeDefined();
+    const cancelButton = await screen.findByRole("button", { name: "Cancel" });
 
-    resolveIngest({
-      content: { readingUnits: [], workEntryId: essayWorkItem.work.entryId },
-      status: "ingested"
+    await user.click(cancelButton);
+
+    expect(mockedCancelPdfImport).toHaveBeenCalledWith("attempt-1");
+    expect(await screen.findByText("Import cancelled.")).toBeDefined();
+    await waitFor(() => {
+      expect(screen.queryByText("Reading the PDF…")).toBeNull();
+    });
+    expect(mockedForgetActivePdfImport).toHaveBeenCalled();
+  });
+
+  it("surfaces a failed cancel instead of success-shaped feedback (#702)", async () => {
+    mockedBeginPdfImport.mockResolvedValue({
+      attemptId: "attempt-1",
+      outcome: "queued",
+      status: pdfStatus()
+    });
+    // The view stays in-flight so the progress card and Cancel action remain visible for the assertion.
+    mockedFetchPdfImportView.mockResolvedValue(
+      pdfView({ status: "pending" }, { state: "running", totalPages: null })
+    );
+    // The cancel request fails: the server import may still be running, so the UI must not claim success.
+    mockedCancelPdfImport.mockRejectedValue(new Error("network"));
+    const user = await renderReady();
+
+    const file = new File([new Uint8Array([1])], "Report.pdf", { type: "application/pdf" });
+    await user.upload(screen.getByLabelText("Upload"), file);
+    await user.type(screen.getByLabelText("New author or source name"), "Nobody");
+    await user.click(screen.getByRole("button", { name: "Create work" }));
+
+    expect(await screen.findByText("Reading the PDF…")).toBeDefined();
+    const cancelButton = await screen.findByRole("button", { name: "Cancel" });
+
+    await user.click(cancelButton);
+
+    expect(mockedCancelPdfImport).toHaveBeenCalledWith("attempt-1");
+    expect(
+      await screen.findByText("Could not cancel the import. It may still be running.")
+    ).toBeDefined();
+    expect(screen.queryByText("Import cancelled.")).toBeNull();
+  });
+
+  it("drops the session without opening the Reader when the polled attempt is gone (#702)", async () => {
+    // A stale/removed attempt returns no view: polling reports `gone`, so the terminal handler just clears
+    // the local session (no Work to open, no error toast).
+    mockedBeginPdfImport.mockResolvedValue({
+      attemptId: "attempt-1",
+      outcome: "queued",
+      status: pdfStatus()
+    });
+    mockedFetchPdfImportView.mockResolvedValue(null);
+    const user = await renderReady();
+
+    const file = new File([new Uint8Array([1])], "Report.pdf", { type: "application/pdf" });
+    await user.upload(screen.getByLabelText("Upload"), file);
+    await user.type(screen.getByLabelText("New author or source name"), "Nobody");
+    await user.click(screen.getByRole("button", { name: "Create work" }));
+
+    await waitFor(() => {
+      expect(mockedForgetActivePdfImport).toHaveBeenCalled();
+    });
+    expect(navigateSpy).not.toHaveBeenCalledWith(expect.stringContaining("/reader"));
+    expect(screen.queryByText("Your PDF is ready to read.")).toBeNull();
+  });
+
+  it("resumes an import left in flight when the Library is reopened (#702)", async () => {
+    // A remembered attempt id (from a prior navigation) re-enters the poll loop on mount and completes.
+    mockedReadActivePdfImport.mockReturnValue("attempt-1");
+    mockedFetchPdfImportView.mockResolvedValue(
+      pdfView({ status: "published", workEntryId: "work-1" })
+    );
+    mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
+    await renderReady();
+
+    await waitFor(() => {
+      expect(navigateSpy).toHaveBeenCalledWith("/reader?work=work-1");
+    });
+    expect(mockedForgetActivePdfImport).toHaveBeenCalled();
+  });
+
+  it("re-queues an interrupted import on reopen so a crash-recovered import resumes (#702)", async () => {
+    // A server restart/crash mid-conversion leaves the attempt `interrupted`; startup recovery parks it
+    // there and the runner only advances `queued`. Reopening the Library must call the retry API to
+    // requeue it — otherwise it shows "Import paused — resuming…" forever. Pre-fix, retry is never called
+    // and the poll never reaches the published Work.
+    mockedReadActivePdfImport.mockReturnValue("attempt-1");
+    mockedFetchPdfImportView
+      .mockResolvedValueOnce(pdfView({ status: "pending" }, { state: "interrupted" }))
+      .mockResolvedValue(pdfView({ status: "published", workEntryId: "work-1" }));
+    mockedRetryPdfImport.mockResolvedValue(pdfView({ status: "pending" }, { state: "queued" }));
+    mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
+    await renderReady();
+
+    await waitFor(() => {
+      expect(mockedRetryPdfImport).toHaveBeenCalledWith("attempt-1");
     });
     await waitFor(() => {
-      expect(screen.queryByText("Converting the PDF…")).toBeNull();
+      expect(navigateSpy).toHaveBeenCalledWith("/reader?work=work-1");
     });
+    expect(mockedForgetActivePdfImport).toHaveBeenCalled();
   });
 
   it("renders cards without entrance offset when reduced motion is preferred", async () => {

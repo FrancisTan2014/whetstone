@@ -72,6 +72,13 @@ export type CreateImportedMarkdownWorkResult =
 // decompose to identical blocks. A conversion failure (no/garbled PDF) is invalid_pdf, not a crash;
 // a MISSING toolchain (no Python/Docling/OCRmyPDF on the host) is reported distinctly as
 // pdf_toolchain_missing so the app can point at `pnpm setup:pdf` instead of blaming the file (#510).
+//
+// Coverage: this function and its pipeline are now-unreachable dead code. The
+// `POST /api/works/:workEntryId/content/pdf` route was deactivated to a 503 (#702) and no longer
+// wires ingestPdf; born-digital PDFs mint their own Work through the structured `/api/pdf-imports`
+// lane. It is retained only until #705 deletes the obsolete lane, so it is excluded from coverage
+// rather than tested as reachable behavior.
+/* v8 ignore start */
 export async function ingestPdf(
   dependencies: ContentDependencies,
   workEntryId: EntryId,
@@ -124,6 +131,7 @@ export async function ingestPdf(
     buildPdfProvenance
   );
 }
+/* v8 ignore stop */
 
 type Provenance = Readonly<{
   fileName: string | null;
@@ -180,6 +188,11 @@ export async function ingestMarkdown(
   }
 
   const sourceId = sourceIdOverride ?? dependencies.createSourceId();
+  // `buildProvenanceOverride` is supplied only by the now-dead ingestPdf path (the PDF→Markdown route
+  // was deactivated to a 503 in #702) and is retained until #705 deletes the obsolete lane. Its
+  // override arm is unreachable in production, so it is excluded from coverage while the live default
+  // provenance path below stays counted.
+  /* v8 ignore next 3 */
   const provenance =
     buildProvenanceOverride !== undefined
       ? await buildProvenanceOverride()

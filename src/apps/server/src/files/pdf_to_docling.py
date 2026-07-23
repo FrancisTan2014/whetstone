@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import json
 import sys
-from typing import Any, Callable, Optional, Sequence
+from typing import Any, Callable, Mapping, Optional, Sequence
 
 # Exit codes — kept in LOCKSTEP with WORKER_EXIT_* in pdfStructuredErrors.ts. Changing one side
 # requires changing the other; the Node adapter maps each to a named PdfStructuredFailure.
@@ -181,17 +181,21 @@ def _prov(item: Any) -> Any:
     return prov[0]
 
 
-def _bounding_box(prov: Any) -> dict[str, float]:
-    """Project a docling ProvenanceItem bbox to the contract's left/top/right/bottom floats."""
-    if prov is None:
+def _bounding_box_from(bbox: Any) -> dict[str, float]:
+    """Project a docling BoundingBox (or None) to the contract's left/top/right/bottom floats."""
+    if bbox is None:
         return {"left": 0.0, "top": 0.0, "right": 0.0, "bottom": 0.0}
-    bbox = prov.bbox
     return {
         "left": float(bbox.l),
         "top": float(bbox.t),
         "right": float(bbox.r),
         "bottom": float(bbox.b),
     }
+
+
+def _bounding_box(prov: Any) -> dict[str, float]:
+    """Project a docling ProvenanceItem bbox to the contract's left/top/right/bottom floats."""
+    return _bounding_box_from(prov.bbox if prov is not None else None)
 
 
 def _char_span(prov: Any) -> list[int]:
@@ -225,6 +229,75 @@ def _confidence(item: Any, page_confidences: dict[int, float], page_number: int)
     return 0.0 if value < 0.0 else 1.0 if value > 1.0 else value
 
 
+def _table_cell_label(cell: Any) -> str:
+    """Name a docling TableCell as the contract cell label the canonical mapper understands.
+
+    A header cell (column or row header) becomes ``column_header`` / ``row_header`` so the mapper
+    renders a ``tableHeader``; every other cell becomes a plain ``table_cell``.
+    """
+    if bool(getattr(cell, "column_header", False)):
+        return "column_header"
+    if bool(getattr(cell, "row_header", False)):
+        return "row_header"
+    return "table_cell"
+
+
+def _table_cell_item(
+    cell: Any, page_number: int, page_confidences: dict[int, float]
+) -> dict[str, Any]:
+    """Project one docling TableCell into a contract cell item under a ``table_row``."""
+    return {
+        "label": _table_cell_label(cell),
+        "pageNumber": page_number,
+        "boundingBox": _bounding_box_from(getattr(cell, "bbox", None)),
+        "charSpan": [0, 0],
+        "confidence": _confidence(cell, page_confidences, page_number),
+        "text": str(getattr(cell, "text", "") or ""),
+        "children": [],
+    }
+
+
+def _table_rows(
+    item: Any, page_number: int, page_confidences: dict[int, float]
+) -> Optional[list[dict[str, Any]]]:
+    """Project a docling TableItem's ``data.table_cells`` grid into ordered ``table_row`` items.
+
+    A docling ``TableItem`` carries NO ``children``; its cells live in ``data.table_cells`` keyed by
+    grid offset. Group them by row (``start_row_offset_idx``), order each row by column
+    (``start_col_offset_idx``), and emit the ``table_row`` -> cell contract shape the canonical mapper
+    already turns into a PM ``table`` block. Returns ``None`` for any item that is not a populated
+    table (no ``data.table_cells``) so ``map_item`` maps ``children`` the normal way instead.
+    """
+    data = getattr(item, "data", None)
+    cells = getattr(data, "table_cells", None) if data is not None else None
+    if not cells:
+        return None
+    by_row: dict[int, list[Any]] = {}
+    for cell in cells:
+        row_index = int(getattr(cell, "start_row_offset_idx", 0) or 0)
+        by_row.setdefault(row_index, []).append(cell)
+    rows: list[dict[str, Any]] = []
+    for row_index in sorted(by_row):
+        ordered = sorted(
+            by_row[row_index],
+            key=lambda cell: int(getattr(cell, "start_col_offset_idx", 0) or 0),
+        )
+        rows.append(
+            {
+                "label": "table_row",
+                "pageNumber": page_number,
+                "boundingBox": _bounding_box_from(None),
+                "charSpan": [0, 0],
+                "confidence": _confidence(item, page_confidences, page_number),
+                "text": "",
+                "children": [
+                    _table_cell_item(cell, page_number, page_confidences) for cell in ordered
+                ],
+            }
+        )
+    return rows
+
+
 def map_item(
     item: Any,
     doc: Any,
@@ -237,10 +310,21 @@ def map_item(
     Layout order, labels, tables, and figures are fallible evidence: the raw docling ``label`` is kept
     verbatim (never narrowed to an enum), and low-confidence/unknown items are preserved with their
     geometry and provenance — nothing is silently dropped. Children are mapped recursively in order.
+    A docling ``TableItem`` is special: it carries no ``children``, so its ``data.table_cells`` grid is
+    projected into ordered ``table_row`` -> cell items (see ``_table_rows``) that the canonical mapper
+    turns into a PM ``table`` block.
     """
     prov = _prov(item)
     page_number = _page_number(prov, inherited_page)
-    children_refs = getattr(item, "children", None) or []
+    table_rows = _table_rows(item, page_number, page_confidences)
+    if table_rows is not None:
+        children = table_rows
+    else:
+        children_refs = getattr(item, "children", None) or []
+        children = [
+            map_item(resolve(ref, doc), doc, resolve, page_confidences, page_number)
+            for ref in children_refs
+        ]
     return {
         "label": str(getattr(item, "label", "unknown")),
         "pageNumber": page_number,
@@ -248,10 +332,7 @@ def map_item(
         "charSpan": _char_span(prov),
         "confidence": _confidence(item, page_confidences, page_number),
         "text": str(getattr(item, "text", "") or ""),
-        "children": [
-            map_item(resolve(ref, doc), doc, resolve, page_confidences, page_number)
-            for ref in children_refs
-        ],
+        "children": children,
     }
 
 
@@ -292,17 +373,59 @@ def page_confidence_map(doc: Any) -> dict[int, float]:
     return confidences
 
 
+def clean_metadata_value(value: Any) -> Optional[str]:
+    """Clean one raw PDF info-dictionary value: trim surrounding whitespace, and treat an empty (or
+    non-string) value as absent (``None``) so a blank Title/Author never wins the resolution ladder."""
+    if not isinstance(value, str):
+        return None
+    trimmed = value.strip()
+    return trimmed if trimmed else None
+
+
+def build_document_metadata(raw: Mapping[str, Any]) -> dict[str, Optional[str]]:
+    """Project the raw PDF info dictionary into the contract's cleaned ``{title, author}`` (#702).
+
+    Both keys are always present; an absent, blank, or non-string field becomes ``None``. The Node
+    ``pdfStructuredContracts`` schema expects this exact strict shape.
+    """
+    return {
+        "title": clean_metadata_value(raw.get("Title")),
+        "author": clean_metadata_value(raw.get("Author")),
+    }
+
+
+def pdf_metadata_reader(
+    pdf_path: str, opener: Callable[[str], Any]
+) -> Callable[[], Mapping[str, Any]]:  # pragma: no cover - real backend; cleaning tested via fake.
+    """A document-metadata reader over the same pypdfium2 backend: reads the info-dictionary Title/Author.
+
+    Kept behind this seam (mirroring ``native_text_prober``) so the cleaning/assembly logic tests against
+    a fake and the real pypdfium2 read stays out of the coverage lane.
+    """
+    document = opener(pdf_path)
+
+    def read() -> Mapping[str, Any]:
+        return {
+            "Title": document.get_metadata_value("Title"),
+            "Author": document.get_metadata_value("Author"),
+        }
+
+    return read
+
+
 def build_range_payload(
     doc: Any,
     start_page: int,
     end_page: int,
     native_text: Callable[[int], bool],
+    metadata: Optional[Mapping[str, Any]] = None,
 ) -> dict[str, Any]:
     """Assemble one range payload from a converted DoclingDocument.
 
     Rejects an unsupported schema version up front (``UnsupportedSchema``) so an incompatible converter
     is a named failure, not a silent misread. Preserves the ordered body/furniture trees and reports
-    native-text availability for every page in [start_page, end_page].
+    native-text availability for every page in [start_page, end_page]. When the caller supplies the raw
+    PDF info dictionary, attaches its cleaned ``metadata`` (#702's title/author fallback source).
     """
     version = str(getattr(doc, "version", ""))
     if version not in SUPPORTED_SCHEMA_VERSIONS:
@@ -313,13 +436,16 @@ def build_range_payload(
         {"pageNumber": page, "hasNativeText": bool(native_text(page))}
         for page in range(start_page, end_page + 1)
     ]
-    return {
+    payload: dict[str, Any] = {
         "schemaVersion": RANGE_SCHEMA_VERSION,
         "doclingSchema": {"name": DOCLING_SCHEMA_NAME, "version": version},
         "pages": pages,
         "body": map_group(getattr(doc, "body", None), doc, _resolve_ref, page_confidences),
         "furniture": map_group(getattr(doc, "furniture", None), doc, _resolve_ref, page_confidences),
     }
+    if metadata is not None:
+        payload["metadata"] = build_document_metadata(metadata)
+    return payload
 
 
 def convert_range(
@@ -328,14 +454,17 @@ def convert_range(
     end_page: int,
     converter_factory: Callable[[], Any],
     native_text: Callable[[int], bool],
+    read_metadata: Optional[Callable[[], Mapping[str, Any]]] = None,
 ) -> dict[str, Any]:
     """Convert one bounded page range to a range payload using a converter from ``converter_factory``.
 
     Docling's ``convert`` receives an explicit ``page_range`` so only the requested pages are decoded.
+    When a ``read_metadata`` seam is supplied, its raw PDF info dictionary is cleaned onto the payload.
     """
     converter = converter_factory()
     result = converter.convert(pdf_path, page_range=(start_page, end_page))
-    return build_range_payload(result.document, start_page, end_page, native_text)
+    metadata = read_metadata() if read_metadata is not None else None
+    return build_range_payload(result.document, start_page, end_page, native_text, metadata)
 
 
 def native_text_prober(pdf_path: str, opener: Callable[[str], Any]) -> Callable[[int], bool]:
@@ -397,11 +526,23 @@ def run_range(
     prober_factory: Callable[[str], Callable[[int], bool]],
     stdout: Any,
     stderr: Any,
+    metadata_reader_factory: Optional[
+        Callable[[str], Callable[[], Mapping[str, Any]]]
+    ] = None,
 ) -> int:
-    """``--range`` mode: emit one validated range payload, classifying each failure distinctly."""
+    """``--range`` mode: emit one validated range payload, classifying each failure distinctly.
+
+    When a ``metadata_reader_factory`` is wired, the payload carries the source PDF's cleaned document
+    metadata (#702's title/author fallback); without one it is simply omitted (an older/metadata-less run).
+    """
     try:
         native_text = prober_factory(pdf_path)
-        payload = convert_range(pdf_path, start_page, end_page, converter_factory, native_text)
+        read_metadata = (
+            metadata_reader_factory(pdf_path) if metadata_reader_factory is not None else None
+        )
+        payload = convert_range(
+            pdf_path, start_page, end_page, converter_factory, native_text, read_metadata
+        )
     except PasswordRequired:
         _write(stderr, "pdf is encrypted; a password is required to open it.\n")
         return EXIT_PASSWORD_REQUIRED
@@ -436,6 +577,9 @@ def main(
     resource_module: Any = "__default__",
     stdout: Any = None,
     stderr: Any = None,
+    metadata_reader_factory: Optional[
+        Callable[[str], Callable[[], Mapping[str, Any]]]
+    ] = None,
 ) -> int:
     """Parse args, apply the memory ceiling, and dispatch to the requested mode."""
     import os
@@ -447,6 +591,8 @@ def main(
         resource_module = _load_resource_module()
     if prober_factory is None:
         prober_factory = lambda path: native_text_prober(path, opener)
+    if metadata_reader_factory is None:
+        metadata_reader_factory = lambda path: pdf_metadata_reader(path, opener)
 
     try:
         apply_memory_limit(os.environ.get(MEMORY_LIMIT_ENV), resource_module)
@@ -467,7 +613,14 @@ def main(
             if end_page < start_page:
                 raise ValueError("end page must be >= start page")
             return run_range(
-                argv[1], start_page, end_page, converter_factory, prober_factory, stdout, stderr
+                argv[1],
+                start_page,
+                end_page,
+                converter_factory,
+                prober_factory,
+                stdout,
+                stderr,
+                metadata_reader_factory,
             )
     except ValueError as error:
         _write(stderr, f"usage error: {error}\n")

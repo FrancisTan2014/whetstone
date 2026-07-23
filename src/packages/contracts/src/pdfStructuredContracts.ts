@@ -59,6 +59,15 @@ export interface StructuredDocItem {
 
 export type StructuredPage = Readonly<{ pageNumber: number; hasNativeText: boolean }>;
 
+// Cleaned document-level bibliographic metadata (#702): the PDF's own Title/Author from its info
+// dictionary, trimmed with empty values normalized to null by the worker. Consumed as the MIDDLE layer
+// of publication's title/author resolution ladder — entered value first, then this cleaned PDF metadata,
+// then the filename stem. Optional because a born-digital PDF may carry none.
+export type StructuredDocumentMetadata = Readonly<{
+  title: string | null;
+  author: string | null;
+}>;
+
 export type StructuredDocumentSource = Readonly<{
   sha256: string;
   byteLength: number;
@@ -74,17 +83,23 @@ export type StructuredDocument = Readonly<{
   pages: readonly StructuredPage[];
   body: readonly StructuredDocItem[];
   furniture: readonly StructuredDocItem[];
+  // Cleaned PDF document metadata, when the source carried any; absent otherwise. Explicit `| undefined`
+  // to match the Zod `.optional()` inference under `exactOptionalPropertyTypes`.
+  metadata?: StructuredDocumentMetadata | undefined;
 }>;
 
 // One page range's worth of converted structure, as emitted by the worker. It carries no source hash
 // or total page count (the adapter owns those); the adapter concatenates ranges in source order and
-// adds the source metadata to form the final StructuredDocument.
+// adds the source metadata to form the final StructuredDocument. Each range may carry the document's
+// cleaned bibliographic metadata (the worker reads it per invocation); the adapter surfaces the first
+// non-empty title/author across ranges.
 export type RangeConversion = Readonly<{
   schemaVersion: typeof RANGE_CONVERSION_SCHEMA_VERSION;
   doclingSchema: DoclingSchemaRef;
   pages: readonly StructuredPage[];
   body: readonly StructuredDocItem[];
   furniture: readonly StructuredDocItem[];
+  metadata?: StructuredDocumentMetadata | undefined;
 }>;
 
 const boundingBoxSchema = z
@@ -111,6 +126,13 @@ const pageSchema = z
   .object({ pageNumber: z.number().int().positive(), hasNativeText: z.boolean() })
   .strict();
 
+// Cleaned document metadata: nullable title/author, both present (the worker emits explicit nulls when
+// a field is absent). Optional on the range/document envelope so an older or metadata-less payload is
+// still valid.
+const documentMetadataSchema = z
+  .object({ title: z.string().nullable(), author: z.string().nullable() })
+  .strict();
+
 const doclingSchemaRefSchema = z
   .object({ name: z.string().min(1), version: z.string().min(1) })
   .strict();
@@ -129,7 +151,8 @@ const rangeConversionSchema = z
     doclingSchema: doclingSchemaRefSchema,
     pages: z.array(pageSchema),
     body: z.array(docItemSchema),
-    furniture: z.array(docItemSchema)
+    furniture: z.array(docItemSchema),
+    metadata: documentMetadataSchema.optional()
   })
   .strict();
 
@@ -140,7 +163,8 @@ const structuredDocumentSchema = z
     source: sourceSchema,
     pages: z.array(pageSchema),
     body: z.array(docItemSchema),
-    furniture: z.array(docItemSchema)
+    furniture: z.array(docItemSchema),
+    metadata: documentMetadataSchema.optional()
   })
   .strict();
 
@@ -226,6 +250,26 @@ export function validateStructuredDocument(value: unknown): ValidateStructuredRe
     : { ok: false, detail: parsed.error.issues[0]!.message };
 }
 
+// Resolve the document's cleaned metadata from its ranges: the first non-null title and the first
+// non-null author seen in range order (the worker emits the same document metadata on every range, so
+// this simply tolerates a metadata-less range). Returns undefined when no range carried either value,
+// keeping the field truly optional on the assembled document.
+function resolveDocumentMetadata(
+  ranges: readonly RangeConversion[]
+): StructuredDocumentMetadata | undefined {
+  let title: string | null = null;
+  let author: string | null = null;
+  for (const range of ranges) {
+    if (title === null && range.metadata?.title != null) {
+      title = range.metadata.title;
+    }
+    if (author === null && range.metadata?.author != null) {
+      author = range.metadata.author;
+    }
+  }
+  return title === null && author === null ? undefined : { author, title };
+}
+
 // Concatenate validated ranges in source order into one structured document, attaching the adapter's
 // source metadata. Body and furniture items keep their given order (ranges already arrive in page
 // order); pages are ordered by page number. Trusts already-validated ranges — it does not re-reject.
@@ -242,13 +286,15 @@ export function concatenateRanges(
     .slice()
     .sort((left, right) => left.pageNumber - right.pageNumber);
 
+  const metadata = resolveDocumentMetadata(ranges);
   return Object.freeze({
     schemaVersion: STRUCTURED_DOCUMENT_SCHEMA_VERSION,
     doclingSchema,
     source,
     pages,
     body: ranges.flatMap((range) => range.body),
-    furniture: ranges.flatMap((range) => range.furniture)
+    furniture: ranges.flatMap((range) => range.furniture),
+    ...(metadata ? { metadata } : {})
   });
 }
 

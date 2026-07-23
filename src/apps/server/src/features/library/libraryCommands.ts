@@ -18,6 +18,7 @@ import {
   entryLinks,
   noteAnchors,
   notes,
+  pdfImportPublications,
   personalEntries,
   readingPositions,
   readingUnits,
@@ -26,6 +27,7 @@ import {
   recitationPlans,
   recitationWholeWork,
   tocEntries,
+  uploadedSourceClaims,
   workMeta,
   workSources
 } from "../../db/schema.js";
@@ -164,13 +166,14 @@ async function resolveAuthor(
 
 // Permanently delete a work and everything it owns, in one transaction (#541). The cascade removes the
 // work's reading units, blocks (legacy mdast + PM `doc_blocks`), authored TOC entries, `work_sources`,
-// notes + their anchors, reading position, and the containment `entry_links`, then the `entries` rows
-// themselves. Recall items that referenced a deleted block/note are PRESERVED with `provenance_entry_id`
-// set to null (provenance is nullable by design), and any chunk harvested from a deleted block keeps its
-// row with `source_block_entry_id` nulled — so the learner model / Map is never harmed. Works are shared
-// content (no per-user owner column), so an unknown work id returns `not_found` (→ 404). The retained
-// source file(s) are unlinked best-effort AFTER commit: a filesystem error is logged and never rolls the
-// delete back.
+// its `uploaded_source_claims` (#706) and any `pdf_import_publications` link (#702) so an imported Work's
+// blocking source references don't strand it in the Library, notes + their anchors, reading position, and
+// the containment `entry_links`, then the `entries` rows themselves. Recall items that referenced a deleted
+// block/note are PRESERVED with `provenance_entry_id` set to null (provenance is nullable by design), and
+// any chunk harvested from a deleted block keeps its row with `source_block_entry_id` nulled — so the
+// learner model / Map is never harmed. Works are shared content (no per-user owner column), so an unknown
+// work id returns `not_found` (→ 404). The retained source file(s) are unlinked best-effort AFTER commit: a
+// filesystem error is logged and never rolls the delete back.
 export async function deleteWork(
   dependencies: DeleteWorkDependencies,
   workEntryId: EntryId
@@ -326,6 +329,23 @@ export async function deleteWork(
       );
 
     await tx.delete(workSources).where(eq(workSources.workEntryId, workEntryId));
+
+    // An imported Work (EPUB or PDF) owns a single-owner `uploaded_source_claims` row keyed by the
+    // uploaded bytes' sha256 (#706): `claimUploadedSource` writes it at publish so identical bytes reopen
+    // this Work instead of duplicating. Its `work_entry_id` FK is `ON DELETE NO ACTION`, so the claim must
+    // be removed with the Work or the entries delete below is rejected and the Work is stuck in the Library
+    // (#702). One Work can own several claims as its source is revised, so this clears all of them.
+    await tx.delete(uploadedSourceClaims).where(eq(uploadedSourceClaims.workEntryId, workEntryId));
+
+    // A PDF-published Work is also pointed at by its `pdf_import_publications` row (`work_entry_id`, another
+    // `ON DELETE NO ACTION` FK), the attempt's record of what it published (#702). Remove it with the Work,
+    // not null it: the attempt stays `converted` after publish, so a null `work_entry_id` would look pending
+    // again and the durable recovery drain (`findConvertedPendingPublications`, which inner-joins this table)
+    // would republish the just-deleted Work. Deleting the row detaches it from that scan entirely.
+    await tx
+      .delete(pdfImportPublications)
+      .where(eq(pdfImportPublications.workEntryId, workEntryId));
+
     await tx.delete(blocks).where(eq(blocks.workEntryId, workEntryId));
     await tx.delete(docBlocks).where(eq(docBlocks.workEntryId, workEntryId));
     await tx.delete(tocEntries).where(eq(tocEntries.workEntryId, workEntryId));

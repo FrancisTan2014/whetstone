@@ -43,8 +43,14 @@ import {
   type PdfImportRunnerDependencies
 } from "./features/pdfImport/pdfImportRunner.js";
 import { createPdfImportStageStore } from "./features/pdfImport/pdfImportStage.js";
+import type { PdfImportCommandDependencies } from "./features/pdfImport/pdfImportCommands.js";
+import {
+  drainPendingPdfPublications,
+  publishConvertedPdfImport,
+  type PdfImportPublishDependencies
+} from "./features/pdfImport/pdfImportPublish.js";
 import { recoverInterruptedAttempts } from "./features/pdfImport/pdfImportStore.js";
-import { createFakeDoclingRunner } from "./files/pdfStructuredAdapter.js";
+import { resolveStructuredPdfRunner } from "./files/pdfStructuredRunnerResolution.js";
 import { createFakeSpeechInput } from "./speech/fakeSpeechInput.js";
 import { readSpeechConfig, resolveSpeechInput } from "./speech/speechConfig.js";
 import { checkSpeechHealth } from "./speech/speechHealth.js";
@@ -163,6 +169,26 @@ const deleteVoiceCaptureAudio = (path: string): Promise<void> => {
   return Promise.resolve();
 };
 
+// #721/#702 shared PDF import primitives, created before the server so its born-digital import routes and
+// its background conversion worker share one stage store + active-run registry. `logCleanupFailure` reads
+// `server.log` lazily (only at request time, after the server below exists).
+const pdfImportStageStore = createPdfImportStageStore(config.pdfImportStageDir);
+const pdfImportActiveRuns = createPdfImportActiveRuns();
+const logPdfImportCleanupFailure = ({
+  attemptId,
+  stagePath,
+  reason
+}: Readonly<{ attemptId: string; stagePath: string; reason: string }>): void =>
+  server.log.warn({ attemptId, stagePath, reason }, "pdf_import_stage_cleanup_failed");
+const pdfImportCommands: PdfImportCommandDependencies = {
+  activeRuns: pdfImportActiveRuns,
+  createAttemptId: () => randomUUID(),
+  db,
+  logCleanupFailure: logPdfImportCleanupFailure,
+  now: () => new Date(),
+  stageStore: pdfImportStageStore
+};
+
 const server = createServer({
   authoredWorks: {
     createEntryId: () => randomUUID(),
@@ -235,6 +261,10 @@ const server = createServer({
     db,
     now: () => new Date()
   },
+  pdfImport: {
+    commands: pdfImportCommands,
+    uploadLimitBytes: config.pdfUploadLimitBytes
+  },
   readingPosition: { db },
   preferences: { db },
   recitation: {
@@ -291,36 +321,83 @@ const drainVoiceCaptureQueue = async (): Promise<void> => {
 
 // The recoverable staged PDF import engine (#721): the in-process worker that drives a claimed attempt
 // through #701's structured conversion, checkpointing each validated range so a crash, cancel, or
-// interrupt resumes without redoing committed work. It ships with the deterministic keyless fake runner
-// by default; a real Docling runner (memory-bounded, POSIX-only) is an opt-in later issue. Converting an
-// attempt never creates a Work, ReadingUnit, or Block — publishing a converted attempt is #702.
-const pdfImportStageStore = createPdfImportStageStore(config.pdfImportStageDir);
-const pdfImportActiveRuns = createPdfImportActiveRuns();
+// interrupt resumes without redoing committed work. The conversion backend is resolved honestly (see
+// `resolveStructuredPdfRunner`): the real memory-bounded Docling worker on a supported platform, a
+// visible `tool_missing` failure where it is unavailable, or — only under `PDF_IMPORT_FIXTURE_CONVERSION`
+// (dev/E2E) — a deterministic runner that converts an embedded fixture from the uploaded bytes. It never
+// publishes canned content from a user upload. Converting an attempt never creates a Work, ReadingUnit,
+// or Block — publishing a converted attempt is #702.
 const pdfImportRunner: PdfImportRunnerDependencies = {
   activeRuns: pdfImportActiveRuns,
   createRunToken: () => randomUUID(),
   db,
   // A stage that could not be removed after a terminal/cancel outcome stays VISIBLE in server logs
   // (never silently swallowed); its bytes linger until retried, per the cleanup-failure rule.
-  logCleanupFailure: ({ attemptId, stagePath, reason }) =>
-    server.log.warn({ attemptId, stagePath, reason }, "pdf_import_stage_cleanup_failed"),
+  logCleanupFailure: logPdfImportCleanupFailure,
   now: () => new Date(),
-  runner: createFakeDoclingRunner(),
+  // The real converter reads the learner's actual bytes; where it is unavailable the attempt fails
+  // visibly rather than publishing fabricated content. `pnpm setup:pdf` provisions the real Docling
+  // worker.
+  runner: resolveStructuredPdfRunner({
+    fixtureConversion: config.pdfImportFixtureConversion,
+    pythonBinary: config.pdfPythonBinary,
+    scriptPath: fileURLToPath(new URL("./files/pdf_to_docling.py", import.meta.url)),
+    perRangeTimeoutMs: config.pdfTimeoutMs,
+    memoryMib: config.pdfStructuredMemoryMib
+  }),
+  stageStore: pdfImportStageStore
+};
+// #702 publishes a converted attempt into a canonical Work (doc_blocks only) once the drain loop reports
+// it converted. Idempotent: an attempt with no publication intent, or one already resolved, is a no-op.
+const pdfImportPublish: PdfImportPublishDependencies = {
+  createAuthorId: () => randomUUID(),
+  createEntryId: () => randomUUID(),
+  createSourceId: () => randomUUID(),
+  db,
+  // Publication retains the original uploaded PDF through the immutable source-file boundary, reading it
+  // back from the attempt's retained stage; a failed cleanup of that redundant stage stays visible.
+  logCleanupFailure: logPdfImportCleanupFailure,
+  now: () => new Date(),
+  sourceFileStore,
   stageStore: pdfImportStageStore
 };
 const PDF_IMPORT_POLL_MS = 1_000;
 let pdfImportDraining = false;
 // Convert one attempt at a time to empty on each tick (single admission is DB-enforced too); never
-// overlap ticks so a slow conversion cannot double-claim the slot. Failures are logged; the loop
-// continues on the next tick.
+// overlap ticks so a slow conversion cannot double-claim the slot. Each converted attempt is published
+// immediately (deterministic, no user wait). Failures are logged; the loop continues on the next tick.
 const drainPdfImportQueue = async (): Promise<void> => {
   if (pdfImportDraining) {
     return;
   }
   pdfImportDraining = true;
   try {
+    // Durable publication recovery first: republish any `converted` attempt whose publication is still
+    // pending — stranded by a process crash after `markConverted` committed but before publication
+    // finished, or by a transient publication throw on a prior tick. Idempotent, and isolated per
+    // attempt so one poisoned attempt cannot block the queue drain that follows.
+    for (const recovered of await drainPendingPdfPublications(pdfImportPublish)) {
+      if (recovered.status === "error") {
+        server.log.error(
+          { attemptId: recovered.attemptId, reason: recovered.reason },
+          "pdf_import_publish_recovery_failed"
+        );
+      } else {
+        server.log.info(
+          { attemptId: recovered.attemptId, outcome: recovered.status },
+          "pdf_import_published_recovered"
+        );
+      }
+    }
     let result = await processNextPdfImport(pdfImportRunner);
     while (result.status !== "idle") {
+      if (result.status === "converted") {
+        const outcome = await publishConvertedPdfImport(pdfImportPublish, result.attemptId);
+        server.log.info(
+          { attemptId: result.attemptId, outcome: outcome.status },
+          "pdf_import_published"
+        );
+      }
       result = await processNextPdfImport(pdfImportRunner);
     }
   } catch (error) {

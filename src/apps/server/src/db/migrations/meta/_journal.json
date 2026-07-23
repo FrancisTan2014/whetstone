@@ -456,6 +456,13 @@
       "when": 1784704835923,
       "tag": "0064_futuristic_sharon_ventura",
       "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "7",
+      "when": 1784761373320,
+      "tag": "0065_third_shotgun",
+      "breakpoints": true
     }
   ]
 }

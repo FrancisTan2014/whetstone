@@ -14,7 +14,7 @@ import {
 import { and, asc, count, eq, ne, sql } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
-import { pdfImportAttempts, pdfImportRanges } from "../../db/schema.js";
+import { pdfImportAttempts, pdfImportPublications, pdfImportRanges } from "../../db/schema.js";
 
 // Durable persistence for recoverable staged PDF import attempts (#721). Every write that a live
 // conversion makes is FENCED by the run token: a checkpoint, probe, heartbeat, or terminal transition is
@@ -67,7 +67,7 @@ function toRecord(row: AttemptRow): PdfImportAttemptRecord {
 }
 
 // Every fenced update carries the same `updated_at` bump; a matched row proves the write was applied.
-type Executor = DbClient | Parameters<Parameters<DbClient["transaction"]>[0]>[0];
+export type Executor = DbClient | Parameters<Parameters<DbClient["transaction"]>[0]>[0];
 
 async function sumCommittedPages(
   tx: Executor,
@@ -94,10 +94,10 @@ export type InsertQueuedAttemptInput = Readonly<{
 }>;
 
 export async function insertQueuedAttempt(
-  db: DbClient,
+  executor: Executor,
   input: InsertQueuedAttemptInput
 ): Promise<PdfImportAttemptRecord> {
-  const [row] = await db
+  const [row] = await executor
     .insert(pdfImportAttempts)
     .values({
       id: input.id,
@@ -327,6 +327,165 @@ export async function countCommittedRanges(db: DbClient, attemptId: string): Pro
   return rows.reduce((total, row) => total + row.value, 0);
 }
 
+// The committed range payloads for the current build, ordered by range index, so #702's publication can
+// reconstruct the full structured document from the checkpoints #721 persisted. Trusts already-validated
+// payloads (each was validated by `parseRangeConversion` before it was committed).
+export async function getCommittedRanges(
+  db: DbClient,
+  attemptId: string,
+  fingerprint: string
+): Promise<readonly RangeConversion[]> {
+  const rows = await db
+    .select({ payload: pdfImportRanges.payload })
+    .from(pdfImportRanges)
+    .where(
+      and(eq(pdfImportRanges.attemptId, attemptId), eq(pdfImportRanges.fingerprint, fingerprint))
+    )
+    .orderBy(asc(pdfImportRanges.rangeIndex));
+  return rows.map((row) => row.payload as RangeConversion);
+}
+
+// The #702 publication record for an attempt: the learner's capture-time intent plus, once published,
+// exactly one resolved outcome (`workEntryId` for a published Work, `ocrRequiredPages` for the typed
+// OCR-required refusal, `noContent` for the typed empty-document refusal, or `unpreservableImages` for
+// the typed unsupported-image refusal). All null means the publication is still pending.
+export type PdfImportPublicationRecord = Readonly<{
+  attemptId: string;
+  enteredTitle: string | null;
+  enteredAuthor: string | null;
+  enteredLanguage: string | null;
+  fileName: string;
+  workEntryId: string | null;
+  ocrRequiredPages: number | null;
+  noContent: boolean | null;
+  unpreservableImages: number | null;
+  publishedAt: Date | null;
+}>;
+
+type PublicationRow = typeof pdfImportPublications.$inferSelect;
+
+function toPublicationRecord(row: PublicationRow): PdfImportPublicationRecord {
+  return Object.freeze({
+    attemptId: row.attemptId,
+    enteredTitle: row.enteredTitle,
+    enteredAuthor: row.enteredAuthor,
+    enteredLanguage: row.enteredLanguage,
+    fileName: row.fileName,
+    workEntryId: row.workEntryId,
+    ocrRequiredPages: row.ocrRequiredPages,
+    noContent: row.noContent,
+    unpreservableImages: row.unpreservableImages,
+    publishedAt: row.publishedAt
+  });
+}
+
+export type InsertPublicationIntentInput = Readonly<{
+  attemptId: string;
+  enteredTitle: string | null;
+  enteredAuthor: string | null;
+  enteredLanguage: string | null;
+  fileName: string;
+}>;
+
+// Record the learner's upload-time intent for a freshly queued attempt, before any conversion. The
+// outcome columns stay null until publication resolves them. Accepts a transaction so the intent can be
+// inserted atomically with the queued-attempt row: the attempt is never claimable without its intent.
+export async function insertPublicationIntent(
+  executor: Executor,
+  input: InsertPublicationIntentInput
+): Promise<void> {
+  await executor.insert(pdfImportPublications).values({
+    attemptId: input.attemptId,
+    enteredTitle: input.enteredTitle,
+    enteredAuthor: input.enteredAuthor,
+    enteredLanguage: input.enteredLanguage,
+    fileName: input.fileName
+  });
+}
+
+export async function getPublication(
+  db: DbClient,
+  attemptId: string
+): Promise<PdfImportPublicationRecord | null> {
+  const [row] = await db
+    .select()
+    .from(pdfImportPublications)
+    .where(eq(pdfImportPublications.attemptId, attemptId));
+  return row === undefined ? null : toPublicationRecord(row);
+}
+
+// Link a published Work to its publication as the terminal job state, inside the caller's claim
+// transaction so the outcome commits atomically with the Work. Only applies while the publication is
+// still pending (no result yet), so a re-run cannot relink an already-resolved publication.
+// A publication is still pending only while no outcome column is set: no linked Work and none of the
+// typed terminal refusals (OCR-required, no-content, unsupported-image) recorded.
+function pendingPublicationCondition(): ReturnType<typeof and> {
+  return and(
+    sql`${pdfImportPublications.workEntryId} is null`,
+    sql`${pdfImportPublications.ocrRequiredPages} is null`,
+    sql`${pdfImportPublications.noContent} is null`,
+    sql`${pdfImportPublications.unpreservableImages} is null`
+  );
+}
+
+// Every terminal marker updates under this guard so a re-run can never overwrite an already-resolved
+// outcome (published Work, OCR-required, no-content, or unsupported-image refusal).
+function pendingPublicationGuard(attemptId: string): ReturnType<typeof and> {
+  return and(eq(pdfImportPublications.attemptId, attemptId), pendingPublicationCondition());
+}
+
+export async function linkPublishedWork(
+  tx: Executor,
+  attemptId: string,
+  workEntryId: string,
+  now: Date
+): Promise<void> {
+  await tx
+    .update(pdfImportPublications)
+    .set({ workEntryId, publishedAt: now })
+    .where(pendingPublicationGuard(attemptId));
+}
+
+// Record the typed OCR-required outcome (no Work) for a pending publication.
+export async function markPublicationOcrRequired(
+  db: DbClient,
+  attemptId: string,
+  pagesNeedingOcr: number,
+  now: Date
+): Promise<void> {
+  await db
+    .update(pdfImportPublications)
+    .set({ ocrRequiredPages: pagesNeedingOcr, publishedAt: now })
+    .where(pendingPublicationGuard(attemptId));
+}
+
+// Record the typed no-content refusal (no Work) for a pending publication: the pages carried native text
+// but mapped to zero canonical blocks, so publishing would create an empty-shell Work.
+export async function markPublicationNoContent(
+  db: DbClient,
+  attemptId: string,
+  now: Date
+): Promise<void> {
+  await db
+    .update(pdfImportPublications)
+    .set({ noContent: true, publishedAt: now })
+    .where(pendingPublicationGuard(attemptId));
+}
+
+// Record the typed unsupported-image refusal (no Work) for a pending publication: the document contains
+// picture/figure constructs whose images #701 cannot extract, so publishing would lose content.
+export async function markPublicationImagesUnsupported(
+  db: DbClient,
+  attemptId: string,
+  unpreservableImages: number,
+  now: Date
+): Promise<void> {
+  await db
+    .update(pdfImportPublications)
+    .set({ unpreservableImages, publishedAt: now })
+    .where(pendingPublicationGuard(attemptId));
+}
+
 export async function markConverted(
   db: DbClient,
   id: string,
@@ -425,6 +584,23 @@ export async function recoverInterruptedAttempts(db: DbClient, now: Date): Promi
     .where(eq(pdfImportAttempts.state, "running"))
     .returning({ id: pdfImportAttempts.id });
   return recovered.length;
+}
+
+// Durable publication recovery (#702): the attempt ids of every `converted` attempt whose publication
+// intent is still pending (no terminal outcome recorded yet), oldest first. These are stranded work the
+// queue runner can never pick up (it only claims `queued` attempts) and startup recovery never touches
+// (it only moves abandoned `running` attempts): an attempt whose process died after `markConverted`
+// committed but before publication finished, or whose publication threw once on a prior drain tick. The
+// drain loop republishes each idempotently, so a converted attempt is never left reporting
+// "Finishing up..." forever with no Work created and no retry path.
+export async function findConvertedPendingPublications(db: DbClient): Promise<readonly string[]> {
+  const rows = await db
+    .select({ attemptId: pdfImportAttempts.id })
+    .from(pdfImportAttempts)
+    .innerJoin(pdfImportPublications, eq(pdfImportPublications.attemptId, pdfImportAttempts.id))
+    .where(and(eq(pdfImportAttempts.state, "converted"), pendingPublicationCondition()))
+    .orderBy(asc(pdfImportAttempts.createdAt));
+  return rows.map((row) => row.attemptId);
 }
 
 // Retry: promote an attempt back to `queued` so the runner resumes it after the last committed range.

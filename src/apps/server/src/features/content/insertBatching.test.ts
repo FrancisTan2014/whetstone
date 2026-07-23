@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { BlockDto, WorkContentDto } from "@whetstone/contracts";
+import type { BlockDto, DocBlockDto, WorkContentDto } from "@whetstone/contracts";
 import { toEntryId } from "@whetstone/domain";
 
 import { assertContentPersisted, batchSize, insertInBatches } from "./insertBatching.js";
@@ -98,5 +98,21 @@ describe("assertContentPersisted", () => {
   it("does not throw when an empty source legitimately persisted zero blocks", () => {
     const empty = content(0);
     expect(assertContentPersisted(0, empty)).toBe(empty);
+  });
+
+  it("counts PM doc_blocks so a doc_blocks-only work (PDF import) is not falsely rejected", () => {
+    const docBlock: DocBlockDto = {
+      entryId: toEntryId("doc-block-1"),
+      node: { type: "paragraph" },
+      orderIndex: 0,
+      type: "paragraph"
+    };
+    const docOnly: WorkContentDto = {
+      readingUnits: [
+        { blocks: [], docBlocks: [docBlock], entryId: toEntryId("unit-1"), orderIndex: 0 }
+      ],
+      workEntryId: toEntryId("work-1")
+    };
+    expect(assertContentPersisted(1, docOnly)).toBe(docOnly);
   });
 });

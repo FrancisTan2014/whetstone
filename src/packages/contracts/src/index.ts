@@ -194,25 +194,36 @@ export type {
   RangeConversion,
   StructuredDocItem,
   StructuredDocument,
+  StructuredDocumentMetadata,
   StructuredDocumentSource,
   StructuredPage,
   ValidateStructuredResult
 } from "./pdfStructuredContracts.js";
 export {
+  parsePdfImportBeginResultDto,
   parsePdfImportStartedDto,
   parsePdfImportStatusDto,
+  parsePdfImportViewDto,
   pdfImportAttemptStateSchema,
+  pdfImportBeginResultDtoSchema,
   pdfImportFailureDtoSchema,
+  pdfImportPublicationOutcomeDtoSchema,
   pdfImportStageDtoSchema,
+  pdfImportStartMetadataSchema,
   pdfImportStartedDtoSchema,
-  pdfImportStatusDtoSchema
+  pdfImportStatusDtoSchema,
+  pdfImportViewDtoSchema
 } from "./pdfImportContracts.js";
 export type {
   PdfImportAttemptStateDto,
+  PdfImportBeginResultDto,
   PdfImportFailureDto,
+  PdfImportPublicationOutcomeDto,
   PdfImportStageDto,
+  PdfImportStartMetadataDto,
   PdfImportStartedDto,
-  PdfImportStatusDto
+  PdfImportStatusDto,
+  PdfImportViewDto
 } from "./pdfImportContracts.js";
 export {
   entryDtoSchema,

@@ -23,9 +23,12 @@ import {
   createDoclingRunner,
   createFakePdfStructuredAdapter,
   createPdfStructuredAdapter,
+  createStagedFixtureDoclingRunner,
+  createUnavailableDoclingRunner,
   defaultRangePayload,
   issueStagedFileHandle,
   pageRangesFor,
+  STRUCTURED_PDF_FIXTURE_MARKER,
   type DoclingRunner,
   type ProbeOutcome,
   type RangeRunOutcome,
@@ -570,5 +573,119 @@ describe("createDoclingRunner", () => {
     } else {
       expect(make).toThrow(/memory ceiling/i);
     }
+  });
+});
+
+function fixtureConversionJson(
+  pages: readonly Readonly<{ pageNumber: number; hasNativeText: boolean }>[]
+): string {
+  return JSON.stringify({
+    schemaVersion: RANGE_CONVERSION_SCHEMA_VERSION,
+    doclingSchema: { name: "DoclingDocument", version: supportedVersion },
+    pages,
+    body: pages.map((page) => ({
+      label: "text",
+      pageNumber: page.pageNumber,
+      boundingBox: { left: 0, top: 0, right: 10, bottom: 10 },
+      charSpan: [0, 4],
+      confidence: 1,
+      text: `page ${page.pageNumber}`,
+      children: []
+    })),
+    furniture: []
+  });
+}
+
+function fixtureBytes(conversionJson: string, header = "%PDF-1.7\n"): Uint8Array {
+  return new TextEncoder().encode(`${header}${STRUCTURED_PDF_FIXTURE_MARKER}\n${conversionJson}`);
+}
+
+describe("createUnavailableDoclingRunner", () => {
+  it("probes as tool_missing so no upload is ever silently converted", async () => {
+    const runner = createUnavailableDoclingRunner();
+    expect(await runner.probe("Q:/stage/anything.pdf", undefined)).toEqual({
+      status: "tool_missing"
+    });
+  });
+
+  it("fails every range with a tool_missing failure", async () => {
+    const runner = createUnavailableDoclingRunner();
+    const outcome = await runner.convertRange("Q:/stage/anything.pdf", 1, 3, undefined);
+    expect(outcome.status).toBe("failure");
+    if (outcome.status !== "failure") throw new Error("expected a failure outcome");
+    expect(outcome.failure.kind).toBe("tool_missing");
+  });
+});
+
+describe("createStagedFixtureDoclingRunner", () => {
+  it("probes the actual staged bytes, reporting the embedded page count", async () => {
+    const runner = createStagedFixtureDoclingRunner();
+    const handle = await stageFile(
+      fixtureBytes(
+        fixtureConversionJson([
+          { pageNumber: 1, hasNativeText: true },
+          { pageNumber: 2, hasNativeText: true }
+        ])
+      )
+    );
+    expect(await runner.probe(handle.path, undefined)).toEqual({ status: "ok", pageCount: 2 });
+  });
+
+  it("converts only the requested page window from the staged bytes", async () => {
+    const runner = createStagedFixtureDoclingRunner();
+    const handle = await stageFile(
+      fixtureBytes(
+        fixtureConversionJson([
+          { pageNumber: 1, hasNativeText: true },
+          { pageNumber: 2, hasNativeText: true },
+          { pageNumber: 3, hasNativeText: true }
+        ])
+      )
+    );
+    const outcome = await runner.convertRange(handle.path, 2, 3, undefined);
+    expect(outcome.status).toBe("ok");
+    if (outcome.status !== "ok") throw new Error("expected an ok outcome");
+    const parsed = parseRangeConversion(outcome.raw);
+    if (parsed.status !== "ok") throw new Error(`fixture output invalid: ${parsed.status}`);
+    expect(parsed.value.pages.map((page) => page.pageNumber)).toEqual([2, 3]);
+    expect(parsed.value.body.map((docItem) => docItem.pageNumber)).toEqual([2, 3]);
+  });
+
+  it("carries a scanned page through so the OCR-required outcome can surface", async () => {
+    const runner = createStagedFixtureDoclingRunner();
+    const handle = await stageFile(
+      fixtureBytes(fixtureConversionJson([{ pageNumber: 1, hasNativeText: false }]))
+    );
+    const outcome = await runner.convertRange(handle.path, 1, 1, undefined);
+    expect(outcome.status).toBe("ok");
+    if (outcome.status !== "ok") throw new Error("expected an ok outcome");
+    const parsed = parseRangeConversion(outcome.raw);
+    if (parsed.status !== "ok") throw new Error(`fixture output invalid: ${parsed.status}`);
+    expect(parsed.value.pages[0]?.hasNativeText).toBe(false);
+  });
+
+  it("reports tool_missing when the staged bytes carry no embedded fixture", async () => {
+    const runner = createStagedFixtureDoclingRunner();
+    const handle = await stageFile(
+      new TextEncoder().encode("%PDF-1.7\nreal pdf, no fixture marker")
+    );
+    expect(await runner.probe(handle.path, undefined)).toEqual({ status: "tool_missing" });
+    const outcome = await runner.convertRange(handle.path, 1, 1, undefined);
+    expect(outcome.status).toBe("failure");
+    if (outcome.status !== "failure") throw new Error("expected a failure outcome");
+    expect(outcome.failure.kind).toBe("tool_missing");
+  });
+
+  it("reports tool_missing when the staged file cannot be read", async () => {
+    const runner = createStagedFixtureDoclingRunner();
+    expect(await runner.probe("Q:/stage/does-not-exist.pdf", undefined)).toEqual({
+      status: "tool_missing"
+    });
+  });
+
+  it("reports tool_missing when the embedded fixture is malformed", async () => {
+    const runner = createStagedFixtureDoclingRunner();
+    const handle = await stageFile(fixtureBytes("{ not a valid conversion }"));
+    expect(await runner.probe(handle.path, undefined)).toEqual({ status: "tool_missing" });
   });
 });

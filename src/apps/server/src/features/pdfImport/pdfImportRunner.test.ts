@@ -19,6 +19,7 @@ import { pdfImportAttempts } from "../../db/schema.js";
 import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
 import {
   createFakeDoclingRunner,
+  createUnavailableDoclingRunner,
   type DoclingRunner,
   type ProbeOutcome
 } from "../../files/pdfStructuredAdapter.js";
@@ -121,7 +122,7 @@ describe("processNextPdfImport", () => {
     expect(await processNextPdfImport(buildDeps())).toEqual({ status: "idle" });
   });
 
-  it("converts a staged attempt range by range and removes its stage", async () => {
+  it("converts a staged attempt range by range and retains its stage for publication", async () => {
     await seedStaged("a1");
     const handlePath = stageStore.openStage("a1").path;
     const deps = buildDeps({
@@ -135,11 +136,13 @@ describe("processNextPdfImport", () => {
     expect(await processNextPdfImport(deps)).toEqual({ status: "converted", attemptId: "a1" });
 
     const attempt = await getAttempt(db, DEFAULT_USER_ID, "a1");
-    expect(attempt).toMatchObject({ state: "converted", completedPages: 5, stagePath: null });
+    // The stage stays BOUND after conversion — publication persists the original bytes as provenance
+    // through the source-file boundary and only then frees the stage.
+    expect(attempt).toMatchObject({ state: "converted", completedPages: 5, stagePath: "a1" });
     expect(await getCommittedRangeIndices(db, "a1", PDF_IMPORT_ADAPTER_FINGERPRINT)).toEqual([
       0, 1, 2
     ]);
-    await expect(stat(handlePath)).rejects.toThrow();
+    await expect(stat(handlePath)).resolves.toBeDefined();
   });
 
   it("resumes after the last committed range without re-probing", async () => {
@@ -206,6 +209,22 @@ describe("processNextPdfImport", () => {
         await expect(stat(handlePath)).rejects.toThrow();
       });
     }
+  });
+
+  it("fails visibly with no publication when the production runner is unavailable", async () => {
+    // The composition root wires this exact runner where the structured PDF toolchain is absent or the
+    // platform cannot enforce the memory ceiling. A user upload must fail visibly (tool_missing) and free
+    // its stage — never be silently turned into fabricated content.
+    await seedStaged("a1");
+    const handlePath = stageStore.openStage("a1").path;
+    const result = await processNextPdfImport(
+      buildDeps({ runner: createUnavailableDoclingRunner() })
+    );
+    expect(result).toMatchObject({ status: "failed", attemptId: "a1" });
+    const attempt = await getAttempt(db, DEFAULT_USER_ID, "a1");
+    expect(attempt).toMatchObject({ state: "failed", stagePath: null });
+    expect(attempt?.failure?.kind).toBe("tool_missing");
+    await expect(stat(handlePath)).rejects.toThrow();
   });
 
   it("fails on a malformed range payload", async () => {
@@ -381,25 +400,32 @@ describe("processNextPdfImport", () => {
     expect((await getAttempt(db, DEFAULT_USER_ID, "a1"))?.failure?.kind).toBe("too_large");
   });
 
-  it("retains the stage (bound, retryable) when cleanup fails after a successful conversion", async () => {
+  it("retains the stage (bound, retryable) when cleanup fails after a failed conversion", async () => {
+    // A failed attempt frees its stage (it never publishes). If that removal fails, the binding must be
+    // retained and the bytes kept, so the terminal attempt stays bound and its cleanup can be retried.
     await seedStaged("a1");
     const handlePath = stageStore.openStage("a1").path;
     const logCleanupFailure = vi.fn();
     const failingStore: PdfImportStageStore = {
       createStage: stageStore.createStage,
+      createStageFromStream: stageStore.createStageFromStream,
       openStage: stageStore.openStage,
+      readStage: stageStore.readStage,
       // A non-Error rejection also exercises the String(cause) fallback in the cleanup log.
       removeStage: () => Promise.reject("stage locked")
     };
     const result = await processNextPdfImport(
-      buildDeps({ stageStore: failingStore, logCleanupFailure })
+      buildDeps({
+        runner: createFakeDoclingRunner({ probe: { status: "tool_missing" } }),
+        stageStore: failingStore,
+        logCleanupFailure
+      })
     );
-    expect(result).toEqual({ status: "converted", attemptId: "a1" });
+    expect(result).toMatchObject({ status: "failed", attemptId: "a1" });
     expect(logCleanupFailure).toHaveBeenCalledWith(
       expect.objectContaining({ attemptId: "a1", reason: "stage locked" })
     );
-    // A failed removal must not forget the stage: the binding is retained and the bytes still exist, so
-    // the terminal attempt stays bound and its cleanup can be retried.
+    // A failed removal must not forget the stage: the binding is retained and the bytes still exist.
     expect((await getAttempt(db, DEFAULT_USER_ID, "a1"))?.stagePath).toBe("a1");
     await expect(stat(handlePath)).resolves.toBeDefined();
   });

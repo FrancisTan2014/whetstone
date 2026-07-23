@@ -11,8 +11,10 @@ import { searchAuthors } from "./libraryApi";
 
 export type AuthorSelectFieldProps = Readonly<{
   // Reports the effective selection (or `undefined` when nothing is committed) so the form can block a
-  // submit that would implicitly create from unselected free text.
-  onSelectionChange: (selection: WorkAuthorSelection | undefined) => void;
+  // submit that would implicitly create from unselected free text. The resolved display name is reported
+  // alongside it so a name-addressed lane (the born-digital PDF import, #702, resolves its author by name)
+  // can forward the entered author without a second lookup; it is `undefined` exactly when the selection is.
+  onSelectionChange: (selection: WorkAuthorSelection | undefined, name?: string) => void;
 }>;
 
 type AuthorItem = Readonly<{ kind: "author"; author: AuthorDto }>;
@@ -137,15 +139,18 @@ export function AuthorSelectField({
   // free text stays `undefined`, so the form's explicit-creation rule blocks an accidental duplicate.
   useEffect(() => {
     let selection: WorkAuthorSelection | undefined;
+    let name: string | undefined;
     if (selectedItem !== null) {
       selection =
         selectedItem.kind === "author"
           ? { authorId: selectedItem.author.id, mode: "existing" }
           : { mode: "new", name: selectedItem.name };
+      name = selectedItem.kind === "author" ? selectedItem.author.name : selectedItem.name;
     } else if (exactMatchId !== null && searchedQuery === query) {
       selection = { authorId: exactMatchId as AuthorDto["id"], mode: "existing" };
+      name = query;
     }
-    onSelectionChange(selection);
+    onSelectionChange(selection, name);
   }, [selectedItem, exactMatchId, searchedQuery, query, onSelectionChange]);
 
   const showEmptyHint = status === "ready" && items.length === 0;

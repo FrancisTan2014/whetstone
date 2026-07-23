@@ -33,7 +33,9 @@ from pdf_to_docling import (  # noqa: E402  (path set above)
     UnsupportedSchema,
     apply_memory_limit,
     build_converter,
+    build_document_metadata,
     build_range_payload,
+    clean_metadata_value,
     convert_range,
     count_pages,
     main,
@@ -80,6 +82,42 @@ class FakeGroup:
 class FakeGrade:
     def __init__(self, layout_score):
         self.layout_score = layout_score
+
+
+class FakeTableCell:
+    """A docling TableCell: text plus its grid offsets and header flags (no children/prov)."""
+
+    def __init__(
+        self,
+        text,
+        start_row_offset_idx=0,
+        start_col_offset_idx=0,
+        column_header=False,
+        row_header=False,
+        bbox=None,
+    ):
+        self.text = text
+        self.start_row_offset_idx = start_row_offset_idx
+        self.start_col_offset_idx = start_col_offset_idx
+        self.column_header = column_header
+        self.row_header = row_header
+        self.bbox = bbox
+
+
+class FakeTableData:
+    def __init__(self, table_cells):
+        self.table_cells = table_cells
+
+
+class FakeTableItem:
+    """A docling TableItem: carries NO children; its cells live in ``data.table_cells``."""
+
+    def __init__(self, table_cells, prov=None):
+        self.label = "table"
+        self.text = ""
+        self.prov = [prov] if prov is not None else []
+        self.children = []
+        self.data = FakeTableData(table_cells)
 
 
 class FakeDoc:
@@ -147,7 +185,45 @@ class MappingTests(unittest.TestCase):
         self.assertEqual(mapped["charSpan"], [0, 0])
         self.assertEqual(mapped["children"], [])
 
-    def test_char_span_is_normalized_to_ascending_order(self):
+    def test_map_item_projects_a_docling_table_grid_into_rows_and_cells(self):
+        # A real docling TableItem carries no children; its cells live in data.table_cells keyed by
+        # grid offset. The worker must project that grid into the table_row -> cell contract shape the
+        # canonical mapper turns into a PM table block (pre-fix it emitted no rows and fell back to an
+        # `unknown` node, so a born-digital table never became a canonical table).
+        cells = [
+            FakeTableCell("Term", 0, 0, column_header=True, bbox=FakeBBox(40, 120, 300, 160)),
+            FakeTableCell("Definition", 0, 1, column_header=True),
+            FakeTableCell("Whetstone", 1, 0, row_header=True),
+            FakeTableCell("A sharpening stone", 1, 1),
+        ]
+        # Deliberately scrambled so the assertions prove row-then-column ordering, not input order.
+        scrambled = [cells[3], cells[0], cells[2], cells[1]]
+        item = FakeTableItem(scrambled, prov=FakeProv(bbox=FakeBBox(40, 120, 560, 300), page_no=1))
+        mapped = map_item(item, FakeDoc(), identity_resolve, {}, inherited_page=1)
+
+        self.assertEqual(mapped["label"], "table")
+        self.assertEqual([row["label"] for row in mapped["children"]], ["table_row", "table_row"])
+        header_cells = mapped["children"][0]["children"]
+        self.assertEqual([c["label"] for c in header_cells], ["column_header", "column_header"])
+        self.assertEqual([c["text"] for c in header_cells], ["Term", "Definition"])
+        # A header cell keeps its own geometry; a cell without a bbox defaults to the zero box.
+        self.assertEqual(
+            header_cells[0]["boundingBox"],
+            {"left": 40.0, "top": 120.0, "right": 300.0, "bottom": 160.0},
+        )
+        self.assertEqual(
+            header_cells[1]["boundingBox"], {"left": 0.0, "top": 0.0, "right": 0.0, "bottom": 0.0}
+        )
+        body_cells = mapped["children"][1]["children"]
+        self.assertEqual([c["label"] for c in body_cells], ["row_header", "table_cell"])
+        self.assertEqual([c["text"] for c in body_cells], ["Whetstone", "A sharpening stone"])
+
+    def test_map_item_falls_back_to_children_for_a_table_with_no_cells(self):
+        # An empty grid yields no rows, so map_item maps the (empty) children normally.
+        item = FakeTableItem([], prov=FakeProv(page_no=1))
+        mapped = map_item(item, FakeDoc(), identity_resolve, {}, inherited_page=1)
+        self.assertEqual(mapped["label"], "table")
+        self.assertEqual(mapped["children"], [])
         item = FakeItem(prov=FakeProv(charspan=(9, 5)))
         mapped = map_item(item, FakeDoc(), identity_resolve, {}, inherited_page=1)
         self.assertEqual(mapped["charSpan"], [5, 9])
@@ -239,6 +315,56 @@ class RangePayloadTests(unittest.TestCase):
         )
         self.assertEqual(converter.calls, [("/tmp/a.pdf", (1, 2))])
         self.assertEqual(payload["pages"][0]["pageNumber"], 1)
+        self.assertNotIn("metadata", payload)
+
+    def test_convert_range_attaches_cleaned_metadata_when_a_reader_is_given(self):
+        converter = FakeConverter(FakeDoc(body=FakeGroup([FakeItem(text="x")])))
+        payload = convert_range(
+            "/tmp/a.pdf",
+            1,
+            1,
+            lambda: converter,
+            native_text=lambda _p: True,
+            read_metadata=lambda: {"Title": "  Trimmed  ", "Author": ""},
+        )
+        self.assertEqual(payload["metadata"], {"title": "Trimmed", "author": None})
+
+
+class DocumentMetadataTests(unittest.TestCase):
+    def test_clean_metadata_value_trims_and_nullifies_blanks(self):
+        self.assertEqual(clean_metadata_value("  A Title  "), "A Title")
+        self.assertIsNone(clean_metadata_value("   "))
+        self.assertIsNone(clean_metadata_value(""))
+
+    def test_clean_metadata_value_nullifies_non_strings(self):
+        self.assertIsNone(clean_metadata_value(None))
+        self.assertIsNone(clean_metadata_value(42))
+
+    def test_build_document_metadata_projects_title_and_author(self):
+        self.assertEqual(
+            build_document_metadata({"Title": " Book ", "Author": " Ada "}),
+            {"title": "Book", "author": "Ada"},
+        )
+
+    def test_build_document_metadata_defaults_missing_fields_to_null(self):
+        self.assertEqual(
+            build_document_metadata({}),
+            {"title": None, "author": None},
+        )
+
+    def test_build_range_payload_attaches_metadata_when_supplied(self):
+        payload = build_range_payload(
+            FakeDoc(),
+            1,
+            1,
+            native_text=lambda _p: True,
+            metadata={"Title": "T", "Author": "A"},
+        )
+        self.assertEqual(payload["metadata"], {"title": "T", "author": "A"})
+
+    def test_build_range_payload_omits_metadata_when_absent(self):
+        payload = build_range_payload(FakeDoc(), 1, 1, native_text=lambda _p: True)
+        self.assertNotIn("metadata", payload)
 
 
 # --- Page counting -----------------------------------------------------------------------------
@@ -421,6 +547,24 @@ class RunRangeTests(unittest.TestCase):
         payload = json.loads(raw.getvalue().decode("utf-8"))
         self.assertEqual(payload["schemaVersion"], RANGE_SCHEMA_VERSION)
         self.assertEqual(payload["body"][0]["text"], "标题 α")
+        self.assertNotIn("metadata", payload)
+
+    def test_emits_cleaned_metadata_when_a_reader_factory_is_wired(self):
+        doc = FakeDoc(body=FakeGroup([FakeItem(text="ok")]))
+        stdout = io.StringIO()
+        code = run_range(
+            "/tmp/a.pdf",
+            1,
+            1,
+            self._factory(doc),
+            lambda _p: (lambda page: True),
+            stdout,
+            io.StringIO(),
+            lambda _path: (lambda: {"Title": " Meta Title ", "Author": None}),
+        )
+        self.assertEqual(code, EXIT_OK)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["metadata"], {"title": "Meta Title", "author": None})
 
     def test_unsupported_schema_exits_with_its_own_code(self):
         doc = FakeDoc(version="0.0.9")
@@ -506,6 +650,7 @@ class MainTests(unittest.TestCase):
             ["--range", "/tmp/a.pdf", "1", "2"],
             converter_factory=lambda: FakeConverter(doc),
             prober_factory=lambda _path: (lambda page: page == 1),
+            metadata_reader_factory=lambda _path: (lambda: {"Title": "Doc", "Author": "Ada"}),
             resource_module=None,
             stdout=stdout,
             stderr=io.StringIO(),
@@ -513,6 +658,7 @@ class MainTests(unittest.TestCase):
         self.assertEqual(code, EXIT_OK)
         payload = json.loads(stdout.getvalue())
         self.assertEqual([p["hasNativeText"] for p in payload["pages"]], [True, False])
+        self.assertEqual(payload["metadata"], {"title": "Doc", "author": "Ada"})
 
     def test_range_rejects_non_positive_pages(self):
         stderr = io.StringIO()

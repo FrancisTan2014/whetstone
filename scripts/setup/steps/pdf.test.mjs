@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { pdfStep, probePdfLane } from "./pdf.mjs";
+import { pdfStep, probeOcrReadiness, probePdfLane } from "./pdf.mjs";
 import { createFakeContext } from "../testSupport.mjs";
 
 const OK = { code: 0, stdout: "", stderr: "" };
@@ -110,18 +110,11 @@ describe("probePdfLane", () => {
     expect(result?.what).toContain("fc0f2d45e2218ea24bce5045f58a389aed16dc23");
   });
 
-  it("reports OCRmyPDF missing distinctly when Python + Docling are present", () => {
-    const { ctx } = pdfContext({ docling: true, ocrmypdf: false });
-    const result = probePdfLane(ctx);
-    expect(result?.status).toBe("missing");
-    expect(result?.what).toContain("OCRmyPDF");
-  });
-
-  it("reports Tesseract missing distinctly when OCRmyPDF is present without it", () => {
-    const { ctx } = pdfContext({ docling: true, ocrmypdf: true, tesseract: false });
-    const result = probePdfLane(ctx);
-    expect(result?.status).toBe("missing");
-    expect(result?.what).toContain("Tesseract");
+  it("is ready (null) on the born-digital prerequisites alone — OCR tooling never gates it", () => {
+    // Python + pinned Docling + cached models present, but OCRmyPDF/Tesseract absent: the born-digital
+    // lane is ready because #702 ships with OCR disabled.
+    const { ctx } = pdfContext({ docling: true, ocrmypdf: false, tesseract: false });
+    expect(probePdfLane(ctx)).toBeNull();
   });
 
   it("returns null when the whole lane is ready", () => {
@@ -130,13 +123,51 @@ describe("probePdfLane", () => {
   });
 });
 
+describe("probeOcrReadiness", () => {
+  it("reports OCRmyPDF missing distinctly as future OCR scope (#704)", () => {
+    const { ctx } = pdfContext({ docling: true, ocrmypdf: false });
+    const result = probeOcrReadiness(ctx);
+    expect(result?.status).toBe("missing");
+    expect(result?.what).toContain("OCRmyPDF");
+    expect(result?.what).toContain("#704");
+  });
+
+  it("reports Tesseract missing distinctly when OCRmyPDF is present without it", () => {
+    const { ctx } = pdfContext({ docling: true, ocrmypdf: true, tesseract: false });
+    const result = probeOcrReadiness(ctx);
+    expect(result?.status).toBe("missing");
+    expect(result?.what).toContain("Tesseract");
+  });
+
+  it("returns null when both OCR tools are present", () => {
+    const { ctx } = pdfContext({ docling: true, ocrmypdf: true, tesseract: true });
+    expect(probeOcrReadiness(ctx)).toBeNull();
+  });
+});
+
 describe("pdf step check", () => {
-  it("is ok when Python, Docling, OCRmyPDF, and Tesseract are all present", () => {
+  it("is ok when the born-digital prerequisites (Python, pinned Docling, models) are present", () => {
     const { ctx } = pdfContext({ docling: true, ocrmypdf: true, tesseract: true });
     expect(pdfStep.check(ctx)).toEqual({ status: "ok" });
   });
 
-  it("surfaces the first gap when the lane is incomplete", () => {
+  it("is ok on the born-digital lane and reports missing OCR tooling as a separate future line", () => {
+    const { ctx, logs } = pdfContext({ docling: true, ocrmypdf: false, tesseract: false });
+    expect(pdfStep.check(ctx)).toEqual({ status: "ok" });
+    expect(logs.some((line) => line.includes("Future PDF OCR support") && line.includes("#704"))).toBe(
+      true
+    );
+  });
+
+  it("logs OCR availability separately when both OCR tools are present", () => {
+    const { ctx, logs } = pdfContext({ docling: true, ocrmypdf: true, tesseract: true });
+    pdfStep.check(ctx);
+    expect(logs.some((line) => line.includes("Future PDF OCR support") && line.includes("available"))).toBe(
+      true
+    );
+  });
+
+  it("surfaces the first born-digital gap when the lane is incomplete", () => {
     const { ctx } = pdfContext({ docling: false });
     expect(pdfStep.check(ctx).status).toBe("missing");
   });
@@ -153,7 +184,7 @@ describe("pdf step provision", () => {
     expect(pipCalls).toEqual([]);
   });
 
-  it("installs the pinned Docling then reports ok when the rest of the lane is present", () => {
+  it("installs the pinned Docling then reports ok when the models are present", () => {
     const { ctx, pipCalls } = pdfContext({
       python: true,
       docling: false,
@@ -192,26 +223,12 @@ describe("pdf step provision", () => {
     expect(pipCalls).toEqual([]);
   });
 
-  it("skips the Docling install when it is already present and surfaces the OCRmyPDF gap", () => {
-    // Docling present (no pip), but OCRmyPDF absent with no consent → installSystemTool returns the
-    // instruct-only OCRmyPDF remedy, which provision returns unchanged.
-    const { ctx, pipCalls } = pdfContext({
+  it("reports the born-digital lane ready without installing OCR tooling, noting it as future", () => {
+    // Docling + models present but OCRmyPDF/Tesseract absent: provision never installs or gates on OCR,
+    // so the step is ready and OCR is reported separately as future scope (#704).
+    const { ctx, pipCalls, logs } = pdfContext({
       platform: "darwin",
       confirm: false,
-      docling: true,
-      ocrmypdf: false,
-      brew: true
-    });
-    const result = pdfStep.provision(ctx);
-    expect(result.status).toBe("missing");
-    expect(result.what).toContain("OCRmyPDF");
-    expect(pipCalls).toEqual([]);
-  });
-
-  it("consent-installs OCRmyPDF (bundling Tesseract) and reports the lane ready", () => {
-    const { ctx } = pdfContext({
-      platform: "darwin",
-      confirm: true,
       python: true,
       docling: true,
       ocrmypdf: false,
@@ -219,17 +236,27 @@ describe("pdf step provision", () => {
       brew: true
     });
     expect(pdfStep.provision(ctx)).toEqual({ status: "ok" });
+    expect(pipCalls).toEqual([]);
+    expect(logs.some((line) => line.includes("Future PDF OCR support") && line.includes("#704"))).toBe(
+      true
+    );
   });
 });
 
 describe("pdf step verify", () => {
-  it("is ok when the lane is fully provisioned", () => {
+  it("is ok when the born-digital lane is fully provisioned", () => {
     const { ctx } = pdfContext({ docling: true, ocrmypdf: true, tesseract: true });
     expect(pdfStep.verify(ctx)).toEqual({ status: "ok" });
   });
 
-  it("surfaces the remaining gap after a partial provision", () => {
-    const { ctx } = pdfContext({ docling: true, ocrmypdf: false });
+  it("is ok on the born-digital lane even when OCR tooling is still absent", () => {
+    const { ctx, logs } = pdfContext({ docling: true, ocrmypdf: false });
+    expect(pdfStep.verify(ctx)).toEqual({ status: "ok" });
+    expect(logs.some((line) => line.includes("Future PDF OCR support"))).toBe(true);
+  });
+
+  it("surfaces the remaining born-digital gap after a partial provision", () => {
+    const { ctx } = pdfContext({ docling: false });
     expect(pdfStep.verify(ctx).status).toBe("missing");
   });
 });

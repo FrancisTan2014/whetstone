@@ -9,6 +9,7 @@ import {
   createHealthResponse,
   healthEndpointPath,
   healthResponseJsonSchema,
+  pdfContentType,
   type HealthResponse
 } from "@whetstone/contracts";
 
@@ -28,6 +29,8 @@ import { registerSearchRoutes } from "../features/search/searchRoutes.js";
 import type { SearchDependencies } from "../features/search/searchRoutes.js";
 import { registerImageRoutes } from "../features/images/imageRoutes.js";
 import type { ImageDependencies } from "../features/images/imageRoutes.js";
+import { registerPdfImportRoutes } from "../features/pdfImport/pdfImportRoutes.js";
+import type { PdfImportRouteDependencies } from "../features/pdfImport/pdfImportRoutes.js";
 import { registerDiaryRoutes } from "../features/diary/diaryRoutes.js";
 import type { DiaryRouteDependencies } from "../features/diary/diaryRoutes.js";
 import { registerAuthoredWorkRoutes } from "../features/authoredWorks/authoredWorkRoutes.js";
@@ -65,6 +68,7 @@ export type CreateServerOptions = Readonly<{
   lookup?: LookupDependencies;
   notes?: NotesDependencies;
   notesReview?: NotesReviewRouteDependencies;
+  pdfImport?: PdfImportRouteDependencies;
   preferences?: PreferencesDependencies;
   readingPosition?: ReadingPositionDependencies;
   recitation?: RecitationRouteDependencies;
@@ -89,6 +93,15 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
     done(null, body)
   );
 
+  // Born-digital PDF uploads (#702) stream straight into the import feature's staging/hash boundary, so
+  // the whole file is never buffered in memory (GUIDELINES: no route buffers an entire source merely to
+  // hash or persist it). This passthrough parser hands the route the raw request stream instead of a
+  // Buffer. Registered here (not in a feature) because the content type is shared by the pdf-import
+  // front door and the legacy content/pdf route, and it must be streaming for both.
+  server.addContentTypeParser(pdfContentType, (_request, payload, done) => {
+    done(null, payload);
+  });
+
   server.get(
     healthEndpointPath,
     {
@@ -107,6 +120,10 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
 
   if (options.content !== undefined) {
     registerContentRoutes(server, options.content);
+  }
+
+  if (options.pdfImport !== undefined) {
+    registerPdfImportRoutes(server, options.pdfImport);
   }
 
   if (options.notes !== undefined) {

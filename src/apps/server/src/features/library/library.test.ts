@@ -18,6 +18,9 @@ import {
   memoryPrompts,
   noteAnchors,
   notes,
+  pdfBlockEvidence,
+  pdfImportAttempts,
+  pdfImportPublications,
   personalEntries,
   readingPositions,
   readingUnits,
@@ -29,6 +32,7 @@ import {
   reviewCards,
   reviewEvents,
   tocEntries,
+  uploadedSourceClaims,
   workMeta,
   workSources
 } from "../../db/schema.js";
@@ -909,6 +913,48 @@ describe("DELETE /api/works/:workEntryId", () => {
     expect(response.statusCode).toBe(204);
     expect(await context.db.select().from(workMeta)).toHaveLength(0);
     expect(await context.db.select().from(entries)).toHaveLength(0);
+  });
+
+  it("deletes a published PDF-imported work, tearing down its source claim and publication link (#702, #706)", async () => {
+    // A born-digital PDF publishes into the same work-1 canonical content seed (unit + `doc_blocks` block)
+    // and additionally leaves the import's data-integrity rows: a single-owner `uploaded_source_claims`
+    // keyed by the uploaded bytes (so the same PDF reopens this Work), a `pdf_import_publications` link
+    // recording what the converted attempt published, and per-block `pdf_block_evidence`. Every one of
+    // these FKs the Work entry; without teardown the entries delete is rejected and the Work is stuck.
+    await seedWorkWithContent(context.db);
+    await context.db
+      .insert(uploadedSourceClaims)
+      .values({ sha256: "pdf-hash", workEntryId: "work-1" });
+    await context.db.insert(pdfImportAttempts).values({
+      id: "attempt-1",
+      sourceHash: "pdf-hash",
+      state: "converted",
+      userId: "user-a"
+    });
+    await context.db.insert(pdfImportPublications).values({
+      attemptId: "attempt-1",
+      fileName: "doomed.pdf",
+      workEntryId: "work-1"
+    });
+    await context.db.insert(pdfBlockEvidence).values({
+      blockId: "pmblock-1",
+      label: "text",
+      page: 1,
+      workEntryId: "work-1"
+    });
+
+    const response = await context.server.inject({ method: "DELETE", url: "/api/works/work-1" });
+
+    // Before the fix this FK-violated on the entries delete and returned 500; the Work is now deletable.
+    expect(response.statusCode).toBe(204);
+
+    // The claim and the publication link that referenced the deleted Work are gone; the per-block evidence
+    // cascaded away with its `doc_blocks` row. work-2 (untouched) still owns nothing PDF-related.
+    expect(await context.db.select().from(uploadedSourceClaims)).toHaveLength(0);
+    expect(await context.db.select().from(pdfImportPublications)).toHaveLength(0);
+    expect(await context.db.select().from(pdfBlockEvidence)).toHaveLength(0);
+    const remainingEntries = (await context.db.select().from(entries)).map((row) => row.id).sort();
+    expect(remainingEntries).toEqual(["work-2"]);
   });
 
   it("still deletes the work and logs when a source-file unlink fails (best-effort)", async () => {

@@ -1,8 +1,13 @@
-import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { motion, type Variants } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 
-import type { CreateWorkRequest, RecitationPlanDto, WorkListItemDto } from "@whetstone/contracts";
+import type {
+  CreateWorkRequest,
+  RecitationPlanDto,
+  WorkAuthorSelection,
+  WorkListItemDto
+} from "@whetstone/contracts";
 import {
   workLanguageLabels,
   workLanguages,
@@ -18,8 +23,22 @@ import { Sheet } from "../../shared/ui/Sheet";
 import { useMediaQuery } from "../../shared/ui/useMediaQuery";
 import { useToast } from "../../shared/ui/toast/ToastProvider";
 import { detectUploadKind, stripFileExtension } from "../../shared/files/fileType";
-import { ingestPdf } from "../content/contentApi";
 import { markdownEmptyContentMessage } from "../content/contentMessages";
+import {
+  beginPdfImport,
+  cancelPdfImport,
+  fetchPdfImportView,
+  retryPdfImport
+} from "../pdfImport/pdfImportApi";
+import {
+  pollPdfImportUntilTerminal,
+  type PdfImportPollResult
+} from "../pdfImport/pdfImportPolling";
+import {
+  forgetActivePdfImport,
+  readActivePdfImport,
+  rememberActivePdfImport
+} from "../pdfImport/pdfImportSession";
 import {
   createWork,
   deleteWork,
@@ -34,23 +53,12 @@ import { LibraryAddMenu } from "./LibraryAddMenu";
 import { WorkOverflowMenu } from "./WorkOverflowMenu";
 import { enrollRecitation, listRecitationPlans } from "../recitation/recitationApi";
 
-// Shown when the doc-AI worker could not read an uploaded PDF (the server's 422 `invalid_pdf`), e.g. a
-// scanned or corrupt file — mirrors the Manage-content panel's copy so the one front door reads the same.
-const invalidPdfMessage = "We couldn’t read this PDF. Please try a different file.";
-
-// Shown when the host has no PDF toolchain provisioned (the server's 503 `pdf_toolchain_missing`) —
-// a setup gap, not a bad file, so the copy points at the fix rather than blaming the PDF (#510).
-const pdfToolchainMissingMessage =
-  "PDF ingestion isn’t set up on the server yet. Run `pnpm setup:pdf` (or `pnpm setup:doctor` to check), then try again.";
-
-// Shown when a PDF produced no readable blocks (the server's 422 `empty_content`), e.g. a
-// scanned/image-only PDF — v0 has no image block, so there is nothing to add. The Markdown upload lane
-// uses `markdownEmptyContentMessage` so it reads identically to the Manage-content panel (#673).
-const emptyPdfContentMessage =
-  "This document has no readable text to add. Images on their own aren’t supported yet.";
-
-// Rejects a picked file that is none of the three supported document types before any ingest call.
+// Shown when a picked file is none of the three supported document types, before any ingest call.
 const unsupportedUploadMessage = "Choose an .epub, .pdf, or .md file.";
+
+// How often the Library polls an in-flight born-digital PDF import's view (#702). The server job runs
+// independently; this only paces the progress card. One second keeps the card responsive without hammering.
+const pdfImportPollIntervalMs = 1000;
 
 type LoadState = "loading" | "ready" | "error";
 
@@ -93,6 +101,10 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
   const [authorSelection, setAuthorSelection] = useState<CreateWorkRequest["author"] | undefined>(
     undefined
   );
+  // The resolved display name for the chosen author, reported by AuthorSelectField alongside the
+  // selection. The born-digital import resolves its author by name (#702), so the page forwards this name
+  // rather than re-deriving it from the selection (an existing pick carries only an id, not a name).
+  const [authorName, setAuthorName] = useState<string | undefined>(undefined);
   const [workError, setWorkError] = useState<string | undefined>(undefined);
   const [submitting, setSubmitting] = useState(false);
 
@@ -100,8 +112,25 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
   // authoritative), these carry no reliable metadata, so we create the Work from the confirmed form
   // first, then ingest this file into it.
   const [pendingUpload, setPendingUpload] = useState<File | undefined>(undefined);
-  const [uploadBusy, setUploadBusy] = useState(false);
-  const [uploadKind, setUploadKind] = useState<UploadKind | undefined>(undefined);
+
+  // A born-digital import (#702) left in flight when the page was last closed or navigated away is remembered
+  // by its #721 attempt id; reading it once on mount (lazy initial state, never in an effect) re-enters the
+  // poll loop below so the progress card reappears and completion still opens the Reader.
+  const [rememberedPdfImportId] = useState(() => readActivePdfImport());
+  const [uploadBusy, setUploadBusy] = useState(() => rememberedPdfImportId !== null);
+  const [uploadKind, setUploadKind] = useState<UploadKind | undefined>(() =>
+    rememberedPdfImportId !== null ? "pdf" : undefined
+  );
+
+  // The born-digital PDF import currently being polled (its #721 attempt id) and the label to show while
+  // it runs. Undefined when no import is in flight. Held in state (not a ref) so the progress card and the
+  // poll effect react to it, and so a remembered attempt can resume the loop after navigation.
+  const [activePdfImportId, setActivePdfImportId] = useState<string | undefined>(
+    () => rememberedPdfImportId ?? undefined
+  );
+  const [pdfImportLabel, setPdfImportLabel] = useState<string | undefined>(() =>
+    rememberedPdfImportId !== null ? "Resuming the import…" : undefined
+  );
 
   // The work awaiting an explicit delete confirmation (destructive + irreversible), and whether the
   // confirmed delete is in flight, so the confirm dialog names the work and disables while deleting.
@@ -116,6 +145,19 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
   // chosen file into the existing ingest flow.
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // A stable selection handler for AuthorSelectField (#702). The field reports both the committed
+  // selection and its resolved display name — the born-digital import forwards that name — but it does so
+  // from an effect keyed on this callback, so the identity MUST be stable: an inline arrow would fire that
+  // effect every render and reset a fresh selection object, looping until React aborts. `useState` setters
+  // are stable, so no dependencies are needed.
+  const handleAuthorSelectionChange = useCallback(
+    (selection: WorkAuthorSelection | undefined, name?: string): void => {
+      setAuthorSelection(selection);
+      setAuthorName(name);
+    },
+    []
+  );
+
   async function reload(): Promise<void> {
     const [workList, withPosition, recitation] = await Promise.all([
       fetchWorks(),
@@ -125,6 +167,12 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
     setWorks(workList.works);
     setWorksWithPosition(withPosition);
     setRecitationByWork(new Map(recitation.plans.map((plan) => [plan.workEntryId, plan])));
+  }
+
+  // Open a published (or reopened) Work in the existing Reader. HashRouter renders this as
+  // `#/reader?work=<id>`, matching the Library's own read links.
+  function openReader(workEntryId: string): void {
+    navigate(`/reader?work=${encodeURIComponent(workEntryId)}`);
   }
 
   useEffect(() => {
@@ -145,6 +193,7 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
     setLanguage("en");
     setWorkType("book");
     setAuthorSelection(undefined);
+    setAuthorName(undefined);
     setWorkError(undefined);
   }
 
@@ -202,10 +251,9 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
     setSubmitting(true);
 
     try {
-      // The learner's create intent decides the Work's content authority (#695): a plain manual entry is
-      // `manual` (owned, editable from the Library), while a held file is an `imported` shell that
-      // ingestion then fills. The server stamps origin (and, for manual, the ownership facet); the client
-      // only declares which path this is.
+      // Three create lanes by intent (#695): a plain manual entry mints an owned, editable Work; a held
+      // Markdown or PDF file mints an imported Work through its own atomic front door. The server stamps
+      // origin and provenance; the client only routes to the right lane.
 
       // A held Markdown file mints its imported Work atomically through the front-door import endpoint
       // (#706): the Work, its source, and its single-owner claim are written in one transaction, so
@@ -218,13 +266,18 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
         return;
       }
 
-      const origin = heldUpload === undefined ? "manual" : "imported";
-      const created = await createWork({ author, language, origin, title: trimmedTitle, workType });
-      resetWorkForm();
-      setPendingUpload(undefined);
-      setAddOpen(false);
-
+      // A plain manual entry mints an owned, editable Work with a canonical empty document (#720).
       if (heldUpload === undefined) {
+        const created = await createWork({
+          author,
+          language,
+          origin: "manual",
+          title: trimmedTitle,
+          workType
+        });
+        resetWorkForm();
+        setPendingUpload(undefined);
+        setAddOpen(false);
         await reload();
         toast.success(`Added “${trimmedTitle}”.`);
         // A manual Work is created with a canonical empty document (#720): open it straight in the
@@ -233,10 +286,14 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
         return;
       }
 
-      // The Work now exists; ingest the held PDF into it. `ingestUploadIntoWork` owns its own
-      // failure handling (a failed ingest leaves the empty Work in place, retryable from Manage
-      // content), so it never throws back into this create-scoped catch.
-      await ingestUploadIntoWork(heldUpload, created.work.entryId, trimmedTitle);
+      // A held PDF is a born-digital import (#702): no shell Work is created up front. The import runs as a
+      // #721 staged attempt and, on completion, mints its Author -> Work -> ReadingUnit -> Block canonical
+      // Work atomically (identical bytes reopen the existing Work instead, #706). This lane owns its own
+      // progress and failure surfacing, so it never throws back into this create-scoped catch.
+      resetWorkForm();
+      setPendingUpload(undefined);
+      setAddOpen(false);
+      await beginHeldPdfImport(heldUpload, trimmedTitle, authorName, language);
     } catch {
       toast.error("Could not save the work. Please try again.");
     } finally {
@@ -244,58 +301,156 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
     }
   }
 
-  // A held PDF is ingested into the just-created Work (#706 routes Markdown through the atomic import
-  // endpoint instead, so this lane is PDF-only). The canonical PDF front door is #702's; until then a
-  // PDF still creates a shell Work first, so a failed ingest leaves it retryable from Manage content.
-  async function ingestUploadIntoWork(
+  // Start a born-digital PDF import from the held file (#702). Identical bytes reopen the existing Work and
+  // open the Reader (#706); otherwise a staged attempt is queued and its id remembered so an in-flight
+  // import survives navigation and can be resumed. This lane owns its own progress and failure surfacing.
+  async function beginHeldPdfImport(
     file: File,
-    workEntryId: string,
-    workTitle: string
+    workTitle: string,
+    enteredAuthor: string | undefined,
+    workLanguage: WorkLanguage
   ): Promise<void> {
     setUploadBusy(true);
     setUploadKind("pdf");
+    setPdfImportLabel("Uploading the PDF…");
 
     try {
-      const failureMessage = await ingestHeldPdf(file, workEntryId);
+      const result = await beginPdfImport(file, {
+        /* v8 ignore next -- AuthorSelectField always reports a resolved name alongside a defined
+           selection, and submit is blocked when the selection is undefined, so `enteredAuthor` is
+           always a string here; the null fallback only bridges the optional-name type. */
+        enteredAuthor: enteredAuthor ?? null,
+        enteredLanguage: workLanguage,
+        enteredTitle: workTitle,
+        fileName: file.name
+      });
 
-      if (failureMessage === undefined) {
-        toast.success(`Imported “${workTitle}”.`);
-      } else {
-        toast.error(failureMessage);
+      if (result.outcome === "reopened") {
+        finishPdfImport();
+        await reload();
+        toast.success(`“${workTitle}” is already in your library — opening it.`);
+        openReader(result.workEntryId);
+        return;
       }
+
+      rememberActivePdfImport(result.attemptId);
+      setActivePdfImportId(result.attemptId);
     } catch {
-      toast.error("Could not ingest the file. Please try again.");
-    } finally {
-      // The Work was created regardless of the ingest outcome. Refresh the shelf and hand the user to
-      // Manage content either way, so a failed ingest leaves the new (empty) Work visible and
-      // immediately retryable from that surface.
+      finishPdfImport();
+      toast.error("Could not start the import. Please try again.");
+    }
+  }
+
+  // Clear every in-flight import UI signal and drop the remembered attempt so no stale poll resumes it.
+  function finishPdfImport(): void {
+    forgetActivePdfImport();
+    setActivePdfImportId(undefined);
+    setPdfImportLabel(undefined);
+    setUploadBusy(false);
+    setUploadKind(undefined);
+  }
+
+  // Cancel the in-flight import: the server terminates its owned conversion child and drops the stage. We
+  // stop the local poll ourselves rather than waiting for the cancelled state to propagate through a poll.
+  async function cancelActivePdfImport(): Promise<void> {
+    const attemptId = activePdfImportId;
+    /* v8 ignore next 3 -- defensive: the Cancel button only renders while an import is in flight
+       (activePdfImportId defined), so this guard cannot be reached through the rendered UI. */
+    if (attemptId === undefined) {
+      return;
+    }
+    finishPdfImport();
+    try {
+      await cancelPdfImport(attemptId);
+    } catch {
+      // The cancel request failed, so the server import may still be running even though the local
+      // session is cleared. Surface the failure instead of success-shaped feedback; the attempt is
+      // reopenable later.
+      toast.error("Could not cancel the import. It may still be running.");
+      return;
+    }
+    toast.success("Import cancelled.");
+  }
+
+  // Apply a terminal poll outcome (#702): open the Reader on a published Work, or surface the
+  // sequenced-limitation (OCR), empty-document (no_content), or named-failure copy. `gone` means the
+  // remembered attempt no longer exists
+  // for this user (a stale reopened id), so we simply drop it.
+  async function applyPdfImportTerminal(result: PdfImportPollResult): Promise<void> {
+    if (result.kind !== "terminal") {
+      // `gone` (a stale reopened id) or a late `aborted`: no Work to open, just drop the session.
+      finishPdfImport();
+      return;
+    }
+
+    const { progress } = result;
+    finishPdfImport();
+
+    if (progress.kind === "published") {
       await reload();
-      onManageContent(workEntryId);
-      setUploadBusy(false);
-      setUploadKind(undefined);
+      toast.success("Your PDF is ready to read.");
+      openReader(progress.workEntryId);
+      return;
     }
+
+    /* v8 ignore next 4 -- a terminal poll result is published, ocr_required, no_content,
+       image_unsupported, or failed; `in_progress` (the only remaining kind) is never terminal, so this
+       early return is unreachable. */
+    if (
+      progress.kind !== "ocr_required" &&
+      progress.kind !== "no_content" &&
+      progress.kind !== "image_unsupported" &&
+      progress.kind !== "failed"
+    ) {
+      return;
+    }
+
+    // ocr_required, no_content, image_unsupported, and failed all surface their message and create no Work.
+    toast.error(progress.message);
   }
 
-  // Ingest the held PDF into the just-created Work, returning a user-facing message when the server
-  // reports a handled failure (unreadable PDF, missing toolchain, no readable text) or `undefined` on
-  // success.
-  async function ingestHeldPdf(file: File, workEntryId: string): Promise<string | undefined> {
-    const outcome = await ingestPdf(workEntryId, file);
-
-    if (outcome.status === "invalid_pdf") {
-      return invalidPdfMessage;
+  // Drive the poll loop for the in-flight born-digital import (#702). Setting `activePdfImportId` — a fresh
+  // queued attempt, or a remembered one resumed on mount — starts it; navigating away aborts the local loop
+  // (the server job keeps running and can be reopened). The first poll reports progress immediately, so the
+  // card never shows a stale label. Declared after `applyPdfImportTerminal` so the effect never reads it
+  // before it exists.
+  useEffect(() => {
+    const attemptId = activePdfImportId;
+    if (attemptId === undefined) {
+      return;
     }
 
-    if (outcome.status === "pdf_toolchain_missing") {
-      return pdfToolchainMissingMessage;
-    }
+    let aborted = false;
+    void (async () => {
+      const result = await pollPdfImportUntilTerminal(
+        attemptId,
+        (progress) => {
+          if (!aborted && progress.kind === "in_progress") {
+            setPdfImportLabel(progress.label);
+          }
+        },
+        {
+          delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+          fetchView: fetchPdfImportView,
+          intervalMs: pdfImportPollIntervalMs,
+          resume: retryPdfImport
+        },
+        () => aborted
+      );
 
-    if (outcome.status === "empty_content") {
-      return emptyPdfContentMessage;
-    }
+      if (aborted || result.kind === "aborted") {
+        return;
+      }
+      await applyPdfImportTerminal(result);
+    })();
 
-    return undefined;
-  }
+    return () => {
+      aborted = true;
+    };
+    // Only the attempt id drives (re)starting the loop; the handlers it closes over are stable enough for
+    // this effect and re-running on every render would restart polling needlessly.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePdfImportId]);
 
   // Mint an imported Work from the held Markdown file in one atomic request (#706). Re-uploading
   // identical bytes reopens the existing Work instead of creating a duplicate; either way the learner
@@ -416,6 +571,10 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
 
   const groups = groupWorksByAuthor(works);
 
+  // The in-flight PDF progress card's label. A PDF import always carries a label (set on start, on
+  // resume, and on every in-progress poll tick), so the fallback is only a defensive default.
+  const pdfProgressLabel = pdfImportLabel ?? "Importing the PDF…";
+
   return (
     <PageFrame
       primaryAction={
@@ -440,7 +599,20 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
         />
 
         {uploadKind === "epub" ? <LoadingIndicator label="Ingesting the EPUB…" /> : null}
-        {uploadKind === "pdf" ? <LoadingIndicator label="Converting the PDF…" /> : null}
+        {uploadKind === "pdf" ? (
+          <div className="flex items-center justify-between gap-3" role="status">
+            <LoadingIndicator label={pdfProgressLabel} />
+            {activePdfImportId !== undefined ? (
+              <Button
+                onClick={() => void cancelActivePdfImport()}
+                type="button"
+                variant="secondary"
+              >
+                Cancel
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
 
         {loadState === "loading" ? <LoadingIndicator label="Loading the library…" /> : null}
         {loadState === "error" ? <p role="alert">Could not load the library.</p> : null}
@@ -503,7 +675,7 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
                 </select>
               </label>
 
-              <AuthorSelectField onSelectionChange={setAuthorSelection} />
+              <AuthorSelectField onSelectionChange={handleAuthorSelectionChange} />
 
               <Button pending={submitting} type="submit">
                 Create work

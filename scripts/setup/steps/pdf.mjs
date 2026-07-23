@@ -1,14 +1,15 @@
-// Optional setup step (#510): make the PDF ingestion lane work end to end with one command —
-// `pnpm setup:pdf`. PDF upload converts the file to Markdown through the Docling worker
-// (src/apps/server/src/files/pdf_to_markdown.py) behind an OCRmyPDF/Tesseract pre-pass for scanned
-// pages (src/apps/server/src/files/pdfOcr.ts). Unlike the coach/speech lanes there is no runtime fake
-// fallback in production wiring (index.ts always composes the real workers), so a fresh clone with no
-// doc-AI toolchain reports a valid PDF as unreadable. This step closes that setup-coverage gap: it
-// checks Python + Docling + OCRmyPDF + Tesseract, reporting each missing piece distinctly, installs
-// what it safely can after explicit consent (Python + the Docling pip package), and leaves the heavy
-// system tools (OCRmyPDF/Tesseract) instruct-only where no clean native install exists. Excluded from
-// the base `pnpm setup` (heavy/network); every failure mode returns an actionable { what, remedy },
-// never a raw crash.
+// Optional setup step (#510): make the born-digital PDF ingestion lane work end to end with one
+// command — `pnpm setup:pdf`. A born-digital PDF is converted to structured JSON by the pinned Docling
+// worker (#701) and published as canonical blocks (#702). That lane needs only Python + the pinned
+// Docling runtime + the pinned model snapshot; it ships with OCR disabled, so a scanned/mixed page
+// returns the typed OCR-required outcome rather than being converted here.
+//
+// This step therefore gates readiness on the BORN-DIGITAL prerequisites alone (Python, pinned Docling,
+// pinned model) and installs what it safely can after explicit consent (Python + the Docling pip
+// package + the model snapshot). OCRmyPDF/Tesseract belong to the future OCR lane (#704); they are
+// reported SEPARATELY as future readiness so a supported born-digital install is never marked "not
+// ready" for lacking out-of-scope OCR tools. Excluded from the base `pnpm setup` (heavy/network);
+// every failure mode returns an actionable { what, remedy }, never a raw crash.
 
 import { installSystemTool } from "../installSystemTool.mjs";
 import { error, isOk, missing, ok, withOutputTail } from "../step.mjs";
@@ -54,12 +55,12 @@ const MODEL_REMEDY = "Run `pnpm setup:pdf` to download the exact pinned model sn
 const OCRMYPDF_DOCS = "https://ocrmypdf.readthedocs.io/en/latest/installation.html";
 const OCRMYPDF_REMEDY =
   "Install OCRmyPDF (`brew install ocrmypdf` / `sudo apt install ocrmypdf`, or on Windows see " +
-  "https://ocrmypdf.readthedocs.io/en/latest/installation.html), then re-run `pnpm setup:pdf`. " +
+  "https://ocrmypdf.readthedocs.io/en/latest/installation.html) once the OCR lane (#704) lands. " +
   "It provides the scanned-PDF OCR pre-pass and bundles Tesseract.";
 const TESSERACT_DOCS = "https://tesseract-ocr.github.io/tessdoc/Installation.html";
 const TESSERACT_REMEDY =
   "Install Tesseract OCR (`brew install tesseract` / `sudo apt install tesseract-ocr`, or on " +
-  "Windows https://github.com/UB-Mannheim/tesseract/wiki), then re-run `pnpm setup:pdf`.";
+  "Windows https://github.com/UB-Mannheim/tesseract/wiki) once the OCR lane (#704) lands.";
 
 /**
  * Resolve an available Python interpreter command, or null when none is on PATH.
@@ -111,31 +112,12 @@ function ocrmypdfPresent(ctx) {
   return ctx.exec("ocrmypdf", ["--version"]).code === 0;
 }
 
-/** @type {import("../installSystemTool.mjs").InstallSpec} */
-const OCRMYPDF_SPEC = {
-  name: "OCRmyPDF",
-  check: (ctx) =>
-    ocrmypdfPresent(ctx)
-      ? ok()
-      : missing(
-          "OCRmyPDF was not found (required for the scanned-PDF OCR pre-pass).",
-          OCRMYPDF_REMEDY,
-          OCRMYPDF_DOCS
-        ),
-  remedy: OCRMYPDF_REMEDY,
-  docs: OCRMYPDF_DOCS,
-  question: "Install OCRmyPDF now? [Y/n]",
-  // Native one-liners only where they cleanly pull OCRmyPDF (and Tesseract with it). Windows has no
-  // clean single-command install, so it falls through to the instruct-only remedy above.
-  plans: {
-    darwin: { manager: "brew", args: ["install", "ocrmypdf"] }
-  }
-};
-
 /**
- * Probe the PDF lane's four prerequisites in order, returning the FIRST gap distinctly (so the
- * report names exactly what is missing — Python, Docling, OCRmyPDF, or Tesseract), or null when the
- * whole lane is ready. Shared by `check` and `verify` so a post-provision probe uses the same logic.
+ * Probe the BORN-DIGITAL PDF lane's prerequisites in order — Python, the Docling package, the pinned
+ * runtime versions, then the pinned model snapshot — returning the FIRST gap distinctly (so the report
+ * names exactly what is missing), or null when the born-digital lane is ready. Shared by `check` and
+ * `verify` so a post-provision probe uses the same logic. OCR tooling is intentionally NOT probed here:
+ * it is future scope (#704) reported separately by `probeOcrReadiness`.
  *
  * @param {import("../step.mjs").SetupContext} ctx
  * @returns {import("../step.mjs").StepResult | null}
@@ -173,16 +155,29 @@ export function probePdfLane(ctx) {
       DOCLING_DOCS
     );
   }
+  return null;
+}
+
+/**
+ * Probe the FUTURE OCR lane's tooling (OCRmyPDF, then the Tesseract it needs), returning the first gap
+ * distinctly or null when both are present. Reported separately from the born-digital readiness gate:
+ * #702 ships with OCR disabled, so a missing OCR tool never marks the PDF lane not ready — a
+ * scanned/mixed page yields the typed OCR-required outcome until the OCR lane (#704) lands.
+ *
+ * @param {import("../step.mjs").SetupContext} ctx
+ * @returns {import("../step.mjs").StepResult | null}
+ */
+export function probeOcrReadiness(ctx) {
   if (!ocrmypdfPresent(ctx)) {
     return missing(
-      "OCRmyPDF was not found (required for the scanned-PDF OCR pre-pass).",
+      "OCRmyPDF was not found (needed by the future scanned-PDF OCR pre-pass, #704).",
       OCRMYPDF_REMEDY,
       OCRMYPDF_DOCS
     );
   }
   if (ctx.exec("tesseract", ["--version"]).code !== 0) {
     return missing(
-      "Tesseract OCR was not found (OCRmyPDF needs it to read scanned pages).",
+      "Tesseract OCR was not found (OCRmyPDF needs it to read scanned pages, #704).",
       TESSERACT_REMEDY,
       TESSERACT_DOCS
     );
@@ -190,13 +185,33 @@ export function probePdfLane(ctx) {
   return null;
 }
 
+/**
+ * Log the future OCR lane's status as one non-blocking line, so setup surfaces OCR readiness distinctly
+ * from — and never gating — the born-digital PDF readiness the step reports.
+ *
+ * @param {import("../step.mjs").SetupContext} ctx
+ * @returns {void}
+ */
+function reportOcrReadiness(ctx) {
+  const gap = probeOcrReadiness(ctx);
+  if (gap === null) {
+    ctx.log("Future PDF OCR support (scanned/mixed pages, #704) is available.");
+    return;
+  }
+  ctx.log(
+    `Future PDF OCR support (scanned/mixed pages, #704) is not installed: ${gap.what} ` +
+      `Born-digital PDFs import without it; scanned/mixed pages return the OCR-required outcome until then.`
+  );
+}
+
 /** @type {import("../step.mjs").Step} */
 export const pdfStep = {
   id: "pdf",
-  title: "PDF ingestion (Docling + OCRmyPDF/Tesseract)",
+  title: "PDF ingestion (born-digital via Docling; OCR is future #704)",
   optional: true,
   capability: "pdf",
   check(ctx) {
+    reportOcrReadiness(ctx);
     return probePdfLane(ctx) ?? ok();
   },
   provision(ctx) {
@@ -245,16 +260,14 @@ export const pdfStep = {
         );
       }
     }
-    // OCRmyPDF (and the Tesseract it bundles) is a heavy system install: consent-gated where a clean
-    // native one-liner exists, instruct-only elsewhere. A not-ready result here is returned as-is so
-    // the summary shows the exact remedy — never force-installed, never a crash.
-    const ocrReady = installSystemTool(ctx, OCRMYPDF_SPEC);
-    if (!isOk(ocrReady)) {
-      return ocrReady;
-    }
+    // OCR tooling (#704) is out of scope for the born-digital lane, so provision never installs or
+    // gates on it — it is only reported as future readiness. The step is ready once the born-digital
+    // prerequisites are provisioned.
+    reportOcrReadiness(ctx);
     return probePdfLane(ctx) ?? ok();
   },
   verify(ctx) {
+    reportOcrReadiness(ctx);
     return probePdfLane(ctx) ?? ok();
   }
 };
