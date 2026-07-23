@@ -36,15 +36,18 @@ describe("createDbClient", () => {
         language: "en",
         origin: "imported",
         title: "Parable of the Sower",
+        // #724: `title_key` is a generated column, derived from the title by `work_title_key`.
+        titleKey: "parableofthesower",
         workType: "book"
       }
     ]);
   });
 
-  it("declares the foreign keys and author index that the work list query relies on", () => {
+  it("declares the foreign keys and indexes that the work list and duplicate-candidate queries rely on", () => {
     const workMetaConfig = getTableConfig(workMeta);
 
     expect(workMetaConfig.foreignKeys).toHaveLength(2);
-    expect(workMetaConfig.indexes).toHaveLength(1);
+    // author index (#694) plus the #724 title-key length-window index.
+    expect(workMetaConfig.indexes).toHaveLength(2);
   });
 });

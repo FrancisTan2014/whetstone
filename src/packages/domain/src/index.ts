@@ -153,3 +153,19 @@ export type {
   RepartitionPlan,
   RepartitionUnit
 } from "./workRepartition.js";
+export {
+  candidateTitleKeyLengthBounds,
+  DIFFERENT_AUTHOR_TITLE_SIMILARITY_THRESHOLD,
+  MAX_WORK_DUPLICATE_CANDIDATES,
+  SAME_AUTHOR_TITLE_SIMILARITY_THRESHOLD,
+  selectWorkDuplicateCandidates,
+  titleKeySimilarity
+} from "./workDuplicateCandidates.js";
+export type {
+  DuplicateCandidateEvidence,
+  ExistingWorkCandidate,
+  ProposedWorkMetadata,
+  WorkDuplicateCandidate,
+  WorkDuplicateCandidateResult,
+  WorkDuplicateMatchTier
+} from "./workDuplicateCandidates.js";

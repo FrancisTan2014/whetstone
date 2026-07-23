@@ -66,6 +66,17 @@ export const workMeta = pgTable(
       .references(() => entries.id),
     language: text("language", { enum: ["zh-CN", "zh-TW", "en"] as const }).notNull(),
     title: text("title").notNull(),
+    // #724 canonical duplicate-candidate key: a GENERATED STORED column computed by the shared
+    // `work_title_key` SQL function (database Unicode lowercase of the NFKC-cleaned title with all Unicode
+    // whitespace removed). It is generated — never written by any of the several Work writers — so the key
+    // can never desync from the title and Unicode lowercase is never duplicated in JavaScript. Punctuation,
+    // symbols, digits, diacritics, and script are preserved so edition/language distinctions survive.
+    // Required (the function fails loud on a blank-after-normalization title, so the value is never NULL) but
+    // deliberately NON-unique: distinct editions, languages, or authors may share a key — title similarity is
+    // candidate evidence, never Work identity, so no uniqueness constraint is placed on it.
+    titleKey: text("title_key")
+      .notNull()
+      .generatedAlwaysAs(sql`work_title_key("title")`),
     workType: text("work_type", {
       enum: ["book", "essay", "blog_post", "classical_text"] as const
     }).notNull(),
@@ -78,6 +89,10 @@ export const workMeta = pgTable(
   },
   (table) => [
     index("work_meta_author_idx").on(table.authorId),
+    // #724 non-unique index over the canonical title key. Duplicate-candidate retrieval prefilters by
+    // title-key length (a bounded window that is a complete superset of any fuzzy match), so an index on
+    // the key keeps that scan cheap. Non-unique: many Works may legitimately share a title key.
+    index("work_meta_title_key_idx").on(table.titleKey),
     // Enforce the closed origin set in the database, not only at the contract boundary, so no writer
     // (or restored dump) can land a Work with an unknown authority.
     check("work_meta_origin_ck", sql`${table.origin} in ('imported', 'manual', 'authored')`)
