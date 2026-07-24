@@ -173,6 +173,11 @@ export function buildReviewDto(
       title: attempt.proposedTitle,
       workType: attempt.proposedWorkType as WorkType
     },
-    revision: attempt.revision
+    revision: attempt.revision,
+    // THIS attempt's own upload name, so the panel is always framed by the reviewed attempt — never by
+    // whatever file the client last posted. On a resumed single-active-attempt race this is the older
+    // attempt's filename, so the two uploads cannot be conflated.
+    /* v8 ignore next -- a markdown attempt always records its upload fileName; the fallback is defensive. */
+    sourceFileName: attempt.sourceFileName ?? `${attempt.proposedTitle}.md`
   };
 }

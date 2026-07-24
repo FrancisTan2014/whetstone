@@ -792,4 +792,24 @@ describe("Markdown creation-review expiry sweep (#747)", () => {
     const staged = (await readdir(h.sourcesDir)).length;
     expect(staged).toBe(1);
   });
+
+  it("frames the resumed review by the older attempt's own upload, never the racing file (#747)", async () => {
+    // The first upload ("politics.md") parks a pending review. A DIFFERENT Markdown upload for the same
+    // owner then races the single-active-attempt slot. The resumed review must describe the FIRST attempt
+    // — its own filename and proposal — so a refresh / second tab / stale attempt can never make the
+    // learner decide on and commit/discard the racing file's bytes while the panel is framed as that file.
+    const { attemptId } = await beginNeedsReview();
+
+    const second = await begin({
+      fileName: "a-different-upload.md",
+      markdown: `${MARKDOWN}\n\nA distinct trailing paragraph.`
+    });
+
+    expect(second.statusCode).toBe(200);
+    const resumed = parseWorkCreationReviewDto(second.json().review);
+    expect(resumed.attemptId).toBe(attemptId);
+    // Framed by the reviewed (first) attempt's own upload and proposal — not the racing "a-different-upload.md".
+    expect(resumed.sourceFileName).toBe("politics.md");
+    expect(resumed.proposed.title).toBe(TITLE);
+  });
 });

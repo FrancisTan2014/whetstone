@@ -80,14 +80,19 @@ export type WorkCreationProposalViewDto = z.infer<typeof workCreationProposalVie
 
 // The full owner-scoped review view: the opaque attempt id and its revision fence (echoed on a
 // decision), the learner's proposal, and the reviewed candidates. `candidateFingerprint` lets a client
-// notice the reviewed evidence changed since it loaded. It carries no Work content and no server path.
+// notice the reviewed evidence changed since it loaded. `sourceFileName` is THIS attempt's own upload
+// name, so a client always frames the panel by the reviewed attempt's file — never by whatever file it
+// last posted. When a begin loses the single-active-attempt slot and resumes an older pending attempt,
+// the resumed review carries that older attempt's filename, so the two uploads can't be conflated. It
+// carries no Work content and no server path.
 export const workCreationReviewDtoSchema = z
   .object({
     attemptId: nonBlankString,
     candidateFingerprint: z.string(),
     candidates: z.array(workDuplicateCandidateReviewDtoSchema),
     proposed: workCreationProposalViewDtoSchema,
-    revision: z.number().int().nonnegative()
+    revision: z.number().int().nonnegative(),
+    sourceFileName: nonBlankString
   })
   .strict();
 

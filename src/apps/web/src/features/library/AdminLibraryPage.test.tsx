@@ -220,7 +220,8 @@ function duplicateReview(revision = 0): WorkCreationReviewDto {
       title: "Politics and the English Language",
       workType: "book"
     },
-    revision
+    revision,
+    sourceFileName: "Politics and the English Language.md"
   };
 }
 

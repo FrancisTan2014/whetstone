@@ -225,7 +225,8 @@ describe("libraryApi", () => {
       title: "Politics and the English Language",
       workType: "book" as const
     },
-    revision: 0
+    revision: 0,
+    sourceFileName: "politics.md"
   };
 
   it("begins a Markdown Work and reports it created (no credible candidate)", async () => {

@@ -6,8 +6,6 @@ import { Sheet } from "../../shared/ui/Sheet";
 import { workDuplicateMatchTierLabels, workOriginLabels } from "./workCreationReview.tokens";
 
 export type WorkCreationReviewPanelProps = Readonly<{
-  // The filename of the upload under review, echoed so the learner can confirm which file this is.
-  fileName: string;
   onBack: () => void;
   onKeepSeparate: () => void;
   onOpenExisting: (entryId: string) => void;
@@ -61,7 +59,6 @@ function CandidateEvidence({
 // Keep separate, and Back. It holds only the opaque attempt id + revision from the review DTO and emits
 // a semantic decision; it never decides candidate policy or creates around the server boundary.
 export function WorkCreationReviewPanel({
-  fileName,
   onBack,
   onKeepSeparate,
   onOpenExisting,
@@ -88,7 +85,7 @@ export function WorkCreationReviewPanel({
         <section className="flex flex-col gap-1">
           <p className="text-text">
             You’re adding <span className="font-semibold">“{proposed.title}”</span> from{" "}
-            <span className="font-medium">{fileName}</span>.
+            <span className="font-medium">{review.sourceFileName}</span>.
           </p>
           <p className="text-sm text-text-muted">
             {proposed.authorName} · {workLanguageLabels[proposed.language]} ·{" "}

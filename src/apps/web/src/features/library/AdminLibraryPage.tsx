@@ -122,13 +122,13 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
 
   // An in-flight Markdown creation-review (#747): when begin returns `needs_review`, the server has
   // parked one owner-scoped attempt and returned the candidates to present BEFORE anything is created.
-  // The panel holds only this opaque attempt id + revision (inside the DTO) and the upload's filename;
+  // The panel holds only this review DTO (opaque attempt id + revision + the attempt's own filename);
   // the Add-work form state (title/type/language/author/held file) is deliberately kept intact so the
   // learner's draft, filename, scroll, and focus survive review, Back, and retry. `decisionPending`
-  // disables the panel while a revision-fenced decision is in flight.
-  const [reviewState, setReviewState] = useState<
-    Readonly<{ fileName: string; review: WorkCreationReviewDto }> | undefined
-  >(undefined);
+  // disables the panel while a revision-fenced decision is in flight. The filename shown comes from the
+  // review DTO (the reviewed attempt's own upload), never from whatever file was last posted, so a
+  // resumed single-active-attempt race can't frame the panel by the wrong upload.
+  const [reviewState, setReviewState] = useState<WorkCreationReviewDto | undefined>(undefined);
   const [decisionPending, setDecisionPending] = useState(false);
 
   // A born-digital import (#702) left in flight when the page was last closed or navigated away is remembered
@@ -516,7 +516,7 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
         title: workTitle,
         workType
       });
-      await applyBeginOutcome(outcome, file.name, workTitle);
+      await applyBeginOutcome(outcome, workTitle);
     } catch {
       toast.error("Could not ingest the file. Please try again.");
     } finally {
@@ -527,7 +527,6 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
 
   async function applyBeginOutcome(
     outcome: BeginMarkdownCreationOutcome,
-    fileName: string,
     workTitle: string
   ): Promise<void> {
     switch (outcome.status) {
@@ -542,9 +541,10 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
         return;
       case "needs_review":
         // A credible candidate exists: park the review panel and keep the draft/file so Back returns to
-        // the still-filled form. Nothing has been created yet.
+        // the still-filled form. Nothing has been created yet. The panel frames itself by the review
+        // DTO's own filename, so a resumed race shows the reviewed attempt's upload, not this one.
         setAddOpen(false);
-        setReviewState({ fileName, review: outcome.review });
+        setReviewState(outcome.review);
         return;
       case "empty_content":
         await reload();
@@ -585,13 +585,7 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
       case "needs_review":
         // The candidate evidence changed since the panel loaded: re-render with the refreshed review so
         // the learner decides against current facts (revision advances with it).
-        setReviewState((current) => {
-          /* v8 ignore next -- functional-updater guard: the panel is always mounted when a decision
-             resolves, so `current` is never undefined here; the check only prevents resurrecting a
-             concurrently-dismissed panel. */
-          if (current === undefined) return current;
-          return { fileName: current.fileName, review: outcome.review };
-        });
+        setReviewState(outcome.review);
         toast.error("The possible duplicates changed — please review again.");
         return;
       case "existing_gone":
@@ -850,12 +844,11 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
 
         {reviewState !== undefined ? (
           <WorkCreationReviewPanel
-            fileName={reviewState.fileName}
-            onBack={() => void backFromReview(reviewState.review)}
-            onKeepSeparate={() => void decideKeepSeparate(reviewState.review)}
-            onOpenExisting={(entryId) => void decideOpenExisting(reviewState.review, entryId)}
+            onBack={() => void backFromReview(reviewState)}
+            onKeepSeparate={() => void decideKeepSeparate(reviewState)}
+            onOpenExisting={(entryId) => void decideOpenExisting(reviewState, entryId)}
             pending={decisionPending}
-            review={reviewState.review}
+            review={reviewState}
           />
         ) : null}
 

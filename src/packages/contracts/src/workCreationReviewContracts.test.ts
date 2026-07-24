@@ -39,7 +39,8 @@ const review = {
     title: "Clean Coder",
     workType: "book"
   },
-  revision: 3
+  revision: 3,
+  sourceFileName: "clean-coder.md"
 } as const;
 
 describe("workDuplicateCandidateReviewDtoSchema", () => {
@@ -82,6 +83,12 @@ describe("parseWorkCreationReviewDto", () => {
 
   it("rejects a negative revision", () => {
     expect(workCreationReviewDtoSchema.safeParse({ ...review, revision: -1 }).success).toBe(false);
+  });
+
+  it("rejects a blank source filename (the panel must always name the reviewed upload)", () => {
+    expect(workCreationReviewDtoSchema.safeParse({ ...review, sourceFileName: "  " }).success).toBe(
+      false
+    );
   });
 
   it("rejects a proposal carrying an author id (a brand-new author has no identity yet)", () => {

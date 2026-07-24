@@ -73,6 +73,7 @@ function review(overrides: Partial<WorkCreationReviewDto> = {}): WorkCreationRev
       workType: "book"
     },
     revision: 0,
+    sourceFileName: "great-expectations.md",
     ...overrides
   };
 }
@@ -89,7 +90,6 @@ function renderPanel(props: Partial<React.ComponentProps<typeof WorkCreationRevi
   const user = userEvent.setup();
   render(
     <WorkCreationReviewPanel
-      fileName="great-expectations.md"
       onBack={onBack}
       onKeepSeparate={onKeepSeparate}
       onOpenExisting={onOpenExisting}
@@ -118,6 +118,14 @@ describe("WorkCreationReviewPanel", () => {
     expect(within(rows[0]!).getByText("Great Expectations")).toBeTruthy();
     expect(within(rows[0]!).getByText("Charles Dickens · English · book · Imported")).toBeTruthy();
     expect(within(rows[0]!).getByText("Similar title, same author")).toBeTruthy();
+  });
+
+  it("names the reviewed upload from the review DTO, never a separately-passed file", () => {
+    // The panel is framed only by the review DTO's own filename. On a resumed single-active-attempt race
+    // the DTO carries the older attempt's upload name, so the two uploads can't be conflated in the UI.
+    renderPanel({ review: review({ sourceFileName: "older-pending-upload.md" }) });
+
+    expect(screen.getByText("older-pending-upload.md")).toBeTruthy();
   });
 
   it("counts multiple candidates in the summary copy", () => {
