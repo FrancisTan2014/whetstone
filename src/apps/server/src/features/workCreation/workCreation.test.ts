@@ -630,24 +630,34 @@ describe("Markdown creation-review cancel / Back (#747)", () => {
     expect(response.json()).toEqual({ cancelled: false });
   });
 
-  it("cancels a finalizing attempt whose stage was already detached (no file to clean)", async () => {
+  it("refuses to cancel a finalizing Keep separate / Open existing and never deletes its in-flight stage", async () => {
     const { attemptId } = await beginNeedsReview();
-    const fenced = await beginFinalizeAttempt(h.db, {
+    const attempt = (
+      await h.db.select().from(workCreationAttempts).where(eq(workCreationAttempts.id, attemptId))
+    )[0];
+    const stagePath = attempt!.stagePath!;
+    expect(await fileExists(stagePath)).toBe(true);
+
+    // A serialized decision (Keep separate / Open existing) claimed the slot: pending -> finalizing. Its
+    // stage is still bound while the decision commits.
+    await beginFinalizeAttempt(h.db, {
       expectedRevision: 0,
       id: attemptId,
       now: h.clock.now,
       userId: DEFAULT_USER_ID
     });
-    await detachStagePath(h.db, {
-      expectedRevision: fenced!.revision,
-      id: attemptId,
-      now: h.clock.now,
-      userId: DEFAULT_USER_ID
-    });
 
+    // A concurrent or stale Back must be a no-op: it cannot flip the finalizing row to cancelled, and it
+    // must not delete the staged bytes the in-flight decision is about to transfer to provenance.
     const result = await cancelWorkCreation(h.deps, DEFAULT_USER_ID, attemptId);
 
-    expect(result).toEqual({ cancelled: true });
+    expect(result).toEqual({ cancelled: false });
+    expect(await fileExists(stagePath)).toBe(true);
+    const row = (
+      await h.db.select().from(workCreationAttempts).where(eq(workCreationAttempts.id, attemptId))
+    )[0];
+    expect(row?.state).toBe("finalizing");
+    expect(row?.stagePath).toBe(stagePath);
   });
 });
 

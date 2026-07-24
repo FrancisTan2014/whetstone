@@ -335,6 +335,29 @@ describe("workCreationAttemptStore", () => {
       });
       expect((await getAttempt(db, DEFAULT_USER_ID, "a1"))?.state).toBe("completed");
     });
+
+    it("refuses to cancel a finalizing attempt and never deletes its in-flight stage (Back is fenced to pending)", async () => {
+      await insertPendingAttempt(db, pendingInput({ id: "a1", stagePath: "stage-a1" }));
+      // A serialized decision claimed the slot: pending -> finalizing (revision 1).
+      const finalizing = await beginFinalizeAttempt(db, {
+        userId: DEFAULT_USER_ID,
+        id: "a1",
+        expectedRevision: 0,
+        now: LATER
+      });
+      expect(finalizing?.state).toBe("finalizing");
+
+      // A concurrent or stale Back must NOT flip the finalizing row to cancelled or hand back its stage for
+      // deletion — the in-flight decision owns the commit and its bytes.
+      const result = await cancelAttempt(db, DEFAULT_USER_ID, "a1", LATER);
+      expect(result).toEqual({ cancelled: false, stagePath: null });
+
+      const record = await getAttempt(db, DEFAULT_USER_ID, "a1");
+      expect(record?.state).toBe("finalizing");
+      expect(record?.revision).toBe(1);
+      // The stage the decision is transferring is left intact.
+      expect(record?.stagePath).toBe("stage-a1");
+    });
   });
 
   describe("expiry sweep", () => {

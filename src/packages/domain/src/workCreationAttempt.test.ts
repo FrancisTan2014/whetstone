@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   canBeginFinalize,
+  canCancelWorkCreationAttempt,
   canCompleteFinalize,
   canTransferStage,
   fingerprintReviewedCandidates,
@@ -50,6 +51,15 @@ describe("workCreationAttempt states", () => {
   it("permits transferring a stage only from finalizing (inside the serialized decision)", () => {
     const transferFrom = workCreationAttemptStates.filter(canTransferStage);
     expect(transferFrom).toEqual(["finalizing"]);
+  });
+
+  it("permits Back/cancel only from pending, never from finalizing or a terminal state", () => {
+    const cancelFrom = workCreationAttemptStates.filter(canCancelWorkCreationAttempt);
+    expect(cancelFrom).toEqual(["pending"]);
+    // A finalizing attempt holds a live committer, so it is active yet NOT cancellable — cancel is a
+    // strict subset of active, so the two predicates must diverge exactly on `finalizing`.
+    expect(canCancelWorkCreationAttempt("finalizing")).toBe(false);
+    expect(isActiveWorkCreationAttemptState("finalizing")).toBe(true);
   });
 });
 

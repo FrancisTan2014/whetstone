@@ -166,6 +166,7 @@ export type {
 } from "./pdfOcr.js";
 export {
   canBeginFinalize,
+  canCancelWorkCreationAttempt,
   canCompleteFinalize,
   canTransferStage,
   fingerprintReviewedCandidates,

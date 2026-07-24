@@ -5,10 +5,10 @@ import type {
 } from "@whetstone/domain";
 import {
   canBeginFinalize,
+  canCancelWorkCreationAttempt,
   canCompleteFinalize,
   canTransferStage,
   fingerprintReviewedCandidates,
-  isActiveWorkCreationAttemptState,
   isTerminalWorkCreationAttemptState,
   ownsOrdinaryUploadStage,
   workCreationAttemptStates
@@ -95,6 +95,7 @@ function soleStateMatching(
 const BEGIN_FINALIZE_FROM = soleStateMatching(canBeginFinalize);
 const COMPLETE_FINALIZE_FROM = soleStateMatching(canCompleteFinalize);
 const TRANSFER_STAGE_FROM = soleStateMatching(canTransferStage);
+const CANCEL_FROM = soleStateMatching(canCancelWorkCreationAttempt);
 
 // The terminal states, derived from the pure state machine so the clear-stage cleanup gate can never drift
 // from the domain's definition of "done". A terminal attempt's state never changes again, so its leftover
@@ -194,6 +195,13 @@ function activeStateCondition(): SQL {
 // attempt whose bytes a live decision may still transfer.
 function terminalStateCondition(): SQL {
   return inArray(workCreationAttempts.state, TERMINAL_STATES);
+}
+
+// The predicate for a `pending` attempt — the only state Back/cancel may abandon. Derived from the domain
+// `canCancelWorkCreationAttempt` rule so cancel's compare-and-set can never drift into touching a
+// `finalizing` row that already holds a live committer.
+function cancellableStateCondition(): SQL {
+  return eq(workCreationAttempts.state, CANCEL_FROM);
 }
 
 // The owner's single active (`pending`/`finalizing`) attempt, if any — the row the partial-unique index
@@ -302,10 +310,12 @@ export async function completeAttempt(
 
 export type CancelResult = Readonly<{ cancelled: boolean; stagePath: string | null }>;
 
-// Cancel a non-terminal attempt for its owner. Terminal attempts (`completed`/`cancelled`/`expired`) are a
-// no-op (returns `cancelled: false`). Returns the stage path still owned so the caller can remove those
-// bytes; the path is left set on the row until `clearStagePath` confirms the filesystem removal, so a
-// failed cleanup stays visible and retryable.
+// Cancel (Back) a `pending` attempt for its owner. A `finalizing` attempt is deliberately NOT cancellable:
+// once a serialized decision claimed the slot it owns the in-flight commit, so a concurrent or stale Back
+// must leave that row (and its stage) alone — a no-op (`cancelled: false`) — rather than flip it to
+// `cancelled` or delete the bytes the decision is transferring. Terminal attempts are likewise a no-op.
+// Returns the stage path still owned so the caller can remove those bytes; the path is left set on the row
+// until `clearStagePath` confirms the filesystem removal, so a failed cleanup stays visible and retryable.
 export async function cancelAttempt(
   db: DbClient,
   userId: string,
@@ -313,19 +323,20 @@ export async function cancelAttempt(
   now: Date
 ): Promise<CancelResult> {
   return db.transaction(async (tx) => {
-    // Lock the row FOR UPDATE so a concurrent terminal transition (complete / expire / another cancel)
-    // cannot slip in between this read and the update: a rival either commits its transition first —
-    // and this read then sees the non-active state and no-ops — or blocks here until we commit.
+    // Lock the row FOR UPDATE so a concurrent transition (begin-finalize / complete / expire / another
+    // cancel) cannot slip in between this read and the update: a rival either commits its transition first —
+    // and this read then sees the non-pending state and no-ops — or blocks here until we commit.
     const [attempt] = await tx
       .select()
       .from(workCreationAttempts)
       .where(and(eq(workCreationAttempts.id, id), eq(workCreationAttempts.userId, userId)))
       .for("update");
-    if (attempt === undefined || !isActiveWorkCreationAttemptState(attempt.state)) {
+    if (attempt === undefined || !canCancelWorkCreationAttempt(attempt.state)) {
       return { cancelled: false, stagePath: null };
     }
-    // Compare-and-set fenced on the locked revision AND the still-active state, so the cancel is applied
-    // only while the row is genuinely active and never clobbers a terminal transition that raced ahead.
+    // Compare-and-set fenced on the locked revision AND the still-pending state, so the cancel is applied
+    // only while the row is genuinely pending and never clobbers a decision (`finalizing`) or terminal
+    // transition that raced ahead.
     const [cancelled] = await tx
       .update(workCreationAttempts)
       .set({ state: "cancelled", revision: attempt.revision + 1, updatedAt: now })
@@ -334,13 +345,13 @@ export async function cancelAttempt(
           eq(workCreationAttempts.id, id),
           eq(workCreationAttempts.userId, userId),
           eq(workCreationAttempts.revision, attempt.revision),
-          activeStateCondition()
+          cancellableStateCondition()
         )
       )
       .returning({ id: workCreationAttempts.id });
-    /* v8 ignore next 3 -- concurrency-only: the FOR UPDATE row lock already prevents a rival terminal
-       transition on this locked row before the update, so the compare-and-set can only miss under a
-       true race that no single-threaded test can drive; the guard stays as defense-in-depth. */
+    /* v8 ignore next 3 -- concurrency-only: the FOR UPDATE row lock already prevents a rival transition
+       (begin-finalize / complete / expire) on this locked row before the update, so the compare-and-set can
+       only miss under a true race that no single-threaded test can drive; the guard stays as defense-in-depth. */
     if (cancelled === undefined) {
       return { cancelled: false, stagePath: null };
     }
