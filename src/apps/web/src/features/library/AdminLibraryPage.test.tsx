@@ -818,7 +818,7 @@ describe("AdminLibraryPage", () => {
       work: {
         authorId: toAuthorId("author-9"),
         entryId: toEntryId("work-epub-new"),
-        language: "zh-CN",
+        language: "zh-CN" as const,
         origin: "imported" as const,
         title: "史记选读",
         workType: "book" as const
@@ -1494,7 +1494,7 @@ describe("AdminLibraryPage", () => {
   });
 
   it("shows the EPUB progress indicator while an EPUB ingests", async () => {
-    let resolveIngest: (value: Awaited<ReturnType<typeof ingestEpub>>) => void = () => {};
+    let resolveIngest: (value: Awaited<ReturnType<typeof beginEpubCreation>>) => void = () => {};
     mockedBeginEpubCreation.mockImplementation(
       () =>
         new Promise((resolve) => {
