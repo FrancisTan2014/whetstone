@@ -242,7 +242,8 @@ describe("publishConvertedPdfImport", () => {
 
     const publication = await getPublication(db, "att-1");
     expect(publication?.workEntryId).toBe(result.work.entryId);
-    expect(publication?.ocrRequiredPages).toBeNull();
+    expect(publication?.ocrValidationFailedPages).toBeNull();
+    expect(publication?.ocrLanguageNotEnabledPages).toBeNull();
 
     // Provenance retention (PRODUCT.md): the original uploaded PDF is persisted through the source-file
     // boundary — the Work's source row keeps a non-null file_path whose bytes match the upload — and the
@@ -334,9 +335,45 @@ describe("publishConvertedPdfImport", () => {
     expect(rows).toHaveLength(4);
     expect(rows.every((row) => row.page === 1)).toBe(true);
     expect(rows.some((row) => row.label === "section_header")).toBe(true);
+    // A born-digital attempt (no OCR fingerprint) records no per-block OCR provenance.
+    expect(rows.every((row) => row.ocrEngine === null && row.ocrLanguage === null)).toBe(true);
   });
 
-  it("records a typed OCR-required outcome without creating a Work when a page lacks native text", async () => {
+  it("stamps every published block with the adopted engine and language for an OCR'd attempt", async () => {
+    await driveToConverted(db, {
+      id: "att-ocr",
+      sourceHash: "a".repeat(64),
+      payload: rangePayload(SAMPLE_BODY, [true]),
+      totalPages: 1
+    });
+    // The attempt adopted an OCR stage before conversion, so its fingerprint records the engine every
+    // block was derived from; publish stamps that provenance (engine + Tesseract language) onto each block.
+    await db
+      .update(pdfImportAttempts)
+      .set({ ocrFingerprint: "ocrmypdf@16.10.4/tesseract@5.5.1/eng" })
+      .where(eq(pdfImportAttempts.id, "att-ocr"));
+    await insertPublicationIntent(db, {
+      attemptId: "att-ocr",
+      enteredTitle: null,
+      enteredAuthor: null,
+      enteredLanguage: null,
+      fileName: "ocr.pdf"
+    });
+
+    const result = published(await publishConvertedPdfImport(publishDeps(db), "att-ocr"));
+    const rows = await db
+      .select()
+      .from(pdfBlockEvidence)
+      .where(eq(pdfBlockEvidence.workEntryId, result.work.entryId));
+    expect(rows.length).toBeGreaterThan(0);
+    expect(
+      rows.every(
+        (row) => row.ocrEngine === "ocrmypdf@16.10.4/tesseract@5.5.1/eng" && row.ocrLanguage === "eng"
+      )
+    ).toBe(true);
+  });
+
+  it("records a typed OCR-validation-failed outcome for an English document that is still text-less", async () => {
     await driveToConverted(db, {
       id: "att-4",
       sourceHash: "d".repeat(64),
@@ -352,16 +389,45 @@ describe("publishConvertedPdfImport", () => {
     });
 
     const result = await publishConvertedPdfImport(publishDeps(db), "att-4");
-    expect(result).toEqual({ pagesNeedingOcr: 2, status: "ocr_required" });
+    expect(result).toEqual({ pagesNeedingOcr: 2, status: "ocr_validation_failed" });
     const publication = await getPublication(db, "att-4");
-    expect(publication?.ocrRequiredPages).toBe(2);
+    expect(publication?.ocrValidationFailedPages).toBe(2);
+    expect(publication?.ocrLanguageNotEnabledPages).toBeNull();
     expect(publication?.workEntryId).toBeNull();
     // No Work is published, so no source file is retained and the redundant stage is freed cleanly.
     expect(await db.select().from(workSources)).toHaveLength(0);
     await expect(stat(stageStore.openStage("att-4").path)).rejects.toThrow();
     expect(cleanupFailures).toEqual([]);
-    // The stage binding is cleared on the OCR-required outcome too, so status reports it unbound.
+    // The stage binding is cleared on the OCR-validation-failed outcome too, so status reports it unbound.
     expect((await getAttemptById(db, "att-4"))?.stagePath).toBeNull();
+  });
+
+  it("records a typed OCR-language-not-enabled outcome for a text-less document in an unenabled language", async () => {
+    await driveToConverted(db, {
+      id: "att-4-zh",
+      sourceHash: "7".repeat(64),
+      payload: rangePayload(SAMPLE_BODY, [true, false, false]),
+      totalPages: 3
+    });
+    await insertPublicationIntent(db, {
+      attemptId: "att-4-zh",
+      enteredTitle: null,
+      enteredAuthor: null,
+      enteredLanguage: "zh-CN",
+      fileName: "scanned-zh.pdf"
+    });
+
+    const result = await publishConvertedPdfImport(publishDeps(db), "att-4-zh");
+    expect(result).toEqual({ pagesNeedingOcr: 2, status: "ocr_language_not_enabled" });
+    const publication = await getPublication(db, "att-4-zh");
+    expect(publication?.ocrLanguageNotEnabledPages).toBe(2);
+    expect(publication?.ocrValidationFailedPages).toBeNull();
+    expect(publication?.workEntryId).toBeNull();
+    // No Work is published (OCR for this language is not enabled yet), so nothing is retained.
+    expect(await db.select().from(workSources)).toHaveLength(0);
+    await expect(stat(stageStore.openStage("att-4-zh").path)).rejects.toThrow();
+    expect(cleanupFailures).toEqual([]);
+    expect((await getAttemptById(db, "att-4-zh"))?.stagePath).toBeNull();
   });
 
   it("refuses a converted PDF whose native-text pages map to zero blocks as no_content, creating no Work", async () => {
@@ -386,7 +452,8 @@ describe("publishConvertedPdfImport", () => {
     const publication = await getPublication(db, "att-empty");
     expect(publication?.noContent).toBe(true);
     expect(publication?.workEntryId).toBeNull();
-    expect(publication?.ocrRequiredPages).toBeNull();
+    expect(publication?.ocrValidationFailedPages).toBeNull();
+    expect(publication?.ocrLanguageNotEnabledPages).toBeNull();
     // No Work, no source, no claim: nothing was committed before the refusal.
     expect(await db.select().from(workSources)).toHaveLength(0);
     expect(await db.select().from(uploadedSourceClaims)).toHaveLength(0);
@@ -427,7 +494,8 @@ describe("publishConvertedPdfImport", () => {
     expect(publication?.unpreservableImages).toBe(1);
     expect(publication?.workEntryId).toBeNull();
     expect(publication?.noContent).toBeNull();
-    expect(publication?.ocrRequiredPages).toBeNull();
+    expect(publication?.ocrValidationFailedPages).toBeNull();
+    expect(publication?.ocrLanguageNotEnabledPages).toBeNull();
     // No Work, no source, no claim: nothing was committed before the refusal.
     expect(await db.select().from(workSources)).toHaveLength(0);
     expect(await db.select().from(uploadedSourceClaims)).toHaveLength(0);
@@ -719,7 +787,8 @@ describe("publishConvertedPdfImport", () => {
     // Title heading opens the first unit; each section_header starts another — three units in order.
     expect(titles).toEqual(["Born-Digital Preview", "How Import Works", "What Remains"]);
     const publication = await getPublication(db, "att-sample");
-    expect(publication?.ocrRequiredPages).toBeNull();
+    expect(publication?.ocrValidationFailedPages).toBeNull();
+    expect(publication?.ocrLanguageNotEnabledPages).toBeNull();
   });
 
   it("publishes a full-length document in one bounded transaction without exceeding the bind limit", async () => {
