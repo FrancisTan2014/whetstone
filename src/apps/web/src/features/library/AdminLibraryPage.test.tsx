@@ -12,12 +12,15 @@ import type * as ReactRouterDom from "react-router-dom";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./libraryApi", () => ({
+  beginMarkdownCreation: vi.fn(),
+  cancelWorkCreation: vi.fn(),
   createWork: vi.fn(),
   deleteWork: vi.fn(),
   fetchWorks: vi.fn(),
   fetchWorksWithReadingPosition: vi.fn(),
-  importMarkdownWork: vi.fn(),
   ingestEpub: vi.fn(),
+  keepSeparateWork: vi.fn(),
+  openExistingWork: vi.fn(),
   searchAuthors: vi.fn()
 }));
 
@@ -84,12 +87,15 @@ vi.mock("react-router-dom", async (importOriginal) => ({
 }));
 
 import {
+  beginMarkdownCreation,
+  cancelWorkCreation,
   createWork,
   deleteWork,
   fetchWorks,
   fetchWorksWithReadingPosition,
-  importMarkdownWork,
   ingestEpub,
+  keepSeparateWork,
+  openExistingWork,
   searchAuthors
 } from "./libraryApi";
 import {
@@ -114,6 +120,7 @@ import type {
   PdfImportViewDto,
   RecitationPlanDto,
   WorkAuthorSelection,
+  WorkCreationReviewDto,
   WorkListItemDto
 } from "@whetstone/contracts";
 import { toAuthorId, toEntryId } from "@whetstone/domain";
@@ -142,7 +149,10 @@ const mockedFetchWorksWithReadingPosition = vi.mocked(fetchWorksWithReadingPosit
 const mockedCreateWork = vi.mocked(createWork);
 const mockedDeleteWork = vi.mocked(deleteWork);
 const mockedIngestEpub = vi.mocked(ingestEpub);
-const mockedImportMarkdownWork = vi.mocked(importMarkdownWork);
+const mockedBeginMarkdownCreation = vi.mocked(beginMarkdownCreation);
+const mockedCancelWorkCreation = vi.mocked(cancelWorkCreation);
+const mockedKeepSeparateWork = vi.mocked(keepSeparateWork);
+const mockedOpenExistingWork = vi.mocked(openExistingWork);
 const mockedBeginPdfImport = vi.mocked(beginPdfImport);
 const mockedCancelPdfImport = vi.mocked(cancelPdfImport);
 const mockedFetchPdfImportView = vi.mocked(fetchPdfImportView);
@@ -178,6 +188,45 @@ const animalFarmItem: WorkListItemDto = {
     title: "Animal Farm",
     workType: "book"
   }
+};
+
+// A begin/decision `needs_review` payload: one credible candidate against the learner's proposal. The
+// panel holds only the opaque attempt id + revision from this DTO and sends a semantic decision.
+function duplicateReview(revision = 0): WorkCreationReviewDto {
+  return {
+    attemptId: "attempt-1",
+    candidateFingerprint: `fp-${revision}`,
+    candidates: [
+      {
+        author: { id: "author-1", name: "George Orwell" },
+        entryId: "work-1",
+        evidence: {
+          editionMarkerDifferences: [],
+          languageDiffers: false,
+          sameAuthor: true,
+          titleSimilarity: 0.94,
+          workTypeDiffers: false
+        },
+        language: "en",
+        matchTier: "same_author_fuzzy",
+        origin: "imported",
+        title: "Politics and the English Language",
+        workType: "book"
+      }
+    ],
+    proposed: {
+      authorName: "George Orwell",
+      language: "en",
+      title: "Politics and the English Language",
+      workType: "book"
+    },
+    revision
+  };
+}
+
+const reopenResult = {
+  content: { readingUnits: [], workEntryId: essayWorkItem.work.entryId },
+  work: essayWorkItem.work
 };
 
 function mockMatchMedia(reduce = false): void {
@@ -280,6 +329,19 @@ async function openWorkOverflow(
   await user.click(screen.getByRole("button", { name: `More actions for ${title}` }));
   // Radix labels the menu by its trigger, so its accessible name matches the trigger's.
   return screen.findByRole("menu", { name: `More actions for ${title}` });
+}
+
+// Drive the Markdown front door to the duplicate-review panel: upload a `.md`, confirm the proposed
+// author, and submit. The caller seeds `beginMarkdownCreation` with a `needs_review` outcome first.
+async function reachReview(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  const file = new File(["# Politics"], "Politics and the English Language.md", {
+    type: "text/markdown"
+  });
+  await user.upload(screen.getByLabelText("Upload"), file);
+  await screen.findByLabelText("Title");
+  await user.type(screen.getByLabelText("New author or source name"), "George Orwell");
+  await user.click(screen.getByRole("button", { name: "Create work" }));
+  await screen.findByText("Possible duplicate");
 }
 
 describe("AdminLibraryPage", () => {
@@ -763,7 +825,7 @@ describe("AdminLibraryPage", () => {
     // The front-door Markdown lane now mints the Work, its retained source, and its single-owner claim
     // in one request (#706) rather than createWork + a separate ingest, so a re-upload can reopen the
     // existing Work instead of orphaning an empty shell. createWork must not be touched for Markdown.
-    mockedImportMarkdownWork.mockResolvedValue({
+    mockedBeginMarkdownCreation.mockResolvedValue({
       result: {
         content: { readingUnits: [], workEntryId: essayWorkItem.work.entryId },
         work: essayWorkItem.work
@@ -780,13 +842,13 @@ describe("AdminLibraryPage", () => {
 
     const titleInput = (await screen.findByLabelText("Title")) as HTMLInputElement;
     expect(titleInput.value).toBe("Politics and the English Language");
-    expect(mockedImportMarkdownWork).not.toHaveBeenCalled();
+    expect(mockedBeginMarkdownCreation).not.toHaveBeenCalled();
 
     await user.type(screen.getByLabelText("New author or source name"), "George Orwell");
     await user.click(screen.getByRole("button", { name: "Create work" }));
 
     await waitFor(() => {
-      expect(mockedImportMarkdownWork).toHaveBeenCalledWith({
+      expect(mockedBeginMarkdownCreation).toHaveBeenCalledWith({
         author: { mode: "new", name: "George Orwell" },
         fileName: "Politics and the English Language.md",
         language: "en",
@@ -806,7 +868,7 @@ describe("AdminLibraryPage", () => {
     const onManageContent = vi.fn();
     // Re-uploading the same bytes returns the already-claimed Work (exact_existing); the learner is told
     // it is already in the library and dropped straight into Manage content, with no duplicate created.
-    mockedImportMarkdownWork.mockResolvedValue({
+    mockedBeginMarkdownCreation.mockResolvedValue({
       result: {
         content: { readingUnits: [], workEntryId: essayWorkItem.work.entryId },
         work: essayWorkItem.work
@@ -1016,7 +1078,7 @@ describe("AdminLibraryPage", () => {
     const onManageContent = vi.fn();
     // The combined import endpoint reports empty_content and creates no Work (#706), so no orphan shell
     // is opened; the learner just sees the panel's Markdown copy and can pick a different file.
-    mockedImportMarkdownWork.mockResolvedValue({ status: "empty_content" });
+    mockedBeginMarkdownCreation.mockResolvedValue({ status: "empty_content" });
     const user = await renderReady(onManageContent);
 
     const file = new File(["![only image](x.png)"], "images.md", { type: "text/markdown" });
@@ -1043,7 +1105,7 @@ describe("AdminLibraryPage", () => {
 
   it("shows a generic error toast when the Markdown import request throws", async () => {
     const onManageContent = vi.fn();
-    mockedImportMarkdownWork.mockRejectedValue(new Error("network down"));
+    mockedBeginMarkdownCreation.mockRejectedValue(new Error("network down"));
     const user = await renderReady(onManageContent);
 
     const file = new File(["# Politics"], "politics.md", { type: "text/markdown" });
@@ -1053,6 +1115,192 @@ describe("AdminLibraryPage", () => {
 
     expect(await screen.findByText("Could not ingest the file. Please try again.")).toBeDefined();
     expect(onManageContent).not.toHaveBeenCalled();
+  });
+
+  it("surfaces the author-not-found and uncertain begin outcomes without creating a Work", async () => {
+    const onManageContent = vi.fn();
+    const user = await renderReady(onManageContent);
+
+    for (const [status, message] of [
+      ["author_not_found", "That author or source no longer exists. Choose another and try again."],
+      ["uncertain", "Couldn’t check your library for duplicates just now. Please try again."]
+    ] as const) {
+      mockedBeginMarkdownCreation.mockResolvedValue({ status });
+      const file = new File(["# Politics"], `${status}.md`, { type: "text/markdown" });
+      await user.upload(screen.getByLabelText("Upload"), file);
+      await screen.findByLabelText("Title");
+      await user.type(screen.getByLabelText("New author or source name"), "George Orwell");
+      await user.click(screen.getByRole("button", { name: "Create work" }));
+
+      expect(await screen.findByText(message)).toBeDefined();
+      await user.click(screen.getByRole("button", { name: "Close" }));
+      await waitFor(() => expect(screen.queryByLabelText("Title")).toBeNull());
+    }
+    expect(onManageContent).not.toHaveBeenCalled();
+  });
+
+  it("presents the duplicate-review panel with factual evidence when a credible candidate exists", async () => {
+    mockedBeginMarkdownCreation.mockResolvedValue({ review: duplicateReview(), status: "needs_review" });
+    const user = await renderReady();
+
+    await reachReview(user);
+
+    const list = screen.getByRole("list", { name: "Possible duplicates" });
+    expect(within(list).getByText("Politics and the English Language")).toBeDefined();
+    expect(within(list).getByText("Same author")).toBeDefined();
+    // Nothing is created while the review is open.
+    expect(mockedOpenExistingWork).not.toHaveBeenCalled();
+    expect(mockedKeepSeparateWork).not.toHaveBeenCalled();
+  });
+
+  it("reopens the chosen candidate when the learner picks Open existing", async () => {
+    const onManageContent = vi.fn();
+    mockedBeginMarkdownCreation.mockResolvedValue({ review: duplicateReview(), status: "needs_review" });
+    mockedOpenExistingWork.mockResolvedValue({ result: reopenResult, status: "opened" });
+    mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
+    const user = await renderReady(onManageContent);
+
+    await reachReview(user);
+    await user.click(
+      screen.getByRole("button", { name: "Open existing “Politics and the English Language”" })
+    );
+
+    await waitFor(() => {
+      expect(mockedOpenExistingWork).toHaveBeenCalledWith("attempt-1", {
+        entryId: "work-1",
+        revision: 0
+      });
+    });
+    await waitFor(() => expect(onManageContent).toHaveBeenCalledWith("work-1"));
+    expect(
+      await screen.findByText(
+        "“Politics and the English Language” is already in your library — opened it."
+      )
+    ).toBeDefined();
+  });
+
+  it("commits a distinct Work when the learner keeps it separate", async () => {
+    const onManageContent = vi.fn();
+    mockedBeginMarkdownCreation.mockResolvedValue({ review: duplicateReview(), status: "needs_review" });
+    mockedKeepSeparateWork.mockResolvedValue({ result: reopenResult, status: "created" });
+    mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
+    const user = await renderReady(onManageContent);
+
+    await reachReview(user);
+    await user.click(screen.getByRole("button", { name: "Keep separate" }));
+
+    await waitFor(() => {
+      expect(mockedKeepSeparateWork).toHaveBeenCalledWith("attempt-1", { revision: 0 });
+    });
+    await waitFor(() => expect(onManageContent).toHaveBeenCalledWith("work-1"));
+    expect(
+      await screen.findByText("Imported “Politics and the English Language”.")
+    ).toBeDefined();
+  });
+
+  it("re-renders the panel against refreshed evidence when a decision changes the snapshot", async () => {
+    mockedBeginMarkdownCreation.mockResolvedValue({ review: duplicateReview(0), status: "needs_review" });
+    mockedKeepSeparateWork.mockResolvedValue({ review: duplicateReview(1), status: "needs_review" });
+    const user = await renderReady();
+
+    await reachReview(user);
+    await user.click(screen.getByRole("button", { name: "Keep separate" }));
+
+    expect(
+      await screen.findByText("The possible duplicates changed — please review again.")
+    ).toBeDefined();
+    // The panel stays open with the refreshed review; a follow-up decision fences on the new revision.
+    mockedKeepSeparateWork.mockResolvedValue({ result: reopenResult, status: "created" });
+    await user.click(screen.getByRole("button", { name: "Keep separate" }));
+    await waitFor(() => {
+      expect(mockedKeepSeparateWork).toHaveBeenLastCalledWith("attempt-1", { revision: 1 });
+    });
+  });
+
+  it("keeps the panel open and warns when the chosen existing Work is gone or the recheck is uncertain", async () => {
+    mockedBeginMarkdownCreation.mockResolvedValue({ review: duplicateReview(), status: "needs_review" });
+    const user = await renderReady();
+
+    await reachReview(user);
+
+    mockedOpenExistingWork.mockResolvedValue({ status: "existing_gone" });
+    await user.click(
+      screen.getByRole("button", { name: "Open existing “Politics and the English Language”" })
+    );
+    expect(
+      await screen.findByText("That work no longer exists. Choose another option.")
+    ).toBeDefined();
+    expect(screen.getByText("Possible duplicate")).toBeDefined();
+
+    mockedKeepSeparateWork.mockResolvedValue({ status: "uncertain" });
+    await user.click(screen.getByRole("button", { name: "Keep separate" }));
+    expect(
+      await screen.findByText("Couldn’t re-check your library just now. Please try again.")
+    ).toBeDefined();
+    expect(screen.getByText("Possible duplicate")).toBeDefined();
+  });
+
+  it("drops a spent review back to the still-filled form when the attempt expires", async () => {
+    mockedBeginMarkdownCreation.mockResolvedValue({ review: duplicateReview(), status: "needs_review" });
+    mockedKeepSeparateWork.mockResolvedValue({ status: "expired" });
+    const user = await renderReady();
+
+    await reachReview(user);
+    await user.click(screen.getByRole("button", { name: "Keep separate" }));
+
+    expect(
+      await screen.findByText("This review is no longer valid. Please try again.")
+    ).toBeDefined();
+    // The Add-work form reopens with the draft title preserved so the learner can retry.
+    const titleInput = (await screen.findByLabelText("Title")) as HTMLInputElement;
+    expect(titleInput.value).toBe("Politics and the English Language");
+  });
+
+  it("shows an error toast when a decision request throws", async () => {
+    mockedBeginMarkdownCreation.mockResolvedValue({ review: duplicateReview(), status: "needs_review" });
+    mockedOpenExistingWork.mockRejectedValue(new Error("offline"));
+    mockedKeepSeparateWork.mockRejectedValue(new Error("offline"));
+    const user = await renderReady();
+
+    await reachReview(user);
+    await user.click(
+      screen.getByRole("button", { name: "Open existing “Politics and the English Language”" })
+    );
+    expect(
+      await screen.findByText("Could not open the existing work. Please try again.")
+    ).toBeDefined();
+
+    await user.click(screen.getByRole("button", { name: "Keep separate" }));
+    expect(
+      await screen.findByText("Could not create the work. Please try again.")
+    ).toBeDefined();
+  });
+
+  it("cancels the attempt and preserves the draft when the learner goes Back", async () => {
+    mockedBeginMarkdownCreation.mockResolvedValue({ review: duplicateReview(), status: "needs_review" });
+    mockedCancelWorkCreation.mockResolvedValue({ cancelled: true });
+    const user = await renderReady();
+
+    await reachReview(user);
+    await user.click(screen.getByRole("button", { name: "Back" }));
+
+    await waitFor(() => expect(mockedCancelWorkCreation).toHaveBeenCalledWith("attempt-1"));
+    // Back returns to the still-filled Add-work form; the draft title survives.
+    const titleInput = (await screen.findByLabelText("Title")) as HTMLInputElement;
+    expect(titleInput.value).toBe("Politics and the English Language");
+  });
+
+  it("still returns to the form when Back's best-effort attempt cleanup fails", async () => {
+    mockedBeginMarkdownCreation.mockResolvedValue({ review: duplicateReview(), status: "needs_review" });
+    mockedCancelWorkCreation.mockRejectedValue(new Error("cleanup failed"));
+    const user = await renderReady();
+
+    await reachReview(user);
+    await user.click(screen.getByRole("button", { name: "Back" }));
+
+    await waitFor(() => expect(mockedCancelWorkCreation).toHaveBeenCalledWith("attempt-1"));
+    const titleInput = (await screen.findByLabelText("Title")) as HTMLInputElement;
+    expect(titleInput.value).toBe("Politics and the English Language");
   });
 
   it("rejects an unsupported file type with an error and ingests nothing", async () => {
@@ -1093,7 +1341,7 @@ describe("AdminLibraryPage", () => {
     await waitFor(() => {
       expect(navigateSpy).toHaveBeenCalledWith("/library/works/work-1/edit");
     });
-    expect(mockedImportMarkdownWork).not.toHaveBeenCalled();
+    expect(mockedBeginMarkdownCreation).not.toHaveBeenCalled();
   });
 
   it("shows the EPUB progress indicator while an EPUB ingests", async () => {

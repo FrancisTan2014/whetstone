@@ -6,6 +6,7 @@ import type {
   CreateWorkRequest,
   RecitationPlanDto,
   WorkAuthorSelection,
+  WorkCreationReviewDto,
   WorkListItemDto
 } from "@whetstone/contracts";
 import {
@@ -40,16 +41,22 @@ import {
   rememberActivePdfImport
 } from "../pdfImport/pdfImportSession";
 import {
+  beginMarkdownCreation,
+  cancelWorkCreation,
   createWork,
   deleteWork,
   fetchWorks,
   fetchWorksWithReadingPosition,
-  importMarkdownWork,
-  ingestEpub
+  ingestEpub,
+  keepSeparateWork,
+  openExistingWork,
+  type BeginMarkdownCreationOutcome,
+  type WorkCreationDecisionOutcome
 } from "./libraryApi";
 import { AuthorSelectField } from "./AuthorSelectField";
 import { groupWorksByAuthor, type AuthorWorks } from "./groupWorksByAuthor";
 import { LibraryAddMenu } from "./LibraryAddMenu";
+import { WorkCreationReviewPanel } from "./WorkCreationReviewPanel";
 import { WorkOverflowMenu } from "./WorkOverflowMenu";
 import { enrollRecitation, listRecitationPlans } from "../recitation/recitationApi";
 
@@ -112,6 +119,17 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
   // authoritative), these carry no reliable metadata, so we create the Work from the confirmed form
   // first, then ingest this file into it.
   const [pendingUpload, setPendingUpload] = useState<File | undefined>(undefined);
+
+  // An in-flight Markdown creation-review (#747): when begin returns `needs_review`, the server has
+  // parked one owner-scoped attempt and returned the candidates to present BEFORE anything is created.
+  // The panel holds only this opaque attempt id + revision (inside the DTO) and the upload's filename;
+  // the Add-work form state (title/type/language/author/held file) is deliberately kept intact so the
+  // learner's draft, filename, scroll, and focus survive review, Back, and retry. `decisionPending`
+  // disables the panel while a revision-fenced decision is in flight.
+  const [reviewState, setReviewState] = useState<
+    Readonly<{ fileName: string; review: WorkCreationReviewDto }> | undefined
+  >(undefined);
+  const [decisionPending, setDecisionPending] = useState(false);
 
   // A born-digital import (#702) left in flight when the page was last closed or navigated away is remembered
   // by its #721 attempt id; reading it once on mount (lazy initial state, never in an effect) re-enters the
@@ -255,14 +273,13 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
       // Markdown or PDF file mints an imported Work through its own atomic front door. The server stamps
       // origin and provenance; the client only routes to the right lane.
 
-      // A held Markdown file mints its imported Work atomically through the front-door import endpoint
-      // (#706): the Work, its source, and its single-owner claim are written in one transaction, so
-      // re-uploading identical bytes reopens the existing Work instead of leaving an orphan shell.
+      // A held Markdown file enters the server-owned duplicate-review boundary (#747): begin streams and
+      // hashes the upload into a #725 stage and reviews exact source + #724 candidates. Exact bytes
+      // reopen the owning Work, no credible candidate commits immediately, and a credible one parks a
+      // review to present first. The form/file are kept intact so the draft survives review/Back/retry;
+      // `beginHeldMarkdown` owns closing/resetting once an outcome resolves.
       if (heldUpload !== undefined && detectUploadKind(heldUpload) === "markdown") {
-        resetWorkForm();
-        setPendingUpload(undefined);
-        setAddOpen(false);
-        await importHeldMarkdown(heldUpload, author, trimmedTitle);
+        await beginHeldMarkdown(heldUpload, author, trimmedTitle);
         return;
       }
 
@@ -452,10 +469,37 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePdfImportId]);
 
-  // Mint an imported Work from the held Markdown file in one atomic request (#706). Re-uploading
-  // identical bytes reopens the existing Work instead of creating a duplicate; either way the learner
-  // lands in Manage content. Markdown with no readable blocks creates no Work and shows the panel's copy.
-  async function importHeldMarkdown(
+  // Reset the whole Markdown create-and-review draft: clear the form, drop the held file, close the Add
+  // sheet, and dismiss the review panel. Called only once a creation truly resolves (a Work was created
+  // or an existing one reopened) so nothing partial lingers.
+  function clearMarkdownDraft(): void {
+    resetWorkForm();
+    setPendingUpload(undefined);
+    setAddOpen(false);
+    setReviewState(undefined);
+  }
+
+  // Return from a spent review to the still-filled Add-work form so the learner can adjust and retry.
+  // The form state and held file are never touched, so the draft, filename, and title are preserved.
+  function returnToAddForm(): void {
+    setReviewState(undefined);
+    setAddOpen(true);
+  }
+
+  // Land a resolved creation/reopen (from begin or a decision): reset the draft, refresh the shelf,
+  // announce it, and drop the learner into Manage content for the resulting Work.
+  async function completeMarkdownCreation(workEntryId: string, message: string): Promise<void> {
+    clearMarkdownDraft();
+    await reload();
+    toast.success(message);
+    onManageContent(workEntryId);
+  }
+
+  // Begin an imported-Markdown Work through the duplicate-review boundary (#747). Exact bytes reopen the
+  // owning Work and no-candidate content commits immediately; a credible candidate parks the review
+  // panel while keeping the draft intact. Empty/author-not-found/uncertain outcomes create nothing and
+  // leave the Add-work form open so the learner can pick another file or retry.
+  async function beginHeldMarkdown(
     file: File,
     author: CreateWorkRequest["author"],
     workTitle: string
@@ -464,7 +508,7 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
     setUploadKind("markdown");
 
     try {
-      const outcome = await importMarkdownWork({
+      const outcome = await beginMarkdownCreation({
         author,
         fileName: file.name,
         language,
@@ -472,26 +516,141 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
         title: workTitle,
         workType
       });
-
-      if (outcome.status === "empty_content") {
-        await reload();
-        toast.error(markdownEmptyContentMessage);
-        return;
-      }
-
-      await reload();
-      toast.success(
-        outcome.status === "exact_existing"
-          ? `“${outcome.result.work.title}” is already in your library — opened it.`
-          : `Imported “${workTitle}”.`
-      );
-      onManageContent(outcome.result.work.entryId);
+      await applyBeginOutcome(outcome, file.name, workTitle);
     } catch {
       toast.error("Could not ingest the file. Please try again.");
     } finally {
       setUploadBusy(false);
       setUploadKind(undefined);
     }
+  }
+
+  async function applyBeginOutcome(
+    outcome: BeginMarkdownCreationOutcome,
+    fileName: string,
+    workTitle: string
+  ): Promise<void> {
+    switch (outcome.status) {
+      case "created":
+        await completeMarkdownCreation(outcome.result.work.entryId, `Imported “${workTitle}”.`);
+        return;
+      case "exact_existing":
+        await completeMarkdownCreation(
+          outcome.result.work.entryId,
+          `“${outcome.result.work.title}” is already in your library — opened it.`
+        );
+        return;
+      case "needs_review":
+        // A credible candidate exists: park the review panel and keep the draft/file so Back returns to
+        // the still-filled form. Nothing has been created yet.
+        setAddOpen(false);
+        setReviewState({ fileName, review: outcome.review });
+        return;
+      case "empty_content":
+        await reload();
+        toast.error(markdownEmptyContentMessage);
+        return;
+      case "author_not_found":
+        toast.error("That author or source no longer exists. Choose another and try again.");
+        return;
+      case "uncertain":
+        toast.error("Couldn’t check your library for duplicates just now. Please try again.");
+        return;
+      /* v8 ignore next 2 -- every begin outcome is handled above; the default only keeps the switch
+         exhaustive and is unreachable. */
+      default:
+        return;
+    }
+  }
+
+  // Apply a review DECISION outcome shared by Open existing and Keep separate (#747). A committing or
+  // reopening result lands the Work; a refreshed snapshot re-renders the panel; expiry/replay/concurrent
+  // finalization drop the spent review back to the form; existing-gone and uncertainty keep the panel so
+  // the learner can choose again.
+  async function applyDecisionOutcome(outcome: WorkCreationDecisionOutcome): Promise<void> {
+    switch (outcome.status) {
+      case "created":
+        await completeMarkdownCreation(
+          outcome.result.work.entryId,
+          `Imported “${outcome.result.work.title}”.`
+        );
+        return;
+      case "opened":
+      case "exact_existing":
+        await completeMarkdownCreation(
+          outcome.result.work.entryId,
+          `“${outcome.result.work.title}” is already in your library — opened it.`
+        );
+        return;
+      case "needs_review":
+        // The candidate evidence changed since the panel loaded: re-render with the refreshed review so
+        // the learner decides against current facts (revision advances with it).
+        setReviewState((current) => {
+          /* v8 ignore next -- functional-updater guard: the panel is always mounted when a decision
+             resolves, so `current` is never undefined here; the check only prevents resurrecting a
+             concurrently-dismissed panel. */
+          if (current === undefined) return current;
+          return { fileName: current.fileName, review: outcome.review };
+        });
+        toast.error("The possible duplicates changed — please review again.");
+        return;
+      case "existing_gone":
+        toast.error("That work no longer exists. Choose another option.");
+        return;
+      case "uncertain":
+        toast.error("Couldn’t re-check your library just now. Please try again.");
+        return;
+      case "expired":
+      case "superseded":
+      case "not_found":
+        // The attempt outlived its TTL, was fenced by a stale revision / concurrent finalization, or no
+        // longer exists: drop the spent review back to the still-filled form so the learner can retry.
+        returnToAddForm();
+        toast.error("This review is no longer valid. Please try again.");
+        return;
+      /* v8 ignore next 2 -- every decision outcome is handled above; the default only keeps the switch
+         exhaustive and is unreachable. */
+      default:
+        return;
+    }
+  }
+
+  // Open existing: reopen the chosen candidate Work and consume the attempt (creates nothing).
+  async function decideOpenExisting(review: WorkCreationReviewDto, entryId: string): Promise<void> {
+    setDecisionPending(true);
+    try {
+      const outcome = await openExistingWork(review.attemptId, {
+        entryId,
+        revision: review.revision
+      });
+      await applyDecisionOutcome(outcome);
+    } catch {
+      toast.error("Could not open the existing work. Please try again.");
+    } finally {
+      setDecisionPending(false);
+    }
+  }
+
+  // Keep separate: confirm the proposal is a distinct Work and commit it (the server transfers the
+  // staged upload and resolves the author only inside the final transaction).
+  async function decideKeepSeparate(review: WorkCreationReviewDto): Promise<void> {
+    setDecisionPending(true);
+    try {
+      const outcome = await keepSeparateWork(review.attemptId, { revision: review.revision });
+      await applyDecisionOutcome(outcome);
+    } catch {
+      toast.error("Could not create the work. Please try again.");
+    } finally {
+      setDecisionPending(false);
+    }
+  }
+
+  // Back: abandon the review and return to the still-filled Add-work form. Cancelling the attempt (and
+  // its staged bytes) is best-effort — an expired attempt is swept server-side anyway — so a failed
+  // cleanup never blocks returning to the form.
+  async function backFromReview(review: WorkCreationReviewDto): Promise<void> {
+    returnToAddForm();
+    await cancelWorkCreation(review.attemptId).catch(() => undefined);
   }
 
   async function onSelectUpload(event: ChangeEvent<HTMLInputElement>): Promise<void> {
@@ -687,6 +846,17 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
               ) : null}
             </form>
           </Sheet>
+        ) : null}
+
+        {reviewState !== undefined ? (
+          <WorkCreationReviewPanel
+            fileName={reviewState.fileName}
+            onBack={() => void backFromReview(reviewState.review)}
+            onKeepSeparate={() => void decideKeepSeparate(reviewState.review)}
+            onOpenExisting={(entryId) => void decideOpenExisting(reviewState.review, entryId)}
+            pending={decisionPending}
+            review={reviewState.review}
+          />
         ) : null}
 
         {pendingDelete !== undefined ? (
