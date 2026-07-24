@@ -12,7 +12,10 @@ import type {
   WorkListDto,
   WorkListItemDto
 } from "@whetstone/contracts";
-import { parseWorkCreationReviewDto, parseWorksWithReadingPositionResponse } from "@whetstone/contracts";
+import {
+  parseWorkCreationReviewDto,
+  parseWorksWithReadingPositionResponse
+} from "@whetstone/contracts";
 
 import { apiUrl } from "../../shared/runtime";
 
@@ -135,7 +138,10 @@ export async function beginMarkdownCreation(
   const body = (await response.json()) as { status?: unknown };
 
   if (body.status === "needs_review") {
-    return { review: parseWorkCreationReviewDto((body as { review: unknown }).review), status: "needs_review" };
+    return {
+      review: parseWorkCreationReviewDto((body as { review: unknown }).review),
+      status: "needs_review"
+    };
   }
 
   if (body.status === "created" || body.status === "exact_existing") {
@@ -161,7 +167,9 @@ export type WorkCreationReviewLookup =
   | Readonly<{ review: WorkCreationReviewDto; status: "ok" }>
   | Readonly<{ status: "expired" | "uncertain" | "not_found" }>;
 
-export async function fetchWorkCreationReview(attemptId: string): Promise<WorkCreationReviewLookup> {
+export async function fetchWorkCreationReview(
+  attemptId: string
+): Promise<WorkCreationReviewLookup> {
   const path = apiUrl(`/work-creation-attempts/${encodeURIComponent(attemptId)}`);
   const response = await fetch(path);
 
@@ -190,7 +198,10 @@ export type WorkCreationDecisionOutcome =
 
 function decisionOutcome(path: string, body: { status?: unknown }): WorkCreationDecisionOutcome {
   if (body.status === "needs_review") {
-    return { review: parseWorkCreationReviewDto((body as { review: unknown }).review), status: "needs_review" };
+    return {
+      review: parseWorkCreationReviewDto((body as { review: unknown }).review),
+      status: "needs_review"
+    };
   }
 
   if (body.status === "opened" || body.status === "created" || body.status === "exact_existing") {
@@ -244,7 +255,9 @@ export async function keepSeparateWork(
 
 // Back: abandon the review, cancelling the attempt and cleaning its staged bytes. Always resolves so
 // dismissing the panel never blocks on a stale attempt.
-export async function cancelWorkCreation(attemptId: string): Promise<Readonly<{ cancelled: boolean }>> {
+export async function cancelWorkCreation(
+  attemptId: string
+): Promise<Readonly<{ cancelled: boolean }>> {
   const path = apiUrl(`/work-creation-attempts/${encodeURIComponent(attemptId)}/cancel`);
   const response = await fetch(path, { method: "POST" });
 

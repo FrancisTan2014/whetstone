@@ -10,7 +10,14 @@ import { parseWorkCreationReviewDto } from "@whetstone/contracts";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
-import { authors, entries, uploadedSourceClaims, workCreationAttempts, workMeta, workSources } from "../../db/schema.js";
+import {
+  authors,
+  entries,
+  uploadedSourceClaims,
+  workCreationAttempts,
+  workMeta,
+  workSources
+} from "../../db/schema.js";
 import { createImageResourceStore } from "../../files/imageResourceStore.js";
 import { createSourceFileStore, hashMarkdown } from "../../files/sourceFileStore.js";
 import { createServer } from "../../http/createServer.js";
@@ -18,16 +25,11 @@ import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
 import type { ContentDependencies } from "../content/contentCommands.js";
 import { commitImportedMarkdownWork } from "../content/contentCommands.js";
 import {
-  beginMarkdownCreation,
   cancelWorkCreation,
   getWorkCreationReview,
-  keepSeparateWork,
   type WorkCreationDependencies
 } from "./workCreationCommands.js";
-import {
-  beginFinalizeAttempt,
-  detachStagePath
-} from "./workCreationAttemptStore.js";
+import { beginFinalizeAttempt, detachStagePath } from "./workCreationAttemptStore.js";
 
 const TTL_MS = 30 * 60 * 1000;
 const TITLE = "Politics and the English Language";
@@ -113,7 +115,12 @@ async function seedAuthor(id: string, name: string): Promise<string> {
 }
 
 async function seedCandidateWork(
-  input: Readonly<{ entryId: string; title?: string; authorId: string; origin?: "imported" | "manual" | "authored" }>
+  input: Readonly<{
+    entryId: string;
+    title?: string;
+    authorId: string;
+    origin?: "imported" | "manual" | "authored";
+  }>
 ): Promise<string> {
   await h.db.insert(entries).values({ id: input.entryId, type: "work" });
   await h.db.insert(workMeta).values({
@@ -128,7 +135,11 @@ async function seedCandidateWork(
 }
 
 function begin(overrides: Record<string, unknown> = {}): ReturnType<typeof h.server.inject> {
-  return h.server.inject({ method: "POST", payload: { ...VALID, ...overrides }, url: "/api/works/markdown" });
+  return h.server.inject({
+    method: "POST",
+    payload: { ...VALID, ...overrides },
+    url: "/api/works/markdown"
+  });
 }
 
 function getReview(attemptId: string): ReturnType<typeof h.server.inject> {
@@ -152,7 +163,10 @@ function keepSeparate(attemptId: string, payload: unknown): ReturnType<typeof h.
 }
 
 function cancel(attemptId: string): ReturnType<typeof h.server.inject> {
-  return h.server.inject({ method: "POST", url: `/api/work-creation-attempts/${attemptId}/cancel` });
+  return h.server.inject({
+    method: "POST",
+    url: `/api/work-creation-attempts/${attemptId}/cancel`
+  });
 }
 
 async function fileExists(relativePath: string): Promise<boolean> {
@@ -234,7 +248,11 @@ describe("Markdown creation-review begin (#747)", () => {
       workType: "essay"
     });
     expect(review.candidates).toHaveLength(1);
-    expect(review.candidates[0]).toMatchObject({ entryId: candidateId, matchTier: "exact", origin: "imported" });
+    expect(review.candidates[0]).toMatchObject({
+      entryId: candidateId,
+      matchTier: "exact",
+      origin: "imported"
+    });
 
     // The attempt persists staged bytes; NO Work, source, or claim is created yet.
     const attempts = await h.db.select().from(workCreationAttempts);
@@ -279,7 +297,9 @@ describe("Markdown creation-review begin (#747)", () => {
     const response = await begin({ author: { mode: "existing", authorId: existingId } });
 
     expect(response.statusCode).toBe(201);
-    expect((response.json() as { result: IngestEpubResultDto }).result.work.authorId).toBe(existingId);
+    expect((response.json() as { result: IngestEpubResultDto }).result.work.authorId).toBe(
+      existingId
+    );
   });
 
   it("reports uncertain (503) when the candidate query cannot be trusted", async () => {
@@ -368,7 +388,9 @@ describe("Markdown creation-review open existing (#747)", () => {
     expect(body.result.work.entryId).toBe(candidateId);
     expect(await countWorks()).toBe(1);
 
-    const attempt = (await h.db.select().from(workCreationAttempts).where(eq(workCreationAttempts.id, attemptId)))[0];
+    const attempt = (
+      await h.db.select().from(workCreationAttempts).where(eq(workCreationAttempts.id, attemptId))
+    )[0];
     expect(attempt?.state).toBe("completed");
     expect(attempt?.stagePath).toBeNull();
   });
@@ -419,7 +441,9 @@ describe("Markdown creation-review open existing (#747)", () => {
 describe("Markdown creation-review keep separate (#747)", () => {
   it("commits a distinct Work, transferring the staged upload to provenance", async () => {
     const { attemptId } = await beginNeedsReview();
-    const attemptRow = (await h.db.select().from(workCreationAttempts).where(eq(workCreationAttempts.id, attemptId)))[0];
+    const attemptRow = (
+      await h.db.select().from(workCreationAttempts).where(eq(workCreationAttempts.id, attemptId))
+    )[0];
     const stagePath = attemptRow!.stagePath!;
 
     const response = await keepSeparate(attemptId, { revision: 0 });
@@ -437,7 +461,9 @@ describe("Markdown creation-review keep separate (#747)", () => {
     expect(sources[0]).toMatchObject({ fileName: "politics.md", sha256: hashMarkdown(MARKDOWN) });
     // The staged file was transferred in place (still present) and the attempt cleared its stage reference.
     expect(await fileExists(stagePath)).toBe(true);
-    const completed = (await h.db.select().from(workCreationAttempts).where(eq(workCreationAttempts.id, attemptId)))[0];
+    const completed = (
+      await h.db.select().from(workCreationAttempts).where(eq(workCreationAttempts.id, attemptId))
+    )[0];
     expect(completed?.state).toBe("completed");
     expect(completed?.stagePath).toBeNull();
   });
@@ -481,7 +507,9 @@ describe("Markdown creation-review keep separate (#747)", () => {
     const body = response.json() as { result: IngestEpubResultDto; status: string };
     expect(body.status).toBe("exact_existing");
     expect(body.result.work.entryId).toBe(claimedEntryId);
-    const attempt = (await h.db.select().from(workCreationAttempts).where(eq(workCreationAttempts.id, attemptId)))[0];
+    const attempt = (
+      await h.db.select().from(workCreationAttempts).where(eq(workCreationAttempts.id, attemptId))
+    )[0];
     expect(attempt?.state).toBe("completed");
     expect(attempt?.stagePath).toBeNull();
   });
@@ -551,7 +579,9 @@ describe("Markdown creation-review keep separate (#747)", () => {
 describe("Markdown creation-review cancel / Back (#747)", () => {
   it("cancels a pending attempt and removes its staged bytes", async () => {
     const { attemptId } = await beginNeedsReview();
-    const attempt = (await h.db.select().from(workCreationAttempts).where(eq(workCreationAttempts.id, attemptId)))[0];
+    const attempt = (
+      await h.db.select().from(workCreationAttempts).where(eq(workCreationAttempts.id, attemptId))
+    )[0];
     const stagePath = attempt!.stagePath!;
     expect(await fileExists(stagePath)).toBe(true);
 
@@ -560,7 +590,9 @@ describe("Markdown creation-review cancel / Back (#747)", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ cancelled: true });
     expect(await fileExists(stagePath)).toBe(false);
-    const cancelled = (await h.db.select().from(workCreationAttempts).where(eq(workCreationAttempts.id, attemptId)))[0];
+    const cancelled = (
+      await h.db.select().from(workCreationAttempts).where(eq(workCreationAttempts.id, attemptId))
+    )[0];
     expect(cancelled?.state).toBe("cancelled");
     expect(cancelled?.stagePath).toBeNull();
   });
@@ -613,7 +645,9 @@ describe("Markdown creation-review expiry sweep (#747)", () => {
     // Any operation opportunistically sweeps expired attempts; this one has a null stage path.
     await getWorkCreationReview(h.deps, DEFAULT_USER_ID, "unrelated");
 
-    const swept = (await h.db.select().from(workCreationAttempts).where(eq(workCreationAttempts.id, attemptId)))[0];
+    const swept = (
+      await h.db.select().from(workCreationAttempts).where(eq(workCreationAttempts.id, attemptId))
+    )[0];
     expect(swept?.state).toBe("expired");
   });
 

@@ -9,8 +9,16 @@ import { WorkCreationReviewPanel } from "./WorkCreationReviewPanel";
 beforeAll(() => {
   // Radix Dialog reads pointer-capture and layout APIs jsdom lacks; stub them so rendering the Sheet
   // does not throw during interaction tests.
-  for (const method of ["hasPointerCapture", "setPointerCapture", "releasePointerCapture", "scrollIntoView"]) {
-    Object.defineProperty(HTMLElement.prototype, method, { configurable: true, value: () => false });
+  for (const method of [
+    "hasPointerCapture",
+    "setPointerCapture",
+    "releasePointerCapture",
+    "scrollIntoView"
+  ]) {
+    Object.defineProperty(HTMLElement.prototype, method, {
+      configurable: true,
+      value: () => false
+    });
   }
   window.matchMedia = vi.fn().mockImplementation((query: string) => ({
     addEventListener: vi.fn(),
@@ -69,9 +77,7 @@ function review(overrides: Partial<WorkCreationReviewDto> = {}): WorkCreationRev
   };
 }
 
-function renderPanel(
-  props: Partial<React.ComponentProps<typeof WorkCreationReviewPanel>> = {}
-): {
+function renderPanel(props: Partial<React.ComponentProps<typeof WorkCreationReviewPanel>> = {}): {
   onBack: ReturnType<typeof vi.fn>;
   onKeepSeparate: ReturnType<typeof vi.fn>;
   onOpenExisting: ReturnType<typeof vi.fn>;
@@ -110,9 +116,7 @@ describe("WorkCreationReviewPanel", () => {
     const rows = within(list).getAllByRole("listitem");
     expect(rows).toHaveLength(1);
     expect(within(rows[0]!).getByText("Great Expectations")).toBeTruthy();
-    expect(
-      within(rows[0]!).getByText("Charles Dickens · English · book · Imported")
-    ).toBeTruthy();
+    expect(within(rows[0]!).getByText("Charles Dickens · English · book · Imported")).toBeTruthy();
     expect(within(rows[0]!).getByText("Similar title, same author")).toBeTruthy();
   });
 
@@ -196,7 +200,9 @@ describe("WorkCreationReviewPanel", () => {
   it("disables every action while a decision is pending", () => {
     renderPanel({ pending: true });
 
-    expect(screen.getByRole("button", { name: /Open existing/ }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: /Open existing/ }).hasAttribute("disabled")).toBe(
+      true
+    );
     expect(screen.getByRole("button", { name: "Back" }).hasAttribute("disabled")).toBe(true);
     const keepSeparate = screen.getByRole("button", { name: "Keep separate" });
     expect(keepSeparate.hasAttribute("disabled")).toBe(true);

@@ -124,7 +124,10 @@ export function registerWorkCreationRoutes(
       );
 
       request.log.info(
-        { route: "POST /api/work-creation-attempts/:attemptId/open-existing", status: result.status },
+        {
+          route: "POST /api/work-creation-attempts/:attemptId/open-existing",
+          status: result.status
+        },
         "work_creation_open_existing"
       );
 
@@ -151,7 +154,10 @@ export function registerWorkCreationRoutes(
       );
 
       request.log.info(
-        { route: "POST /api/work-creation-attempts/:attemptId/keep-separate", status: result.status },
+        {
+          route: "POST /api/work-creation-attempts/:attemptId/keep-separate",
+          status: result.status
+        },
         "work_creation_keep_separate"
       );
 

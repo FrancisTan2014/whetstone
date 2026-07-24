@@ -288,7 +288,9 @@ describe("libraryApi", () => {
   it("throws when begin returns an unrecognized outcome", async () => {
     stubFetch({ ok: true, body: { status: "surprise" } });
 
-    await expect(beginMarkdownCreation(markdownRequest)).rejects.toThrow("unexpected begin outcome");
+    await expect(beginMarkdownCreation(markdownRequest)).rejects.toThrow(
+      "unexpected begin outcome"
+    );
   });
 
   it("fetches the current review view for an attempt", async () => {
@@ -315,7 +317,10 @@ describe("libraryApi", () => {
   });
 
   it("posts an Open existing decision and returns the reopened Work", async () => {
-    const result = { content: { readingUnits: [], workEntryId: "work-2" }, work: { entryId: "work-2" } };
+    const result = {
+      content: { readingUnits: [], workEntryId: "work-2" },
+      work: { entryId: "work-2" }
+    };
     const fetchMock = stubFetch({ ok: true, body: { result, status: "opened" } });
 
     await expect(
@@ -328,7 +333,10 @@ describe("libraryApi", () => {
   });
 
   it("posts a Keep separate decision and returns the created Work", async () => {
-    const result = { content: { readingUnits: [], workEntryId: "work-3" }, work: { entryId: "work-3" } };
+    const result = {
+      content: { readingUnits: [], workEntryId: "work-3" },
+      work: { entryId: "work-3" }
+    };
     const fetchMock = stubFetch({ ok: true, status: 201, body: { result, status: "created" } });
 
     await expect(keepSeparateWork("attempt-1", { revision: 1 })).resolves.toEqual({
@@ -359,9 +367,9 @@ describe("libraryApi", () => {
       "not_found"
     ] as const) {
       stubFetch({ ok: false, body: { status } });
-      await expect(openExistingWork("attempt-1", { entryId: "work-2", revision: 0 })).resolves.toEqual(
-        { status }
-      );
+      await expect(
+        openExistingWork("attempt-1", { entryId: "work-2", revision: 0 })
+      ).resolves.toEqual({ status });
     }
   });
 

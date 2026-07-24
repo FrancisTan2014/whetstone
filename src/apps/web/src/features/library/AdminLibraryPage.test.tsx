@@ -1140,7 +1140,10 @@ describe("AdminLibraryPage", () => {
   });
 
   it("presents the duplicate-review panel with factual evidence when a credible candidate exists", async () => {
-    mockedBeginMarkdownCreation.mockResolvedValue({ review: duplicateReview(), status: "needs_review" });
+    mockedBeginMarkdownCreation.mockResolvedValue({
+      review: duplicateReview(),
+      status: "needs_review"
+    });
     const user = await renderReady();
 
     await reachReview(user);
@@ -1155,7 +1158,10 @@ describe("AdminLibraryPage", () => {
 
   it("reopens the chosen candidate when the learner picks Open existing", async () => {
     const onManageContent = vi.fn();
-    mockedBeginMarkdownCreation.mockResolvedValue({ review: duplicateReview(), status: "needs_review" });
+    mockedBeginMarkdownCreation.mockResolvedValue({
+      review: duplicateReview(),
+      status: "needs_review"
+    });
     mockedOpenExistingWork.mockResolvedValue({ result: reopenResult, status: "opened" });
     mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
     const user = await renderReady(onManageContent);
@@ -1181,7 +1187,10 @@ describe("AdminLibraryPage", () => {
 
   it("commits a distinct Work when the learner keeps it separate", async () => {
     const onManageContent = vi.fn();
-    mockedBeginMarkdownCreation.mockResolvedValue({ review: duplicateReview(), status: "needs_review" });
+    mockedBeginMarkdownCreation.mockResolvedValue({
+      review: duplicateReview(),
+      status: "needs_review"
+    });
     mockedKeepSeparateWork.mockResolvedValue({ result: reopenResult, status: "created" });
     mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
     const user = await renderReady(onManageContent);
@@ -1193,14 +1202,18 @@ describe("AdminLibraryPage", () => {
       expect(mockedKeepSeparateWork).toHaveBeenCalledWith("attempt-1", { revision: 0 });
     });
     await waitFor(() => expect(onManageContent).toHaveBeenCalledWith("work-1"));
-    expect(
-      await screen.findByText("Imported “Politics and the English Language”.")
-    ).toBeDefined();
+    expect(await screen.findByText("Imported “Politics and the English Language”.")).toBeDefined();
   });
 
   it("re-renders the panel against refreshed evidence when a decision changes the snapshot", async () => {
-    mockedBeginMarkdownCreation.mockResolvedValue({ review: duplicateReview(0), status: "needs_review" });
-    mockedKeepSeparateWork.mockResolvedValue({ review: duplicateReview(1), status: "needs_review" });
+    mockedBeginMarkdownCreation.mockResolvedValue({
+      review: duplicateReview(0),
+      status: "needs_review"
+    });
+    mockedKeepSeparateWork.mockResolvedValue({
+      review: duplicateReview(1),
+      status: "needs_review"
+    });
     const user = await renderReady();
 
     await reachReview(user);
@@ -1218,7 +1231,10 @@ describe("AdminLibraryPage", () => {
   });
 
   it("keeps the panel open and warns when the chosen existing Work is gone or the recheck is uncertain", async () => {
-    mockedBeginMarkdownCreation.mockResolvedValue({ review: duplicateReview(), status: "needs_review" });
+    mockedBeginMarkdownCreation.mockResolvedValue({
+      review: duplicateReview(),
+      status: "needs_review"
+    });
     const user = await renderReady();
 
     await reachReview(user);
@@ -1241,7 +1257,10 @@ describe("AdminLibraryPage", () => {
   });
 
   it("drops a spent review back to the still-filled form when the attempt expires", async () => {
-    mockedBeginMarkdownCreation.mockResolvedValue({ review: duplicateReview(), status: "needs_review" });
+    mockedBeginMarkdownCreation.mockResolvedValue({
+      review: duplicateReview(),
+      status: "needs_review"
+    });
     mockedKeepSeparateWork.mockResolvedValue({ status: "expired" });
     const user = await renderReady();
 
@@ -1257,7 +1276,10 @@ describe("AdminLibraryPage", () => {
   });
 
   it("shows an error toast when a decision request throws", async () => {
-    mockedBeginMarkdownCreation.mockResolvedValue({ review: duplicateReview(), status: "needs_review" });
+    mockedBeginMarkdownCreation.mockResolvedValue({
+      review: duplicateReview(),
+      status: "needs_review"
+    });
     mockedOpenExistingWork.mockRejectedValue(new Error("offline"));
     mockedKeepSeparateWork.mockRejectedValue(new Error("offline"));
     const user = await renderReady();
@@ -1271,13 +1293,14 @@ describe("AdminLibraryPage", () => {
     ).toBeDefined();
 
     await user.click(screen.getByRole("button", { name: "Keep separate" }));
-    expect(
-      await screen.findByText("Could not create the work. Please try again.")
-    ).toBeDefined();
+    expect(await screen.findByText("Could not create the work. Please try again.")).toBeDefined();
   });
 
   it("cancels the attempt and preserves the draft when the learner goes Back", async () => {
-    mockedBeginMarkdownCreation.mockResolvedValue({ review: duplicateReview(), status: "needs_review" });
+    mockedBeginMarkdownCreation.mockResolvedValue({
+      review: duplicateReview(),
+      status: "needs_review"
+    });
     mockedCancelWorkCreation.mockResolvedValue({ cancelled: true });
     const user = await renderReady();
 
@@ -1291,7 +1314,10 @@ describe("AdminLibraryPage", () => {
   });
 
   it("still returns to the form when Back's best-effort attempt cleanup fails", async () => {
-    mockedBeginMarkdownCreation.mockResolvedValue({ review: duplicateReview(), status: "needs_review" });
+    mockedBeginMarkdownCreation.mockResolvedValue({
+      review: duplicateReview(),
+      status: "needs_review"
+    });
     mockedCancelWorkCreation.mockRejectedValue(new Error("cleanup failed"));
     const user = await renderReady();
 

@@ -291,7 +291,8 @@ const server = createServer({
     // A structural logger for how many credible duplicate candidates the boundary weighed, mirroring the
     // library duplicate-candidate query's log shape without depending on Fastify.
     log: {
-      info: (payload, message) => console.info(`[work-creation] ${message}`, JSON.stringify(payload))
+      info: (payload, message) =>
+        console.info(`[work-creation] ${message}`, JSON.stringify(payload))
     }
   },
   // In a single-origin deploy (#184) the built web client is served from this same server; in

@@ -132,7 +132,10 @@ describe("createSourceFileStore", () => {
 
   it("reads back a retained markdown source by its relative path", async () => {
     const store = createSourceFileStore(directory);
-    const written = await store.writeMarkdownSource({ id: "source-5", markdown: "# Kept\n\nBody." });
+    const written = await store.writeMarkdownSource({
+      id: "source-5",
+      markdown: "# Kept\n\nBody."
+    });
 
     expect(await store.readMarkdownSource(written.path)).toBe("# Kept\n\nBody.");
   });

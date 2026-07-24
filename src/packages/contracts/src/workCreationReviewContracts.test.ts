@@ -119,9 +119,9 @@ describe("parseKeepSeparateDecisionRequest", () => {
   });
 
   it("rejects an extra field", () => {
-    expect(
-      keepSeparateDecisionRequestSchema.safeParse({ revision: 4, entryId: "x" }).success
-    ).toBe(false);
+    expect(keepSeparateDecisionRequestSchema.safeParse({ revision: 4, entryId: "x" }).success).toBe(
+      false
+    );
   });
 });
 
