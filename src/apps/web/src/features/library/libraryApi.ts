@@ -78,18 +78,25 @@ export async function createWork(request: CreateWorkRequest): Promise<WorkListIt
   });
 }
 
-// The front-door outcome of ingesting an uploaded EPUB (#706): `created` minted a new Work (201),
-// `exact_existing` reopened the Work that already owns these exact bytes (200). Both carry the Work so
-// the shelf can either announce the import or drop the learner into the already-owning Work.
-export type IngestEpubOutcome = Readonly<{
-  result: IngestEpubResultDto;
-  status: "created" | "exact_existing";
-}>;
+// The front-door outcome of BEGINNING an imported EPUB Work through the duplicate-review boundary
+// (#748). `created` committed a new Work immediately (no credible candidate, 201); `exact_existing`
+// reopened the Work that already owns these exact bytes (200); `needs_review` persisted one
+// owner-scoped attempt and returned the review to present before anything is created; `invalid_epub`
+// refused bytes the parser could not open (422); `uncertain` means the candidate query could not be
+// trusted (503), so nothing was created and the client must retry rather than be shown a false
+// "no duplicates". EPUB metadata is embedded, so there is no learner-typed author/empty-content refusal.
+export type BeginEpubCreationOutcome =
+  | Readonly<{ result: IngestEpubResultDto; status: "created" | "exact_existing" }>
+  | Readonly<{ review: WorkCreationReviewDto; status: "needs_review" }>
+  | Readonly<{ status: "invalid_epub" | "uncertain" }>;
 
-// Ingest an uploaded EPUB through the shared uploaded-source claim (#706): re-uploading identical bytes
-// reopens the existing Work (200) instead of creating a duplicate (201). The status is surfaced so the
-// shelf can route a duplicate to the same open-existing behavior as the Markdown front door.
-export async function ingestEpub(file: File): Promise<IngestEpubOutcome> {
+// Begin an imported-EPUB Work (#748): the server hashes the upload, reopens the owning Work on exact
+// bytes, refuses an unopenable file, and otherwise weighs #724 candidates — creating immediately when
+// there is none or parking one review attempt when there is. `created`/`exact_existing` return the bare
+// Work resource (201/200) exactly as the one-step front door always did, so a duplicate re-upload drops
+// the learner into the owning Work; only `needs_review` carries the review envelope the shared panel
+// consumes. The client trusts the body/HTTP discriminant, never deciding candidate policy itself.
+export async function beginEpubCreation(file: File): Promise<BeginEpubCreationOutcome> {
   const bytes = new Uint8Array(await file.arrayBuffer());
   const path = apiUrl("/works/epub");
   const response = await fetch(path, {
@@ -98,12 +105,26 @@ export async function ingestEpub(file: File): Promise<IngestEpubOutcome> {
     method: "POST"
   });
 
+  if (response.status === 422) {
+    return { status: "invalid_epub" };
+  }
+
+  if (response.status === 503) {
+    return { status: "uncertain" };
+  }
+
   if (!response.ok) {
     throw new Error(`Request to ${path} failed with status ${response.status}.`);
   }
 
+  const body = (await response.json()) as { review?: unknown; status?: unknown };
+
+  if (body.status === "needs_review") {
+    return { review: parseWorkCreationReviewDto(body.review), status: "needs_review" };
+  }
+
   return {
-    result: (await response.json()) as IngestEpubResultDto,
+    result: body as unknown as IngestEpubResultDto,
     status: response.status === 200 ? "exact_existing" : "created"
   };
 }

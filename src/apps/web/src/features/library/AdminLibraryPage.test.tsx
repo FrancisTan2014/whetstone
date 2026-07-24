@@ -12,13 +12,13 @@ import type * as ReactRouterDom from "react-router-dom";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./libraryApi", () => ({
+  beginEpubCreation: vi.fn(),
   beginMarkdownCreation: vi.fn(),
   cancelWorkCreation: vi.fn(),
   createWork: vi.fn(),
   deleteWork: vi.fn(),
   fetchWorks: vi.fn(),
   fetchWorksWithReadingPosition: vi.fn(),
-  ingestEpub: vi.fn(),
   keepSeparateWork: vi.fn(),
   openExistingWork: vi.fn(),
   searchAuthors: vi.fn()
@@ -87,13 +87,13 @@ vi.mock("react-router-dom", async (importOriginal) => ({
 }));
 
 import {
+  beginEpubCreation,
   beginMarkdownCreation,
   cancelWorkCreation,
   createWork,
   deleteWork,
   fetchWorks,
   fetchWorksWithReadingPosition,
-  ingestEpub,
   keepSeparateWork,
   openExistingWork,
   searchAuthors
@@ -148,7 +148,7 @@ const mockedFetchWorks = vi.mocked(fetchWorks);
 const mockedFetchWorksWithReadingPosition = vi.mocked(fetchWorksWithReadingPosition);
 const mockedCreateWork = vi.mocked(createWork);
 const mockedDeleteWork = vi.mocked(deleteWork);
-const mockedIngestEpub = vi.mocked(ingestEpub);
+const mockedBeginEpubCreation = vi.mocked(beginEpubCreation);
 const mockedBeginMarkdownCreation = vi.mocked(beginMarkdownCreation);
 const mockedCancelWorkCreation = vi.mocked(cancelWorkCreation);
 const mockedKeepSeparateWork = vi.mocked(keepSeparateWork);
@@ -229,6 +229,41 @@ const reopenResult = {
   content: { readingUnits: [], workEntryId: essayWorkItem.work.entryId },
   work: essayWorkItem.work
 };
+
+// The EPUB counterpart of duplicateReview: a credible same-author candidate against the embedded OPF
+// metadata. The panel is format-agnostic, so it frames the attempt by the derived `<title>.epub` label.
+function duplicateEpubReview(revision = 0): WorkCreationReviewDto {
+  return {
+    attemptId: "attempt-epub-1",
+    candidateFingerprint: `fp-epub-${revision}`,
+    candidates: [
+      {
+        author: { id: "author-9", name: "司马迁" },
+        entryId: "work-epub-existing",
+        evidence: {
+          editionMarkerDifferences: [],
+          languageDiffers: false,
+          sameAuthor: true,
+          titleSimilarity: 0.95,
+          workTypeDiffers: false
+        },
+        language: "zh-CN",
+        matchTier: "same_author_fuzzy",
+        origin: "imported",
+        title: "史记选读",
+        workType: "book"
+      }
+    ],
+    proposed: {
+      authorName: "司马迁",
+      language: "zh-CN",
+      title: "史记选读",
+      workType: "book"
+    },
+    revision,
+    sourceFileName: "史记选读.epub"
+  };
+}
 
 function mockMatchMedia(reduce = false): void {
   window.matchMedia = vi.fn().mockImplementation((query: string) => ({
@@ -646,7 +681,7 @@ describe("AdminLibraryPage", () => {
         workType: "book"
       }
     };
-    mockedIngestEpub.mockResolvedValue({
+    mockedBeginEpubCreation.mockResolvedValue({
       result: {
         content: { readingUnits: [], workEntryId: epubWork.work.entryId },
         work: epubWork.work
@@ -662,7 +697,7 @@ describe("AdminLibraryPage", () => {
 
     expect(await screen.findByRole("heading", { name: "史记选读" })).toBeDefined();
     expect(await screen.findByText("Imported “史记选读”.")).toBeDefined();
-    expect(mockedIngestEpub).toHaveBeenCalledTimes(1);
+    expect(mockedBeginEpubCreation).toHaveBeenCalledTimes(1);
   });
 
   it("does not open the manage-content surface after an EPUB import", async () => {
@@ -679,7 +714,7 @@ describe("AdminLibraryPage", () => {
         workType: "book"
       }
     };
-    mockedIngestEpub.mockResolvedValue({
+    mockedBeginEpubCreation.mockResolvedValue({
       result: {
         content: { readingUnits: [], workEntryId: epubWork.work.entryId },
         work: epubWork.work
@@ -715,7 +750,7 @@ describe("AdminLibraryPage", () => {
         workType: "book"
       }
     };
-    mockedIngestEpub.mockResolvedValue({
+    mockedBeginEpubCreation.mockResolvedValue({
       result: {
         content: { readingUnits: [], workEntryId: epubWork.work.entryId },
         work: epubWork.work
@@ -741,7 +776,7 @@ describe("AdminLibraryPage", () => {
 
   it("shows an error when the EPUB ingestion fails", async () => {
     const user = await renderReady();
-    mockedIngestEpub.mockRejectedValue(new Error("boom"));
+    mockedBeginEpubCreation.mockRejectedValue(new Error("boom"));
 
     const file = new File([new Uint8Array([1])], "bad.epub", { type: "application/epub+zip" });
     await user.upload(screen.getByLabelText("Upload"), file);
@@ -749,12 +784,99 @@ describe("AdminLibraryPage", () => {
     expect(await screen.findByText("Could not ingest the EPUB. Please try again.")).toBeDefined();
   });
 
+  it("routes a credible EPUB duplicate into the shared review panel (#748)", async () => {
+    const user = await renderReady();
+    mockedBeginEpubCreation.mockResolvedValue({
+      review: duplicateEpubReview(),
+      status: "needs_review"
+    });
+
+    const file = new File([new Uint8Array([1, 2, 3])], "shiji.epub", {
+      type: "application/epub+zip"
+    });
+    await user.upload(screen.getByLabelText("Upload"), file);
+
+    // The same duplicate-review panel the Markdown front door shows — no EPUB-specific branch — framed by
+    // the derived `<title>.epub` label, with the candidate Work listed for an Open existing / Keep separate
+    // decision. Nothing is created until the learner decides.
+    expect(await screen.findByText("Possible duplicate")).toBeDefined();
+    const list = screen.getByRole("list", { name: "Possible duplicates" });
+    expect(within(list).getByText("史记选读")).toBeDefined();
+    expect(screen.getByText("史记选读.epub")).toBeDefined();
+    expect(mockedCreateWork).not.toHaveBeenCalled();
+  });
+
+  it("commits the EPUB as a separate Work from the review panel (#748)", async () => {
+    const onManageContent = vi.fn();
+    const user = await renderReady(onManageContent);
+    mockedBeginEpubCreation.mockResolvedValue({
+      review: duplicateEpubReview(),
+      status: "needs_review"
+    });
+    const created = {
+      content: { readingUnits: [], workEntryId: toEntryId("work-epub-new") },
+      work: {
+        authorId: toAuthorId("author-9"),
+        entryId: toEntryId("work-epub-new"),
+        language: "zh-CN",
+        origin: "imported" as const,
+        title: "史记选读",
+        workType: "book" as const
+      }
+    };
+    mockedKeepSeparateWork.mockResolvedValue({ result: created, status: "created" });
+
+    const file = new File([new Uint8Array([1, 2, 3])], "shiji.epub", {
+      type: "application/epub+zip"
+    });
+    await user.upload(screen.getByLabelText("Upload"), file);
+    await screen.findByText("Possible duplicate");
+    await user.click(screen.getByRole("button", { name: "Keep separate" }));
+
+    // The shared decision path lands the distinct Work: it drops the learner into Manage content, just as
+    // the Markdown Keep separate does — the review UI never forks by source format.
+    await waitFor(() => {
+      expect(mockedKeepSeparateWork).toHaveBeenCalledWith("attempt-epub-1", { revision: 0 });
+    });
+    await waitFor(() => {
+      expect(onManageContent).toHaveBeenCalledWith("work-epub-new");
+    });
+  });
+
+  it("reports an unreadable EPUB without creating anything (#748)", async () => {
+    const user = await renderReady();
+    mockedBeginEpubCreation.mockResolvedValue({ status: "invalid_epub" });
+
+    const file = new File([new Uint8Array([9])], "broken.epub", { type: "application/epub+zip" });
+    await user.upload(screen.getByLabelText("Upload"), file);
+
+    expect(
+      await screen.findByText("That file couldn’t be read as an EPUB. Please choose a valid .epub file.")
+    ).toBeDefined();
+    expect(mockedCreateWork).not.toHaveBeenCalled();
+  });
+
+  it("reports an untrusted duplicate check for an EPUB and creates nothing (#748)", async () => {
+    const user = await renderReady();
+    mockedBeginEpubCreation.mockResolvedValue({ status: "uncertain" });
+
+    const file = new File([new Uint8Array([1, 2, 3])], "shiji.epub", {
+      type: "application/epub+zip"
+    });
+    await user.upload(screen.getByLabelText("Upload"), file);
+
+    expect(
+      await screen.findByText("Couldn’t check your library for duplicates just now. Please try again.")
+    ).toBeDefined();
+    expect(mockedCreateWork).not.toHaveBeenCalled();
+  });
+
   it("ignores an upload with no file selected", async () => {
     await renderReady();
 
     fireEvent.change(screen.getByLabelText("Upload"), { target: { files: [] } });
 
-    expect(mockedIngestEpub).not.toHaveBeenCalled();
+    expect(mockedBeginEpubCreation).not.toHaveBeenCalled();
   });
 
   it("labels the shelf control 'Upload' and accepts epub, pdf, and md", async () => {
@@ -788,7 +910,7 @@ describe("AdminLibraryPage", () => {
         workType: "book"
       }
     };
-    mockedIngestEpub.mockResolvedValue({
+    mockedBeginEpubCreation.mockResolvedValue({
       result: {
         content: { readingUnits: [], workEntryId: epubWork.work.entryId },
         work: epubWork.work
@@ -818,7 +940,7 @@ describe("AdminLibraryPage", () => {
 
     const titleInput = (await screen.findByLabelText("Title")) as HTMLInputElement;
     expect(titleInput.value).toBe("mislabelled");
-    expect(mockedIngestEpub).not.toHaveBeenCalled();
+    expect(mockedBeginEpubCreation).not.toHaveBeenCalled();
   });
 
   it("prefills the Add-work sheet from a Markdown filename, then mints the Work in one atomic import (#706)", async () => {
@@ -1339,7 +1461,7 @@ describe("AdminLibraryPage", () => {
 
     expect(await screen.findByText("Choose an .epub, .pdf, or .md file.")).toBeDefined();
     expect(mockedCreateWork).not.toHaveBeenCalled();
-    expect(mockedIngestEpub).not.toHaveBeenCalled();
+    expect(mockedBeginEpubCreation).not.toHaveBeenCalled();
   });
 
   it("drops a held upload when the Add-work sheet is dismissed", async () => {
@@ -1373,7 +1495,7 @@ describe("AdminLibraryPage", () => {
 
   it("shows the EPUB progress indicator while an EPUB ingests", async () => {
     let resolveIngest: (value: Awaited<ReturnType<typeof ingestEpub>>) => void = () => {};
-    mockedIngestEpub.mockImplementation(
+    mockedBeginEpubCreation.mockImplementation(
       () =>
         new Promise((resolve) => {
           resolveIngest = resolve;
