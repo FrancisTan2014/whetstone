@@ -138,6 +138,8 @@ export function createFixtureOcrTransformAdapter(
 
   const ocrPass: OcrPass = async (params: OcrPassParams) => {
     const fixture = await loadFixtureConversion(params.inputPath);
+    /* v8 ignore next 4 -- defensive: the before-probe reads the same staged bytes and already fails
+       tool_missing when no fixture is embedded, so the pass only runs once a fixture is present. */
     if (fixture === null) {
       // No embedded fixture: behave like a missing tool rather than fabricate output.
       return { status: "tool_missing" };
