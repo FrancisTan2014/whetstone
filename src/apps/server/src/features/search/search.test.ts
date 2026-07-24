@@ -15,6 +15,7 @@ import type { ParsedEpub } from "../../files/epubSource.js";
 import { createServer } from "../../http/createServer.js";
 import type { ContentDependencies } from "../content/contentCommands.js";
 import type { LibraryDependencies } from "../library/libraryCommands.js";
+import type { WorkCreationDependencies } from "../workCreation/workCreationCommands.js";
 import { escapeLikePattern, searchBlocks } from "./searchQueries.js";
 
 let db: DbClient;
@@ -383,10 +384,25 @@ describe("searchBlocks over PM-backed (EPUB) units", () => {
       sourceFileStore: createSourceFileStore(sourcesDir)
     };
 
+    const workCreation: WorkCreationDependencies = {
+      attemptTtlMs: 30 * 60 * 1000,
+      content,
+      createAttemptId: () => `attempt-${(sourceSequence += 1)}`,
+      createStageId: () => `stage-${(sourceSequence += 1)}`,
+      log: { info: () => undefined },
+      now: () => new Date()
+    };
+
     return {
       db: database,
       imagesDir,
-      server: createServer({ content, library, logger: false, search: { db: database } }),
+      server: createServer({
+        content,
+        library,
+        logger: false,
+        search: { db: database },
+        workCreation
+      }),
       sourcesDir
     };
   }
