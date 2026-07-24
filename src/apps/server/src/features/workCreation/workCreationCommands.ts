@@ -382,6 +382,18 @@ export async function openExistingWork(
     return guard.result;
   }
 
+  // Fence Open existing to the server-reviewed candidate set (#747): the client may only choose one of the
+  // Works the review actually surfaced as a possible duplicate, never an arbitrary existing id. An id absent
+  // from the attempt's persisted snapshot is rejected WITHOUT consuming the attempt or discarding the staged
+  // upload, so a client can neither decide candidate policy nor reopen an unreviewed Work around the review.
+  // The existence/ownership recheck below still applies to a reviewed id.
+  /* v8 ignore next -- a pending review attempt always carries its reviewed snapshot; the ?? only guards types. */
+  const reviewedSnapshot = guard.attempt.candidateSnapshot ?? [];
+
+  if (!reviewedSnapshot.some((entry) => entry.entryId === entryId)) {
+    return { status: "existing_gone" };
+  }
+
   const reopened = await loadReopenableWork(db(deps), entryId);
 
   if (reopened === undefined) {

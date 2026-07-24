@@ -404,6 +404,32 @@ describe("Markdown creation-review open existing (#747)", () => {
     expect(response.json()).toEqual({ status: "existing_gone" });
   });
 
+  it("rejects an existing but unreviewed Work id without consuming the attempt (fence, #747)", async () => {
+    const { attemptId, candidateId } = await beginNeedsReview();
+    // A real, reopenable Work the review never surfaced as a candidate (unrelated title/author).
+    const unreviewedId = await seedCandidateWork({
+      authorId: await seedAuthor("unrelated-author", "Unrelated Author"),
+      entryId: "unreviewed-work",
+      title: "A Completely Unrelated Title"
+    });
+
+    const response = await openExisting(attemptId, { entryId: unreviewedId, revision: 0 });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({ status: "existing_gone" });
+    // Nothing was opened around review, and the attempt stays live at its revision for a valid choice.
+    const attempt = (
+      await h.db.select().from(workCreationAttempts).where(eq(workCreationAttempts.id, attemptId))
+    )[0];
+    expect(attempt?.state).toBe("pending");
+    expect(attempt?.revision).toBe(0);
+
+    // The genuinely reviewed candidate still opens on the same live attempt.
+    const reopen = await openExisting(attemptId, { entryId: candidateId, revision: 0 });
+    expect(reopen.statusCode).toBe(200);
+    expect((reopen.json() as { status: string }).status).toBe("opened");
+  });
+
   it("answers 409 superseded for a stale revision", async () => {
     const { attemptId, candidateId } = await beginNeedsReview();
 
