@@ -404,6 +404,27 @@ describe("Markdown creation-review open existing (#747)", () => {
     expect(response.json()).toEqual({ status: "existing_gone" });
   });
 
+  it("answers 409 existing_gone without consuming the attempt when a reviewed candidate is deleted before the decision (#747)", async () => {
+    const { attemptId, candidateId } = await beginNeedsReview();
+    // A real race: the reviewed candidate Work is deleted between review and decision. Its id is still in
+    // the attempt's snapshot, so it clears the fence, but it no longer resolves to a reopenable Work.
+    await h.db.delete(workMeta).where(eq(workMeta.entryId, candidateId));
+    await h.db.delete(entries).where(eq(entries.id, candidateId));
+
+    const response = await openExisting(attemptId, { entryId: candidateId, revision: 0 });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({ status: "existing_gone" });
+    // Nothing was reopened, and the staged upload plus the attempt stay live for a Keep separate or Back.
+    expect(await countWorks()).toBe(0);
+    const attempt = (
+      await h.db.select().from(workCreationAttempts).where(eq(workCreationAttempts.id, attemptId))
+    )[0];
+    expect(attempt?.state).toBe("pending");
+    expect(attempt?.revision).toBe(0);
+    expect(attempt?.stagePath).not.toBeNull();
+  });
+
   it("rejects an existing but unreviewed Work id without consuming the attempt (fence, #747)", async () => {
     const { attemptId, candidateId } = await beginNeedsReview();
     // A real, reopenable Work the review never surfaced as a candidate (unrelated title/author).
