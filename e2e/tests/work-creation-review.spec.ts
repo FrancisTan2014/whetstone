@@ -13,10 +13,7 @@ const DESKTOP = { height: 900, width: 1280 } as const;
 
 // Distinct bytes per upload so none is an EXACT re-upload (that path reopens silently, #706). Identical
 // title + author with DIFFERENT bytes is what trips the exact title-key candidate and opens the panel.
-function markdownUpload(
-  title: string,
-  body: string
-): { buffer: Buffer; mimeType: string; name: string } {
+function markdownUpload(title: string, body: string): { buffer: Buffer; mimeType: string; name: string } {
   return {
     buffer: Buffer.from(`# ${body}\n\nA durable paragraph for “${title}”.\n`, "utf8"),
     mimeType: "text/markdown",

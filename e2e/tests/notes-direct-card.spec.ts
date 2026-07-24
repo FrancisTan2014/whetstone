@@ -95,9 +95,7 @@ test.describe("notes direct card", () => {
     await expect(page.getByRole("heading", { name: "Review" })).toBeVisible();
     await page.getByRole("button", { name: "Show note" }).click();
     await expect(page.getByLabel("Success check")).toContainText("randomized election timeouts");
-    await expect(page.getByLabel("Reference")).toContainText(
-      "avoid split votes across the cluster"
-    );
+    await expect(page.getByLabel("Reference")).toContainText("avoid split votes across the cluster");
     await page.getByRole("button", { name: "Good" }).click();
     await expect(page.getByText(/Due complete/)).toBeVisible();
   });

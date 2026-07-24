@@ -70,7 +70,9 @@ test.describe("notes saved-note first card", () => {
     await expect(cardsPanel.getByLabel("Success check")).toContainText(
       "flushed before the write is applied"
     );
-    await expect(cardsPanel.getByLabel("Reference")).toContainText("before the write is applied");
+    await expect(cardsPanel.getByLabel("Reference")).toContainText(
+      "before the write is applied"
+    );
     await cardsPanel.getByRole("button", { name: "Back to editing" }).click();
 
     // The preview minted nothing; Add card is what actually authors the first card. It lands in the list.

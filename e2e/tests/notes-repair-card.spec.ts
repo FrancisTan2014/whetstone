@@ -52,7 +52,9 @@ test.describe("notes repair unclear card before rating", () => {
     await cardsPanel.getByRole("button", { name: "Add card" }).click();
     await cardsPanel.getByRole("textbox", { name: "Question" }).fill("Why does it survive?");
     await cardsPanel.getByRole("button", { name: "Add card" }).click();
-    await expect(cardsPanel.getByRole("button", { name: /Why does it survive\?/ })).toBeVisible();
+    await expect(
+      cardsPanel.getByRole("button", { name: /Why does it survive\?/ })
+    ).toBeVisible();
 
     await dialog.getByRole("button", { name: "Close" }).click();
     await expect(dialog).toBeHidden();

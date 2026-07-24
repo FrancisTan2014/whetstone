@@ -64,13 +64,7 @@ async function createHeadingWork(
   markdown: string
 ): Promise<{ entryId: string; title: string }> {
   const created = await request.post(`${baseURL}api/works`, {
-    data: {
-      author: { mode: "new", name: `${title} Author` },
-      language: "en",
-      origin: "imported",
-      title,
-      workType: "essay"
-    }
+    data: { author: { mode: "new", name: `${title} Author` }, language: "en", origin: "imported", title, workType: "essay" }
   });
   expect(created.status(), `create → ${await created.text()}`).toBe(201);
   const { work } = (await created.json()) as { work: { entryId: string; title: string } };
@@ -98,12 +92,7 @@ test.describe("heading-derived Work table of contents (#680)", () => {
     setup
   }) => {
     const { baseURL } = setup;
-    const work = await createHeadingWork(
-      page.request,
-      baseURL,
-      "Heading Outline Book",
-      initialMarkdown
-    );
+    const work = await createHeadingWork(page.request, baseURL, "Heading Outline Book", initialMarkdown);
 
     // Manage content: the derived outline renders as a labelled list, nesting Section 1.1 under
     // Chapter One in reading order.
@@ -143,14 +132,8 @@ test.describe("heading-derived Work table of contents (#680)", () => {
     await page.goto(`${baseURL}#/reader?work=${encodeURIComponent(work.entryId)}`);
     await expect(page.locator(`${READING} [data-block-id]`).first()).toBeVisible();
     const recomputed = await openReaderToc(page);
-    await expect(
-      recomputed.getByRole("button", { name: "Chapter Three", exact: true })
-    ).toBeVisible();
-    await expect(recomputed.getByRole("button", { name: "Chapter Two", exact: true })).toHaveCount(
-      0
-    );
-    await expect(recomputed.getByRole("button", { name: "Section 1.1", exact: true })).toHaveCount(
-      0
-    );
+    await expect(recomputed.getByRole("button", { name: "Chapter Three", exact: true })).toBeVisible();
+    await expect(recomputed.getByRole("button", { name: "Chapter Two", exact: true })).toHaveCount(0);
+    await expect(recomputed.getByRole("button", { name: "Section 1.1", exact: true })).toHaveCount(0);
   });
 });
