@@ -972,6 +972,25 @@ describe("EPUB creation-review begin (#748)", () => {
     expect(await readdir(h.sourcesDir)).toEqual([]);
     expect(await countWorks()).toBe(0);
   });
+
+  it("resumes the owner's existing EPUB review when a second begin races the single-attempt slot", async () => {
+    await seedEpubCandidate();
+    const first = (await beginEpub()).json();
+    expect(first.status).toBe("needs_review");
+    const attemptId = first.review.attemptId as string;
+
+    // A second begin for the same owner while an attempt is already pending must clean up its
+    // just-staged file and resume the existing review rather than double-owning the slot (#748).
+    const second = await beginEpub();
+
+    expect(second.statusCode).toBe(200);
+    const body = second.json();
+    expect(body.status).toBe("needs_review");
+    expect(body.review.attemptId).toBe(attemptId);
+    expect(await h.db.select().from(workCreationAttempts)).toHaveLength(1);
+    // Only the original attempt's stage remains; the raced begin deleted its own just-staged file.
+    expect((await readdir(h.sourcesDir)).length).toBe(1);
+  });
 });
 
 describe("EPUB creation-review keep separate (#748)", () => {

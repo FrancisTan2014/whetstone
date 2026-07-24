@@ -302,4 +302,36 @@ describe("EPUB ingestion fidelity invariants (#520)", () => {
     expect(wrapperEvidence).toHaveLength(1);
     expect(wrapperEvidence[0]!.tag).toBe("div");
   });
+
+  // The retained one-step `ingestEpub` front door (immediate-create composition; the #748 review
+  // boundary uses `commitImportedEpubWork` directly). These cover its dedup and error contract.
+  it("reopens the owning Work on identical bytes instead of creating a duplicate", async () => {
+    const first = await ingestEpub(context.dependencies, new Uint8Array([1, 2, 3]));
+    if (first.status !== "created") {
+      throw new Error(`expected created, got ${first.status}`);
+    }
+
+    const second = await ingestEpub(context.dependencies, new Uint8Array([1, 2, 3]));
+
+    expect(second.status).toBe("exact_existing");
+    if (second.status !== "exact_existing") {
+      throw new Error("unreachable");
+    }
+    expect(second.result.work.entryId).toBe(first.result.work.entryId);
+  });
+
+  it("reports invalid_epub when the archive cannot be parsed", async () => {
+    const broken = await buildContext(() => {
+      throw new Error("not a zip");
+    });
+
+    try {
+      const result = await ingestEpub(broken.dependencies, new Uint8Array([9, 9, 9]));
+
+      expect(result.status).toBe("invalid_epub");
+    } finally {
+      await rm(broken.sourcesDir, { force: true, recursive: true });
+      await rm(broken.imagesDir, { force: true, recursive: true });
+    }
+  });
 });
