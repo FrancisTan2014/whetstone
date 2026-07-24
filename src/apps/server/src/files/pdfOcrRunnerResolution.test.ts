@@ -78,7 +78,7 @@ describe("ocrTransformFixture", () => {
       { pageNumber: 2, hasNativeText: false }
     ]);
 
-    const transformed = ocrTransformFixture(fixture, [2]);
+    const transformed = ocrTransformFixture(fixture, [2], "eng");
 
     expect(transformed.pages).toEqual([
       { pageNumber: 1, hasNativeText: true },
@@ -91,6 +91,16 @@ describe("ocrTransformFixture", () => {
     );
     expect(injected).toHaveLength(1);
     expect(injected[0]?.pageNumber).toBe(2);
+  });
+
+  it("recovers text in the script the OCR pass was asked to recognize", () => {
+    const fixture = fixtureWith([{ pageNumber: 1, hasNativeText: false }]);
+
+    const simplified = ocrTransformFixture(fixture, [1], "chi_sim+eng");
+    expect(simplified.body.at(-1)?.text).toContain("简体中文");
+
+    const traditional = ocrTransformFixture(fixture, [1], "chi_tra+eng");
+    expect(traditional.body.at(-1)?.text).toContain("繁體中文");
   });
 });
 

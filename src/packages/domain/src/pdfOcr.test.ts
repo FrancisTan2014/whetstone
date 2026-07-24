@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   classifyOcrRouting,
-  isOcrLanguageEnabled,
   OCR_GEOMETRY_TOLERANCE_PT,
   ocrPassRequired,
   ocrTesseractLanguage,
@@ -14,21 +13,13 @@ import {
 } from "./pdfOcr.js";
 import { workLanguages, type WorkLanguage } from "./work.js";
 
-describe("ocr language enablement", () => {
-  it("enables English OCR and leaves Chinese disabled until #746", () => {
-    expect(isOcrLanguageEnabled("en")).toBe(true);
-    expect(isOcrLanguageEnabled("zh-CN")).toBe(false);
-    expect(isOcrLanguageEnabled("zh-TW")).toBe(false);
-  });
-
-  it("runs the OCR pass only for a text-less document in an enabled language", () => {
-    // English scanned/mixed → OCR; English native → never; Chinese scanned → skipped (no pack yet).
-    expect(ocrPassRequired("scanned", "en")).toBe(true);
-    expect(ocrPassRequired("mixed", "en")).toBe(true);
-    expect(ocrPassRequired("native", "en")).toBe(false);
-    expect(ocrPassRequired("scanned", "zh-CN")).toBe(false);
-    expect(ocrPassRequired("mixed", "zh-TW")).toBe(false);
-    expect(ocrPassRequired("native", "zh-CN")).toBe(false);
+describe("ocr pass gating", () => {
+  it("runs the OCR pass only for a text-less document (language-independent now)", () => {
+    // Chinese now ships an OCR pack (#746), so the pass is gated only by routing kind: a scanned or
+    // mixed document OCRs in any language; a native (born-digital) document never does.
+    expect(ocrPassRequired("scanned")).toBe(true);
+    expect(ocrPassRequired("mixed")).toBe(true);
+    expect(ocrPassRequired("native")).toBe(false);
   });
 });
 

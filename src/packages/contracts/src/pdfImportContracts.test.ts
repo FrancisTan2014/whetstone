@@ -106,12 +106,13 @@ describe("parsePdfImportStartedDto", () => {
 });
 
 describe("pdfImportStartMetadataSchema", () => {
-  it("defaults the three optional intent fields to null and requires a file name", () => {
+  it("defaults the three optional intent fields and the OCR override to null and requires a file name", () => {
     expect(pdfImportStartMetadataSchema.parse({ fileName: "reading.pdf" })).toEqual({
       enteredAuthor: null,
       enteredLanguage: null,
       enteredTitle: null,
-      fileName: "reading.pdf"
+      fileName: "reading.pdf",
+      ocrLanguageOverride: null
     });
   });
 
@@ -121,18 +122,35 @@ describe("pdfImportStartMetadataSchema", () => {
         enteredAuthor: "Jane",
         enteredLanguage: "en",
         enteredTitle: "Chosen",
-        fileName: "x.pdf"
+        fileName: "x.pdf",
+        ocrLanguageOverride: "zh-CN"
       })
     ).toEqual({
       enteredAuthor: "Jane",
       enteredLanguage: "en",
       enteredTitle: "Chosen",
-      fileName: "x.pdf"
+      fileName: "x.pdf",
+      ocrLanguageOverride: "zh-CN"
     });
     expect(pdfImportStartMetadataSchema.safeParse({ fileName: "" }).success).toBe(false);
     expect(pdfImportStartMetadataSchema.safeParse({ fileName: "x.pdf", extra: 1 }).success).toBe(
       false
     );
+  });
+
+  it("accepts every Work language as the OCR override and rejects any other value", () => {
+    for (const override of ["en", "zh-CN", "zh-TW"] as const) {
+      expect(
+        pdfImportStartMetadataSchema.parse({ fileName: "x.pdf", ocrLanguageOverride: override })
+          .ocrLanguageOverride
+      ).toBe(override);
+    }
+    expect(
+      pdfImportStartMetadataSchema.safeParse({ fileName: "x.pdf", ocrLanguageOverride: "fr" }).success
+    ).toBe(false);
+    expect(
+      pdfImportStartMetadataSchema.safeParse({ fileName: "x.pdf", ocrLanguageOverride: "" }).success
+    ).toBe(false);
   });
 
   it("sanitizes a file name to a safe basename, stripping any directory path", () => {
@@ -186,12 +204,6 @@ describe("pdfImportPublicationOutcomeDtoSchema", () => {
     expect(
       pdfImportPublicationOutcomeDtoSchema.parse({ status: "published", workEntryId: "work-1" })
     ).toEqual({ status: "published", workEntryId: "work-1" });
-    expect(
-      pdfImportPublicationOutcomeDtoSchema.parse({
-        pagesNeedingOcr: 3,
-        status: "ocr_language_not_enabled"
-      })
-    ).toEqual({ pagesNeedingOcr: 3, status: "ocr_language_not_enabled" });
     expect(
       pdfImportPublicationOutcomeDtoSchema.parse({
         pagesNeedingOcr: 3,

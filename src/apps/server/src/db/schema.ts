@@ -802,6 +802,12 @@ export const pdfImportAttempts = pgTable(
     // OCR pre-pass safely against the immutable original; non-null → the derived `ocr.pdf` is the trusted
     // source, so recovery skips OCR and resumes structured conversion over it without re-OCR'ing.
     ocrFingerprint: text("ocr_fingerprint"),
+    // The resolved OCR language for this attempt (#746): the pre-import override if one was chosen,
+    // otherwise the Work's own language. One of the three Work languages — never free text. Resolved and
+    // frozen once when the attempt is queued, so the runner and publication read the SAME choice and it
+    // cannot drift mid-run; a re-import is a fresh attempt that resolves its own value. `en` is the
+    // neutral default so a legacy row (pre-#746) reads as English.
+    ocrLanguage: text("ocr_language").notNull().default("en"),
     adapterFingerprint: text("adapter_fingerprint"),
     stagePath: text("stage_path"),
     totalPages: integer("total_pages"),
@@ -833,6 +839,12 @@ export const pdfImportAttempts = pgTable(
     check(
       "pdf_import_attempts_failure_ck",
       sql`(${table.state} = 'failed' and ${table.failure} is not null) or (${table.state} <> 'failed' and ${table.failure} is null)`
+    ),
+    // The resolved OCR language is one of the three Work languages (#746) — never free text — so no
+    // writer or restored dump can land an unknown OCR language the pack mapping would not cover.
+    check(
+      "pdf_import_attempts_ocr_language_ck",
+      sql`${table.ocrLanguage} in ('en', 'zh-CN', 'zh-TW')`
     )
   ]
 );
@@ -862,17 +874,15 @@ export const pdfImportRanges = pgTable(
 // execution and knows nothing about publishing; this row is the publication's own record, one per
 // attempt. It captures the learner's upload-time intent (`entered_*`, `file_name`) at start, then
 // records the outcome exactly once at publish: `work_entry_id` (the published Work), OR
-// `ocr_language_not_enabled_pages` (a positive page count when the document is text-less in a language
-// whose OCR pack is not yet enabled — Chinese until #746 — so no Work was created), OR
-// `ocr_validation_failed_pages` (a positive page count when an English document still had text-less
-// pages after the OCR pass — preflight/full-conversion disagreement or incomplete OCR — so publishing is
-// refused, no Work created), OR `no_content` (the pages carried native text but mapped to zero canonical
-// blocks, so publishing would create an empty-shell Work — refused, no Work created), OR
-// `unpreservable_images` (a positive count of picture/figure constructs whose images #701 cannot extract,
-// so publishing would lose content — refused, no Work created). A row with no result set is a publication
-// still pending; the `result_ck` check forbids ever setting more than one. Deleted with its attempt
-// (cascade) as operational hygiene — the published Work and its blocks are independent, immutable content
-// and are never touched by that cleanup.
+// `ocr_validation_failed_pages` (a positive page count when a document still had text-less pages after
+// the OCR pass — preflight/full-conversion disagreement or incomplete OCR — so publishing is refused, no
+// Work created), OR `no_content` (the pages carried native text but mapped to zero canonical blocks, so
+// publishing would create an empty-shell Work — refused, no Work created), OR `unpreservable_images` (a
+// positive count of picture/figure constructs whose images #701 cannot extract, so publishing would lose
+// content — refused, no Work created). A row with no result set is a publication still pending; the
+// `result_ck` check forbids ever setting more than one. Deleted with its attempt (cascade) as operational
+// hygiene — the published Work and its blocks are independent, immutable content and are never touched by
+// that cleanup.
 export const pdfImportPublications = pgTable(
   "pdf_import_publications",
   {
@@ -884,7 +894,6 @@ export const pdfImportPublications = pgTable(
     enteredLanguage: text("entered_language"),
     fileName: text("file_name").notNull(),
     workEntryId: text("work_entry_id").references(() => entries.id),
-    ocrLanguageNotEnabledPages: integer("ocr_language_not_enabled_pages"),
     ocrValidationFailedPages: integer("ocr_validation_failed_pages"),
     noContent: boolean("no_content"),
     unpreservableImages: integer("unpreservable_images"),
@@ -892,17 +901,12 @@ export const pdfImportPublications = pgTable(
     publishedAt: timestamp("published_at", { mode: "date", withTimezone: true })
   },
   (table) => [
-    // A publication resolves to at most one outcome: a published Work, an OCR-language-not-enabled page
-    // count, an OCR-validation-failed page count, a no-content refusal, or an unsupported-image refusal —
-    // never more than one. (None set = pending.)
+    // A publication resolves to at most one outcome: a published Work, an OCR-validation-failed page
+    // count, a no-content refusal, or an unsupported-image refusal — never more than one. (None set =
+    // pending.)
     check(
       "pdf_import_publications_result_ck",
-      sql`(${table.workEntryId} is not null)::int + (${table.ocrLanguageNotEnabledPages} is not null)::int + (${table.ocrValidationFailedPages} is not null)::int + (${table.noContent} is not null)::int + (${table.unpreservableImages} is not null)::int <= 1`
-    ),
-    // An OCR-language-not-enabled marker, when present, is a positive page count.
-    check(
-      "pdf_import_publications_ocr_lang_pages_ck",
-      sql`${table.ocrLanguageNotEnabledPages} is null or ${table.ocrLanguageNotEnabledPages} > 0`
+      sql`(${table.workEntryId} is not null)::int + (${table.ocrValidationFailedPages} is not null)::int + (${table.noContent} is not null)::int + (${table.unpreservableImages} is not null)::int <= 1`
     ),
     // An OCR-validation-failed marker, when present, is a positive page count.
     check(

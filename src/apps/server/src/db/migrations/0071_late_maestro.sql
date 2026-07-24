@@ -1,0 +1,6 @@
+ALTER TABLE "pdf_import_publications" DROP CONSTRAINT "pdf_import_publications_ocr_lang_pages_ck";--> statement-breakpoint
+ALTER TABLE "pdf_import_publications" DROP CONSTRAINT "pdf_import_publications_result_ck";--> statement-breakpoint
+ALTER TABLE "pdf_import_attempts" ADD COLUMN "ocr_language" text DEFAULT 'en' NOT NULL;--> statement-breakpoint
+ALTER TABLE "pdf_import_publications" DROP COLUMN "ocr_language_not_enabled_pages";--> statement-breakpoint
+ALTER TABLE "pdf_import_attempts" ADD CONSTRAINT "pdf_import_attempts_ocr_language_ck" CHECK ("pdf_import_attempts"."ocr_language" in ('en', 'zh-CN', 'zh-TW'));--> statement-breakpoint
+ALTER TABLE "pdf_import_publications" ADD CONSTRAINT "pdf_import_publications_result_ck" CHECK (("pdf_import_publications"."work_entry_id" is not null)::int + ("pdf_import_publications"."ocr_validation_failed_pages" is not null)::int + ("pdf_import_publications"."no_content" is not null)::int + ("pdf_import_publications"."unpreservable_images" is not null)::int <= 1);

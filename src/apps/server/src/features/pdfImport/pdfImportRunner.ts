@@ -10,8 +10,7 @@ import {
 import {
   classifyOcrRouting,
   nextRangeIndex,
-  ocrPassRequired,
-  resolveWorkLanguage
+  ocrPassRequired
 } from "@whetstone/domain";
 
 import type { DbClient } from "../../db/dbClient.js";
@@ -39,7 +38,6 @@ import {
   clearStagePath,
   commitRange,
   getCommittedRangeIndices,
-  getPublication,
   markConverted,
   markFailed,
   setPhase,
@@ -378,11 +376,10 @@ async function resolveConversionSource(
     return { status: "ok", handle };
   }
 
-  // The Work language drives the OCR decision (whether to run, and in which Tesseract language). It is
-  // read from the publication intent; a raw enqueue without intent has no language, so default to
-  // English rather than guessing from page content.
-  const publication = await getPublication(deps.db, claimed.id);
-  const language = resolveWorkLanguage(publication?.enteredLanguage ?? null);
+  // The OCR language is the attempt's own resolved, frozen choice (#746): the pre-import override if one
+  // was chosen, otherwise the Work's own language — decided once at queue time so the runner and
+  // publication never disagree and re-probing cannot drift it.
+  const language = claimed.ocrLanguage;
 
   // Fresh run: the probe pages are in hand. Resumed pre-adoption run: re-probe the ORIGINAL for routing —
   // safe because no OCR stage has been adopted (fingerprint null), so re-probing and re-OCRing loses
@@ -401,7 +398,7 @@ async function resolveConversionSource(
   const routing = classifyOcrRouting(
     pages.map((page) => ({ pageNumber: page.pageNumber, hasNativeText: page.hasNativeText }))
   );
-  if (!ocrPassRequired(routing.kind, language)) {
+  if (!ocrPassRequired(routing.kind)) {
     return { status: "ok", handle };
   }
 

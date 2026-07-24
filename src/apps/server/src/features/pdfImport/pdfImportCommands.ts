@@ -1,5 +1,5 @@
 import type { PdfImportStartedDto, PdfImportStatusDto } from "@whetstone/contracts";
-import { isTerminalAttemptState } from "@whetstone/domain";
+import { isTerminalAttemptState, type WorkLanguage } from "@whetstone/domain";
 
 import type { DbClient } from "../../db/dbClient.js";
 import type { PdfImportCleanupLogger, PdfImportActiveRuns } from "./pdfImportRunner.js";
@@ -72,6 +72,9 @@ export type BindStagedPdfAttemptInput = Readonly<{
   stagePath: string;
   sha256: string;
   userId: string;
+  // The resolved OCR language for this attempt (#746), frozen at queue time on the attempt row so the
+  // runner and publication read the same choice for the life of the run.
+  ocrLanguage: WorkLanguage;
   // An optional dependent write (e.g. #702's publication intent) committed in the SAME transaction as
   // the queued-attempt row, so the attempt is never visible/claimable by the runner without it. Any
   // throw here rolls the row back too, and the stage THIS upload created is then removed — a partial
@@ -96,6 +99,7 @@ export async function bindStagedPdfAttempt(
         userId: input.userId,
         sourceHash: input.sha256,
         stagePath: input.stagePath,
+        ocrLanguage: input.ocrLanguage,
         now: deps.now()
       });
       if (input.commitWithin !== undefined) {

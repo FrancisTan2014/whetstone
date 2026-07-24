@@ -5,18 +5,22 @@ import {
   type PdfImportBeginResultDto,
   type PdfImportViewDto
 } from "@whetstone/contracts";
+import type { WorkLanguage } from "@whetstone/domain";
 
 import { apiUrl } from "../../shared/runtime";
 
 // The learner's upload-time intent that rides alongside the born-digital PDF bytes (#702). The file name
 // is required (its stem is the title fallback and it is recorded as provenance); title/author/language are
-// optional overrides. This is sent as base64-encoded JSON in a header so the request body stays the raw
-// PDF bytes and non-ASCII metadata survives a header that only carries ASCII.
+// optional overrides. `ocrLanguageOverride` (#746) optionally forces the OCR language for a scanned/mixed
+// PDF, limited to the three Work languages; null/omitted means "OCR in the Work's own language". This is
+// sent as base64-encoded JSON in a header so the request body stays the raw PDF bytes and non-ASCII
+// metadata survives a header that only carries ASCII.
 export type PdfImportMetadata = Readonly<{
   fileName: string;
   enteredTitle?: string | null;
   enteredAuthor?: string | null;
   enteredLanguage?: string | null;
+  ocrLanguageOverride?: WorkLanguage | null;
 }>;
 
 const metadataHeader = "x-pdf-import-metadata";

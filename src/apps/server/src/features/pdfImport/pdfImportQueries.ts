@@ -54,9 +54,8 @@ export async function getPdfImportStatus(
 }
 
 // Project the #702 publication record into its outcome DTO: no intent -> `none`; a resolved Work ->
-// `published`; a not-yet-enabled text-less refusal -> `ocr_language_not_enabled`; an English OCR
-// validation refusal -> `ocr_validation_failed`; a resolved no-content refusal -> `no_content`; a
-// resolved unsupported-image refusal -> `image_unsupported`; otherwise still `pending`.
+// `published`; an OCR validation refusal -> `ocr_validation_failed`; a resolved no-content refusal ->
+// `no_content`; a resolved unsupported-image refusal -> `image_unsupported`; otherwise still `pending`.
 export async function buildPdfImportPublicationOutcome(
   db: DbClient,
   attemptId: string
@@ -67,12 +66,6 @@ export async function buildPdfImportPublicationOutcome(
   }
   if (publication.workEntryId !== null) {
     return { status: "published", workEntryId: publication.workEntryId };
-  }
-  if (publication.ocrLanguageNotEnabledPages !== null) {
-    return {
-      pagesNeedingOcr: publication.ocrLanguageNotEnabledPages,
-      status: "ocr_language_not_enabled"
-    };
   }
   if (publication.ocrValidationFailedPages !== null) {
     return {
