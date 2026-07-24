@@ -139,12 +139,45 @@ class FakeConverter:
         return types.SimpleNamespace(document=self._doc)
 
 
+class FakeBackendPage:
+    def __init__(self, chars=1, size=(612.0, 792.0), rotation=0):
+        self._chars = chars
+        self._size = size
+        self._rotation = rotation
+
+    def get_textpage(self):
+        return self
+
+    def count_chars(self):
+        return self._chars
+
+    def get_size(self):
+        return self._size
+
+    def get_rotation(self):
+        return self._rotation
+
+
 class FakeBackendDoc:
-    def __init__(self, pages):
+    def __init__(self, pages, page=None):
         self._pages = pages
+        self._page = page if page is not None else FakeBackendPage()
 
     def __len__(self):
         return self._pages
+
+    def __getitem__(self, index):
+        return self._page
+
+
+# Probe-mode test factories: build a per-page native-text / geometry predicate from a pdf path.
+def native_text_factory(predicate=lambda _page: True):
+    return lambda _path: predicate
+
+
+def geometry_factory(box=None):
+    box = box if box is not None else {"width": 612.0, "height": 792.0, "rotation": 0}
+    return lambda _path: (lambda _page: dict(box))
 
 
 def identity_resolve(ref, _doc):
@@ -495,18 +528,55 @@ class BuildConverterTests(unittest.TestCase):
 
 
 class RunProbeTests(unittest.TestCase):
-    def test_emits_the_page_count(self):
+    def test_emits_page_count_and_per_page_classification(self):
         stdout = io.StringIO()
-        code = run_probe("/tmp/a.pdf", lambda _p: FakeBackendDoc(11), stdout, io.StringIO())
+        native = native_text_factory(lambda page: page != 2)  # page 2 is image-only
+        geometry = lambda _path: (
+            lambda page: {"width": 600.0, "height": 800.0, "rotation": 90 if page == 3 else 0}
+        )
+        code = run_probe(
+            "/tmp/a.pdf", lambda _p: FakeBackendDoc(3), native, geometry, stdout, io.StringIO()
+        )
         self.assertEqual(code, EXIT_OK)
-        self.assertEqual(json.loads(stdout.getvalue()), {"pageCount": 11})
+        self.assertEqual(
+            json.loads(stdout.getvalue()),
+            {
+                "pageCount": 3,
+                "pages": [
+                    {"pageNumber": 1, "width": 600.0, "height": 800.0, "rotation": 0, "hasNativeText": True},
+                    {"pageNumber": 2, "width": 600.0, "height": 800.0, "rotation": 0, "hasNativeText": False},
+                    {"pageNumber": 3, "width": 600.0, "height": 800.0, "rotation": 90, "hasNativeText": True},
+                ],
+            },
+        )
+
+    def test_geometry_failure_exits_conversion_failed(self):
+        def geometry(_path):
+            def boom(_page):
+                raise RuntimeError("page geometry unavailable")
+
+            return boom
+
+        stderr = io.StringIO()
+        code = run_probe(
+            "/tmp/a.pdf",
+            lambda _p: FakeBackendDoc(1),
+            native_text_factory(),
+            geometry,
+            io.StringIO(),
+            stderr,
+        )
+        self.assertEqual(code, EXIT_CONVERSION_FAILED)
+        self.assertIn("probe failed", stderr.getvalue())
 
     def test_encrypted_probe_exits_password_required(self):
         def opener(_path):
             raise PasswordRequired()
 
         stderr = io.StringIO()
-        code = run_probe("/tmp/a.pdf", opener, io.StringIO(), stderr)
+        code = run_probe(
+            "/tmp/a.pdf", opener, native_text_factory(), geometry_factory(), io.StringIO(), stderr
+        )
         self.assertEqual(code, EXIT_PASSWORD_REQUIRED)
         self.assertIn("encrypted", stderr.getvalue())
 
@@ -515,7 +585,9 @@ class RunProbeTests(unittest.TestCase):
             raise OSError("broken")
 
         stderr = io.StringIO()
-        code = run_probe("/tmp/a.pdf", opener, io.StringIO(), stderr)
+        code = run_probe(
+            "/tmp/a.pdf", opener, native_text_factory(), geometry_factory(), io.StringIO(), stderr
+        )
         self.assertEqual(code, EXIT_CONVERSION_FAILED)
         self.assertIn("probe failed", stderr.getvalue())
 
@@ -526,7 +598,9 @@ class RunProbeTests(unittest.TestCase):
             raise ModuleNotFoundError("No module named 'pypdfium2'")
 
         stderr = io.StringIO()
-        code = run_probe("/tmp/a.pdf", opener, io.StringIO(), stderr)
+        code = run_probe(
+            "/tmp/a.pdf", opener, native_text_factory(), geometry_factory(), io.StringIO(), stderr
+        )
         self.assertEqual(code, EXIT_MISSING_DEPENDENCY)
         self.assertIn("setup:pdf", stderr.getvalue())
 
@@ -641,7 +715,22 @@ class MainTests(unittest.TestCase):
             stderr=io.StringIO(),
         )
         self.assertEqual(code, EXIT_OK)
-        self.assertEqual(json.loads(stdout.getvalue()), {"pageCount": 3})
+        self.assertEqual(
+            json.loads(stdout.getvalue()),
+            {
+                "pageCount": 3,
+                "pages": [
+                    {
+                        "pageNumber": page,
+                        "width": 612.0,
+                        "height": 792.0,
+                        "rotation": 0,
+                        "hasNativeText": True,
+                    }
+                    for page in (1, 2, 3)
+                ],
+            },
+        )
 
     def test_range_mode_dispatches(self):
         doc = FakeDoc(body=FakeGroup([FakeItem(text="ok")]))
@@ -710,9 +799,9 @@ class MainTests(unittest.TestCase):
         self.assertEqual(code, EXIT_MEMORY_CEILING_UNSUPPORTED)
         self.assertIn("memory ceiling", stderr.getvalue())
 
-    def test_default_prober_factory_is_wired_when_not_injected(self):
-        # Exercise the branch that builds the default prober from the opener. The opener is only
-        # touched lazily by the real prober, so a probe call never invokes it here.
+    def test_default_prober_and_geometry_factories_are_wired_when_not_injected(self):
+        # Exercise the branch that builds the default native-text + geometry factories from the opener,
+        # so a probe emits a full per-page classification without an injected factory.
         stdout = io.StringIO()
         code = main(
             ["--probe", "/tmp/a.pdf"],
@@ -722,6 +811,10 @@ class MainTests(unittest.TestCase):
             stderr=io.StringIO(),
         )
         self.assertEqual(code, EXIT_OK)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["pageCount"], 1)
+        self.assertEqual(payload["pages"][0]["hasNativeText"], True)
+        self.assertEqual(payload["pages"][0]["rotation"], 0)
 
 
 if __name__ == "__main__":

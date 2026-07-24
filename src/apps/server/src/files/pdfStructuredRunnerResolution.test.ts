@@ -57,7 +57,11 @@ describe("resolveStructuredPdfRunner", () => {
     // page count — proving this branch is input-derived, not the canned or unavailable runner.
     const runner = resolveStructuredPdfRunner({ ...baseResolution, fixtureConversion: true });
     const path = await writeFixtureFile();
-    expect(await runner.probe(path, undefined)).toEqual({ status: "ok", pageCount: 1 });
+    expect(await runner.probe(path, undefined)).toEqual({
+      status: "ok",
+      pageCount: 1,
+      pages: [{ pageNumber: 1, width: 612, height: 792, rotation: 0, hasNativeText: true }]
+    });
   });
 
   it("fails visibly on a platform where the memory ceiling cannot be enforced", async () => {

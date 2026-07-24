@@ -213,28 +213,83 @@ function readDoclingSchemaVersion(json: unknown): string | null {
   return typeof version === "string" ? version : null;
 }
 
+// The quarter-turn page rotations a PDF page may declare, in degrees. A probe that reports anything
+// else is malformed — OCR's geometry validator (#704) compares rotation exactly, so a nonsense value
+// must never reach it.
+export const SUPPORTED_PAGE_ROTATIONS: readonly number[] = Object.freeze([0, 90, 180, 270]);
+
+// One page's lightweight classification, reported by the shared adapter's `--probe` BEFORE any full
+// Docling conversion (#744): its box dimensions (PDF points) and quarter-turn rotation, plus whether
+// the page already carries native text. This is the SOLE classifier #704 routes on — a scanned/mixed
+// document is detected here, so it never pays for a disposable pre-OCR Docling conversion.
+export type ProbePage = Readonly<{
+  pageNumber: number;
+  width: number;
+  height: number;
+  rotation: number;
+  hasNativeText: boolean;
+}>;
+
+const probePageSchema = z
+  .object({
+    pageNumber: z.number().int().positive(),
+    width: z.number().finite().nonnegative(),
+    height: z.number().finite().nonnegative(),
+    rotation: z
+      .number()
+      .int()
+      .refine((value) => SUPPORTED_PAGE_ROTATIONS.includes(value), {
+        message: "rotation must be one of 0, 90, 180, 270 degrees."
+      }),
+    hasNativeText: z.boolean()
+  })
+  .strict();
+
+const probeClassificationSchema = z
+  .object({ pageCount: z.number().int().nonnegative(), pages: z.array(probePageSchema) })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.pages.length !== value.pageCount) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `probe reported ${value.pageCount} pages but ${value.pages.length} page records.`
+      });
+      return;
+    }
+    const seen = new Set<number>();
+    for (const page of value.pages) {
+      if (page.pageNumber > value.pageCount || seen.has(page.pageNumber)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `probe page numbers must be unique and within 1..${value.pageCount}.`
+        });
+        return;
+      }
+      seen.add(page.pageNumber);
+    }
+  });
+
 export type ProbeParseResult =
-  | Readonly<{ status: "ok"; pageCount: number }>
+  | Readonly<{ status: "ok"; pageCount: number; pages: readonly ProbePage[] }>
   | Readonly<{ status: "malformed"; detail: string }>;
 
-// Validate the worker's `--probe` stdout into a page count. A JSON error, a missing/non-integer/
-// negative page count, is `malformed` so the adapter reports a named failure instead of trusting a
-// bad number. Extracted as a pure function so the real spawn boundary stays a thin, ignored wrapper.
-export function parseProbePageCount(raw: string): ProbeParseResult {
+// Validate the worker's `--probe` stdout into a page count AND per-page geometry/rotation/native-text
+// classification. A JSON error, a missing/non-integer/negative page count, a page-count/records
+// mismatch, an out-of-range or duplicate page number, a negative dimension, or an unsupported rotation
+// is `malformed` so the adapter reports a named failure instead of trusting a bad classifier. Extracted
+// as a pure function so the real spawn boundary stays a thin, ignored wrapper.
+export function parseProbeClassification(raw: string): ProbeParseResult {
   let json: unknown;
   try {
     json = JSON.parse(raw);
   } catch (cause) {
     return { status: "malformed", detail: (cause as SyntaxError).message };
   }
-  const pageCount = (json as { pageCount?: unknown } | null)?.pageCount;
-  if (typeof pageCount !== "number" || !Number.isInteger(pageCount) || pageCount < 0) {
-    return {
-      status: "malformed",
-      detail: "probe did not report a non-negative integer page count."
-    };
+  const parsed = probeClassificationSchema.safeParse(json);
+  if (!parsed.success) {
+    return { status: "malformed", detail: parsed.error.issues[0]!.message };
   }
-  return { status: "ok", pageCount };
+  return { status: "ok", pageCount: parsed.data.pageCount, pages: parsed.data.pages };
 }
 
 export type ValidateStructuredResult =

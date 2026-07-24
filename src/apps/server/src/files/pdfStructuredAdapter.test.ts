@@ -84,6 +84,22 @@ function expectFailure(outcome: StructuredConversionOutcome, kind: string): void
   expect(outcome.failure.kind).toBe(kind);
 }
 
+// Build an `ok` probe outcome with default per-page geometry, so a test that only cares about the page
+// count need not restate width/height/rotation for every page.
+function okProbe(pageCount: number): ProbeOutcome {
+  return {
+    status: "ok",
+    pageCount,
+    pages: Array.from({ length: pageCount }, (_unused, index) => ({
+      pageNumber: index + 1,
+      width: 612,
+      height: 792,
+      rotation: 0,
+      hasNativeText: true
+    }))
+  };
+}
+
 describe("issueStagedFileHandle", () => {
   it("resolves a simple server-issued name within the stage root", () => {
     const handle = issueStagedFileHandle("Q:/stage", "abc123.pdf");
@@ -109,7 +125,7 @@ describe("createPdfStructuredAdapter — forged handle", () => {
       stageRoot: "/etc"
     } as unknown as StagedFileHandle;
 
-    const probe = vi.fn(() => Promise.resolve<ProbeOutcome>({ status: "ok", pageCount: 1 }));
+    const probe = vi.fn(() => Promise.resolve<ProbeOutcome>(okProbe(1)));
     const adapter = createPdfStructuredAdapter({
       runner: {
         probe,
@@ -170,7 +186,7 @@ describe("createPdfStructuredAdapter — success", () => {
     const tempDir = await makeTempDir("whetstone-temp-");
     const adapter = createPdfStructuredAdapter({
       runner: fakeRunner({
-        probe: { status: "ok", pageCount: 3 },
+        probe: okProbe(3),
         rangePayloads: [rangePayload(2), rangePayload(1), rangePayload(3)]
       }),
       limits: { pageRangeSize: 1 },
@@ -198,7 +214,7 @@ function fakeRunner(config: {
 }): DoclingRunner {
   let index = 0;
   return {
-    probe: () => Promise.resolve(config.probe ?? { status: "ok", pageCount: 1 }),
+    probe: () => Promise.resolve(config.probe ?? okProbe(1)),
     convertRange: () => {
       config.onRange?.();
       if (config.failRange) return Promise.resolve(config.failRange);
@@ -220,7 +236,7 @@ describe("createPdfStructuredAdapter — bounds and failures", () => {
   it("rejects a document above the page ceiling as too_many_pages", async () => {
     const handle = await stageFile(new Uint8Array([1]));
     const adapter = createPdfStructuredAdapter({
-      runner: fakeRunner({ probe: { status: "ok", pageCount: 10 } }),
+      runner: fakeRunner({ probe: okProbe(10) }),
       limits: { maxPageCount: 5 },
       tempDir: await makeTempDir("whetstone-temp-")
     });
@@ -295,7 +311,7 @@ describe("createPdfStructuredAdapter — bounds and failures", () => {
 describe("createPdfStructuredAdapter — cancellation", () => {
   it("returns cancelled without touching the file when the signal is already aborted", async () => {
     const handle = await stageFile(new Uint8Array([1]));
-    const probe = vi.fn(() => Promise.resolve<ProbeOutcome>({ status: "ok", pageCount: 1 }));
+    const probe = vi.fn(() => Promise.resolve<ProbeOutcome>(okProbe(1)));
     const adapter = createPdfStructuredAdapter({
       runner: {
         probe,
@@ -315,7 +331,7 @@ describe("createPdfStructuredAdapter — cancellation", () => {
       return Promise.resolve<RangeRunOutcome>({ status: "ok", raw: rangePayload(1) });
     });
     const adapter = createPdfStructuredAdapter({
-      runner: { probe: () => Promise.resolve({ status: "ok", pageCount: 2 }), convertRange },
+      runner: { probe: () => Promise.resolve(okProbe(2)), convertRange },
       limits: { pageRangeSize: 1 },
       tempDir: await makeTempDir("whetstone-temp-")
     });
@@ -422,7 +438,7 @@ describe("createPdfStructuredAdapter — single-flight", () => {
           await gate;
         }
         active -= 1;
-        return { status: "ok", pageCount: 1 };
+        return okProbe(1);
       },
       convertRange: () => Promise.resolve({ status: "ok", raw: rangePayload(1) })
     };
@@ -628,7 +644,14 @@ describe("createStagedFixtureDoclingRunner", () => {
         ])
       )
     );
-    expect(await runner.probe(handle.path, undefined)).toEqual({ status: "ok", pageCount: 2 });
+    expect(await runner.probe(handle.path, undefined)).toEqual({
+      status: "ok",
+      pageCount: 2,
+      pages: [
+        { pageNumber: 1, width: 612, height: 792, rotation: 0, hasNativeText: true },
+        { pageNumber: 2, width: 612, height: 792, rotation: 0, hasNativeText: true }
+      ]
+    });
   });
 
   it("converts only the requested page window from the staged bytes", async () => {
