@@ -23,7 +23,19 @@ jobs:
           node-version: 22
 
       - name: Enable pnpm
-        run: corepack enable
+        run: |
+          corepack enable
+          # Corepack lazily downloads the pinned pnpm on first use; a transient
+          # registry 5xx there fails the whole lane, so pre-warm it with retries.
+          for attempt in 1 2 3 4 5; do
+            if corepack prepare --activate; then
+              exit 0
+            fi
+            echo "corepack prepare pnpm failed (attempt ${attempt}/5); retrying in 15s" >&2
+            sleep 15
+          done
+          echo "corepack prepare pnpm failed after 5 attempts" >&2
+          exit 1
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -51,7 +63,19 @@ jobs:
           node-version: 22
 
       - name: Enable pnpm
-        run: corepack enable
+        run: |
+          corepack enable
+          # Corepack lazily downloads the pinned pnpm on first use; a transient
+          # registry 5xx there fails the whole lane, so pre-warm it with retries.
+          for attempt in 1 2 3 4 5; do
+            if corepack prepare --activate; then
+              exit 0
+            fi
+            echo "corepack prepare pnpm failed (attempt ${attempt}/5); retrying in 15s" >&2
+            sleep 15
+          done
+          echo "corepack prepare pnpm failed after 5 attempts" >&2
+          exit 1
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -85,7 +109,19 @@ jobs:
           node-version: 22
 
       - name: Enable pnpm
-        run: corepack enable
+        run: |
+          corepack enable
+          # Corepack lazily downloads the pinned pnpm on first use; a transient
+          # registry 5xx there fails the whole lane, so pre-warm it with retries.
+          for attempt in 1 2 3 4 5; do
+            if corepack prepare --activate; then
+              exit 0
+            fi
+            echo "corepack prepare pnpm failed (attempt ${attempt}/5); retrying in 15s" >&2
+            sleep 15
+          done
+          echo "corepack prepare pnpm failed after 5 attempts" >&2
+          exit 1
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
