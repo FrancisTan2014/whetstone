@@ -153,6 +153,50 @@ function proposedMetadata(
   };
 }
 
+// Refresh an attempt's PERSISTED review to the current duplicate evidence before returning it, so the
+// candidates and the revision fence the client will decide against are exactly what the server holds. When
+// the evidence changed since the attempt was parked, persist the new snapshot under a bumped revision (the
+// same fenced update the keep-separate refresh path uses) and return the review at that revision; otherwise
+// the persisted view is already current. This closes the gap where GET/resume could display a candidate the
+// decision would then reject as `existing_gone` (Open existing) or force a redundant re-review (Keep
+// separate returning `needs_review`) because the shown evidence was never persisted or revision-bumped.
+// Throws on a candidate-query failure so the caller maps it to `uncertain`.
+async function refreshPersistedReview(
+  deps: WorkCreationDependencies,
+  attempt: WorkCreationAttemptRecord,
+  nowDate: Date
+): Promise<WorkCreationReviewDto> {
+  const review = await computeReviewCandidates(db(deps), deps.log, proposedFromAttempt(attempt));
+
+  if (fingerprintReviewedCandidates(review.snapshot) === attempt.candidateFingerprint) {
+    return buildReviewDto(attempt, review);
+  }
+
+  const updated = await updateAttemptReview(db(deps), {
+    userId: attempt.userId,
+    id: attempt.id,
+    expectedRevision: attempt.revision,
+    proposed: {
+      title: attempt.proposedTitle,
+      authorId: attempt.proposedAuthorId,
+      authorName: attempt.proposedAuthorName,
+      language: attempt.proposedLanguage,
+      workType: attempt.proposedWorkType
+    },
+    candidates: review.snapshot,
+    now: nowDate
+  });
+
+  /* v8 ignore next 3 -- the attempt was just read as pending at this revision, so the fenced update can only
+     miss under a concurrent decision no single-threaded test can drive; the recomputed view is then returned
+     against the loaded revision and the decision path re-fences it. */
+  if (updated === null) {
+    return buildReviewDto(attempt, review);
+  }
+
+  return buildReviewDto(updated, review);
+}
+
 // Begin an imported-Markdown creation. Exact uploaded bytes reopen the owning Work; empty content and an
 // unknown existing author are refused before anything is staged; with no credible candidate the Work is
 // committed immediately; with a credible candidate exactly one review attempt is persisted (staged bytes +
@@ -267,13 +311,10 @@ export async function beginMarkdownCreation(
       /* v8 ignore next -- a unique violation always leaves a resumable active attempt; the non-pending
          fallthrough guards a begin racing a concurrent decision mid-finalize (rethrown below). */
       if (active !== null && active.state === "pending") {
-        const resumed = await computeReviewCandidates(
-          db(deps),
-          deps.log,
-          proposedFromAttempt(active)
-        );
-
-        return { status: "needs_review", review: buildReviewDto(active, resumed) };
+        return {
+          status: "needs_review",
+          review: await refreshPersistedReview(deps, active, nowDate)
+        };
       }
     }
 
@@ -282,8 +323,10 @@ export async function beginMarkdownCreation(
   }
 }
 
-// Load an attempt's current review for its owner, refreshing candidates and expiry. A missing or
-// non-pending attempt is `not_found` (or `expired` once swept); a candidate-query failure is `uncertain`.
+// Load an attempt's current review for its owner, refreshing candidates (persisting the refreshed snapshot
+// under a bumped revision when the evidence changed, so the shown candidates and revision are exactly what a
+// later decision accepts) and expiry. A missing or non-pending attempt is `not_found` (or `expired` once
+// swept); a candidate-query failure is `uncertain`.
 export async function getWorkCreationReview(
   deps: WorkCreationDependencies,
   userId: string,
@@ -307,9 +350,7 @@ export async function getWorkCreationReview(
   }
 
   try {
-    const review = await computeReviewCandidates(db(deps), deps.log, proposedFromAttempt(attempt));
-
-    return { status: "ok", review: buildReviewDto(attempt, review) };
+    return { status: "ok", review: await refreshPersistedReview(deps, attempt, nowDate) };
   } catch {
     return { status: "uncertain" };
   }

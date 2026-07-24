@@ -339,6 +339,74 @@ describe("Markdown creation-review view (#747)", () => {
     expect(review.candidates[0]?.entryId).toBe(candidateId);
   });
 
+  it("persists newly appeared candidates under a bumped revision so Open existing accepts the displayed evidence (#747)", async () => {
+    const { attemptId, candidateId } = await beginNeedsReview();
+    // A second credible duplicate appears AFTER the attempt was parked; the revision-0 snapshot holds only
+    // the first candidate.
+    const secondId = await seedCandidateWork({
+      authorId: await seedAuthor("second-author", "Another Person"),
+      entryId: "candidate-2"
+    });
+
+    // GET must persist the refreshed evidence and bump the revision, not display a candidate the decision
+    // would then reject as existing_gone.
+    const view = await getReview(attemptId);
+    expect(view.statusCode).toBe(200);
+    const review = parseWorkCreationReviewDto(view.json());
+    expect(review.revision).toBe(1);
+    expect(review.candidates.map((candidate) => candidate.entryId).sort()).toEqual(
+      [candidateId, secondId].sort()
+    );
+
+    // Open existing on the newly appeared candidate, at the revision GET returned, now succeeds instead of
+    // being fenced out — the shown evidence agrees with the persisted snapshot and revision.
+    const opened = await openExisting(attemptId, { entryId: secondId, revision: review.revision });
+    expect(opened.statusCode).toBe(200);
+    const body = opened.json() as { result: IngestEpubResultDto; status: string };
+    expect(body.status).toBe("opened");
+    expect(body.result.work.entryId).toBe(secondId);
+  });
+
+  it("commits Keep separate against the revision GET refreshed to after the evidence changed (#747)", async () => {
+    const { attemptId } = await beginNeedsReview();
+    await seedCandidateWork({
+      authorId: await seedAuthor("second-author", "Another Person"),
+      entryId: "candidate-2"
+    });
+
+    // GET persists the changed evidence and bumps the revision to 1.
+    const review = parseWorkCreationReviewDto((await getReview(attemptId)).json());
+    expect(review.revision).toBe(1);
+
+    // Keep separate at the refreshed revision no longer sees changed evidence, so it commits once instead of
+    // bouncing back to needs_review against evidence the learner just reviewed.
+    const decided = await keepSeparate(attemptId, { revision: review.revision });
+    expect(decided.statusCode).toBe(201);
+    expect((decided.json() as { status: string }).status).toBe("created");
+  });
+
+  it("resumes the owner's review with the refreshed evidence and bumped revision when a begin races the slot (#747)", async () => {
+    const { attemptId, candidateId } = await beginNeedsReview();
+    // A second credible duplicate appears, then a second begin for the same owner races the single-attempt
+    // slot and resumes the existing review.
+    const secondId = await seedCandidateWork({
+      authorId: await seedAuthor("second-author", "Another Person"),
+      entryId: "candidate-2"
+    });
+
+    const resumed = parseWorkCreationReviewDto((await begin()).json().review);
+    expect(resumed.attemptId).toBe(attemptId);
+    expect(resumed.revision).toBe(1);
+    expect(resumed.candidates.map((candidate) => candidate.entryId).sort()).toEqual(
+      [candidateId, secondId].sort()
+    );
+
+    // The resumed review's candidate is a genuine choice at the returned revision.
+    const opened = await openExisting(attemptId, { entryId: secondId, revision: resumed.revision });
+    expect(opened.statusCode).toBe(200);
+    expect((opened.json() as { status: string }).status).toBe("opened");
+  });
+
   it("answers 404 for an unknown attempt", async () => {
     const response = await getReview("missing");
 
