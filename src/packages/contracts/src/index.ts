@@ -278,6 +278,32 @@ export type {
   WorkCreationStageDto
 } from "./workCreationContracts.js";
 export {
+  duplicateCandidateEvidenceDtoSchema,
+  keepSeparateDecisionRequestSchema,
+  openExistingDecisionRequestSchema,
+  parseKeepSeparateDecisionRequest,
+  parseOpenExistingDecisionRequest,
+  parseWorkCreationReviewDto,
+  workCreationBeginOutcomes,
+  workCreationDecisionOutcomes,
+  workCreationProposalViewDtoSchema,
+  workCreationReviewDtoSchema,
+  workDuplicateCandidateReviewDtoSchema,
+  workDuplicateMatchTierSchema,
+  workOriginDtoSchema
+} from "./workCreationReviewContracts.js";
+export type {
+  DuplicateCandidateEvidenceDto,
+  KeepSeparateDecisionRequest,
+  OpenExistingDecisionRequest,
+  WorkCreationBeginOutcome,
+  WorkCreationDecisionOutcome,
+  WorkCreationProposalViewDto,
+  WorkCreationReviewDto,
+  WorkDuplicateCandidateReviewDto,
+  WorkDuplicateMatchTierDto
+} from "./workCreationReviewContracts.js";
+export {
   defaultWebHostRuntimeConfig,
   hostPlatforms,
   hostPlatformSchema,
