@@ -19,6 +19,7 @@ import {
   commitImportedMarkdownWork,
   type ContentDependencies
 } from "../content/contentCommands.js";
+import { commitImportedEpubWork, parseEpubBytes } from "../content/epubCommands.js";
 import { loadWorkContent } from "../content/contentQueries.js";
 import { findClaimedWork, isUniqueViolation } from "../content/sourceClaims.js";
 import {
@@ -65,6 +66,16 @@ export type BeginResult =
   | Readonly<{ status: "needs_review"; review: WorkCreationReviewDto }>
   | Readonly<{ status: "empty_content" }>
   | Readonly<{ status: "author_not_found" }>
+  | Readonly<{ status: "uncertain" }>;
+
+// The EPUB creation begin outcomes (#748). EPUB has no learner-typed author selection (metadata is
+// embedded) and no "empty content" refusal (the atomic writer accepts whatever the spine yields), so it
+// replaces those with `invalid_epub` for bytes the parser could not open. Exact-reopen, immediate-create,
+// needs-review, and uncertain match the Markdown boundary exactly, so the review API/UI never forks.
+export type BeginEpubResult =
+  | Readonly<{ status: "created" | "exact_existing"; result: IngestEpubResultDto }>
+  | Readonly<{ status: "needs_review"; review: WorkCreationReviewDto }>
+  | Readonly<{ status: "invalid_epub" }>
   | Readonly<{ status: "uncertain" }>;
 
 export type ReviewResult =
@@ -323,6 +334,121 @@ export async function beginMarkdownCreation(
   }
 }
 
+// Begin an imported-EPUB creation (#748). Mirrors the Markdown boundary: exact uploaded bytes reopen the
+// owning Work; bytes the parser cannot open are `invalid_epub`; with no credible candidate the Work is
+// committed immediately through the atomic EPUB writer; with a credible candidate exactly one review
+// attempt is persisted (staged EPUB bytes + snapshot) and the review is returned. Metadata is embedded
+// (OPF), so the author is resolved from the embedded name against the canonical identity WITHOUT creating
+// one — an unmatched name is kept as proposed evidence and minted only in the final Work transaction. A
+// candidate-query failure yields `uncertain`, never a false "no duplicates".
+export async function beginEpubCreation(
+  deps: WorkCreationDependencies,
+  userId: string,
+  bytes: Uint8Array
+): Promise<BeginEpubResult> {
+  const nowDate = deps.now();
+  await sweepExpired(deps, nowDate);
+
+  const sha256 = deps.content.sourceFileStore.hashBytes(bytes);
+
+  // Exact uploaded bytes reopen the owning Work before any parse/candidate work — identical bytes resolve
+  // to the one owning Work regardless of format, so a re-upload only ever shows Open existing.
+  const existing = await findClaimedWork(db(deps), sha256);
+
+  if (existing !== undefined) {
+    return { status: "exact_existing", result: existing };
+  }
+
+  // Parse up front for the embedded metadata (no image storage, no content write yet) so an unopenable
+  // upload is refused and the candidate check runs on real title/author/language.
+  const parsed = await parseEpubBytes(deps.content, bytes);
+
+  if (parsed.status === "invalid_epub") {
+    return { status: "invalid_epub" };
+  }
+
+  const metadata = parsed.parsed.metadata;
+  // Resolve the embedded author against the SAME canonical identity every author is stored under, so a
+  // name-equivalent existing author corroborates a same-author duplicate; a genuinely new name resolves to
+  // a null id and is created only inside the final Work transaction.
+  const author = await resolveProposedAuthor(db(deps), { mode: "new", name: metadata.author });
+
+  /* v8 ignore next 2 -- a `new` author selection always resolves to found:true; the guard only narrows the
+     union and degrades a future resolver change to a retryable uncertain rather than a crash. */
+  if (!author.found) {
+    return { status: "uncertain" };
+  }
+
+  let review;
+
+  try {
+    review = await computeReviewCandidates(db(deps), deps.log, {
+      title: metadata.title,
+      authorId: author.authorId,
+      language: metadata.language,
+      workType: "book"
+    });
+  } catch {
+    return { status: "uncertain" };
+  }
+
+  if (review.candidates.length === 0) {
+    const outcome = await commitImportedEpubWork(deps.content, { bytes, parsed: parsed.parsed });
+
+    return { status: outcome.status, result: outcome.result };
+  }
+
+  // Stage the uploaded EPUB bytes and persist ONE pending attempt with the reviewed snapshot. A concurrent
+  // active attempt for this owner loses the single-active-attempt index: discard the just-staged file and
+  // resume the existing review instead of orphaning bytes or double-owning the slot.
+  const stageId = deps.createStageId();
+  const written = await deps.content.sourceFileStore.writeEpubSource({ bytes, id: stageId });
+
+  try {
+    const attempt = await insertPendingAttempt(db(deps), {
+      id: deps.createAttemptId(),
+      userId,
+      proposed: {
+        title: metadata.title,
+        authorId: author.authorId,
+        authorName: author.authorName,
+        language: metadata.language,
+        workType: "book"
+      },
+      sourceKind: "epub",
+      sourceHash: sha256,
+      // EPUB uploads carry no filename in v0; the review panel derives a `<title>.epub` label instead.
+      sourceFileName: null,
+      candidates: review.snapshot,
+      stagePath: written.path,
+      expiresAt: new Date(nowDate.getTime() + deps.attemptTtlMs),
+      now: nowDate
+    });
+
+    return { status: "needs_review", review: buildReviewDto(attempt, review) };
+  } catch (error) {
+    await deps.content.sourceFileStore.deleteSourceFile(written.path);
+
+    /* v8 ignore next -- a non-unique-violation insert failure is unexpected infrastructure error; the
+       false branch falls through to the rethrow below. */
+    if (isUniqueViolation(error)) {
+      const active = await getActiveAttemptForUser(db(deps), userId);
+
+      /* v8 ignore next -- a unique violation always leaves a resumable active attempt; the non-pending
+         fallthrough guards a begin racing a concurrent decision mid-finalize (rethrown below). */
+      if (active !== null && active.state === "pending") {
+        return {
+          status: "needs_review",
+          review: await refreshPersistedReview(deps, active, nowDate)
+        };
+      }
+    }
+
+    /* v8 ignore next -- a non-unique insert failure is an unexpected infrastructure error; surface it. */
+    throw error;
+  }
+}
+
 // Load an attempt's current review for its owner, refreshing candidates (persisting the refreshed snapshot
 // under a bumped revision when the evidence changed, so the shown candidates and revision are exactly what a
 // later decision accepts) and expiry. A missing or non-pending attempt is `not_found` (or `expired` once
@@ -489,10 +615,11 @@ export async function keepSeparateWork(
   }
 
   const attempt = guard.attempt;
-  // A markdown attempt always carries the uploaded hash and stage; assert for the type narrowing.
+  // An uploaded creation attempt (Markdown or EPUB) always carries its uploaded hash and stage; assert
+  // for the type narrowing.
   const sha256 = attempt.sourceHash;
 
-  /* v8 ignore next -- a markdown creation attempt always records its uploaded hash; guard for types. */
+  /* v8 ignore next -- an uploaded creation attempt always records its uploaded hash; guard for types. */
   if (sha256 === null) {
     return { status: "uncertain" };
   }
@@ -584,13 +711,67 @@ export async function keepSeparateWork(
     now: nowDate
   });
 
-  /* v8 ignore next -- the fenced attempt holds the slot with a markdown stage, so the detach cannot miss
-     single-threaded; the guard stays as defense-in-depth. */
+  /* v8 ignore next -- the fenced attempt holds the slot with an ordinary upload stage, so the detach cannot
+     miss single-threaded; the guard stays as defense-in-depth. */
   if (detached === null) {
     return { status: "uncertain" };
   }
 
-  const markdown = await deps.content.sourceFileStore.readMarkdownSource(detached.stagePath);
+  const outcome = await commitReviewedUpload(deps, attempt, detached.stagePath);
+
+  const completed = await completeAttempt(db(deps), {
+    userId,
+    id: attemptId,
+    expectedRevision: detached.revision,
+    now: nowDate
+  });
+
+  /* v8 ignore next -- completion follows the detach at its bumped revision; cannot miss single-threaded. */
+  if (completed === null) {
+    return { status: "superseded" };
+  }
+
+  if (outcome.status === "created" || outcome.status === "exact_existing") {
+    return { status: outcome.status, result: outcome.result };
+  }
+
+  /* v8 ignore next 2 -- the proposal was validated at begin and its bytes were unclaimed above, so the
+     transfer commit can only return created/exact_existing here. */
+  return { status: "uncertain" };
+}
+
+// Commit a reviewed attempt's staged upload to a Work, transferring the staged file to provenance in place
+// (never re-writing or double-owning it). Dispatches by the attempt's source kind: an EPUB stage is
+// re-parsed from its exact staged bytes and committed through the atomic EPUB writer (units, canonical
+// blocks, authored nav, images — all in one transaction); a Markdown stage is read as text and committed
+// through the shared Markdown writer. The upstream fence guarantees the attempt owns exactly one ordinary
+// upload stage, so no other kind reaches here.
+async function commitReviewedUpload(
+  deps: WorkCreationDependencies,
+  attempt: WorkCreationAttemptRecord,
+  stagePath: string
+): Promise<
+  | Readonly<{ status: "created" | "exact_existing"; result: IngestEpubResultDto }>
+  | Readonly<{ status: "uncertain" }>
+> {
+  if (attempt.sourceKind === "epub") {
+    const bytes = await deps.content.sourceFileStore.readEpubSource(stagePath);
+    const parsed = await parseEpubBytes(deps.content, bytes);
+
+    /* v8 ignore next 3 -- the staged bytes parsed successfully at begin, so re-parsing the identical file
+       cannot fail single-threaded; degrade to uncertain rather than commit half a Work. */
+    if (parsed.status === "invalid_epub") {
+      return { status: "uncertain" };
+    }
+
+    return commitImportedEpubWork(deps.content, {
+      bytes,
+      parsed: parsed.parsed,
+      stagedSource: { path: stagePath }
+    });
+  }
+
+  const markdown = await deps.content.sourceFileStore.readMarkdownSource(stagePath);
   const selection: ImportMarkdownWorkRequest["author"] =
     attempt.proposedAuthorId === null
       ? { mode: "new", name: attempt.proposedAuthorName }
@@ -605,20 +786,8 @@ export async function keepSeparateWork(
     markdown,
     title: attempt.proposedTitle,
     workType: attempt.proposedWorkType as ImportMarkdownWorkRequest["workType"],
-    stagedSource: { path: detached.stagePath }
+    stagedSource: { path: stagePath }
   });
-
-  const completed = await completeAttempt(db(deps), {
-    userId,
-    id: attemptId,
-    expectedRevision: detached.revision,
-    now: nowDate
-  });
-
-  /* v8 ignore next -- completion follows the detach at its bumped revision; cannot miss single-threaded. */
-  if (completed === null) {
-    return { status: "superseded" };
-  }
 
   /* v8 ignore next -- the unclaimed transfer commit returns `created`; `exact_existing` only under a claim
      race between the identity recheck and this commit, which no single-threaded test can drive. */
