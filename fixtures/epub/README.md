@@ -28,6 +28,15 @@ separately via Playwright).
   (`e2e/tests/recitation-aggregate.spec.ts`) can adopt **two separate** recitation Works without the
   uploads deduping to the same Work.
 
+- `illustrated-review-edition-a.epub` / `illustrated-review-edition-b.epub` — two EDITIONS of
+  _The Fox Fables — Illustrated Review (748)_ by Aesop: identical title + author, disjoint fable
+  chapters (so distinct bytes), each with authored navigation and a figure image. Aesop's fables are
+  ancient and in the public domain worldwide. Both are generated deterministically by
+  `scripts/make-review-fixture-epubs.mjs`; regenerate with `node scripts/make-review-fixture-epubs.mjs`.
+  The EPUB creation-review E2E (`e2e/tests/work-creation-review-epub.spec.ts`) seeds edition A, then
+  uploads edition B (same metadata, new bytes) to trip the shared duplicate-review panel (#748) and
+  prove the "Keep separate" edition commits its navigation and image intact.
+
 - `three-character-classic.epub` — _三字经_ (the Three Character Classic), a classical Chinese
   primer (~13th century). The text is in the public domain; this EPUB was produced by the
   公版书 (public-domain books) project at https://www.7sbook.com, whose notice explicitly
