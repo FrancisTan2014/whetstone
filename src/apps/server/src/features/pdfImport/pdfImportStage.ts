@@ -29,6 +29,13 @@ export class PdfUploadTooLargeError extends Error {
 
 const STAGED_FILE_NAME = "staged.pdf";
 
+// The derived, OCR-adopted PDF (#745): a second file in the SAME attempt-owned stage directory, written
+// only after the OCR pass validates. It never replaces `staged.pdf` (the immutable original kept for
+// provenance) — one `removeStage` removes the whole directory, so both files share a single cleanup
+// surface. Written with the `w` flag (overwrite) so a rerun of the OCR pass BEFORE adoption is safe to
+// repeat; once `ocr_fingerprint` is recorded the file is the trusted structured-conversion source.
+const DERIVED_OCR_FILE_NAME = "ocr.pdf";
+
 // Server-generated attempt ids only (uuid-shaped): letters, digits, hyphen, underscore — never a path
 // segment. Rejected before any filesystem touch so a crafted id cannot escape the stage root.
 const safeStageIdPattern = /^[A-Za-z0-9_-]+$/;
@@ -71,6 +78,13 @@ export type PdfImportStageStore = Readonly<{
   // Re-open the handle for an already-created stage (e.g. a resumed run after restart), from the stored
   // relative stage path. Does not touch disk; the runner's read reports a missing stage as a failure.
   openStage: (stagePath: string) => StagedFileHandle;
+  // Write the derived OCR PDF (#745) into the attempt's EXISTING stage directory and return a
+  // server-issued handle #701 reads. Overwrites any prior derived file (a re-run before adoption is safe),
+  // and never touches the immutable original `staged.pdf`. Rejects if the stage directory is missing.
+  writeDerivedStage: (stagePath: string, bytes: Uint8Array) => Promise<StagedFileHandle>;
+  // Re-open the handle for the derived OCR PDF (a resumed run after adoption), from the stored relative
+  // stage path. Does not touch disk; a missing derived file surfaces as a read failure.
+  openDerivedStage: (stagePath: string) => StagedFileHandle;
   // Read the exact staged bytes back through the server-issued handle, so publication can retain the
   // original uploaded PDF as immutable provenance without ever seeing a user-supplied path. A missing or
   // unreadable stage rejects (the caller surfaces it), never silently returns empty bytes.
@@ -149,6 +163,18 @@ export function createPdfImportStageStore(stageRootDir: string): PdfImportStageS
     return issueStagedFileHandle(stageDirFor(stagePath), STAGED_FILE_NAME);
   }
 
+  async function writeDerivedStage(stagePath: string, bytes: Uint8Array): Promise<StagedFileHandle> {
+    const stageDir = stageDirFor(stagePath);
+    // `w` (not `wx`): a re-run of the OCR pass before adoption may legitimately overwrite an earlier,
+    // unadopted derived file. The original `staged.pdf` in the same directory is never touched.
+    await writeFile(join(stageDir, DERIVED_OCR_FILE_NAME), bytes, { flag: "w" });
+    return issueStagedFileHandle(stageDir, DERIVED_OCR_FILE_NAME);
+  }
+
+  function openDerivedStage(stagePath: string): StagedFileHandle {
+    return issueStagedFileHandle(stageDirFor(stagePath), DERIVED_OCR_FILE_NAME);
+  }
+
   async function readStage(stagePath: string): Promise<Uint8Array> {
     const handle = openStage(stagePath);
     return new Uint8Array(await readFile(handle.path));
@@ -158,5 +184,13 @@ export function createPdfImportStageStore(stageRootDir: string): PdfImportStageS
     await rm(stageDirFor(stagePath), { force: true, recursive: true });
   }
 
-  return Object.freeze({ createStage, createStageFromStream, openStage, readStage, removeStage });
+  return Object.freeze({
+    createStage,
+    createStageFromStream,
+    openStage,
+    writeDerivedStage,
+    openDerivedStage,
+    readStage,
+    removeStage
+  });
 }

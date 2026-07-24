@@ -52,6 +52,7 @@ import {
 } from "./features/pdfImport/pdfImportPublish.js";
 import { recoverInterruptedAttempts } from "./features/pdfImport/pdfImportStore.js";
 import { resolveStructuredPdfRunner } from "./files/pdfStructuredRunnerResolution.js";
+import { resolvePdfOcrAdapter } from "./files/pdfOcrRunnerResolution.js";
 import { createFakeSpeechInput } from "./speech/fakeSpeechInput.js";
 import { readSpeechConfig, resolveSpeechInput } from "./speech/speechConfig.js";
 import { checkSpeechHealth } from "./speech/speechHealth.js";
@@ -347,6 +348,16 @@ const drainVoiceCaptureQueue = async (): Promise<void> => {
 // (dev/E2E) — a deterministic runner that converts an embedded fixture from the uploaded bytes. It never
 // publishes canned content from a user upload. Converting an attempt never creates a Work, ReadingUnit,
 // or Block — publishing a converted attempt is #702.
+// The structured PDF conversion backend (#701), resolved once and shared by both the import runner's
+// range conversion and the OCR adapter's before/after page probe, so a single memory-bounded worker
+// classifies native text throughout an attempt.
+const pdfStructuredRunner = resolveStructuredPdfRunner({
+  fixtureConversion: config.pdfImportFixtureConversion,
+  pythonBinary: config.pdfPythonBinary,
+  scriptPath: fileURLToPath(new URL("./files/pdf_to_docling.py", import.meta.url)),
+  perRangeTimeoutMs: config.pdfTimeoutMs,
+  memoryMib: config.pdfStructuredMemoryMib
+});
 const pdfImportRunner: PdfImportRunnerDependencies = {
   activeRuns: pdfImportActiveRuns,
   createRunToken: () => randomUUID(),
@@ -357,13 +368,24 @@ const pdfImportRunner: PdfImportRunnerDependencies = {
   now: () => new Date(),
   // The real converter reads the learner's actual bytes; where it is unavailable the attempt fails
   // visibly rather than publishing fabricated content. `pnpm setup:pdf` provisions the real Docling
-  // worker.
-  runner: resolveStructuredPdfRunner({
-    fixtureConversion: config.pdfImportFixtureConversion,
-    pythonBinary: config.pdfPythonBinary,
-    scriptPath: fileURLToPath(new URL("./files/pdf_to_docling.py", import.meta.url)),
-    perRangeTimeoutMs: config.pdfTimeoutMs,
-    memoryMib: config.pdfStructuredMemoryMib
+  // worker. The same resolved runner is shared as the OCR adapter's page probe, so one worker classifies
+  // native-text before and after the OCR pass.
+  runner: pdfStructuredRunner,
+  // The durable OCR phase (#745) runs before structured conversion for a scanned/mixed English PDF,
+  // resolved honestly (see `resolvePdfOcrAdapter`): the real bounded OCRmyPDF adapter on a supported
+  // platform (named tool/language failure where unprovisioned), a visible `tool_missing` where it cannot
+  // run, or — only under `PDF_IMPORT_FIXTURE_OCR` (dev/E2E) — a deterministic fixture transform. It never
+  // publishes canned text from a user upload.
+  ocrAdapter: resolvePdfOcrAdapter({
+    fixtureOcr: config.pdfImportFixtureOcr,
+    probe: pdfStructuredRunner,
+    ocrBinary: config.pdfOcrBinary,
+    tesseractBinary: config.pdfTesseractBinary,
+    timeoutMs: config.pdfTimeoutMs,
+    // A dot-prefixed sibling of the attempt stages: it can never collide with a uuid attempt id (whose
+    // stage-id pattern excludes a leading dot), so a validated OCR output stages beside the originals
+    // without clashing.
+    outputStageRoot: join(config.pdfImportStageDir, ".ocr-output")
   }),
   stageStore: pdfImportStageStore
 };

@@ -383,9 +383,9 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
     toast.success("Import cancelled.");
   }
 
-  // Apply a terminal poll outcome (#702): open the Reader on a published Work, or surface the
-  // sequenced-limitation (OCR), empty-document (no_content), or named-failure copy. `gone` means the
-  // remembered attempt no longer exists
+  // Apply a terminal poll outcome (#702/#745): open the Reader on a published Work, or surface the
+  // OCR-refusal (language-not-enabled / validation-failed), empty-document (no_content),
+  // unsupported-image, or named-failure copy. `gone` means the remembered attempt no longer exists
   // for this user (a stale reopened id), so we simply drop it.
   async function applyPdfImportTerminal(result: PdfImportPollResult): Promise<void> {
     if (result.kind !== "terminal") {
@@ -404,11 +404,12 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
       return;
     }
 
-    /* v8 ignore next 4 -- a terminal poll result is published, ocr_required, no_content,
-       image_unsupported, or failed; `in_progress` (the only remaining kind) is never terminal, so this
-       early return is unreachable. */
+    /* v8 ignore next 5 -- a terminal poll result is published, ocr_language_not_enabled,
+       ocr_validation_failed, no_content, image_unsupported, or failed; `in_progress` (the only remaining
+       kind) is never terminal, so this early return is unreachable. */
     if (
-      progress.kind !== "ocr_required" &&
+      progress.kind !== "ocr_language_not_enabled" &&
+      progress.kind !== "ocr_validation_failed" &&
       progress.kind !== "no_content" &&
       progress.kind !== "image_unsupported" &&
       progress.kind !== "failed"
@@ -416,7 +417,7 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
       return;
     }
 
-    // ocr_required, no_content, image_unsupported, and failed all surface their message and create no Work.
+    // Every non-published terminal outcome surfaces its message and creates no Work.
     toast.error(progress.message);
   }
 

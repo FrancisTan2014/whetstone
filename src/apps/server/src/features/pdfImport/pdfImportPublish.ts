@@ -1,6 +1,6 @@
 import { concatenateRanges, type WorkContentDto, type WorkDto } from "@whetstone/contracts";
 import type { PdfImportStartedDto } from "@whetstone/contracts";
-import { toEntryId, workLanguages, type WorkLanguage } from "@whetstone/domain";
+import { ocrTesseractLanguage, resolveWorkLanguage, toEntryId } from "@whetstone/domain";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { entries, pdfBlockEvidence, workMeta, workSources } from "../../db/schema.js";
@@ -28,7 +28,8 @@ import {
   linkPublishedWork,
   markPublicationImagesUnsupported,
   markPublicationNoContent,
-  markPublicationOcrRequired,
+  markPublicationOcrLanguageNotEnabled,
+  markPublicationOcrValidationFailed,
   PDF_IMPORT_ADAPTER_FINGERPRINT
 } from "./pdfImportStore.js";
 
@@ -145,8 +146,10 @@ export type PdfImportPublishDependencies = Readonly<{
 
 // The result of attempting to publish a converted attempt. `skipped` = the attempt was not started
 // through `beginPdfImport` (no publication intent); `already_published` = its outcome was resolved by a
-// prior tick (idempotent); `not_ready` = the attempt is not `converted`; `ocr_required` = a typed refusal
-// with no Work (a page lacked native text); `no_content` = a typed refusal with no Work (the pages had
+// prior tick (idempotent); `not_ready` = the attempt is not `converted`; `ocr_language_not_enabled` = a
+// typed refusal with no Work (the document is text-less in a language whose OCR pack is not yet enabled —
+// Chinese until #746); `ocr_validation_failed` = a typed refusal with no Work (an English document still
+// had text-less pages after the OCR pass); `no_content` = a typed refusal with no Work (the pages had
 // native text but mapped to zero canonical blocks); `image_unsupported` = a typed refusal with no Work
 // (the document contains picture/figure constructs whose images cannot be preserved); `published` = a
 // canonical Work (freshly created, or reopened for identical bytes).
@@ -154,7 +157,8 @@ export type PublishConvertedResult =
   | Readonly<{ status: "skipped" }>
   | Readonly<{ status: "already_published" }>
   | Readonly<{ status: "not_ready" }>
-  | Readonly<{ status: "ocr_required"; pagesNeedingOcr: number }>
+  | Readonly<{ status: "ocr_language_not_enabled"; pagesNeedingOcr: number }>
+  | Readonly<{ status: "ocr_validation_failed"; pagesNeedingOcr: number }>
   | Readonly<{ status: "no_content" }>
   | Readonly<{ status: "image_unsupported"; unpreservableImages: number }>
   | Readonly<{ status: "published"; work: WorkDto; reopened: boolean }>;
@@ -188,16 +192,15 @@ function resolveAuthorName(
   return enteredAuthor ?? normalizeEntered(metadataAuthor) ?? "Unknown";
 }
 
-// Accept an entered language only when it is one of the supported work languages; otherwise fall back to
-// English, so an unrecognized or absent value never blocks publication.
-function resolveLanguage(enteredLanguage: string | null): WorkLanguage {
-  return workLanguages.find((candidate) => candidate === enteredLanguage) ?? "en";
-}
-
 async function writeBlockEvidence(
   tx: Transaction,
   workEntryId: string,
-  evidence: readonly PdfBlockEvidence[]
+  evidence: readonly PdfBlockEvidence[],
+  // Attempt-level OCR provenance (#745): the engine fingerprint and Tesseract language every block was
+  // produced under when the attempt adopted a validated OCR stage, or null for a born-digital document
+  // that never went through OCR. The post-conversion projection no longer carries a per-page OCR flag, so
+  // this is recorded uniformly for the attempt's blocks rather than per page.
+  ocrProvenance: Readonly<{ engine: string; language: string }> | null
 ): Promise<void> {
   const rows = evidence.map((item) => ({
     blockId: item.blockId,
@@ -210,7 +213,9 @@ async function writeBlockEvidence(
     charStart: item.charStart,
     charEnd: item.charEnd,
     confidence: item.confidence,
-    label: item.label
+    label: item.label,
+    ocrEngine: ocrProvenance?.engine ?? null,
+    ocrLanguage: ocrProvenance?.language ?? null
   }));
   await insertInBatches(rows, (batch) => tx.insert(pdfBlockEvidence).values(batch));
 }
@@ -257,7 +262,8 @@ export async function publishConvertedPdfImport(
   }
   if (
     publication.workEntryId !== null ||
-    publication.ocrRequiredPages !== null ||
+    publication.ocrLanguageNotEnabledPages !== null ||
+    publication.ocrValidationFailedPages !== null ||
     publication.noContent !== null ||
     publication.unpreservableImages !== null
   ) {
@@ -289,12 +295,31 @@ export async function publishConvertedPdfImport(
     ranges
   );
 
-  const mapping = mapStructuredDocument(document);
-  if (mapping.status === "ocr_required") {
-    await markPublicationOcrRequired(deps.db, attemptId, mapping.pagesNeedingOcr, deps.now());
-    // No Work is published, so the retained bytes are no longer needed: free the stage.
+  const language = resolveWorkLanguage(publication.enteredLanguage);
+  const mapping = mapStructuredDocument(document, language);
+  if (mapping.status === "ocr_language_not_enabled") {
+    await markPublicationOcrLanguageNotEnabled(
+      deps.db,
+      attemptId,
+      mapping.pagesNeedingOcr,
+      deps.now()
+    );
+    // No Work is published (OCR for this language is not enabled yet), so the retained bytes are no longer
+    // needed: free the stage.
     await removeRetainedStage(deps, attemptId, stagePath);
-    return { status: "ocr_required", pagesNeedingOcr: mapping.pagesNeedingOcr };
+    return { status: "ocr_language_not_enabled", pagesNeedingOcr: mapping.pagesNeedingOcr };
+  }
+  if (mapping.status === "ocr_validation_failed") {
+    // An English document still had text-less pages after the OCR pass (a preflight/full-conversion
+    // disagreement or incomplete OCR): refuse rather than publish a partial Work, and free the bytes.
+    await markPublicationOcrValidationFailed(
+      deps.db,
+      attemptId,
+      mapping.pagesNeedingOcr,
+      deps.now()
+    );
+    await removeRetainedStage(deps, attemptId, stagePath);
+    return { status: "ocr_validation_failed", pagesNeedingOcr: mapping.pagesNeedingOcr };
   }
   if (mapping.status === "no_content") {
     // The pages had native text but mapped to zero canonical blocks: refuse before claiming/publishing so
@@ -323,8 +348,14 @@ export async function publishConvertedPdfImport(
     document.metadata?.title,
     publication.fileName
   );
-  const language = resolveLanguage(publication.enteredLanguage);
   const authorName = resolveAuthorName(publication.enteredAuthor, document.metadata?.author);
+  // Per-block OCR provenance (#745): when the attempt adopted a validated OCR stage its fingerprint is
+  // recorded; every published block was produced from that OCR'd source, in the Work's language. A
+  // born-digital attempt never adopted OCR, so its blocks carry no OCR provenance.
+  const ocrProvenance =
+    attempt.ocrFingerprint === null
+      ? null
+      : { engine: attempt.ocrFingerprint, language: ocrTesseractLanguage(language) };
   const sourceId = deps.createSourceId();
   const expectedBlockCount = mapping.units.reduce(
     (total, unit) => total + unit.docBlocks.length,
@@ -369,7 +400,7 @@ export async function publishConvertedPdfImport(
         units: mapping.units,
         workEntryId
       });
-      await writeBlockEvidence(tx, workEntryId, mapping.evidence);
+      await writeBlockEvidence(tx, workEntryId, mapping.evidence, ocrProvenance);
       // Terminal job state, atomic with the Work: a failure anywhere above leaves no readable Work and
       // no linked publication.
       await linkPublishedWork(tx, attemptId, workEntryId, deps.now());

@@ -11,6 +11,9 @@ export type ServerConfig = Readonly<{
   imageResourcesDir: string;
   logLevel: ServerLogLevel;
   pdfOcrBinary: string;
+  // The Tesseract binary the OCR toolchain inspector (#745) lists installed trained-data packs from, so
+  // the bounded OCR adapter can fail with a named language-pack error before spawning. Env-overridable.
+  pdfTesseractBinary: string;
   pdfImportStageDir: string;
   // Upload cap (bytes) for the born-digital PDF import front door (#702). Aligned with the structured
   // PDF staging bound (`MAX_STAGED_BYTES`, 128 MiB) so a supported PDF is streamed into the staged
@@ -25,6 +28,11 @@ export type ServerConfig = Readonly<{
   // of the real Docling worker, so the journey runs without a Python/Docling install. Never set in
   // production — a real upload there is converted by the real runner or fails visibly.
   pdfImportFixtureConversion: boolean;
+  // Dev/E2E only: run the OCR phase (#745) with a deterministic fixture that transforms the embedded
+  // conversion fixture (text-less pages -> native with recovered text) instead of the real OCRmyPDF
+  // pass, so a scanned/mixed English import honestly publishes without any OCR tool installed. Never set
+  // in production — a real scanned upload there is OCR'd by the real adapter or fails visibly.
+  pdfImportFixtureOcr: boolean;
   port: number;
   sourceFilesDir: string;
   // Ordinary Work-creation upload stages (#725): transient per-attempt staged markdown/EPUB bytes held by
@@ -43,6 +51,7 @@ const defaultServerConfig: ServerConfig = {
   imageResourcesDir: "./.data/images",
   logLevel: "info",
   pdfOcrBinary: "ocrmypdf",
+  pdfTesseractBinary: "tesseract",
   // Recoverable PDF import stages (#721): transient per-attempt staged bytes, SEPARATE from immutable
   // source provenance under sourceFilesDir, so they are never backed up and a cancelled/failed/expired
   // attempt's bytes are freed without touching provenance. Env-overridable.
@@ -60,6 +69,8 @@ const defaultServerConfig: ServerConfig = {
   pdfStructuredMemoryMib: 2048,
   // Off by default: production converts with the real Docling worker (or fails visibly), never a fixture.
   pdfImportFixtureConversion: false,
+  // Off by default: production OCRs with the real bounded adapter (or fails visibly), never a fixture.
+  pdfImportFixtureOcr: false,
   port: 3000,
   sourceFilesDir: "./.data/sources",
   workCreationStageDir: "./.data/work-creation-stages",
@@ -91,6 +102,7 @@ export function readServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
     imageResourcesDir: env.IMAGE_RESOURCES_DIR ?? defaultServerConfig.imageResourcesDir,
     logLevel,
     pdfOcrBinary: env.PDF_OCR_BINARY ?? defaultServerConfig.pdfOcrBinary,
+    pdfTesseractBinary: env.PDF_TESSERACT_BINARY ?? defaultServerConfig.pdfTesseractBinary,
     pdfImportStageDir: env.PDF_IMPORT_STAGE_DIR ?? defaultServerConfig.pdfImportStageDir,
     pdfUploadLimitBytes,
     pdfPythonBinary: env.PDF_PYTHON_BINARY ?? defaultServerConfig.pdfPythonBinary,
@@ -99,6 +111,8 @@ export function readServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
     pdfImportFixtureConversion:
       parseBooleanFlag(env.PDF_IMPORT_FIXTURE_CONVERSION) ??
       defaultServerConfig.pdfImportFixtureConversion,
+    pdfImportFixtureOcr:
+      parseBooleanFlag(env.PDF_IMPORT_FIXTURE_OCR) ?? defaultServerConfig.pdfImportFixtureOcr,
     port,
     sourceFilesDir: env.SOURCE_FILES_DIR ?? defaultServerConfig.sourceFilesDir,
     workCreationStageDir: env.WORK_CREATION_STAGE_DIR ?? defaultServerConfig.workCreationStageDir,

@@ -9,7 +9,8 @@ import {
   isNonTerminalAttemptState,
   isRetryableAttemptState,
   mayApplyRunOutput,
-  type PdfImportAttemptState
+  type PdfImportAttemptState,
+  type PdfImportPhase
 } from "@whetstone/domain";
 import { and, asc, count, eq, ne, sql } from "drizzle-orm";
 
@@ -34,6 +35,8 @@ export type PdfImportAttemptRecord = Readonly<{
   sourceHash: string;
   state: PdfImportAttemptState;
   runToken: string | null;
+  phase: PdfImportPhase | null;
+  ocrFingerprint: string | null;
   adapterFingerprint: string | null;
   stagePath: string | null;
   totalPages: number | null;
@@ -54,6 +57,8 @@ function toRecord(row: AttemptRow): PdfImportAttemptRecord {
     sourceHash: row.sourceHash,
     state: row.state,
     runToken: row.runToken,
+    phase: row.phase,
+    ocrFingerprint: row.ocrFingerprint,
     adapterFingerprint: row.adapterFingerprint,
     stagePath: row.stagePath,
     totalPages: row.totalPages,
@@ -192,6 +197,7 @@ export async function claimNextQueued(
       .set({
         state: "running",
         runToken: input.runToken,
+        phase: "preflight",
         adapterFingerprint: input.fingerprint,
         completedPages,
         heartbeatAt: input.now,
@@ -236,6 +242,44 @@ export async function setProbeResult(db: DbClient, input: ProbeResultInput): Pro
       updatedAt: input.now
     })
     .where(fencedWhere(input.id, input.runToken))
+    .returning({ id: pdfImportAttempts.id });
+  return applied.length > 0;
+}
+
+// Record the durable phase of a running attempt (#745), fenced by the run token so a stale child can
+// never move the phase of an attempt it no longer owns. Returns false when fenced. The phase is a status
+// hint only: recovery never trusts it, it recomputes real work from `ocr_fingerprint` and the committed
+// ranges.
+export async function setPhase(
+  db: DbClient,
+  id: string,
+  runToken: string,
+  phase: PdfImportPhase,
+  now: Date
+): Promise<boolean> {
+  const applied = await db
+    .update(pdfImportAttempts)
+    .set({ phase, heartbeatAt: now, updatedAt: now })
+    .where(fencedWhere(id, runToken))
+    .returning({ id: pdfImportAttempts.id });
+  return applied.length > 0;
+}
+
+// Atomically adopt a validated OCR stage (#745): record its fingerprint (engine build + language) and
+// advance the phase to `structured`. `ocr_fingerprint` becoming non-null is the recovery boundary — from
+// here a crash resumes structured conversion over the derived `ocr.pdf` without re-running OCR. Fenced by
+// the run token; returns false when the child was superseded, so the runner does not proceed to convert.
+export async function adoptOcrStage(
+  db: DbClient,
+  id: string,
+  runToken: string,
+  ocrFingerprint: string,
+  now: Date
+): Promise<boolean> {
+  const applied = await db
+    .update(pdfImportAttempts)
+    .set({ ocrFingerprint, phase: "structured", heartbeatAt: now, updatedAt: now })
+    .where(fencedWhere(id, runToken))
     .returning({ id: pdfImportAttempts.id });
   return applied.length > 0;
 }
@@ -346,9 +390,11 @@ export async function getCommittedRanges(
 }
 
 // The #702 publication record for an attempt: the learner's capture-time intent plus, once published,
-// exactly one resolved outcome (`workEntryId` for a published Work, `ocrRequiredPages` for the typed
-// OCR-required refusal, `noContent` for the typed empty-document refusal, or `unpreservableImages` for
-// the typed unsupported-image refusal). All null means the publication is still pending.
+// exactly one resolved outcome (`workEntryId` for a published Work, `ocrLanguageNotEnabledPages` for a
+// text-less document in a language whose OCR pack is not yet enabled, `ocrValidationFailedPages` for an
+// English document still text-less after the OCR pass, `noContent` for the typed empty-document refusal,
+// or `unpreservableImages` for the typed unsupported-image refusal). All null means the publication is
+// still pending.
 export type PdfImportPublicationRecord = Readonly<{
   attemptId: string;
   enteredTitle: string | null;
@@ -356,7 +402,8 @@ export type PdfImportPublicationRecord = Readonly<{
   enteredLanguage: string | null;
   fileName: string;
   workEntryId: string | null;
-  ocrRequiredPages: number | null;
+  ocrLanguageNotEnabledPages: number | null;
+  ocrValidationFailedPages: number | null;
   noContent: boolean | null;
   unpreservableImages: number | null;
   publishedAt: Date | null;
@@ -372,7 +419,8 @@ function toPublicationRecord(row: PublicationRow): PdfImportPublicationRecord {
     enteredLanguage: row.enteredLanguage,
     fileName: row.fileName,
     workEntryId: row.workEntryId,
-    ocrRequiredPages: row.ocrRequiredPages,
+    ocrLanguageNotEnabledPages: row.ocrLanguageNotEnabledPages,
+    ocrValidationFailedPages: row.ocrValidationFailedPages,
     noContent: row.noContent,
     unpreservableImages: row.unpreservableImages,
     publishedAt: row.publishedAt
@@ -418,18 +466,21 @@ export async function getPublication(
 // transaction so the outcome commits atomically with the Work. Only applies while the publication is
 // still pending (no result yet), so a re-run cannot relink an already-resolved publication.
 // A publication is still pending only while no outcome column is set: no linked Work and none of the
-// typed terminal refusals (OCR-required, no-content, unsupported-image) recorded.
+// typed terminal refusals (OCR-language-not-enabled, OCR-validation-failed, no-content, unsupported-image)
+// recorded.
 function pendingPublicationCondition(): ReturnType<typeof and> {
   return and(
     sql`${pdfImportPublications.workEntryId} is null`,
-    sql`${pdfImportPublications.ocrRequiredPages} is null`,
+    sql`${pdfImportPublications.ocrLanguageNotEnabledPages} is null`,
+    sql`${pdfImportPublications.ocrValidationFailedPages} is null`,
     sql`${pdfImportPublications.noContent} is null`,
     sql`${pdfImportPublications.unpreservableImages} is null`
   );
 }
 
 // Every terminal marker updates under this guard so a re-run can never overwrite an already-resolved
-// outcome (published Work, OCR-required, no-content, or unsupported-image refusal).
+// outcome (published Work, OCR-language-not-enabled, OCR-validation-failed, no-content, or
+// unsupported-image refusal).
 function pendingPublicationGuard(attemptId: string): ReturnType<typeof and> {
   return and(eq(pdfImportPublications.attemptId, attemptId), pendingPublicationCondition());
 }
@@ -446,16 +497,33 @@ export async function linkPublishedWork(
     .where(pendingPublicationGuard(attemptId));
 }
 
-// Record the typed OCR-required outcome (no Work) for a pending publication.
-export async function markPublicationOcrRequired(
+// Record the typed OCR-language-not-enabled outcome (no Work) for a pending publication: the document is
+// text-less in a language whose OCR pack is not yet enabled (Chinese until #746), so no text layer could
+// be added.
+export async function markPublicationOcrLanguageNotEnabled(
   db: DbClient,
   attemptId: string,
-  pagesNeedingOcr: number,
+  pages: number,
   now: Date
 ): Promise<void> {
   await db
     .update(pdfImportPublications)
-    .set({ ocrRequiredPages: pagesNeedingOcr, publishedAt: now })
+    .set({ ocrLanguageNotEnabledPages: pages, publishedAt: now })
+    .where(pendingPublicationGuard(attemptId));
+}
+
+// Record the typed OCR-validation-failed outcome (no Work) for a pending publication: an English document
+// still had text-less pages after the OCR pass (a preflight/full-conversion disagreement or incomplete
+// OCR), so publishing is refused rather than dropping content.
+export async function markPublicationOcrValidationFailed(
+  db: DbClient,
+  attemptId: string,
+  pages: number,
+  now: Date
+): Promise<void> {
+  await db
+    .update(pdfImportPublications)
+    .set({ ocrValidationFailedPages: pages, publishedAt: now })
     .where(pendingPublicationGuard(attemptId));
 }
 
@@ -494,7 +562,7 @@ export async function markConverted(
 ): Promise<boolean> {
   const applied = await db
     .update(pdfImportAttempts)
-    .set({ state: "converted", runToken: null, heartbeatAt: null, updatedAt: now })
+    .set({ state: "converted", runToken: null, phase: "publication", heartbeatAt: null, updatedAt: now })
     .where(fencedWhere(id, runToken))
     .returning({ id: pdfImportAttempts.id });
   return applied.length > 0;

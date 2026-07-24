@@ -125,6 +125,7 @@ export type {
 export {
   isWorkLanguage,
   normalizeWorkLanguage,
+  resolveWorkLanguage,
   workLanguageLabels,
   workLanguages
 } from "./work.js";
