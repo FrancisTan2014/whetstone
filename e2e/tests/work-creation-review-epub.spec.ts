@@ -77,11 +77,11 @@ test("routes a look-alike EPUB edition through the duplicate-review panel and ho
   await panel.getByRole("button", { name: "Keep separate" }).click();
   await expect(page.getByText(`Imported “${TITLE}”.`)).toBeVisible();
 
-  // The Manage-content sheet opens on the just-created edition. Its table of contents proves the authored
-  // navigation committed as two reading units, and the reader proves the figure image committed.
-  const toc = page.getByRole("list", { name: "Table of contents" });
-  await expect(toc.getByText("The Fox and the Crow")).toBeVisible();
-  await expect(toc.getByText("The Fox and the Lion")).toBeVisible();
+  // The Manage-content sheet opens on the just-created edition. Its reading-unit overview proves the
+  // authored navigation committed as two units, and the reader proves the figure image committed.
+  const units = page.getByRole("list", { name: "Reading units" });
+  await expect(units.getByText("The Fox and the Crow")).toBeVisible();
+  await expect(units.getByText("The Fox and the Lion")).toBeVisible();
 
   await page.getByRole("link", { name: "Open in Reader" }).click();
   const reading = page.locator('article[aria-label="Reading"]');
