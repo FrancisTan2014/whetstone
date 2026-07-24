@@ -202,7 +202,9 @@ function begin(overrides: Record<string, unknown> = {}): ReturnType<typeof h.ser
 const EPUB_TITLE = "史记选读";
 const EPUB_AUTHOR = "司马迁";
 
-function beginEpub(bytes: Uint8Array = new Uint8Array([1, 2, 3])): ReturnType<typeof h.server.inject> {
+function beginEpub(
+  bytes: Uint8Array = new Uint8Array([1, 2, 3])
+): ReturnType<typeof h.server.inject> {
   return h.server.inject({
     headers: { "content-type": epubContentType },
     method: "POST",

@@ -130,7 +130,8 @@ describe("createSourceFileStore", () => {
     await expect(store.deleteSourceFile("../escape.epub")).rejects.toThrow();
   });
 
-  it("reads back a retained markdown source by its relative path", async () => {    const store = createSourceFileStore(directory);
+  it("reads back a retained markdown source by its relative path", async () => {
+    const store = createSourceFileStore(directory);
     const written = await store.writeMarkdownSource({
       id: "source-5",
       markdown: "# Kept\n\nBody."

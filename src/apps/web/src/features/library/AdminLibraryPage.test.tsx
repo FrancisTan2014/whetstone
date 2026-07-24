@@ -851,7 +851,9 @@ describe("AdminLibraryPage", () => {
     await user.upload(screen.getByLabelText("Upload"), file);
 
     expect(
-      await screen.findByText("That file couldn’t be read as an EPUB. Please choose a valid .epub file.")
+      await screen.findByText(
+        "That file couldn’t be read as an EPUB. Please choose a valid .epub file."
+      )
     ).toBeDefined();
     expect(mockedCreateWork).not.toHaveBeenCalled();
   });
@@ -866,7 +868,9 @@ describe("AdminLibraryPage", () => {
     await user.upload(screen.getByLabelText("Upload"), file);
 
     expect(
-      await screen.findByText("Couldn’t check your library for duplicates just now. Please try again.")
+      await screen.findByText(
+        "Couldn’t check your library for duplicates just now. Please try again."
+      )
     ).toBeDefined();
     expect(mockedCreateWork).not.toHaveBeenCalled();
   });
