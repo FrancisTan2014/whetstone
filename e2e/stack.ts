@@ -95,6 +95,12 @@ async function startServer(port: number, sourceFilesDir: string): Promise<ChildP
     // uploaded file itself (see e2e/pdfFixture.ts). It is input-derived — never canned — so the born-digital
     // journey is exercised honestly. Off in production, where the real #701 runner or a visible failure applies.
     PDF_IMPORT_FIXTURE_CONVERSION: "1",
+    // Transform the actual uploaded bytes through the deterministic fixture OCR lane (#745): CI ships no
+    // OCRmyPDF/Tesseract, so this env-gated dev/E2E adapter reads the embedded RangeConversion from the
+    // uploaded file, flips its text-less pages to native, and injects recovered English text — an honest,
+    // input-derived stand-in for a real OCR pass so a scanned/mixed English upload publishes. Off in
+    // production, where the real bounded adapter or a visible failure applies.
+    PDF_IMPORT_FIXTURE_OCR: "1",
     SOURCE_FILES_DIR: sourceFilesDir
   };
   // Ephemeral in-memory PGlite: DATABASE_DIR must be unset so each run starts clean.
