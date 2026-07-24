@@ -1576,6 +1576,43 @@ describe("imported Markdown front door (#706)", () => {
     expect(await context.db.select().from(workSources)).toHaveLength(0);
   });
 
+  it("refuses empty Markdown at the commit boundary without staging a source or Work", async () => {
+    // The commit is a reusable boundary: it validates its own inputs even though every production caller
+    // (the #747 begin/keep-separate flow) already refuses empty content upstream — defense in depth so no
+    // future caller can stage a source file or shell Work from block-less input.
+    const outcome = await createImportedMarkdownWork(context.content, {
+      author: { mode: "new", name: "Empty Commit Author" },
+      fileName: "empty.md",
+      language: "en",
+      markdown: "![only image](x.png)",
+      title: "Empty Commit",
+      workType: "essay"
+    });
+
+    expect(outcome.status).toBe("empty_content");
+    expect(await context.db.select().from(workMeta)).toHaveLength(0);
+    expect(await context.db.select().from(workSources)).toHaveLength(0);
+  });
+
+  it("refuses an unknown existing author at the commit boundary before staging a source", async () => {
+    const outcome = await createImportedMarkdownWork(context.content, {
+      author: { authorId: "no-such-author", mode: "existing" },
+      fileName: "missing-author.md",
+      language: "en",
+      markdown: "# Chapter\n\nA durable paragraph with real content.",
+      title: "Missing Author Commit",
+      workType: "essay"
+    });
+
+    expect(outcome.status).toBe("author_not_found");
+    if (outcome.status !== "author_not_found") {
+      throw new Error(`expected author_not_found, got ${outcome.status}`);
+    }
+    expect(outcome.authorId).toBe("no-such-author");
+    expect(await context.db.select().from(workMeta)).toHaveLength(0);
+    expect(await context.db.select().from(workSources)).toHaveLength(0);
+  });
+
   it("rolls back the EPUB loser and reopens the winner on the same mid-stage race", async () => {
     const winnerAuthorId = await createAuthorNamed("EPUB Race Winner");
     const bytes = Buffer.from("epub-race-bytes");
