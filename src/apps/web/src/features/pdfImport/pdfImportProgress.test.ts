@@ -6,11 +6,10 @@ import type {
 import { describe, expect, it } from "vitest";
 
 import {
-  addingEnglishTextLabel,
   describePdfImport,
   noReadableContentMessage,
-  ocrLanguageNotEnabledMessage,
-  ocrValidationFailedMessage
+  ocrValidationFailedMessage,
+  recognizingTextLabel
 } from "./pdfImportProgress";
 
 const sha = "a".repeat(64);
@@ -48,31 +47,6 @@ describe("describePdfImport", () => {
     const progress = describePdfImport(view({ status: "published", workEntryId: "work-9" }));
 
     expect(progress).toEqual({ kind: "published", terminal: true, workEntryId: "work-9" });
-  });
-
-  it("refuses a single language-not-enabled page with the sequenced-limitation copy", () => {
-    const progress = describePdfImport(
-      view({ pagesNeedingOcr: 1, status: "ocr_language_not_enabled" })
-    );
-
-    expect(progress.kind).toBe("ocr_language_not_enabled");
-    expect(progress.terminal).toBe(true);
-    if (progress.kind === "ocr_language_not_enabled") {
-      expect(progress.message).toContain(ocrLanguageNotEnabledMessage);
-      expect(progress.message).toContain("1 page needs");
-    }
-  });
-
-  it("pluralizes when several pages need a not-yet-enabled language", () => {
-    const progress = describePdfImport(
-      view({ pagesNeedingOcr: 3, status: "ocr_language_not_enabled" })
-    );
-
-    if (progress.kind === "ocr_language_not_enabled") {
-      expect(progress.message).toContain("3 pages need");
-    } else {
-      expect.unreachable("expected ocr_language_not_enabled");
-    }
   });
 
   it("refuses a single validation-failed page with the recognition-failed copy", () => {
@@ -203,14 +177,14 @@ describe("describePdfImport", () => {
     });
   });
 
-  it("labels the durable OCR phase while English text is recovered", () => {
+  it("labels the durable OCR phase while text is recognized", () => {
     const progress = describePdfImport(
       view({ status: "pending" }, { phase: "ocr", state: "running", totalPages: null })
     );
 
     expect(progress).toEqual({
       kind: "in_progress",
-      label: addingEnglishTextLabel,
+      label: recognizingTextLabel,
       needsResume: false,
       terminal: false
     });

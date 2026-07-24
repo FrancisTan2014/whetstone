@@ -921,26 +921,28 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
               </label>
 
               {pendingUpload !== undefined && detectUploadKind(pendingUpload) === "pdf" ? (
-                <label className="flex flex-col gap-1" htmlFor="pdf-ocr-language">
-                  Scanned-text language
-                  <select
-                    className="min-h-11 rounded border border-border bg-surface px-3 py-2"
-                    id="pdf-ocr-language"
-                    onChange={(event) =>
-                      setOcrLanguageOverride(event.currentTarget.value as WorkLanguage)
-                    }
-                    value={ocrLanguageOverride ?? language}
-                  >
-                    {workLanguages.map((code) => (
-                      <option key={code} value={code}>
-                        {workLanguageLabels[code]}
-                      </option>
-                    ))}
-                  </select>
+                <div className="flex flex-col gap-1">
+                  <label className="flex flex-col gap-1" htmlFor="pdf-ocr-language">
+                    Scanned-text language
+                    <select
+                      className="min-h-11 rounded border border-border bg-surface px-3 py-2"
+                      id="pdf-ocr-language"
+                      onChange={(event) =>
+                        setOcrLanguageOverride(event.currentTarget.value as WorkLanguage)
+                      }
+                      value={ocrLanguageOverride ?? language}
+                    >
+                      {workLanguages.map((code) => (
+                        <option key={code} value={code}>
+                          {workLanguageLabels[code]}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                   <span className="text-sm text-muted">
                     Used to recognize text in a scanned PDF. Defaults to the work language.
                   </span>
-                </label>
+                </div>
               ) : null}
 
               <AuthorSelectField onSelectionChange={handleAuthorSelectionChange} />

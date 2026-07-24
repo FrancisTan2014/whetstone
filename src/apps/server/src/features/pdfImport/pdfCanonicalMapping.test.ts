@@ -5,10 +5,10 @@ import { describe, expect, it } from "vitest";
 
 import { mapStructuredDocument, type PdfCanonicalMappingResult } from "./pdfCanonicalMapping.js";
 
-// Most cases assert the language-independent mapping (native pages, so no OCR routing); wrap the common
-// English call. The language-aware OCR-refusal cases call `mapStructuredDocument` directly with a locale.
+// `mapStructuredDocument` is language-independent — OCR routing is decided upstream by the resolved
+// attempt language, and text-less pages that survive to mapping are always refused as validation failures.
 function mapEn(document: StructuredDocument): PdfCanonicalMappingResult {
-  return mapStructuredDocument(document, "en");
+  return mapStructuredDocument(document);
 }
 
 function item(partial: Partial<StructuredDocItem> & { label: string }): StructuredDocItem {
@@ -56,9 +56,9 @@ function unitTypes(
 }
 
 describe("mapStructuredDocument", () => {
-  it("refuses a text-less English document as ocr_validation_failed and maps no content", () => {
-    // An enabled OCR language (English) still carrying text-less pages here means the OCR pass and the
-    // full conversion disagreed, or OCR was incomplete — the whole publication is refused, no partial Work.
+  it("refuses a text-less document as ocr_validation_failed and maps no content", () => {
+    // Text-less pages surviving to mapping mean the OCR pass and the full conversion disagreed, or OCR was
+    // incomplete — the whole publication is refused, no partial Work, regardless of the OCR language chosen.
     const result = mapStructuredDocument(
       doc(
         [item({ label: "text", text: "Body" })],
@@ -67,27 +67,9 @@ describe("mapStructuredDocument", () => {
           { hasNativeText: false, pageNumber: 2 },
           { hasNativeText: false, pageNumber: 3 }
         ]
-      ),
-      "en"
+      )
     );
     expect(result).toEqual({ pagesNeedingOcr: 2, status: "ocr_validation_failed" });
-  });
-
-  it("refuses a text-less document in a not-yet-enabled language as ocr_language_not_enabled", () => {
-    // A language whose OCR pack is not yet enabled (Chinese until #746) is refused with a distinct typed
-    // outcome, so the UI can explain the pack is coming rather than blaming OCR quality.
-    const result = mapStructuredDocument(
-      doc(
-        [item({ label: "text", text: "Body" })],
-        [
-          { hasNativeText: true, pageNumber: 1 },
-          { hasNativeText: false, pageNumber: 2 },
-          { hasNativeText: false, pageNumber: 3 }
-        ]
-      ),
-      "zh-CN"
-    );
-    expect(result).toEqual({ pagesNeedingOcr: 2, status: "ocr_language_not_enabled" });
   });
 
   it("projects title to a level-1 heading and section_header to a level-2 heading", () => {

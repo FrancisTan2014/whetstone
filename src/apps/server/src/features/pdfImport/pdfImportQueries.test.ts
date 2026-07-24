@@ -17,7 +17,6 @@ import {
   markFailed,
   markPublicationImagesUnsupported,
   markPublicationNoContent,
-  markPublicationOcrLanguageNotEnabled,
   markPublicationOcrValidationFailed,
   setProbeResult
 } from "./pdfImportStore.js";
@@ -198,23 +197,6 @@ describe("buildPdfImportPublicationOutcome", () => {
     expect(await buildPdfImportPublicationOutcome(db, "a1")).toEqual({
       pagesNeedingOcr: 3,
       status: "ocr_validation_failed"
-    });
-  });
-
-  it("reports `ocr_language_not_enabled` with the page count once a not-yet-enabled refusal is recorded", async () => {
-    await seedQueued("a1");
-    await insertPublicationIntent(db, {
-      attemptId: "a1",
-      enteredTitle: null,
-      enteredAuthor: null,
-      enteredLanguage: "zh-CN",
-      fileName: "scan.pdf"
-    });
-    await markPublicationOcrLanguageNotEnabled(db, "a1", 3, new Date());
-
-    expect(await buildPdfImportPublicationOutcome(db, "a1")).toEqual({
-      pagesNeedingOcr: 3,
-      status: "ocr_language_not_enabled"
     });
   });
 

@@ -1160,12 +1160,14 @@ describe("AdminLibraryPage", () => {
     await user.click(screen.getByRole("button", { name: "Create work" }));
 
     // The learner's upload-time intent (title/author/language + provenance file name) rides with the bytes.
+    // With no explicit scanned-text choice, the override is null so the server falls back to the work language.
     await waitFor(() => {
       expect(mockedBeginPdfImport).toHaveBeenCalledWith(file, {
         enteredAuthor: "Nobody",
         enteredLanguage: "en",
         enteredTitle: "Report",
-        fileName: "Report.pdf"
+        fileName: "Report.pdf",
+        ocrLanguageOverride: null
       });
     });
     // No legacy shell-Work create for a born-digital PDF.
@@ -1179,6 +1181,36 @@ describe("AdminLibraryPage", () => {
     expect(await screen.findByText("Your PDF is ready to read.")).toBeDefined();
     // The Reader is the destination, not the Manage-content panel.
     expect(onManageContent).not.toHaveBeenCalled();
+  });
+
+  it("sends the chosen scanned-text language as the OCR override for a held PDF (#746)", async () => {
+    mockedBeginPdfImport.mockResolvedValue({
+      attemptId: "attempt-1",
+      outcome: "queued",
+      status: pdfStatus()
+    });
+    mockedFetchPdfImportView.mockResolvedValue(
+      pdfView({ status: "published", workEntryId: "work-1" })
+    );
+    mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
+    const user = await renderReady();
+
+    const file = new File([new Uint8Array([1, 2, 3])], "Report.pdf", { type: "application/pdf" });
+    await user.upload(screen.getByLabelText("Upload"), file);
+    await user.type(screen.getByLabelText("New author or source name"), "Nobody");
+    // The scanned-text language control only appears for a held PDF and drives the OCR override.
+    await user.selectOptions(screen.getByLabelText("Scanned-text language"), "zh-CN");
+    await user.click(screen.getByRole("button", { name: "Create work" }));
+
+    await waitFor(() => {
+      expect(mockedBeginPdfImport).toHaveBeenCalledWith(file, {
+        enteredAuthor: "Nobody",
+        enteredLanguage: "en",
+        enteredTitle: "Report",
+        fileName: "Report.pdf",
+        ocrLanguageOverride: "zh-CN"
+      });
+    });
   });
 
   it("reopens the existing Work when identical PDF bytes are re-uploaded, with no new attempt (#706)", async () => {
@@ -1200,30 +1232,6 @@ describe("AdminLibraryPage", () => {
     // A reopen never polls a new attempt.
     expect(mockedFetchPdfImportView).not.toHaveBeenCalled();
     expect(mockedRememberActivePdfImport).not.toHaveBeenCalled();
-  });
-
-  it("refuses a scanned/mixed PDF in a not-yet-enabled language and publishes no Work (#745)", async () => {
-    mockedBeginPdfImport.mockResolvedValue({
-      attemptId: "attempt-1",
-      outcome: "queued",
-      status: pdfStatus()
-    });
-    mockedFetchPdfImportView.mockResolvedValue(
-      pdfView({ pagesNeedingOcr: 2, status: "ocr_language_not_enabled" })
-    );
-    const user = await renderReady();
-
-    const file = new File([new Uint8Array([1])], "scan.pdf", { type: "application/pdf" });
-    await user.upload(screen.getByLabelText("Upload"), file);
-    await user.type(screen.getByLabelText("New author or source name"), "Nobody");
-    await user.click(screen.getByRole("button", { name: "Create work" }));
-
-    expect(
-      await screen.findByText(/text recognition for a language that isn't enabled yet/)
-    ).toBeDefined();
-    // No Work is published, so the Reader is never opened.
-    expect(navigateSpy).not.toHaveBeenCalledWith(expect.stringContaining("/reader"));
-    expect(mockedForgetActivePdfImport).toHaveBeenCalled();
   });
 
   it("refuses an English PDF whose OCR left text-less pages and publishes no Work (#745)", async () => {

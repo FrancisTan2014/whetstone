@@ -4,7 +4,8 @@ import {
   ocrTesseractLanguage,
   resolveOcrLanguage,
   resolveWorkLanguage,
-  toEntryId
+  toEntryId,
+  type WorkLanguage
 } from "@whetstone/domain";
 
 import type { DbClient } from "../../db/dbClient.js";
@@ -277,7 +278,6 @@ export async function publishConvertedPdfImport(
   }
   if (
     publication.workEntryId !== null ||
-    publication.ocrLanguageNotEnabledPages !== null ||
     publication.ocrValidationFailedPages !== null ||
     publication.noContent !== null ||
     publication.unpreservableImages !== null
