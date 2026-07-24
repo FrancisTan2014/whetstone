@@ -41,7 +41,10 @@ async function returnToShelf(page: Page, setup: { baseURL: string }): Promise<vo
   // navigation would leave it covering the shelf. A full reload drops back to a clean shelf.
   await page.goto(`${setup.baseURL}#/library`);
   await page.reload();
-  await expect(page.getByRole("button", { name: "Add" })).toBeVisible();
+  // `exact: true`: the shared smoke shelf carries a Work titled "Add To Review" seeded by an earlier
+  // spec, whose "More actions for Add To Review" button substring-matches a loose "Add" name. Pin the
+  // primary shelf Add affordance by its exact accessible name so this settle never resolves to two.
+  await expect(page.getByRole("button", { name: "Add", exact: true })).toBeVisible();
 }
 
 test("routes look-alike Markdown through the duplicate-review panel and honors each decision (#747)", async ({
