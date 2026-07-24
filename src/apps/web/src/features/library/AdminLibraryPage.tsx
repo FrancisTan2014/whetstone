@@ -41,15 +41,16 @@ import {
   rememberActivePdfImport
 } from "../pdfImport/pdfImportSession";
 import {
+  beginEpubCreation,
   beginMarkdownCreation,
   cancelWorkCreation,
   createWork,
   deleteWork,
   fetchWorks,
   fetchWorksWithReadingPosition,
-  ingestEpub,
   keepSeparateWork,
   openExistingWork,
+  type BeginEpubCreationOutcome,
   type BeginMarkdownCreationOutcome,
   type WorkCreationDecisionOutcome
 } from "./libraryApi";
@@ -563,6 +564,42 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
     }
   }
 
+  // Apply an EPUB begin outcome (#748). `created` announces the import but stays on the shelf (EPUB
+  // metadata is authoritative, so there is no editor step to confirm); `exact_existing` reopens the
+  // owning Work into Manage content; `needs_review` parks the shared review panel before anything is
+  // created; `invalid_epub`/`uncertain` create nothing and surface an explicit message so the learner
+  // can pick another file or retry.
+  async function applyEpubBeginOutcome(outcome: BeginEpubCreationOutcome): Promise<void> {
+    switch (outcome.status) {
+      case "created":
+        await reload();
+        toast.success(`Imported “${outcome.result.work.title}”.`);
+        return;
+      case "exact_existing":
+        await reload();
+        toast.success(`“${outcome.result.work.title}” is already in your library — opened it.`);
+        onManageContent(outcome.result.work.entryId);
+        return;
+      case "needs_review":
+        // A credible candidate exists: park the review panel. Nothing has been created yet; Back returns
+        // to the Add-work form so the learner can pick another file. The panel frames itself by the
+        // review DTO's own `<title>.epub` label, format-agnostic like the Markdown flow.
+        setAddOpen(false);
+        setReviewState(outcome.review);
+        return;
+      case "invalid_epub":
+        toast.error("That file couldn’t be read as an EPUB. Please choose a valid .epub file.");
+        return;
+      case "uncertain":
+        toast.error("Couldn’t check your library for duplicates just now. Please try again.");
+        return;
+      /* v8 ignore next 2 -- every EPUB begin outcome is handled above; the default only keeps the switch
+         exhaustive and is unreachable. */
+      default:
+        return;
+    }
+  }
+
   // Apply a review DECISION outcome shared by Open existing and Keep separate (#747). A committing or
   // reopening result lands the Work; a refreshed snapshot re-renders the panel; expiry/replay/concurrent
   // finalization drop the spent review back to the form; existing-gone and uncertainty keep the panel so
@@ -655,9 +692,10 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
       return;
     }
 
-    // EPUB metadata (OPF) is authoritative, so ingest straight to a new Work with no confirm form. A
-    // re-upload of identical bytes reopens the owning Work (#706): the learner is told it is already in
-    // the library and dropped into Manage content, mirroring the Markdown front door.
+    // EPUB metadata (OPF) is authoritative, so there is no confirm form: the file goes straight to the
+    // creation-review front door (#748). Exact bytes reopen the owning Work (#706) and no-candidate
+    // content creates immediately; a credible duplicate parks the shared review panel before anything is
+    // created, and an unopenable file is refused.
     const kind = detectUploadKind(file);
 
     if (kind === "epub") {
@@ -665,15 +703,7 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
       setUploadKind("epub");
 
       try {
-        const outcome = await ingestEpub(file);
-        await reload();
-
-        if (outcome.status === "exact_existing") {
-          toast.success(`“${outcome.result.work.title}” is already in your library — opened it.`);
-          onManageContent(outcome.result.work.entryId);
-        } else {
-          toast.success(`Imported “${outcome.result.work.title}”.`);
-        }
+        await applyEpubBeginOutcome(await beginEpubCreation(file));
       } catch {
         toast.error("Could not ingest the EPUB. Please try again.");
       } finally {

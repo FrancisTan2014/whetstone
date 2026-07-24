@@ -3,20 +3,23 @@ import {
   parseKeepSeparateDecisionRequest,
   parseOpenExistingDecisionRequest
 } from "@whetstone/contracts";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply } from "fastify";
 
 import {
+  beginEpubCreation,
   beginMarkdownCreation,
   cancelWorkCreation,
   getWorkCreationReview,
   keepSeparateWork,
   openExistingWork,
+  type BeginEpubResult,
   type BeginResult,
   type DecisionResult,
   type WorkCreationDependencies
 } from "./workCreationCommands.js";
 
 const invalidRequestBody = { error: "invalid_request" } as const;
+const invalidEpubBody = { error: "invalid_epub" } as const;
 
 type AttemptParams = Readonly<{ attemptId: string }>;
 
@@ -60,6 +63,26 @@ function decisionStatusCode(status: DecisionResult["status"]): number {
   }
 }
 
+// Send an EPUB begin outcome (#748). Created/exact-existing return the bare Work resource (201/200), the
+// same shape the one-step front door always returned, so a duplicate re-upload drops the learner into the
+// owning Work. A credible candidate parks review (200 + the review envelope the shared panel consumes);
+// bytes the parser could not open are 422; an untrusted candidate recheck is 503.
+function sendEpubBegin(reply: FastifyReply, result: BeginEpubResult): FastifyReply {
+  switch (result.status) {
+    case "created":
+      return reply.code(201).send(result.result);
+    case "exact_existing":
+      return reply.code(200).send(result.result);
+    case "needs_review":
+      return reply.code(200).send({ review: result.review, status: "needs_review" });
+    case "invalid_epub":
+      return reply.code(422).send(invalidEpubBody);
+    /* v8 ignore next 2 -- uncertain is the only remaining case; listed for exhaustiveness. */
+    default:
+      return reply.code(503).send({ status: "uncertain" });
+  }
+}
+
 // The server-owned Markdown creation-review boundary routes (#747). The browser holds only an opaque
 // attempt id + revision and sends a semantic decision, so it can neither create around review nor decide
 // candidate policy. Every owner scope is read from the request's current-user provider, never a literal.
@@ -67,6 +90,31 @@ export function registerWorkCreationRoutes(
   server: FastifyInstance,
   dependencies: WorkCreationDependencies
 ): void {
+  // Begin: the imported-EPUB front door now routes through review (#748). Exact bytes reopen the owning
+  // Work; bytes the parser cannot open are refused (422); with no credible candidate the Work is created
+  // immediately through the atomic EPUB writer; a credible candidate parks a review attempt.
+  server.post(
+    "/api/works/epub",
+    { bodyLimit: dependencies.content.epubUploadLimitBytes },
+    async (request, reply) => {
+      const body = request.body;
+
+      if (!Buffer.isBuffer(body) || body.length === 0) {
+        return reply.code(400).send(invalidRequestBody);
+      }
+
+      const userId = request.server.currentUser.getCurrentUserId();
+      const result = await beginEpubCreation(dependencies, userId, new Uint8Array(body));
+
+      request.log.info(
+        { route: "POST /api/works/epub", status: result.status },
+        "work_epub_creation_begin"
+      );
+
+      return sendEpubBegin(reply, result);
+    }
+  );
+
   // Begin: the imported-Markdown front door now routes through review. Exact bytes reopen the owning
   // Work; a credible candidate parks a review attempt; otherwise the Work is created immediately.
   server.post("/api/works/markdown", async (request, reply) => {

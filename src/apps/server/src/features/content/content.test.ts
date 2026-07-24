@@ -42,6 +42,7 @@ import { createImportedMarkdownWork, type ContentDependencies } from "./contentC
 import { ingestEpub as ingestEpubCommand } from "./epubCommands.js";
 import type { IngestionEvidence } from "./htmlToDocument.js";
 import type { LibraryDependencies } from "../library/libraryCommands.js";
+import type { WorkCreationDependencies } from "../workCreation/workCreationCommands.js";
 
 type TestContext = Readonly<{
   content: ContentDependencies;
@@ -88,6 +89,8 @@ async function buildContext(): Promise<TestContext> {
   let entrySequence = 0;
   let sourceSequence = 0;
   let contentAuthorSequence = 0;
+  let attemptSequence = 0;
+  let stageSequence = 0;
   const library: LibraryDependencies = {
     createAuthorId: () => `author-${(authorSequence += 1)}`,
     createEntryId: () => `work-${(workSequence += 1)}`,
@@ -106,13 +109,24 @@ async function buildContext(): Promise<TestContext> {
     pdfToMarkdown: { convert: () => pdfResponder() },
     sourceFileStore: createSourceFileStore(sourcesDir)
   };
+  // The EPUB creation front door now lives on the work-creation review boundary (#748), so the content
+  // route tests build the server with it wired. A single-upload EPUB in a fresh DB has no duplicate
+  // candidate, so it still commits immediately — the adapter fidelity/nav/image assertions are unchanged.
+  const workCreation: WorkCreationDependencies = {
+    attemptTtlMs: 30 * 60 * 1000,
+    content,
+    createAttemptId: () => `attempt-${(attemptSequence += 1)}`,
+    createStageId: () => `stage-${(stageSequence += 1)}`,
+    log: { info: () => undefined },
+    now: () => new Date()
+  };
 
   return {
     content,
     db,
     imagesDir,
     pglite,
-    server: createServer({ content, library, logger: false }),
+    server: createServer({ content, library, logger: false, workCreation }),
     sourcesDir
   };
 }

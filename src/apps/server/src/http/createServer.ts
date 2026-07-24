@@ -7,6 +7,7 @@ import Fastify, {
 import {
   audioContentType,
   createHealthResponse,
+  epubContentType,
   healthEndpointPath,
   healthResponseJsonSchema,
   pdfContentType,
@@ -106,6 +107,14 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
   server.addContentTypeParser(pdfContentType, (_request, payload, done) => {
     done(null, payload);
   });
+
+  // Uploaded EPUB bytes arrive as a binary body the creation-review front door (#748) hashes and parses.
+  // Registered once here (not in a feature) because the endpoint now lives in the work-creation review
+  // boundary while other content routes may register independently, so the parser must exist regardless
+  // of which route module owns the EPUB endpoint.
+  server.addContentTypeParser(epubContentType, { parseAs: "buffer" }, (_request, body, done) =>
+    done(null, body)
+  );
 
   server.get(
     healthEndpointPath,

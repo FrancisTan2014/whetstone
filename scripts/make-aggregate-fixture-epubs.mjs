@@ -1,10 +1,16 @@
 // Generates the two small public-domain EPUB fixtures the recitation aggregate E2E
-// (`e2e/tests/recitation-aggregate.spec.ts`) adopts as two SEPARATE recitation Works. Each must have
-// distinct bytes (a different sha256) from every other fixture — the shared `aesop-fables.epub`
-// (`e2e/stack.ts`), `today-cycle.epub`, and `recitation-session.epub` — and from each other, otherwise
-// EPUB upload dedupes to the same Work and the plans collide on the shared user. The text is more of
-// Aesop's fables, unambiguously in the public domain. Re-run with
-// `node scripts/make-aggregate-fixture-epubs.mjs`; the output is deterministic. fflate is a devDependency.
+// (`e2e/tests/recitation-review-continuation.spec.ts`) adopts as two SEPARATE recitation Works. Each must
+// be distinct from every other fixture and from each other along TWO axes, or the shared-user shelf
+// collapses them:
+//   1. Distinct bytes (a different sha256), so an exact-hash re-upload never reopens the wrong Work.
+//   2. Distinct TITLE + AUTHOR metadata, so the #724/#748 duplicate-review boundary — through which EPUB
+//      upload now routes — does not flag one as a look-alike edition of the other (or of the seeded
+//      `aesop-fables.epub`) and park it for review instead of creating it. The old fixtures shared the
+//      author "Aesop" and titles differing by a single character ("(Aggregate A)" vs "(Aggregate B)"),
+//      which scored ~0.96 same-author title similarity and parked the second upload. These two are now
+//      unrelated works by different authors with well-separated titles.
+// The text is public-domain Aesop's fables. Re-run with `node scripts/make-aggregate-fixture-epubs.mjs`;
+// the output is deterministic. fflate is a devDependency.
 
 import { strToU8, zipSync } from "fflate";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -84,8 +90,8 @@ function writeEpub(fileName, identifier, title, author, chapters) {
 writeEpub(
   "recitation-aggregate-a.epub",
   "urn:uuid:whetstone-fixture-recitation-aggregate-a",
-  "Aesop's Fables (Aggregate A)",
-  "Aesop",
+  "The Ant and the Crow (Recitation Set A)",
+  "Odell Faber",
   [
     {
       heading: "The Ant and the Grasshopper",
@@ -111,8 +117,8 @@ writeEpub(
 writeEpub(
   "recitation-aggregate-b.epub",
   "urn:uuid:whetstone-fixture-recitation-aggregate-b",
-  "Aesop's Fables (Aggregate B)",
-  "Aesop",
+  "The Tortoise and the Wind (Recitation Set B)",
+  "Priya Marlow",
   [
     {
       heading: "The Tortoise and the Hare",

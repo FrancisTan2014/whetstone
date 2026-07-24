@@ -1,9 +1,8 @@
-import { epubContentType, ingestMarkdownRequestSchema } from "@whetstone/contracts";
+import { ingestMarkdownRequestSchema } from "@whetstone/contracts";
 import { toEntryId } from "@whetstone/domain";
 import type { FastifyInstance } from "fastify";
 
 import { ingestMarkdown, type ContentDependencies } from "./contentCommands.js";
-import { ingestEpub } from "./epubCommands.js";
 import {
   loadReadingUnitContent,
   loadWorkAnchorIndex,
@@ -13,7 +12,6 @@ import {
 } from "./contentQueries.js";
 
 const invalidRequestBody = { error: "invalid_request" } as const;
-const invalidEpubBody = { error: "invalid_epub" } as const;
 // The born-digital PDF lane (#702) is authoritative and the legacy Docling-to-Markdown route is
 // deactivated; scanned/mixed PDFs (and any legacy content/pdf caller) get this sequenced limitation until
 // language-aware OCR lands (#704). 503 (Service Unavailable) + a distinct body so the client can show the
@@ -35,39 +33,9 @@ export function registerContentRoutes(
   server: FastifyInstance,
   dependencies: ContentDependencies
 ): void {
-  server.addContentTypeParser(epubContentType, { parseAs: "buffer" }, (_request, body, done) =>
-    done(null, body)
-  );
-
-  server.post(
-    "/api/works/epub",
-    { bodyLimit: dependencies.epubUploadLimitBytes },
-    async (request, reply) => {
-      const body = request.body;
-
-      if (!Buffer.isBuffer(body) || body.length === 0) {
-        return reply.code(400).send(invalidRequestBody);
-      }
-
-      const result = await ingestEpub(dependencies, new Uint8Array(body));
-
-      if (result.status === "invalid_epub") {
-        return reply.code(422).send(invalidEpubBody);
-      }
-
-      request.log.info(
-        {
-          readingUnitCount: result.result.content.readingUnits.length,
-          route: "POST /api/works/epub",
-          status: result.status,
-          workEntryId: result.result.work.entryId
-        },
-        "work_epub_ingested"
-      );
-
-      return reply.code(result.status === "exact_existing" ? 200 : 201).send(result.result);
-    }
-  );
+  // Imported-EPUB Work creation is routed through the server-owned duplicate-review boundary (#748),
+  // registered by `registerWorkCreationRoutes` at `POST /api/works/epub`. There is no second EPUB front
+  // door here: a client cannot create around review.
 
   // Imported-Markdown Work creation is routed through the server-owned duplicate-review boundary
   // (#747), registered by `registerWorkCreationRoutes` at `POST /api/works/markdown`. There is no

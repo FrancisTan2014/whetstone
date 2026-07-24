@@ -32,6 +32,11 @@ export type SourceFileStore = Readonly<{
   // canonical content without re-uploading. The path is resolved within the source directory, so a stored
   // path can never escape it; a missing file throws so the caller can treat it as a lost stage.
   readMarkdownSource: (relativePath: string) => Promise<string>;
+  // Read back a retained EPUB source file's bytes by its stored relative path (a staged attempt's path).
+  // Used to transfer a review attempt's already-staged EPUB upload (#748) into canonical content by
+  // re-parsing the exact bytes, without re-uploading. Resolved within the source directory (no escape);
+  // a missing file throws so the caller can treat it as a lost stage.
+  readEpubSource: (relativePath: string) => Promise<Uint8Array>;
   writeEpubSource: (input: WriteEpubSourceInput) => Promise<WrittenEpubSource>;
   writeMarkdownSource: (input: WriteMarkdownSourceInput) => Promise<WrittenMarkdownSource>;
   writePdfSource: (input: WriteEpubSourceInput) => Promise<WrittenEpubSource>;
@@ -113,10 +118,17 @@ export function createSourceFileStore(sourceFilesDir: string): SourceFileStore {
     return readFile(target, "utf8");
   }
 
+  async function readEpubSource(relativePath: string): Promise<Uint8Array> {
+    const target = resolveWithinDirectory(sourceFilesDir, relativePath);
+
+    return new Uint8Array(await readFile(target));
+  }
+
   return Object.freeze({
     deleteSourceFile,
     hashBytes,
     hashMarkdown,
+    readEpubSource,
     readMarkdownSource,
     writeEpubSource,
     writeMarkdownSource,

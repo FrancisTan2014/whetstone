@@ -146,6 +146,26 @@ describe("createSourceFileStore", () => {
     await expect(store.readMarkdownSource("never-written.md")).rejects.toThrow();
   });
 
+  it("reads back a retained EPUB source as raw bytes by its relative path", async () => {
+    const store = createSourceFileStore(directory);
+    const bytes = new Uint8Array([0, 1, 2, 250, 255]);
+    const written = await store.writeEpubSource({ bytes, id: "source-6" });
+
+    expect(await store.readEpubSource(written.path)).toEqual(bytes);
+  });
+
+  it("throws when reading an EPUB source that is missing", async () => {
+    const store = createSourceFileStore(directory);
+
+    await expect(store.readEpubSource("never-written.epub")).rejects.toThrow();
+  });
+
+  it("refuses to read an EPUB path that escapes the source directory", async () => {
+    const store = createSourceFileStore(directory);
+
+    await expect(store.readEpubSource("../escape.epub")).rejects.toThrow();
+  });
+
   it("refuses to read a path that escapes the source directory", async () => {
     const store = createSourceFileStore(directory);
 

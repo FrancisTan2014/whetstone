@@ -176,8 +176,12 @@ export function buildReviewDto(
     revision: attempt.revision,
     // THIS attempt's own upload name, so the panel is always framed by the reviewed attempt — never by
     // whatever file the client last posted. On a resumed single-active-attempt race this is the older
-    // attempt's filename, so the two uploads cannot be conflated.
-    /* v8 ignore next -- a markdown attempt always records its upload fileName; the fallback is defensive. */
-    sourceFileName: attempt.sourceFileName ?? `${attempt.proposedTitle}.md`
+    // attempt's filename, so the two uploads cannot be conflated. EPUB uploads carry no filename in v0
+    // (#748), so a stable `<title>.epub` fallback is derived from the attempt's source kind.
+    /* v8 ignore next -- a markdown attempt always records its upload fileName; the fallback covers epub
+       (no v0 filename) and defends a missing markdown name. */
+    sourceFileName:
+      attempt.sourceFileName ??
+      `${attempt.proposedTitle}.${attempt.sourceKind === "epub" ? "epub" : "md"}`
   };
 }

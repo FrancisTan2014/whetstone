@@ -439,8 +439,9 @@ can navigate them from another package.
     second block writer. PDF uploads' legacy Docling→Markdown route (`POST …/content/pdf`) is **deactivated by #702**: the handler now returns **503 `ocr_support_unavailable`** ("OCR support is not available yet.") instead of persisting mdast, and its now-unreachable conversion code is kept only until #705 deletes it. Historically it converged on the Markdown pipeline: `src/files/pdfToMarkdown.ts` (`PdfToMarkdown` seam) converts a PDF to Markdown one-shot — production spawns the isolated Docling worker (`src/files/pdf_to_markdown.py`, MIT, permissive); a deterministic fake keeps the keyless gate green with no Python — then `ingestPdf` reuses `ingestMarkdown` (golden: a PDF ≡ the equivalent `.md`). A missing toolchain (no Python/Docling/OCRmyPDF/Tesseract on the host — including an installed OCRmyPDF that cannot find Tesseract) is classified at the spawn boundary (`src/files/pdfToolchain.ts`, `PdfToolchainMissingError`) and surfaced distinctly as **503 `pdf_toolchain_missing`** ("run `pnpm setup:pdf`"), separate from a genuinely bad file's **422 `invalid_pdf`** (#510). A scanned PDF gets an OCR pre-pass first (`src/files/pdfOcr.ts`, `PdfOcr` seam, composed via `composePdfToMarkdown`): production spawns OCRmyPDF/Tesseract (`--skip-text`, permissive); the identity fake is a no-op so born-digital ingest is unchanged. **Structured PDF adapter (#701, capability only — not yet wired to any route; first consumer #721):** `src/apps/server/src/files/pdfStructuredAdapter.ts` converts one server-staged born-digital PDF into a validated, versioned DoclingDocument-projection result (not Markdown) under explicit bounds — ≤128 MiB / ≤3000 pages, single-flight, per-range page windows concatenated in source order, OCR disabled, per-page native-text reported, memory/time ceilings, child terminated on every outcome. The pure StructuredDocument/RangeConversion contract + pins live in `@whetstone/contracts` (`pdfStructuredContracts.ts`); named failures in `src/files/pdfStructuredErrors.ts` (exit codes in LOCKSTEP with the worker); the isolated worker is `src/files/pdf_to_docling.py` (`--probe`/`--range`, MIT, no OCR). Real adapter + deterministic fake share one contract suite (`createFakePdfStructuredAdapter` needs no Python; the real Docling lane skips cleanly). `pnpm setup:pdf` verifies the EXACT pinned docling/docling-core versions and the pinned model snapshot before reporting readiness. **Recoverable staged PDF imports (#721):** `src/apps/server/src/features/pdfImport/` runs that adapter resumably as an attempt state machine (start/status/cancel/retry are owner-scoped commands/queries; #702 adds the HTTP routes + publication). `pdfImportStage.ts` stages the uploaded bytes in a per-attempt dir under a server root (never a user path; it mints the `StagedFileHandle` the adapter reads and removes only that exact dir). `pdfImportStore.ts` persists attempts + per-range checkpoints in `pdf_import_attempts`/`pdf_import_ranges` with an atomic single-active claim (partial-unique index on the one `running` row), run-token fencing on every write, progress recomputed from committed ranges, and startup `running→interrupted` recovery. `pdfImportRunner.ts` (`processNextPdfImport`) claims→probes→converts each page range→checkpoints, resuming after the last committed range and stopping (`fenced`) the moment a cancel/interrupt fences a write. `pdfImportCommands.ts` owns start/cancel/retry (stage created before the row and rolled back on a bind failure; cancel aborts the owned child then frees the stage; retry re-queues an interrupted attempt) plus `retryPdfImportCleanup` — the owner-scoped path that re-removes a terminal attempt's leftover stage and clears the binding only on success, so a failed cleanup stays visible (`bound`) AND retryable — and `pdfImportQueries.ts` reports status as page/range COUNTS + typed failure. The pure state machine (states, `isTerminalAttemptState` cleanup-eligibility, `mayApplyRunOutput` fencing, `nextRangeIndex` resume) is `@whetstone/domain` `pdfImportAttempt.ts`; DTOs in `@whetstone/contracts` `pdfImportContracts.ts`. **Born-digital PDF publication (#702):** the same `pdfImport/` feature turns a converted attempt into ONE canonical Author→Work→ReadingUnit→Block Work stored ONLY as ProseMirror `doc_blocks` (never Markdown/mdast). `pdfCanonicalMapping.ts` is the pure mapper: it reconstructs the StructuredDocument from committed ranges (`concatenateRanges`) and projects each validated docling item to a canonical node (title/section_header→heading, text/caption→paragraph, list→bullet/ordered list, table→table, code/formula→codeBlock, footnote/reference→footnoteTarget, anything unmapped→explicit `unknown`), splits the body into ReadingUnits at each heading (a leading run becomes one neutral **Start** unit), and returns a typed **OCR-required** outcome with the affected page count — and NO Work — when any page lacks native text, a typed **no-content** outcome — also NO Work — when the native-text pages map to zero canonical blocks, or a typed **image-unsupported** outcome with the unpreservable-image count — also NO Work — when the document contains picture/figure constructs whose images #701 cannot preserve (refused before mapping rather than published as a content-losing null-image placeholder), so publication never creates an empty-shell Work or silently drops an image. `pdfImportPublish.ts` (`beginPdfImport`/`publishConvertedPdfImport`) resolves metadata (entered → cleaned PDF metadata from the worker (#701 info-dict Title/Author) → filename stem → neutral default, never a raw path), then atomically commits Work metadata, the original uploaded PDF as immutable source provenance — the bytes are read back from the retained stage (#721) and persisted through the #706 source-file boundary, so `work_sources.file_path`/`sha256` are **non-null** and every published Work keeps its source bytes for provenance/export/re-ingestion while readable content stays in `doc_blocks` (the source file is provenance/export only) — the #706 exact-source claim (identical bytes reopen the owning Work), reading units, doc_blocks, additive per-block page/bbox/char-span/confidence evidence (`pdf_block_evidence`), and terminal publication state (`pdf_import_publications`); every bulk insert batches under the bind-parameter ceiling (`insertBatching.ts`) so a full-length document commits in one bounded transaction. `pdfImportRoutes.ts` exposes `POST /api/pdf-imports` (start/dedup — raw bytes + base64 metadata header), `GET /api/pdf-imports/:id` (status + publication view), and `POST /api/pdf-imports/:id/{cancel,retry}`; the drain loop in `index.ts` publishes each converted attempt immediately and, at the top of every tick, re-runs `drainPendingPdfPublications` (`findConvertedPendingPublications` → idempotent `publishConvertedPdfImport` per attempt, errors isolated) so a `converted` attempt whose publication was stranded by a process crash after `markConverted` or a transient publication throw is durably republished on the next tick/restart rather than reporting "Finishing up..." forever; the composition root resolves the structured conversion backend through `pdfStructuredRunnerResolution.ts` — the **real #701 Docling runner** on a platform that can enforce the memory ceiling (self-reporting `tool_missing` per attempt when `pnpm setup:pdf`'s toolchain is absent), a **fail-visibly unavailable runner** on an unsupported platform — so a user upload is either converted from its own bytes or fails visibly, **never** published as canned content; an **env-gated (`PDF_IMPORT_FIXTURE_CONVERSION`) staged-fixture runner** for dev/E2E converts the ACTUAL staged bytes (a RangeConversion embedded after `STRUCTURED_PDF_FIXTURE_MARKER`), keeping the born-digital journey deterministic in CI without Python while staying input-derived, not canned. Reader surfacing generalized from a work-level `authored` gate to a unit-level `source_file === null` (`contentQueries.ts`), so PDF/manual doc_blocks render while EPUB units (non-null `source_file`) are unchanged. Web: `src/apps/web/src/features/pdfImport/` (`pdfImportApi.ts` upload/status/cancel, `pdfImportProgress.ts` state labels, `pdfImportPolling.ts` poll-until-terminal, `pdfImportSession.ts` resume-across-navigation) drives the Library upload/progress/cancel/reopen flow in `AdminLibraryPage.tsx`; a scanned/mixed upload reports **OCR support is not available yet**. EPUB uploads (`epubCommands.ts`) create the Work from OPF metadata and are
   sha256-idempotent, persisting via `blockWriter.ts`. Uploaded-source identity is a shared boundary
   (`sourceClaims.ts`, `claimUploadedSource` + the `uploaded_source_claims` table, sha256 PK →
-  owning Work): both the EPUB front door and the imported-Markdown front door
-  (`POST /api/works/markdown` → `beginMarkdownCreation`, the #747 duplicate-review boundary that
+  owning Work): both the imported-EPUB front door and the imported-Markdown front door
+  (`POST /api/works/epub` → `beginEpubCreation` (#748) and `POST /api/works/markdown` →
+  `beginMarkdownCreation` (#747) — the shared duplicate-review boundary that
   reopens on exact bytes, commits the Work + source + blocks + claim in one transaction when no credible
   candidate exists, and otherwise parks a review attempt — see the workCreation entry below) resolve
   through it, so re-uploading identical bytes reopens the owning Work
@@ -464,8 +465,10 @@ can navigate them from another package.
   (`hoistWrapperAnchorIds`, #516) first moves a section fragment id authored on a structural wrapper
   (`<div class="sect1" id>` / `<section id>`) onto its leading block, so section anchors survive
   unwrapping and reach the work anchor index (innermost wrapper wins; a block's own id is never
-  overwritten). `ingestEpub` wires
-  this into the real flow: `resolveChapters` runs `htmlToDocument` per chapter, resolves each PM
+  overwritten). `commitImportedEpubWork` wires
+  this into the real flow (composed by both the retained one-step `ingestEpub` front door — kept for
+  the immediate-create path and adapter tests — and the #748 review boundary, which hands it the
+  attempt's already-staged `.epub` to transfer in place): `resolveChapters` runs `htmlToDocument` per chapter, resolves each PM
   `image` node's `src` against that chapter's stored content-addressed images (the same resolution used
   for mdast figures, via `figureImageResolver.ts`) and stamps the resolved store id onto the node's
   `imageResourceId` attr (#310/#312), then the document's top-level PM nodes are dual-written at the
@@ -782,8 +785,9 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   grouped by author (`groupWorksByAuthor.ts`) with an "Add work" `Sheet` dialog, and a single
   **Upload** control — the one file front door — that accepts `.epub`/`.pdf`/`.md` and creates a new
   Work (#417). It routes by type via the shared `shared/files/fileType.ts` `detectUploadKind`
-  (MIME type first, extension fallback): an EPUB ingests
-  straight to a Work (`libraryApi.ingestEpub` posts the raw bytes, OPF metadata authoritative), while a
+  (MIME type first, extension fallback): an EPUB posts its raw bytes to the #748 duplicate-review
+  boundary (`libraryApi.beginEpubCreation`, OPF metadata authoritative) — creating the Work directly when
+  there is no credible duplicate, or opening the shared review panel when there is — while a
   PDF/Markdown (no reliable metadata) opens the same **Add work** sheet pre-filled with the filename's
   title, then on submit creates the Work and ingests the held file into it via the content feature's
   `contentApi.ingestPdf`/`ingestMarkdown`. The Library is **read-first** (#640): each card leads with one
@@ -798,8 +802,8 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   ≥44px **Add** menu (`LibraryAddMenu.tsx`): **Upload file** (`.epub, .pdf, .md`) and
   **Add work manually** — document creation now lives on the Write home (#679); class maps for both menus
   live in the coverage-excluded
-  `libraryMenu.tokens.ts`. **Upload file** opens the same file front door as before — an EPUB ingests
-  straight to a Work, a PDF/Markdown opens the pre-filled **Add work** sheet. The **Add work** sheet's
+  `libraryMenu.tokens.ts`. **Upload file** opens the same file front door as before — an EPUB routes
+  through the #748 review boundary (direct create or the shared review panel), a PDF/Markdown opens the pre-filled **Add work** sheet. The **Add work** sheet's
   author field is `AuthorSelectField.tsx` — a `downshift` create-or-select combobox over
   `libraryApi.searchAuthors` (`GET /api/authors?query=`) that reuses an existing author by default and
   only offers an explicit **Add** for a genuinely new name, so duplicates can't be created by accident
@@ -832,23 +836,30 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `workCreationStageDir`, deliberately NOT a backed-up data root (`resolveDataRoots`). The pure state
   machine + evidence fingerprint are `@whetstone/domain` `workCreationAttempt.ts`; DTOs (attempt view
   exposes stage presence only, never a filesystem path) in `@whetstone/contracts`
-    `workCreationContracts.ts`. **Imported-Markdown duplicate-review boundary (#747, first consumer of
-    #725/#724):** `features/workCreation/` turns the Markdown front door into a server-owned review gate.
-    `workCreationCommands.ts` is the orchestration core — `beginMarkdownCreation` stages the upload on the
-    #725 attempt and decides the outcome (exact uploaded bytes reopen the owning Work as `exact_existing`
+    `workCreationContracts.ts`. **Imported-upload duplicate-review boundary (#747 Markdown / #748 EPUB,
+    first consumers of #725/#724):** `features/workCreation/` turns the Markdown and EPUB front doors into a
+    server-owned review gate.
+    `workCreationCommands.ts` is the orchestration core — `beginMarkdownCreation`/`beginEpubCreation` stage
+    the upload on the
+    #725 attempt and decide the outcome (exact uploaded bytes reopen the owning Work as `exact_existing`
     with no attempt; new bytes with no credible candidate commit atomically as `created`; new bytes with
     credible #724 candidates persist ONE attempt (staged bytes + snapshot) as `needs_review`; empty content
-    is `empty_content`; candidate-query/storage uncertainty is `uncertain`, never a fake "no candidates"),
+    is `empty_content` / an unreadable archive is `invalid_epub`; candidate-query/storage uncertainty is
+    `uncertain`, never a fake "no candidates"),
     and `openExistingWork`/`keepSeparateWork`/`cancelWorkCreation` are the revision-fenced, owner-scoped
     decisions (Open existing rechecks the chosen Work then completes, changing no Work; Keep separate
     rechecks exact identity + candidates — a changed snapshot re-reviews — then commits the
-    Work/source/claim/content and transfers the stage exactly once; Back cancels the attempt and cleans the
+    Work/source/claim/content, dispatching by the attempt's `source_kind` to the Markdown or EPUB commit and
+    transferring the stage exactly once; Back cancels the attempt and cleans the
     stage). `markdownDuplicateReview.ts` is the pure-ish review layer (author resolution,
-    `computeReviewCandidates` over #724, `buildReviewDto`); `getWorkCreationReview` reads a parked attempt
-    into that DTO; `workCreationRoutes.ts` exposes `POST /api/works/markdown` (begin), the review GET, and
-    the decision/cancel routes. The web review UI is `features/library/WorkCreationReviewPanel.tsx`
+    `computeReviewCandidates` over #724, `buildReviewDto` — its fallback source filename takes the kind's
+    extension, `.epub` for an EPUB); `getWorkCreationReview` reads a parked attempt
+    into that DTO; `workCreationRoutes.ts` exposes `POST /api/works/markdown` and `POST /api/works/epub`
+    (begin), the review GET, and
+    the decision/cancel routes (the `epubContentType` body parser is registered in `createServer`). The web
+    review UI is `features/library/WorkCreationReviewPanel.tsx`
     (presentational "Possible duplicate" panel — proposal + factual candidate evidence + Open
-    existing/Keep separate/Back), wired through `libraryApi.ts` (`beginMarkdownCreation`/
+    existing/Keep separate/Back), wired through `libraryApi.ts` (`beginMarkdownCreation`/`beginEpubCreation`/
     `fetchWorkCreationReview`/`openExistingWork`/`keepSeparateWork`/`cancelWorkCreation`) into
     `AdminLibraryPage.tsx`, which holds only the opaque attempt id + revision and preserves the
     draft/filename across review, Back, and retry. The begin/review/decision vocab +

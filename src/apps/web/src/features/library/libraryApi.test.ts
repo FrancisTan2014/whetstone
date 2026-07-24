@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  beginEpubCreation,
   beginMarkdownCreation,
   cancelWorkCreation,
   createAuthor,
@@ -9,7 +10,6 @@ import {
   fetchWorkCreationReview,
   fetchWorks,
   fetchWorksWithReadingPosition,
-  ingestEpub,
   keepSeparateWork,
   openExistingWork,
   searchAuthors
@@ -142,7 +142,7 @@ describe("libraryApi", () => {
     await expect(searchAuthors()).rejects.toThrow("failed with status 500");
   });
 
-  it("posts EPUB bytes to the epub endpoint and reports it created on 201", async () => {
+  it("begins an EPUB Work and reports it created on 201 (no credible candidate)", async () => {
     const result = {
       content: { readingUnits: [], workEntryId: "work-1" },
       work: {
@@ -158,7 +158,7 @@ describe("libraryApi", () => {
       type: "application/epub+zip"
     });
 
-    await expect(ingestEpub(file)).resolves.toEqual({ result, status: "created" });
+    await expect(beginEpubCreation(file)).resolves.toEqual({ result, status: "created" });
 
     const call = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(call[0]).toBe("/api/works/epub");
@@ -177,16 +177,74 @@ describe("libraryApi", () => {
       type: "application/epub+zip"
     });
 
-    await expect(ingestEpub(file)).resolves.toEqual({ result, status: "exact_existing" });
+    await expect(beginEpubCreation(file)).resolves.toEqual({ result, status: "exact_existing" });
   });
 
-  it("throws when the epub endpoint responds with a non-ok status", async () => {
+  it("parses and returns the review when a credible EPUB candidate needs review (200)", async () => {
+    const epubReview = {
+      attemptId: "attempt-e1",
+      candidateFingerprint: "fp-e1",
+      candidates: [
+        {
+          author: { id: "author-9", name: "司马迁" },
+          entryId: "work-2",
+          evidence: {
+            editionMarkerDifferences: [],
+            languageDiffers: false,
+            sameAuthor: true,
+            titleSimilarity: 0.95,
+            workTypeDiffers: false
+          },
+          language: "zh-CN" as const,
+          matchTier: "same_author_fuzzy" as const,
+          origin: "imported" as const,
+          title: "史记选读",
+          workType: "book" as const
+        }
+      ],
+      proposed: {
+        authorName: "司马迁",
+        language: "zh-CN" as const,
+        title: "史记选读",
+        workType: "book" as const
+      },
+      revision: 0,
+      sourceFileName: "史记选读.epub"
+    };
+    stubFetch({ ok: true, status: 200, body: { review: epubReview, status: "needs_review" } });
+    const file = new File([new Uint8Array([1, 2, 3])], "book.epub", {
+      type: "application/epub+zip"
+    });
+
+    await expect(beginEpubCreation(file)).resolves.toEqual({
+      review: epubReview,
+      status: "needs_review"
+    });
+  });
+
+  it("reports invalid_epub for bytes the parser could not open (422)", async () => {
+    stubFetch({ ok: false, status: 422, body: { error: "invalid_epub" } });
+    const file = new File([new Uint8Array([9])], "bad.epub", { type: "application/epub+zip" });
+
+    await expect(beginEpubCreation(file)).resolves.toEqual({ status: "invalid_epub" });
+  });
+
+  it("reports uncertain when the candidate query could not be trusted (503)", async () => {
+    stubFetch({ ok: false, status: 503, body: { status: "uncertain" } });
+    const file = new File([new Uint8Array([1, 2, 3])], "book.epub", {
+      type: "application/epub+zip"
+    });
+
+    await expect(beginEpubCreation(file)).resolves.toEqual({ status: "uncertain" });
+  });
+
+  it("throws when the epub endpoint responds with an unexpected non-ok status", async () => {
     stubFetch({ ok: false, status: 500, body: undefined });
     const file = new File([new Uint8Array([1, 2, 3])], "book.epub", {
       type: "application/epub+zip"
     });
 
-    await expect(ingestEpub(file)).rejects.toThrow("failed with status 500");
+    await expect(beginEpubCreation(file)).rejects.toThrow("failed with status 500");
   });
 
   const markdownRequest = {

@@ -6,24 +6,27 @@ import { eq, sql } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { IngestEpubResultDto } from "@whetstone/contracts";
-import { parseWorkCreationReviewDto } from "@whetstone/contracts";
+import { epubContentType, parseWorkCreationReviewDto } from "@whetstone/contracts";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
 import {
   authors,
   entries,
+  tocEntries,
   uploadedSourceClaims,
   workCreationAttempts,
   workMeta,
   workSources
 } from "../../db/schema.js";
 import { createImageResourceStore } from "../../files/imageResourceStore.js";
-import { createSourceFileStore, hashMarkdown } from "../../files/sourceFileStore.js";
+import { createSourceFileStore, hashBytes, hashMarkdown } from "../../files/sourceFileStore.js";
+import type { ParsedEpub, ParsedEpubImage } from "../../files/epubSource.js";
 import { createServer } from "../../http/createServer.js";
 import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
 import type { ContentDependencies } from "../content/contentCommands.js";
 import { commitImportedMarkdownWork } from "../content/contentCommands.js";
+import { ingestEpub as ingestEpubCommand } from "../content/epubCommands.js";
 import {
   cancelWorkCreation,
   getWorkCreationReview,
@@ -53,6 +56,9 @@ type Harness = Readonly<{
   sourcesDir: string;
   clock: { now: Date };
   advance: (ms: number) => void;
+  // The injected EPUB parser's next response, reassigned per test so a begin/keep-separate drives a
+  // specific book (or a parser failure) without a real archive.
+  epub: { respond: (bytes: Uint8Array) => Promise<ParsedEpub> };
 }>;
 
 let h: Harness;
@@ -70,12 +76,14 @@ async function buildHarness(): Promise<Harness> {
   let attemptSeq = 0;
   let stageSeq = 0;
 
+  const epub: Harness["epub"] = { respond: (bytes) => bookEpub(bytes) };
+
   const content: ContentDependencies = {
     createAuthorId: () => `author-${(authorSeq += 1)}`,
     createEntryId: () => `work-${(entrySeq += 1)}`,
     createSourceId: () => `source-${(sourceSeq += 1)}`,
     db,
-    epubParser: () => Promise.reject(new Error("epub not used")),
+    epubParser: (bytes) => epub.respond(bytes),
     epubUploadLimitBytes: 1024,
     imageResourceStore: createImageResourceStore(imagesDir),
     ingestionLogger: () => undefined,
@@ -101,9 +109,58 @@ async function buildHarness(): Promise<Harness> {
     content,
     db,
     deps,
+    epub,
     pglite,
     server: createServer({ content, logger: false, workCreation: deps }),
     sourcesDir
+  };
+}
+
+// The EPUB the fake parser returns by default: a two-chapter book by 司马迁 with no images or nav, so a
+// plain begin has clean metadata to weigh. `bytes` is unused (the fake keys off nothing), matching the
+// injected-parser seam.
+function bookEpub(_bytes: Uint8Array): Promise<ParsedEpub> {
+  return Promise.resolve({
+    chapters: [
+      { html: "<h1>Chapter One</h1><p>First.</p>", images: [], sourceFile: "ch01.xhtml" },
+      { html: "<h1>本纪</h1><p>黄帝者。</p>", images: [], sourceFile: "ch02.xhtml" }
+    ],
+    metadata: { author: "司马迁", language: "zh-CN", title: "史记选读" }
+  });
+}
+
+// A single-byte 1×1 PNG, so a figure block carries a real stored image on the keep-separate transfer path.
+function pngBytes(): Uint8Array {
+  return Uint8Array.from(
+    Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=",
+      "base64"
+    )
+  );
+}
+
+// An EPUB whose first chapter carries a figure image and which declares an authored nav, so a
+// keep-separate commit must persist units + a figure block's stored image + toc_entries in one
+// transaction (the atomic transfer path, #748).
+function figureNavEpub(image: ParsedEpubImage): ParsedEpub {
+  const navSource =
+    '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body>' +
+    '<nav epub:type="toc"><ol>' +
+    '<li><a href="ch01.xhtml">Chapter One</a></li>' +
+    '<li><a href="ch02.xhtml">Chapter Two</a></li>' +
+    "</ol></nav></body></html>";
+
+  return {
+    chapters: [
+      {
+        html: `<h1>Chapter One</h1><figure><img src="${image.src}" alt="A dot"/><figcaption>Cap.</figcaption></figure>`,
+        images: [image],
+        sourceFile: "ch01.xhtml"
+      },
+      { html: "<h1>Chapter Two</h1><p>Second.</p>", images: [], sourceFile: "ch02.xhtml" }
+    ],
+    metadata: { author: "司马迁", language: "zh-CN", title: "史记选读" },
+    nav: { kind: "xhtml-nav", path: "nav.xhtml", source: navSource }
   };
 }
 
@@ -139,6 +196,29 @@ function begin(overrides: Record<string, unknown> = {}): ReturnType<typeof h.ser
     method: "POST",
     payload: { ...VALID, ...overrides },
     url: "/api/works/markdown"
+  });
+}
+
+const EPUB_TITLE = "史记选读";
+const EPUB_AUTHOR = "司马迁";
+
+function beginEpub(
+  bytes: Uint8Array = new Uint8Array([1, 2, 3])
+): ReturnType<typeof h.server.inject> {
+  return h.server.inject({
+    headers: { "content-type": epubContentType },
+    method: "POST",
+    payload: Buffer.from(bytes),
+    url: "/api/works/epub"
+  });
+}
+
+// Seed a Work whose title matches the fake EPUB's embedded metadata, so a begin sees a credible duplicate.
+async function seedEpubCandidate(entryId = "epub-candidate-1"): Promise<string> {
+  return seedCandidateWork({
+    authorId: await seedAuthor("sima-existing", EPUB_AUTHOR),
+    entryId,
+    title: EPUB_TITLE
   });
 }
 
@@ -811,5 +891,200 @@ describe("Markdown creation-review expiry sweep (#747)", () => {
     // Framed by the reviewed (first) attempt's own upload and proposal — not the racing "a-different-upload.md".
     expect(resumed.sourceFileName).toBe("politics.md");
     expect(resumed.proposed.title).toBe(TITLE);
+  });
+});
+
+describe("EPUB creation-review begin (#748)", () => {
+  it("commits immediately when no credible duplicate exists", async () => {
+    const response = await beginEpub();
+
+    expect(response.statusCode).toBe(201);
+    const body = response.json() as IngestEpubResultDto;
+    expect(body.work).toMatchObject({ origin: "imported", title: EPUB_TITLE, workType: "book" });
+    expect(body.content.readingUnits.length).toBeGreaterThan(0);
+
+    expect(await countWorks()).toBe(1);
+    expect(await h.db.select().from(workCreationAttempts)).toHaveLength(0);
+    expect(await h.db.select().from(uploadedSourceClaims)).toHaveLength(1);
+  });
+
+  it("reopens the owning Work when identical bytes are re-uploaded", async () => {
+    const first = (await beginEpub()).json() as IngestEpubResultDto;
+
+    const response = await beginEpub();
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as IngestEpubResultDto;
+    expect(body.work.entryId).toBe(first.work.entryId);
+    expect(await countWorks()).toBe(1);
+    expect(await h.db.select().from(uploadedSourceClaims)).toHaveLength(1);
+  });
+
+  it("refuses an unreadable archive with 422 and stages nothing", async () => {
+    h.epub.respond = () => Promise.reject(new Error("not a zip"));
+
+    const response = await beginEpub();
+
+    expect(response.statusCode).toBe(422);
+    expect(response.json()).toEqual({ error: "invalid_epub" });
+    expect(await readdir(h.sourcesDir)).toEqual([]);
+    expect(await countWorks()).toBe(0);
+    expect(await h.db.select().from(uploadedSourceClaims)).toHaveLength(0);
+  });
+
+  it("parks one review attempt keyed on the EPUB when a duplicate is credible", async () => {
+    const candidateId = await seedEpubCandidate();
+
+    const response = await beginEpub();
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.status).toBe("needs_review");
+    const review = parseWorkCreationReviewDto(body.review);
+    expect(review.proposed).toEqual({
+      authorName: EPUB_AUTHOR,
+      language: "zh-CN",
+      title: EPUB_TITLE,
+      workType: "book"
+    });
+    // The upload has no client-supplied name; the DTO derives an `.epub` label from the title.
+    expect(review.sourceFileName.endsWith(".epub")).toBe(true);
+    expect(review.candidates).toHaveLength(1);
+    expect(review.candidates[0]).toMatchObject({ entryId: candidateId, matchTier: "exact" });
+
+    // The attempt persists staged bytes as an EPUB; NO Work, source, or claim is created yet.
+    const attempts = await h.db.select().from(workCreationAttempts);
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]?.sourceKind).toBe("epub");
+    expect(attempts[0]?.sourceFileName).toBeNull();
+    expect(await fileExists(attempts[0]!.stagePath!)).toBe(true);
+    expect(await countWorks()).toBe(1);
+    expect(await h.db.select().from(uploadedSourceClaims)).toHaveLength(0);
+  });
+
+  it("reports uncertain when the candidate query cannot be trusted, staging nothing", async () => {
+    await h.db.execute(sql`DROP FUNCTION IF EXISTS work_title_key(text) CASCADE`);
+
+    const response = await beginEpub();
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toEqual({ status: "uncertain" });
+    expect(await readdir(h.sourcesDir)).toEqual([]);
+    expect(await countWorks()).toBe(0);
+  });
+
+  it("resumes the owner's existing EPUB review when a second begin races the single-attempt slot", async () => {
+    await seedEpubCandidate();
+    const first = (await beginEpub()).json();
+    expect(first.status).toBe("needs_review");
+    const attemptId = first.review.attemptId as string;
+
+    // A second begin for the same owner while an attempt is already pending must clean up its
+    // just-staged file and resume the existing review rather than double-owning the slot (#748).
+    const second = await beginEpub();
+
+    expect(second.statusCode).toBe(200);
+    const body = second.json();
+    expect(body.status).toBe("needs_review");
+    expect(body.review.attemptId).toBe(attemptId);
+    expect(await h.db.select().from(workCreationAttempts)).toHaveLength(1);
+    // Only the original attempt's stage remains; the raced begin deleted its own just-staged file.
+    expect((await readdir(h.sourcesDir)).length).toBe(1);
+  });
+});
+
+describe("EPUB creation-review keep separate (#748)", () => {
+  it("commits a distinct Work atomically, transferring the staged EPUB with units, image, and nav", async () => {
+    const png = pngBytes();
+    const image: ParsedEpubImage = { bytes: png, contentType: "image/png", src: "img/dot.png" };
+    h.epub.respond = () => Promise.resolve(figureNavEpub(image));
+    await seedEpubCandidate();
+
+    const begun = (await beginEpub()).json();
+    expect(begun.status).toBe("needs_review");
+    const attemptId = begun.review.attemptId as string;
+    const stagePath = (
+      await h.db.select().from(workCreationAttempts).where(eq(workCreationAttempts.id, attemptId))
+    )[0]!.stagePath!;
+
+    const response = await keepSeparate(attemptId, { revision: 0 });
+
+    expect(response.statusCode).toBe(201);
+    const body = response.json() as { result: IngestEpubResultDto; status: string };
+    expect(body.status).toBe("created");
+    expect(body.result.work).toMatchObject({ title: EPUB_TITLE, workType: "book" });
+    expect(await countWorks()).toBe(2);
+
+    // The figure block carries its stored image — the transferred archive's resources were committed.
+    const figure = body.result.content.readingUnits
+      .flatMap((unit) => unit.blocks)
+      .find((block) => block.blockType === "figure");
+    expect(figure?.imageResourceId).toBe(hashBytes(png));
+
+    // The authored nav was persisted as toc_entries in the same transaction.
+    const toc = await h.db
+      .select()
+      .from(tocEntries)
+      .where(eq(tocEntries.workEntryId, body.result.work.entryId));
+    expect(toc.map((entry) => entry.label)).toEqual(["Chapter One", "Chapter Two"]);
+
+    // The staged EPUB was transferred in place as provenance and the attempt cleared its stage reference.
+    const sources = await h.db
+      .select()
+      .from(workSources)
+      .where(eq(workSources.workEntryId, body.result.work.entryId));
+    expect(sources[0]).toMatchObject({ fileName: null, filePath: stagePath, kind: "upload" });
+    expect(await fileExists(stagePath)).toBe(true);
+    const completed = (
+      await h.db.select().from(workCreationAttempts).where(eq(workCreationAttempts.id, attemptId))
+    )[0];
+    expect(completed?.state).toBe("completed");
+    expect(completed?.stagePath).toBeNull();
+    expect(await h.db.select().from(uploadedSourceClaims)).toHaveLength(1);
+  });
+
+  it("reopens the existing Work when identical EPUB bytes were claimed meanwhile (exact_existing)", async () => {
+    await seedEpubCandidate();
+    const begun = (await beginEpub()).json();
+    const attemptId = begun.review.attemptId as string;
+    // The same bytes are committed out-of-band (the one-step front door) before the learner decides.
+    const claimed = await ingestEpubCommand(h.content, new Uint8Array([1, 2, 3]));
+    const claimedEntryId =
+      claimed.status === "created" || claimed.status === "exact_existing"
+        ? claimed.result.work.entryId
+        : "";
+
+    const response = await keepSeparate(attemptId, { revision: 0 });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as { result: IngestEpubResultDto; status: string };
+    expect(body.status).toBe("exact_existing");
+    expect(body.result.work.entryId).toBe(claimedEntryId);
+    const attempt = (
+      await h.db.select().from(workCreationAttempts).where(eq(workCreationAttempts.id, attemptId))
+    )[0];
+    expect(attempt?.state).toBe("completed");
+    expect(attempt?.stagePath).toBeNull();
+  });
+
+  it("reopens the chosen existing Work, consuming the EPUB attempt without creating anything", async () => {
+    const candidateId = await seedEpubCandidate();
+    const begun = (await beginEpub()).json();
+    const attemptId = begun.review.attemptId as string;
+
+    const response = await openExisting(attemptId, { entryId: candidateId, revision: 0 });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as { result: IngestEpubResultDto; status: string };
+    expect(body.status).toBe("opened");
+    expect(body.result.work.entryId).toBe(candidateId);
+    expect(await countWorks()).toBe(1);
+    const attempt = (
+      await h.db.select().from(workCreationAttempts).where(eq(workCreationAttempts.id, attemptId))
+    )[0];
+    expect(attempt?.state).toBe("completed");
+    expect(attempt?.stagePath).toBeNull();
+    // The staged EPUB was discarded, not transferred.
+    expect(await readdir(h.sourcesDir)).toEqual([]);
   });
 });

@@ -23,6 +23,7 @@ import type { ParsedEpub } from "../../files/epubSource.js";
 import { createServer } from "../../http/createServer.js";
 import type { ContentDependencies } from "./contentCommands.js";
 import type { LibraryDependencies } from "../library/libraryCommands.js";
+import type { WorkCreationDependencies } from "../workCreation/workCreationCommands.js";
 
 type TestContext = Readonly<{
   db: DbClient;
@@ -89,6 +90,15 @@ async function buildContext(epub: ParsedEpub = singleChapterEpub()): Promise<Tes
     sourceFileStore: createSourceFileStore(sourcesDir)
   };
 
+  const workCreation: WorkCreationDependencies = {
+    attemptTtlMs: 30 * 60 * 1000,
+    content,
+    createAttemptId: () => `attempt-${(sourceSequence += 1)}`,
+    createStageId: () => `stage-${(sourceSequence += 1)}`,
+    log: { info: () => undefined },
+    now: () => new Date()
+  };
+
   return {
     db,
     imagesDir,
@@ -97,7 +107,8 @@ async function buildContext(epub: ParsedEpub = singleChapterEpub()): Promise<Tes
       library,
       logger: false,
       notes: { createEntryId: () => `note-${(entrySequence += 1)}`, db, now: () => new Date() },
-      readingPosition: { db }
+      readingPosition: { db },
+      workCreation
     }),
     sourcesDir
   };
