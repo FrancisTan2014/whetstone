@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   authorIdDtoSchema,
+  beginManualWorkRequestSchema,
   createWorkRequestSchema,
+  parseBeginManualWorkRequest,
   parseCreateAuthorRequest,
   parseCreateWorkRequest,
   workAuthorSelectionSchema
@@ -126,6 +128,74 @@ describe("parseCreateWorkRequest", () => {
         language: "zh",
         title: "t",
         workType: "book"
+      }).success
+    ).toBe(false);
+  });
+});
+
+describe("parseBeginManualWorkRequest", () => {
+  it("accepts a valid new-author manual request (origin implicit, not carried)", () => {
+    expect(
+      parseBeginManualWorkRequest({
+        author: { mode: "new", name: "George Orwell" },
+        language: "en",
+        title: "Politics and the English Language",
+        workType: "essay"
+      })
+    ).toEqual({
+      author: { mode: "new", name: "George Orwell" },
+      language: "en",
+      title: "Politics and the English Language",
+      workType: "essay"
+    });
+  });
+
+  it("accepts an existing-author manual request", () => {
+    expect(
+      parseBeginManualWorkRequest({
+        author: { authorId: "author-1", mode: "existing" },
+        language: "zh-CN",
+        title: "史记",
+        workType: "classical_text"
+      })
+    ).toEqual({
+      author: { authorId: "author-1", mode: "existing" },
+      language: "zh-CN",
+      title: "史记",
+      workType: "classical_text"
+    });
+  });
+
+  it("rejects a client-supplied origin (never accepted at the manual front door)", () => {
+    expect(
+      beginManualWorkRequestSchema.safeParse({
+        author: { mode: "new", name: "x" },
+        language: "en",
+        origin: "imported",
+        title: "t",
+        workType: "book"
+      }).success
+    ).toBe(false);
+  });
+
+  it("rejects a blank title", () => {
+    expect(() =>
+      parseBeginManualWorkRequest({
+        author: { mode: "new", name: "x" },
+        language: "en",
+        title: " ",
+        workType: "book"
+      })
+    ).toThrow();
+  });
+
+  it("rejects an invalid work type", () => {
+    expect(
+      beginManualWorkRequestSchema.safeParse({
+        author: { mode: "new", name: "x" },
+        language: "en",
+        title: "t",
+        workType: "magazine"
       }).success
     ).toBe(false);
   });

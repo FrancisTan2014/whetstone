@@ -1,4 +1,5 @@
 import {
+  beginManualWorkRequestSchema,
   importMarkdownWorkRequestSchema,
   parseKeepSeparateDecisionRequest,
   parseOpenExistingDecisionRequest
@@ -7,6 +8,7 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 
 import {
   beginEpubCreation,
+  beginManualCreation,
   beginMarkdownCreation,
   cancelWorkCreation,
   getWorkCreationReview,
@@ -130,6 +132,29 @@ export function registerWorkCreationRoutes(
     request.log.info(
       { route: "POST /api/works/markdown", status: result.status },
       "work_markdown_creation_begin"
+    );
+
+    return reply.code(beginStatusCode(result.status)).send(result);
+  });
+
+  // Begin: manual Work creation now routes through review (#749). Manual creation carries no uploaded
+  // bytes, so there is no exact-source reopen: with no credible candidate the Work is created immediately
+  // through the canonical empty-document boundary; a credible candidate parks a metadata-only review
+  // attempt. Every begin response carries the full outcome object so the client trusts the body's
+  // discriminant, never deciding candidate policy itself.
+  server.post("/api/works/manual", async (request, reply) => {
+    const parsed = beginManualWorkRequestSchema.safeParse(request.body);
+
+    if (!parsed.success) {
+      return reply.code(400).send(invalidRequestBody);
+    }
+
+    const userId = request.server.currentUser.getCurrentUserId();
+    const result = await beginManualCreation(dependencies, userId, parsed.data);
+
+    request.log.info(
+      { route: "POST /api/works/manual", status: result.status },
+      "work_manual_creation_begin"
     );
 
     return reply.code(beginStatusCode(result.status)).send(result);

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   beginEpubCreation,
+  beginManualCreation,
   beginMarkdownCreation,
   cancelWorkCreation,
   createAuthor,
@@ -350,6 +351,60 @@ describe("libraryApi", () => {
     await expect(beginMarkdownCreation(markdownRequest)).rejects.toThrow(
       "unexpected begin outcome"
     );
+  });
+
+  const manualRequest = {
+    author: { mode: "new" as const, name: "George Orwell" },
+    language: "en" as const,
+    title: "Politics and the English Language",
+    workType: "essay" as const
+  };
+
+  it("begins a manual Work and reports it created (no credible candidate)", async () => {
+    const result = {
+      content: { readingUnits: [], workEntryId: "work-1" },
+      work: {
+        authorId: "author-1",
+        entryId: "work-1",
+        language: "en",
+        origin: "manual",
+        title: "Politics and the English Language",
+        workType: "essay"
+      }
+    };
+    const fetchMock = stubFetch({ ok: true, status: 201, body: { result, status: "created" } });
+
+    await expect(beginManualCreation(manualRequest)).resolves.toEqual({
+      result,
+      status: "created"
+    });
+
+    const call = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(call[0]).toBe("/api/works/manual");
+    expect(call[1].method).toBe("POST");
+    expect(JSON.parse(call[1].body as string)).toEqual(manualRequest);
+  });
+
+  it("parses and returns the review when a manual begin needs review", async () => {
+    stubFetch({ ok: true, status: 200, body: { review: reviewDto, status: "needs_review" } });
+
+    await expect(beginManualCreation(manualRequest)).resolves.toEqual({
+      review: reviewDto,
+      status: "needs_review"
+    });
+  });
+
+  it("surfaces manual author_not_found and uncertain begin outcomes as data", async () => {
+    for (const status of ["author_not_found", "uncertain"] as const) {
+      stubFetch({ ok: status !== "uncertain", body: { status } });
+      await expect(beginManualCreation(manualRequest)).resolves.toEqual({ status });
+    }
+  });
+
+  it("throws when a manual begin returns an unrecognized outcome", async () => {
+    stubFetch({ ok: true, body: { status: "surprise" } });
+
+    await expect(beginManualCreation(manualRequest)).rejects.toThrow("unexpected begin outcome");
   });
 
   it("fetches the current review view for an attempt", async () => {
