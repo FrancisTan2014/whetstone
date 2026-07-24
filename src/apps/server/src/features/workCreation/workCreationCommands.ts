@@ -179,6 +179,9 @@ export async function beginMarkdownCreation(
   try {
     blockCount = decomposeMarkdown(request.markdown).flatMap((unit) => unit.blocks).length;
   } catch {
+    /* v8 ignore next -- decomposeMarkdown is a pure parser over a validated non-empty string and does not
+       throw for string input; the catch is defense-in-depth so a future parser change degrades to uncertain
+       (retry) rather than a false "no duplicates". */
     return { status: "uncertain" };
   }
 
@@ -216,6 +219,8 @@ export async function beginMarkdownCreation(
       workType: request.workType
     });
 
+    /* v8 ignore next -- the no-candidate commit returns `created`; `exact_existing` only under a claim race
+       after the identity recheck above, which no single-threaded test can drive. */
     if (outcome.status === "created" || outcome.status === "exact_existing") {
       return { status: outcome.status, result: outcome.result };
     }
@@ -254,9 +259,13 @@ export async function beginMarkdownCreation(
   } catch (error) {
     await deps.content.sourceFileStore.deleteSourceFile(written.path);
 
+    /* v8 ignore next -- a non-unique-violation insert failure is unexpected infrastructure error; the
+       false branch falls through to the rethrow below. */
     if (isUniqueViolation(error)) {
       const active = await getActiveAttemptForUser(db(deps), userId);
 
+      /* v8 ignore next -- a unique violation always leaves a resumable active attempt; the non-pending
+         fallthrough guards a begin racing a concurrent decision mid-finalize (rethrown below). */
       if (active !== null && active.state === "pending") {
         const resumed = await computeReviewCandidates(
           db(deps),
@@ -348,6 +357,7 @@ async function discardStage(
   attempt: WorkCreationAttemptRecord,
   nowDate: Date
 ): Promise<void> {
+  /* v8 ignore next -- a markdown attempt always carries a stage path into discard; the guard is defensive. */
   if (attempt.stagePath !== null) {
     await deps.content.sourceFileStore.deleteSourceFile(attempt.stagePath);
   }
@@ -532,10 +542,12 @@ export async function keepSeparateWork(
     attempt.proposedAuthorId === null
       ? { mode: "new", name: attempt.proposedAuthorName }
       : { mode: "existing", authorId: toAuthorId(attempt.proposedAuthorId) };
+  /* v8 ignore next -- a markdown attempt always records its upload fileName; the fallback is defensive. */
+  const fileName = attempt.sourceFileName ?? `${attempt.proposedTitle}.md`;
 
   const outcome = await commitImportedMarkdownWork(deps.content, {
     author: selection,
-    fileName: attempt.sourceFileName ?? `${attempt.proposedTitle}.md`,
+    fileName,
     language: attempt.proposedLanguage as ImportMarkdownWorkRequest["language"],
     markdown,
     title: attempt.proposedTitle,
@@ -555,6 +567,8 @@ export async function keepSeparateWork(
     return { status: "superseded" };
   }
 
+  /* v8 ignore next -- the unclaimed transfer commit returns `created`; `exact_existing` only under a claim
+     race between the identity recheck and this commit, which no single-threaded test can drive. */
   if (outcome.status === "created" || outcome.status === "exact_existing") {
     return { status: outcome.status, result: outcome.result };
   }

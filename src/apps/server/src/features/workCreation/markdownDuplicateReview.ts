@@ -126,7 +126,9 @@ export async function computeReviewCandidates(
     },
     language: candidate.language,
     matchTier: candidate.matchTier,
-    // Every candidate is a real non-authored Work row, so its origin is always present; fall back defensively.
+    // Every candidate is a real non-authored Work row, so its origin is always present here; the fallback is
+    // defense-in-depth for a candidate deleted between the #724 scoring query and this origin read.
+    /* v8 ignore next -- the `?? "imported"` fallback is unreachable while the candidate row exists. */
     origin: originByEntryId.get(candidate.entryId) ?? "imported",
     title: candidate.title,
     workType: candidate.workType
