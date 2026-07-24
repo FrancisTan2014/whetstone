@@ -440,8 +440,10 @@ can navigate them from another package.
   sha256-idempotent, persisting via `blockWriter.ts`. Uploaded-source identity is a shared boundary
   (`sourceClaims.ts`, `claimUploadedSource` + the `uploaded_source_claims` table, sha256 PK →
   owning Work): both the EPUB front door and the imported-Markdown front door
-  (`POST /api/works/markdown` → `createImportedMarkdownWork`, which mints the Work + source + blocks +
-  claim in one transaction) resolve through it, so re-uploading identical bytes reopens the owning Work
+  (`POST /api/works/markdown` → `beginMarkdownCreation`, the #747 duplicate-review boundary that
+  reopens on exact bytes, commits the Work + source + blocks + claim in one transaction when no credible
+  candidate exists, and otherwise parks a review attempt — see the workCreation entry below) resolve
+  through it, so re-uploading identical bytes reopens the owning Work
   (200) instead of duplicating it; a concurrent loser rolls back and reopens the winner. The per-work
   content endpoint (`POST /api/works/:id/content`) and the PDF path are edit-existing, not mint, and do
   not claim (PDF dedup is #702's). Figure blocks have their transient image src
@@ -813,8 +815,8 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   five credible existing-Work duplicate candidates for proposed manual/imported metadata — bounded
   complete pool by title-key length, authored Works excluded, scored by the pure
   `domain/workDuplicateCandidates.ts` (pinned Damerau-Levenshtein), factual evidence only, writes
-  nothing (#724). **Durable creation-review attempt foundation (#725, foundation only — no live
-  creation route uses it yet; first consumer #747):** `features/workCreation/workCreationAttemptStore.ts`
+  nothing (#724). **Durable creation-review attempt foundation (#725; now driven by #747's Markdown
+  duplicate-review boundary — see below):** `features/workCreation/workCreationAttemptStore.ts`
   persists one owner-scoped `work_creation_attempts` row holding the proposed title/author/language/type,
   the source kind/hash, the reviewed duplicate-candidate evidence snapshot + its fingerprint (so changed
   evidence — not only a new candidate id — forces a fresh review), and an ordinary markdown/EPUB upload
@@ -830,7 +832,28 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `workCreationStageDir`, deliberately NOT a backed-up data root (`resolveDataRoots`). The pure state
   machine + evidence fingerprint are `@whetstone/domain` `workCreationAttempt.ts`; DTOs (attempt view
   exposes stage presence only, never a filesystem path) in `@whetstone/contracts`
-  `workCreationContracts.ts`. It never absorbs `pdf_import_attempts` — a `pdf` attempt references that
+    `workCreationContracts.ts`. **Imported-Markdown duplicate-review boundary (#747, first consumer of
+    #725/#724):** `features/workCreation/` turns the Markdown front door into a server-owned review gate.
+    `workCreationCommands.ts` is the orchestration core — `beginMarkdownCreation` stages the upload on the
+    #725 attempt and decides the outcome (exact uploaded bytes reopen the owning Work as `exact_existing`
+    with no attempt; new bytes with no credible candidate commit atomically as `created`; new bytes with
+    credible #724 candidates persist ONE attempt (staged bytes + snapshot) as `needs_review`; empty content
+    is `empty_content`; candidate-query/storage uncertainty is `uncertain`, never a fake "no candidates"),
+    and `openExistingWork`/`keepSeparateWork`/`cancelWorkCreation` are the revision-fenced, owner-scoped
+    decisions (Open existing rechecks the chosen Work then completes, changing no Work; Keep separate
+    rechecks exact identity + candidates — a changed snapshot re-reviews — then commits the
+    Work/source/claim/content and transfers the stage exactly once; Back cancels the attempt and cleans the
+    stage). `markdownDuplicateReview.ts` is the pure-ish review layer (author resolution,
+    `computeReviewCandidates` over #724, `buildReviewDto`); `getWorkCreationReview` reads a parked attempt
+    into that DTO; `workCreationRoutes.ts` exposes `POST /api/works/markdown` (begin), the review GET, and
+    the decision/cancel routes. The web review UI is `features/library/WorkCreationReviewPanel.tsx`
+    (presentational "Possible duplicate" panel — proposal + factual candidate evidence + Open
+    existing/Keep separate/Back), wired through `libraryApi.ts` (`beginMarkdownCreation`/
+    `fetchWorkCreationReview`/`openExistingWork`/`keepSeparateWork`/`cancelWorkCreation`) into
+    `AdminLibraryPage.tsx`, which holds only the opaque attempt id + revision and preserves the
+    draft/filename across review, Back, and retry. The begin/review/decision vocab +
+    `parseWorkCreationReviewDto` live in `@whetstone/contracts` `workCreationReviewContracts.ts`. It
+    never absorbs `pdf_import_attempts` — a `pdf` attempt references that
   execution attempt, which keeps sole ownership of the PDF stages. Creating a work auto-opens
   its Manage-content sheet (add content right after create); an EPUB import does not. Authored-document
   creation moved out of Library to the Write home (#679): the minimal title/type/language sheet now lives
