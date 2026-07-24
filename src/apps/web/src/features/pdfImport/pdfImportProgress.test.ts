@@ -6,9 +6,11 @@ import type {
 import { describe, expect, it } from "vitest";
 
 import {
+  addingEnglishTextLabel,
   describePdfImport,
   noReadableContentMessage,
-  ocrSupportUnavailableMessage
+  ocrLanguageNotEnabledMessage,
+  ocrValidationFailedMessage
 } from "./pdfImportProgress";
 
 const sha = "a".repeat(64);
@@ -23,6 +25,7 @@ function status(overrides: Partial<PdfImportStatusDto> = {}): PdfImportStatusDto
     createdAt: "2026-01-01T00:00:00.000Z",
     failure: null,
     heartbeatAt: null,
+    phase: null,
     sourceHash: sha,
     stage: { bound: true },
     state: "running",
@@ -47,24 +50,53 @@ describe("describePdfImport", () => {
     expect(progress).toEqual({ kind: "published", terminal: true, workEntryId: "work-9" });
   });
 
-  it("refuses a single OCR-needing page with the sequenced-limitation copy", () => {
-    const progress = describePdfImport(view({ pagesNeedingOcr: 1, status: "ocr_required" }));
+  it("refuses a single language-not-enabled page with the sequenced-limitation copy", () => {
+    const progress = describePdfImport(
+      view({ pagesNeedingOcr: 1, status: "ocr_language_not_enabled" })
+    );
 
-    expect(progress.kind).toBe("ocr_required");
+    expect(progress.kind).toBe("ocr_language_not_enabled");
     expect(progress.terminal).toBe(true);
-    if (progress.kind === "ocr_required") {
-      expect(progress.message).toContain(ocrSupportUnavailableMessage);
+    if (progress.kind === "ocr_language_not_enabled") {
+      expect(progress.message).toContain(ocrLanguageNotEnabledMessage);
       expect(progress.message).toContain("1 page needs");
     }
   });
 
-  it("pluralizes when several pages need OCR", () => {
-    const progress = describePdfImport(view({ pagesNeedingOcr: 3, status: "ocr_required" }));
+  it("pluralizes when several pages need a not-yet-enabled language", () => {
+    const progress = describePdfImport(
+      view({ pagesNeedingOcr: 3, status: "ocr_language_not_enabled" })
+    );
 
-    if (progress.kind === "ocr_required") {
+    if (progress.kind === "ocr_language_not_enabled") {
       expect(progress.message).toContain("3 pages need");
     } else {
-      expect.unreachable("expected ocr_required");
+      expect.unreachable("expected ocr_language_not_enabled");
+    }
+  });
+
+  it("refuses a single validation-failed page with the recognition-failed copy", () => {
+    const progress = describePdfImport(
+      view({ pagesNeedingOcr: 1, status: "ocr_validation_failed" })
+    );
+
+    expect(progress.kind).toBe("ocr_validation_failed");
+    expect(progress.terminal).toBe(true);
+    if (progress.kind === "ocr_validation_failed") {
+      expect(progress.message).toContain(ocrValidationFailedMessage);
+      expect(progress.message).toContain("1 page");
+    }
+  });
+
+  it("pluralizes when several pages fail OCR validation", () => {
+    const progress = describePdfImport(
+      view({ pagesNeedingOcr: 4, status: "ocr_validation_failed" })
+    );
+
+    if (progress.kind === "ocr_validation_failed") {
+      expect(progress.message).toContain("4 pages");
+    } else {
+      expect.unreachable("expected ocr_validation_failed");
     }
   });
 
@@ -166,6 +198,19 @@ describe("describePdfImport", () => {
     expect(progress).toEqual({
       kind: "in_progress",
       label: "Finishing up…",
+      needsResume: false,
+      terminal: false
+    });
+  });
+
+  it("labels the durable OCR phase while English text is recovered", () => {
+    const progress = describePdfImport(
+      view({ status: "pending" }, { phase: "ocr", state: "running", totalPages: null })
+    );
+
+    expect(progress).toEqual({
+      kind: "in_progress",
+      label: addingEnglishTextLabel,
       needsResume: false,
       terminal: false
     });

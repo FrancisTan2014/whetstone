@@ -342,13 +342,19 @@ type ConversionSource =
 // Decide which staged file structured conversion reads, running the durable OCR phase when required:
 //   - an attempt that already adopted an OCR stage (`ocr_fingerprint` set) resumes from the derived
 //     `ocr.pdf` — the recovery boundary is crossed, so the pass never re-runs;
-//   - otherwise classify routing from the source's per-page native-text flags and the Work language:
-//     a born-digital document, or a text-less one whose language pack is not yet enabled, converts the
-//     ORIGINAL untouched (publication reports the text-less pages for the not-yet-enabled case);
+//   - an attempt with no adopted stage but already-committed ranges was routed `native` on its first run
+//     (a text-less document adopts an OCR stage BEFORE any range commits, so a committed range with no
+//     fingerprint can only be born-digital): resume converting the ORIGINAL without re-probing. Recovery
+//     recomputes from the fingerprint and the committed ranges — never a re-probe — as the store contract
+//     requires;
+//   - otherwise (fresh run, or a resumed run that adopted nothing and committed nothing) classify routing
+//     from the source's per-page native-text flags and the Work language: a born-digital document, or a
+//     text-less one whose language pack is not yet enabled, converts the ORIGINAL untouched (publication
+//     reports the text-less pages for the not-yet-enabled case);
 //   - a text-less document in an enabled language runs one bounded OCR pass, then — only after the
 //     adapter validated geometry/rotation/native-text — transfers the output into the attempt stage as
 //     `ocr.pdf` and atomically adopts it (recording the fingerprint) before any range commits, so a
-//     committed range always implies an adopted OCR stage.
+//     committed range always implies a settled routing decision (adopted OCR, or native).
 async function resolveConversionSource(
   deps: PdfImportRunnerDependencies,
   claimed: PdfImportAttemptRecord,
@@ -360,6 +366,12 @@ async function resolveConversionSource(
 ): Promise<ConversionSource> {
   if (claimed.ocrFingerprint !== null) {
     return { status: "ok", handle: deps.stageStore.openDerivedStage(stagePath) };
+  }
+
+  // No adopted OCR stage, but ranges already committed → routed `native` on the first run; resume the
+  // ORIGINAL without re-probing (recovery never re-probes once real work is committed).
+  if (claimed.completedPages > 0) {
+    return { status: "ok", handle };
   }
 
   // The Work language drives the OCR decision (whether to run, and in which Tesseract language). It is
@@ -412,11 +424,17 @@ async function resolveConversionSource(
   const outputPath = outcome.result.output.path;
   const bytes = new Uint8Array(await readFile(outputPath));
   const derived = await deps.stageStore.writeDerivedStage(stagePath, bytes);
+  /* v8 ignore start -- best-effort transient cleanup: the OCR bytes are already durable in the derived
+     stage by this point, so a removal failure is surfaced (never swallowed) but is not a product failure.
+     Forcing `rm` to throw between the preceding `readFile` and here — without also breaking that read —
+     cannot be driven deterministically across platforms, so this logging branch is exercised only in the
+     field. The identical `logCleanupFailure` callback is covered on the stage-cleanup path. */
   try {
     await rm(outputPath, { force: true });
   } catch (cause) {
     deps.logCleanupFailure({ attemptId: claimed.id, stagePath: outputPath, reason: describeError(cause) });
   }
+  /* v8 ignore stop */
 
   // Atomic adoption: record the fingerprint (crossing the recovery boundary) and advance the phase to
   // `structured`. Fenced here means a newer run superseded this one after the pass; stop without failing.
