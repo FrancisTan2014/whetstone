@@ -17,7 +17,8 @@ import {
   markFailed,
   markPublicationImagesUnsupported,
   markPublicationNoContent,
-  markPublicationOcrRequired,
+  markPublicationOcrLanguageNotEnabled,
+  markPublicationOcrValidationFailed,
   setProbeResult
 } from "./pdfImportStore.js";
 
@@ -71,6 +72,7 @@ describe("getPdfImportStatus", () => {
     expect(status).toMatchObject({
       attemptId: "a1",
       state: "queued",
+      phase: null,
       completedPages: 0,
       completedRanges: 0,
       totalPages: null,
@@ -110,6 +112,7 @@ describe("getPdfImportStatus", () => {
     const status = await getPdfImportStatus(db, DEFAULT_USER_ID, "a1");
     expect(status).toMatchObject({
       state: "running",
+      phase: "preflight",
       totalPages: 4,
       totalRanges: 2,
       completedPages: 2,
@@ -181,7 +184,7 @@ describe("buildPdfImportPublicationOutcome", () => {
     expect(await buildPdfImportPublicationOutcome(db, "a1")).toEqual({ status: "none" });
   });
 
-  it("reports `ocr_required` with the page count once an OCR refusal is recorded", async () => {
+  it("reports `ocr_validation_failed` with the page count once an English OCR refusal is recorded", async () => {
     await seedQueued("a1");
     await insertPublicationIntent(db, {
       attemptId: "a1",
@@ -190,11 +193,28 @@ describe("buildPdfImportPublicationOutcome", () => {
       enteredLanguage: null,
       fileName: "scan.pdf"
     });
-    await markPublicationOcrRequired(db, "a1", 3, new Date());
+    await markPublicationOcrValidationFailed(db, "a1", 3, new Date());
 
     expect(await buildPdfImportPublicationOutcome(db, "a1")).toEqual({
       pagesNeedingOcr: 3,
-      status: "ocr_required"
+      status: "ocr_validation_failed"
+    });
+  });
+
+  it("reports `ocr_language_not_enabled` with the page count once a not-yet-enabled refusal is recorded", async () => {
+    await seedQueued("a1");
+    await insertPublicationIntent(db, {
+      attemptId: "a1",
+      enteredTitle: null,
+      enteredAuthor: null,
+      enteredLanguage: "zh-CN",
+      fileName: "scan.pdf"
+    });
+    await markPublicationOcrLanguageNotEnabled(db, "a1", 3, new Date());
+
+    expect(await buildPdfImportPublicationOutcome(db, "a1")).toEqual({
+      pagesNeedingOcr: 3,
+      status: "ocr_language_not_enabled"
     });
   });
 

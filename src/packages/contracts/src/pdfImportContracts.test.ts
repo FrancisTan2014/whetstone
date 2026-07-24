@@ -7,6 +7,7 @@ import {
   parsePdfImportViewDto,
   pdfImportAttemptStateSchema,
   pdfImportFailureDtoSchema,
+  pdfImportPhaseSchema,
   pdfImportPublicationOutcomeDtoSchema,
   pdfImportStageDtoSchema,
   pdfImportStartMetadataSchema,
@@ -23,6 +24,7 @@ const baseStatus: PdfImportStatusDto = {
   createdAt: "2026-01-01T00:00:00.000Z",
   failure: null,
   heartbeatAt: null,
+  phase: null,
   sourceHash: hexHash,
   stage: { bound: true },
   state: "queued",
@@ -79,6 +81,14 @@ describe("parsePdfImportStatusDto", () => {
 
   it("rejects a non-hex source hash", () => {
     expect(() => parsePdfImportStatusDto({ ...baseStatus, sourceHash: "not-hex" })).toThrow();
+  });
+
+  it("accepts a running attempt's durable phase and rejects an unknown one", () => {
+    expect(parsePdfImportStatusDto({ ...baseStatus, state: "running", phase: "ocr" })).toMatchObject({
+      phase: "ocr"
+    });
+    expect(pdfImportPhaseSchema.parse("structured")).toBe("structured");
+    expect(pdfImportPhaseSchema.safeParse("nope").success).toBe(false);
   });
 });
 
@@ -175,8 +185,17 @@ describe("pdfImportPublicationOutcomeDtoSchema", () => {
       pdfImportPublicationOutcomeDtoSchema.parse({ status: "published", workEntryId: "work-1" })
     ).toEqual({ status: "published", workEntryId: "work-1" });
     expect(
-      pdfImportPublicationOutcomeDtoSchema.parse({ pagesNeedingOcr: 3, status: "ocr_required" })
-    ).toEqual({ pagesNeedingOcr: 3, status: "ocr_required" });
+      pdfImportPublicationOutcomeDtoSchema.parse({
+        pagesNeedingOcr: 3,
+        status: "ocr_language_not_enabled"
+      })
+    ).toEqual({ pagesNeedingOcr: 3, status: "ocr_language_not_enabled" });
+    expect(
+      pdfImportPublicationOutcomeDtoSchema.parse({
+        pagesNeedingOcr: 3,
+        status: "ocr_validation_failed"
+      })
+    ).toEqual({ pagesNeedingOcr: 3, status: "ocr_validation_failed" });
     expect(pdfImportPublicationOutcomeDtoSchema.parse({ status: "no_content" })).toEqual({
       status: "no_content"
     });
@@ -190,8 +209,10 @@ describe("pdfImportPublicationOutcomeDtoSchema", () => {
 
   it("rejects a non-positive OCR page count", () => {
     expect(
-      pdfImportPublicationOutcomeDtoSchema.safeParse({ pagesNeedingOcr: 0, status: "ocr_required" })
-        .success
+      pdfImportPublicationOutcomeDtoSchema.safeParse({
+        pagesNeedingOcr: 0,
+        status: "ocr_validation_failed"
+      }).success
     ).toBe(false);
   });
 
