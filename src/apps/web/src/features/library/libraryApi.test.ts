@@ -1,14 +1,17 @@
-import { toAuthorId } from "@whetstone/domain";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  beginMarkdownCreation,
+  cancelWorkCreation,
   createAuthor,
   createWork,
   deleteWork,
+  fetchWorkCreationReview,
   fetchWorks,
   fetchWorksWithReadingPosition,
-  importMarkdownWork,
   ingestEpub,
+  keepSeparateWork,
+  openExistingWork,
   searchAuthors
 } from "./libraryApi";
 
@@ -186,7 +189,47 @@ describe("libraryApi", () => {
     await expect(ingestEpub(file)).rejects.toThrow("failed with status 500");
   });
 
-  it("mints a Work from an uploaded .md and reports it created on 201", async () => {
+  const markdownRequest = {
+    author: { mode: "new" as const, name: "George Orwell" },
+    fileName: "politics.md",
+    language: "en" as const,
+    markdown: "# Politics",
+    title: "Politics and the English Language",
+    workType: "book" as const
+  };
+
+  const reviewDto = {
+    attemptId: "attempt-1",
+    candidateFingerprint: "fp-1",
+    candidates: [
+      {
+        author: { id: "author-2", name: "George Orwell" },
+        entryId: "work-2",
+        evidence: {
+          editionMarkerDifferences: ["2nd"],
+          languageDiffers: false,
+          sameAuthor: true,
+          titleSimilarity: 0.91,
+          workTypeDiffers: false
+        },
+        language: "en" as const,
+        matchTier: "same_author_fuzzy" as const,
+        origin: "imported" as const,
+        title: "Politics and the English Language",
+        workType: "book" as const
+      }
+    ],
+    proposed: {
+      authorName: "George Orwell",
+      language: "en" as const,
+      title: "Politics and the English Language",
+      workType: "book" as const
+    },
+    revision: 0,
+    sourceFileName: "politics.md"
+  };
+
+  it("begins a Markdown Work and reports it created (no credible candidate)", async () => {
     const result = {
       content: { readingUnits: [], workEntryId: "work-1" },
       work: {
@@ -198,18 +241,12 @@ describe("libraryApi", () => {
         workType: "book"
       }
     };
-    const fetchMock = stubFetch({ ok: true, status: 201, body: result });
+    const fetchMock = stubFetch({ ok: true, status: 201, body: { result, status: "created" } });
 
-    await expect(
-      importMarkdownWork({
-        author: { mode: "new", name: "George Orwell" },
-        fileName: "politics.md",
-        language: "en",
-        markdown: "# Politics",
-        title: "Politics and the English Language",
-        workType: "book"
-      })
-    ).resolves.toEqual({ result, status: "created" });
+    await expect(beginMarkdownCreation(markdownRequest)).resolves.toEqual({
+      result,
+      status: "created"
+    });
 
     const call = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(call[0]).toBe("/api/works/markdown");
@@ -220,53 +257,144 @@ describe("libraryApi", () => {
     });
   });
 
-  it("reports exact_existing when identical bytes reopen the owning Work (200)", async () => {
+  it("reports exact_existing when identical bytes reopen the owning Work", async () => {
     const result = {
       content: { readingUnits: [], workEntryId: "work-1" },
       work: { entryId: "work-1" }
     };
-    stubFetch({ ok: true, status: 200, body: result });
+    stubFetch({ ok: true, status: 200, body: { result, status: "exact_existing" } });
 
-    await expect(
-      importMarkdownWork({
-        author: { mode: "new", name: "George Orwell" },
-        fileName: "politics.md",
-        language: "en",
-        markdown: "# Politics",
-        title: "Politics and the English Language",
-        workType: "book"
-      })
-    ).resolves.toEqual({ result, status: "exact_existing" });
+    await expect(beginMarkdownCreation(markdownRequest)).resolves.toEqual({
+      result,
+      status: "exact_existing"
+    });
   });
 
-  it("reports empty_content without throwing when the server returns 422", async () => {
-    stubFetch({ ok: false, status: 422, body: { error: "empty_content" } });
+  it("parses and returns the review when a credible candidate needs review", async () => {
+    stubFetch({ ok: true, status: 200, body: { review: reviewDto, status: "needs_review" } });
 
-    await expect(
-      importMarkdownWork({
-        author: { mode: "new", name: "George Orwell" },
-        fileName: "images.md",
-        language: "en",
-        markdown: "![only image](x.png)",
-        title: "Images",
-        workType: "book"
-      })
-    ).resolves.toEqual({ status: "empty_content" });
+    await expect(beginMarkdownCreation(markdownRequest)).resolves.toEqual({
+      review: reviewDto,
+      status: "needs_review"
+    });
   });
 
-  it("throws on any other non-ok status", async () => {
-    stubFetch({ ok: false, status: 400, body: { error: "author_not_found" } });
+  it("surfaces empty_content, author_not_found, and uncertain begin outcomes as data", async () => {
+    for (const status of ["empty_content", "author_not_found", "uncertain"] as const) {
+      stubFetch({ ok: status !== "uncertain", body: { status } });
+      await expect(beginMarkdownCreation(markdownRequest)).resolves.toEqual({ status });
+    }
+  });
+
+  it("throws when begin returns an unrecognized outcome", async () => {
+    stubFetch({ ok: true, body: { status: "surprise" } });
+
+    await expect(beginMarkdownCreation(markdownRequest)).rejects.toThrow(
+      "unexpected begin outcome"
+    );
+  });
+
+  it("fetches the current review view for an attempt", async () => {
+    const fetchMock = stubFetch({ ok: true, body: reviewDto });
+
+    await expect(fetchWorkCreationReview("attempt-1")).resolves.toEqual({
+      review: reviewDto,
+      status: "ok"
+    });
+    expect(fetchMock).toHaveBeenCalledWith("/api/work-creation-attempts/attempt-1");
+  });
+
+  it("surfaces expired, uncertain, and not_found review lookups as named states", async () => {
+    for (const status of ["expired", "uncertain", "not_found"] as const) {
+      stubFetch({ ok: false, body: { status } });
+      await expect(fetchWorkCreationReview("attempt-1")).resolves.toEqual({ status });
+    }
+  });
+
+  it("throws when a failed review lookup carries no recognized state", async () => {
+    stubFetch({ ok: false, status: 500, body: { error: "boom" } });
+
+    await expect(fetchWorkCreationReview("attempt-1")).rejects.toThrow("failed with status 500");
+  });
+
+  it("posts an Open existing decision and returns the reopened Work", async () => {
+    const result = {
+      content: { readingUnits: [], workEntryId: "work-2" },
+      work: { entryId: "work-2" }
+    };
+    const fetchMock = stubFetch({ ok: true, body: { result, status: "opened" } });
 
     await expect(
-      importMarkdownWork({
-        author: { authorId: toAuthorId("author-x"), mode: "existing" },
-        fileName: "politics.md",
-        language: "en",
-        markdown: "# Politics",
-        title: "Politics",
-        workType: "book"
-      })
-    ).rejects.toThrow("failed with status 400");
+      openExistingWork("attempt-1", { entryId: "work-2", revision: 0 })
+    ).resolves.toEqual({ result, status: "opened" });
+
+    const call = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(call[0]).toBe("/api/work-creation-attempts/attempt-1/open-existing");
+    expect(JSON.parse(call[1].body as string)).toEqual({ entryId: "work-2", revision: 0 });
+  });
+
+  it("posts a Keep separate decision and returns the created Work", async () => {
+    const result = {
+      content: { readingUnits: [], workEntryId: "work-3" },
+      work: { entryId: "work-3" }
+    };
+    const fetchMock = stubFetch({ ok: true, status: 201, body: { result, status: "created" } });
+
+    await expect(keepSeparateWork("attempt-1", { revision: 1 })).resolves.toEqual({
+      result,
+      status: "created"
+    });
+
+    const call = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(call[0]).toBe("/api/work-creation-attempts/attempt-1/keep-separate");
+    expect(JSON.parse(call[1].body as string)).toEqual({ revision: 1 });
+  });
+
+  it("returns a refreshed review when a decision surfaces changed evidence", async () => {
+    stubFetch({ ok: true, body: { review: reviewDto, status: "needs_review" } });
+
+    await expect(keepSeparateWork("attempt-1", { revision: 0 })).resolves.toEqual({
+      review: reviewDto,
+      status: "needs_review"
+    });
+  });
+
+  it("surfaces each non-committing decision state as data", async () => {
+    for (const status of [
+      "existing_gone",
+      "expired",
+      "superseded",
+      "uncertain",
+      "not_found"
+    ] as const) {
+      stubFetch({ ok: false, body: { status } });
+      await expect(
+        openExistingWork("attempt-1", { entryId: "work-2", revision: 0 })
+      ).resolves.toEqual({ status });
+    }
+  });
+
+  it("throws when a decision returns an unrecognized outcome", async () => {
+    stubFetch({ ok: true, body: { status: "surprise" } });
+
+    await expect(keepSeparateWork("attempt-1", { revision: 0 })).rejects.toThrow(
+      "unexpected decision outcome"
+    );
+  });
+
+  it("cancels an attempt and returns whether it was cancelled", async () => {
+    const fetchMock = stubFetch({ ok: true, body: { cancelled: true } });
+
+    await expect(cancelWorkCreation("attempt-1")).resolves.toEqual({ cancelled: true });
+    const call = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(call[0]).toBe("/api/work-creation-attempts/attempt-1/cancel");
+    expect(call[1].method).toBe("POST");
+  });
+
+  it("throws when cancelling an attempt fails", async () => {
+    stubFetch({ ok: false, status: 500, body: undefined });
+
+    await expect(cancelWorkCreation("attempt-1")).rejects.toThrow("failed with status 500");
   });
 
   it("sends a DELETE to the work endpoint and resolves on success", async () => {

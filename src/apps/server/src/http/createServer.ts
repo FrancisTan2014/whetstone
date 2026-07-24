@@ -17,6 +17,8 @@ import { registerLibraryRoutes } from "../features/library/libraryRoutes.js";
 import type { LibraryRouteDependencies } from "../features/library/libraryRoutes.js";
 import { registerContentRoutes } from "../features/content/contentRoutes.js";
 import type { ContentDependencies } from "../features/content/contentCommands.js";
+import { registerWorkCreationRoutes } from "../features/workCreation/workCreationRoutes.js";
+import type { WorkCreationDependencies } from "../features/workCreation/workCreationCommands.js";
 import { registerNoteRoutes } from "../features/notes/noteRoutes.js";
 import type { NotesDependencies } from "../features/notes/noteCommands.js";
 import { registerReadingPositionRoutes } from "../features/readingPosition/readingPositionRoutes.js";
@@ -74,6 +76,9 @@ export type CreateServerOptions = Readonly<{
   recitation?: RecitationRouteDependencies;
   search?: SearchDependencies;
   today?: TodayRouteDependencies;
+  // The server-owned Markdown creation-review boundary (#747). When set, imported-Markdown Work creation
+  // routes through a durable review attempt instead of the old one-step content route.
+  workCreation?: WorkCreationDependencies;
   // When set, the built web client in `web.dir` is served from this same origin (single-origin
   // deploy, #184). Left unset in dev/tests, where Vite serves the client separately.
   web?: { dir: string } | undefined;
@@ -120,6 +125,10 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
 
   if (options.content !== undefined) {
     registerContentRoutes(server, options.content);
+  }
+
+  if (options.workCreation !== undefined) {
+    registerWorkCreationRoutes(server, options.workCreation);
   }
 
   if (options.pdfImport !== undefined) {

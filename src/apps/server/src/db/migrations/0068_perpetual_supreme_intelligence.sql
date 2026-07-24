@@ -1,0 +1,1 @@
+ALTER TABLE "work_creation_attempts" ADD COLUMN "source_file_name" text;

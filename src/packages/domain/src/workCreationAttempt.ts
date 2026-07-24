@@ -39,11 +39,24 @@ export function isTerminalWorkCreationAttemptState(state: WorkCreationAttemptSta
   return terminalStates.has(state);
 }
 
-// The non-terminal states (`pending`, `finalizing`) are the exact set an owner may cancel and the TTL
-// sweep may expire. The store consults this instead of duplicating the state set, so a new state can
-// never be silently treated as terminal.
+// The non-terminal states (`pending`, `finalizing`) are the live set the partial-unique index guards and
+// the TTL sweep may expire (a `finalizing` row whose committer died must still be reclaimable). The store
+// consults this instead of duplicating the state set, so a new state can never be silently treated as
+// terminal. Cancellation is stricter — see `canCancelWorkCreationAttempt`.
 export function isActiveWorkCreationAttemptState(state: WorkCreationAttemptState): boolean {
   return !terminalStates.has(state);
+}
+
+// Back / owner cancel may abandon ONLY a `pending` attempt: once a serialized decision has moved the
+// attempt `pending` -> `finalizing` it holds a live committer, and a concurrent or stale Back must not be
+// allowed to flip that row to `cancelled` or delete the stage the in-flight decision is transferring —
+// that would either lose the committing bytes or tell the client the review is invalid after it may have
+// already committed. So cancel is fenced strictly tighter than "active": a `finalizing` row is left to its
+// decision, and a terminal row is already done. (Coincides with `canBeginFinalize` today because the slot
+// is claimed exactly on leaving `pending`, but it is a distinct product rule — what an owner may abandon —
+// so it stays its own predicate.)
+export function canCancelWorkCreationAttempt(state: WorkCreationAttemptState): boolean {
+  return state === "pending";
 }
 
 // A serialized decision may BEGIN only from `pending`: the compare-and-set that moves `pending` ->

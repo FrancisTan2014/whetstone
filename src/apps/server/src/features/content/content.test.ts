@@ -171,33 +171,6 @@ function ingestEpub(bytes: Buffer): ReturnType<typeof context.server.inject> {
   });
 }
 
-type ImportMarkdownPayload = Readonly<{
-  author?: unknown;
-  fileName?: string;
-  language?: string;
-  markdown?: string;
-  title?: string;
-  workType?: string;
-}>;
-
-function importMarkdownWork(
-  overrides: ImportMarkdownPayload = {}
-): ReturnType<typeof context.server.inject> {
-  return context.server.inject({
-    method: "POST",
-    payload: {
-      author: { mode: "new", name: "George Orwell" },
-      fileName: "politics.md",
-      language: "en",
-      markdown: "# Chapter One\n\nFirst paragraph.",
-      title: "Politics and the English Language",
-      workType: "essay",
-      ...overrides
-    },
-    url: "/api/works/markdown"
-  });
-}
-
 async function createAuthorNamed(name: string): Promise<string> {
   const response = await context.server.inject({
     method: "POST",
@@ -1547,111 +1520,9 @@ describe("EPUB ingestion routes", () => {
 });
 
 describe("imported Markdown front door (#706)", () => {
-  const markdown = "# Chapter One\n\nFirst paragraph.";
-
-  it("mints an imported Work, retains the uploaded .md, and records its source claim", async () => {
-    const response = await importMarkdownWork({ markdown });
-
-    expect(response.statusCode).toBe(201);
-    const body = response.json() as IngestEpubResultDto;
-    expect(body.work).toMatchObject({
-      language: "en",
-      origin: "imported",
-      title: "Politics and the English Language",
-      workType: "essay"
-    });
-    expect(body.content.workEntryId).toBe(body.work.entryId);
-    expect(body.content.readingUnits[0]?.blocks.map((block) => block.blockType)).toEqual([
-      "heading",
-      "paragraph"
-    ]);
-
-    const createdAuthors = await context.db.select().from(authors);
-    expect(createdAuthors.map((author) => author.name)).toEqual(["George Orwell"]);
-    expect(body.work.authorId).toBe(createdAuthors[0]?.id);
-
-    const sources = await context.db
-      .select()
-      .from(workSources)
-      .where(eq(workSources.workEntryId, body.work.entryId));
-    expect(sources[0]).toMatchObject({
-      fileName: "politics.md",
-      kind: "upload",
-      sha256: hashMarkdown(markdown),
-      sourceText: null
-    });
-
-    const claims = await context.db.select().from(uploadedSourceClaims);
-    expect(claims).toEqual([{ sha256: hashMarkdown(markdown), workEntryId: body.work.entryId }]);
-  });
-
-  it("reopens the owning Work when identical bytes are re-uploaded, creating no duplicate", async () => {
-    const first = await importMarkdownWork({ markdown });
-    const firstBody = first.json() as IngestEpubResultDto;
-
-    const second = await importMarkdownWork({ markdown });
-    expect(second.statusCode).toBe(200);
-    const secondBody = second.json() as IngestEpubResultDto;
-
-    expect(secondBody.work.entryId).toBe(firstBody.work.entryId);
-    expect(secondBody.content.readingUnits[0]?.blocks).toHaveLength(2);
-    expect(await context.db.select().from(uploadedSourceClaims)).toHaveLength(1);
-    expect(await context.db.select().from(workSources)).toHaveLength(1);
-    expect(await context.db.select().from(entries).where(eq(entries.type, "work"))).toHaveLength(1);
-    expect(await context.db.select().from(authors)).toHaveLength(1);
-  });
-
-  it("refuses image-only Markdown with 422 and mints no Work, source, or claim", async () => {
-    const response = await importMarkdownWork({ markdown: "![only image](x.png)" });
-
-    expect(response.statusCode).toBe(422);
-    expect(response.json()).toEqual({ error: "empty_content" });
-    expect(await context.db.select().from(workSources)).toHaveLength(0);
-    expect(await context.db.select().from(uploadedSourceClaims)).toHaveLength(0);
-    expect(await context.db.select().from(entries).where(eq(entries.type, "work"))).toHaveLength(0);
-    // No source file is ever staged for unsupported content.
-    expect(await readdir(context.sourcesDir)).toEqual([]);
-  });
-
-  it("reuses an existing author selected by id instead of creating a duplicate", async () => {
-    const existingAuthorId = await createAuthorNamed("George Orwell");
-
-    const response = await importMarkdownWork({
-      author: { authorId: existingAuthorId, mode: "existing" },
-      markdown
-    });
-
-    expect(response.statusCode).toBe(201);
-    expect((response.json() as IngestEpubResultDto).work.authorId).toBe(existingAuthorId);
-    expect(await context.db.select().from(authors)).toHaveLength(1);
-  });
-
-  it("returns 400 and stages no source when the selected existing author is unknown", async () => {
-    const response = await importMarkdownWork({
-      author: { authorId: "missing-author", mode: "existing" },
-      markdown
-    });
-
-    expect(response.statusCode).toBe(400);
-    expect(response.json()).toMatchObject({
-      authorId: "missing-author",
-      error: "author_not_found"
-    });
-    expect(await context.db.select().from(workSources)).toHaveLength(0);
-    expect(await readdir(context.sourcesDir)).toEqual([]);
-  });
-
-  it("rejects an invalid request body with 400", async () => {
-    const response = await context.server.inject({
-      method: "POST",
-      payload: { fileName: "notes.txt", markdown },
-      url: "/api/works/markdown"
-    });
-
-    expect(response.statusCode).toBe(400);
-    expect(response.json()).toEqual({ error: "invalid_request" });
-  });
-
+  // The HTTP front door (`POST /api/works/markdown`) is now the duplicate-review boundary (#747); its
+  // begin/decision behavior is covered by the workCreation route and command tests. The command-level
+  // claim-race rollback below stays here because it exercises the shared uploaded-source commit directly.
   it("rolls back the loser and reopens the winner when an identical claim lands mid-stage", async () => {
     const winnerAuthorId = await createAuthorNamed("Race Winner");
     const raceMarkdown = "# Race\n\nOne durable paragraph for the mid-stage claim race.";
@@ -1702,6 +1573,43 @@ describe("imported Markdown front door (#706)", () => {
     const works = await context.db.select().from(workMeta);
     expect(works.map((row) => row.entryId)).toEqual(["md-winner"]);
     expect(await context.db.select().from(uploadedSourceClaims)).toHaveLength(1);
+    expect(await context.db.select().from(workSources)).toHaveLength(0);
+  });
+
+  it("refuses empty Markdown at the commit boundary without staging a source or Work", async () => {
+    // The commit is a reusable boundary: it validates its own inputs even though every production caller
+    // (the #747 begin/keep-separate flow) already refuses empty content upstream — defense in depth so no
+    // future caller can stage a source file or shell Work from block-less input.
+    const outcome = await createImportedMarkdownWork(context.content, {
+      author: { mode: "new", name: "Empty Commit Author" },
+      fileName: "empty.md",
+      language: "en",
+      markdown: "![only image](x.png)",
+      title: "Empty Commit",
+      workType: "essay"
+    });
+
+    expect(outcome.status).toBe("empty_content");
+    expect(await context.db.select().from(workMeta)).toHaveLength(0);
+    expect(await context.db.select().from(workSources)).toHaveLength(0);
+  });
+
+  it("refuses an unknown existing author at the commit boundary before staging a source", async () => {
+    const outcome = await createImportedMarkdownWork(context.content, {
+      author: { authorId: "no-such-author", mode: "existing" },
+      fileName: "missing-author.md",
+      language: "en",
+      markdown: "# Chapter\n\nA durable paragraph with real content.",
+      title: "Missing Author Commit",
+      workType: "essay"
+    });
+
+    expect(outcome.status).toBe("author_not_found");
+    if (outcome.status !== "author_not_found") {
+      throw new Error(`expected author_not_found, got ${outcome.status}`);
+    }
+    expect(outcome.authorId).toBe("no-such-author");
+    expect(await context.db.select().from(workMeta)).toHaveLength(0);
     expect(await context.db.select().from(workSources)).toHaveLength(0);
   });
 

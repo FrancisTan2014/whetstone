@@ -62,6 +62,7 @@ function pendingInput(
     proposed: overrides.proposed ?? proposal,
     sourceKind: overrides.sourceKind ?? "markdown",
     sourceHash: "sourceHash" in overrides ? overrides.sourceHash! : "a".repeat(64),
+    sourceFileName: "sourceFileName" in overrides ? overrides.sourceFileName! : "notes.md",
     candidates: "candidates" in overrides ? overrides.candidates! : candidates,
     stagePath: "stagePath" in overrides ? overrides.stagePath! : "stage-attempt-1",
     expiresAt: overrides.expiresAt ?? EXPIRES,
@@ -85,6 +86,7 @@ describe("workCreationAttemptStore", () => {
     expect(record.candidateSnapshot).toEqual(candidates);
     expect(record.candidateFingerprint).toBe(fingerprintReviewedCandidates(candidates));
     expect(record.sourceHash).toBe("a".repeat(64));
+    expect(record.sourceFileName).toBe("notes.md");
   });
 
   it("stores no fingerprint when no candidates were reviewed", async () => {
@@ -332,6 +334,29 @@ describe("workCreationAttemptStore", () => {
         stagePath: null
       });
       expect((await getAttempt(db, DEFAULT_USER_ID, "a1"))?.state).toBe("completed");
+    });
+
+    it("refuses to cancel a finalizing attempt and never deletes its in-flight stage (Back is fenced to pending)", async () => {
+      await insertPendingAttempt(db, pendingInput({ id: "a1", stagePath: "stage-a1" }));
+      // A serialized decision claimed the slot: pending -> finalizing (revision 1).
+      const finalizing = await beginFinalizeAttempt(db, {
+        userId: DEFAULT_USER_ID,
+        id: "a1",
+        expectedRevision: 0,
+        now: LATER
+      });
+      expect(finalizing?.state).toBe("finalizing");
+
+      // A concurrent or stale Back must NOT flip the finalizing row to cancelled or hand back its stage for
+      // deletion — the in-flight decision owns the commit and its bytes.
+      const result = await cancelAttempt(db, DEFAULT_USER_ID, "a1", LATER);
+      expect(result).toEqual({ cancelled: false, stagePath: null });
+
+      const record = await getAttempt(db, DEFAULT_USER_ID, "a1");
+      expect(record?.state).toBe("finalizing");
+      expect(record?.revision).toBe(1);
+      // The stage the decision is transferring is left intact.
+      expect(record?.stagePath).toBe("stage-a1");
     });
   });
 

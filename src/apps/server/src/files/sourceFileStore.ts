@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
 
 type WriteMarkdownSourceInput = Readonly<{
@@ -27,6 +27,11 @@ export type SourceFileStore = Readonly<{
   deleteSourceFile: (relativePath: string) => Promise<void>;
   hashBytes: (bytes: Uint8Array) => string;
   hashMarkdown: (markdown: string) => string;
+  // Read back a retained Markdown source file's text by its stored relative path (`work_sources.file_path`
+  // / a staged attempt's path). Used to transfer a review attempt's already-staged upload (#747) into
+  // canonical content without re-uploading. The path is resolved within the source directory, so a stored
+  // path can never escape it; a missing file throws so the caller can treat it as a lost stage.
+  readMarkdownSource: (relativePath: string) => Promise<string>;
   writeEpubSource: (input: WriteEpubSourceInput) => Promise<WrittenEpubSource>;
   writeMarkdownSource: (input: WriteMarkdownSourceInput) => Promise<WrittenMarkdownSource>;
   writePdfSource: (input: WriteEpubSourceInput) => Promise<WrittenEpubSource>;
@@ -102,10 +107,17 @@ export function createSourceFileStore(sourceFilesDir: string): SourceFileStore {
     await rm(target, { force: true });
   }
 
+  async function readMarkdownSource(relativePath: string): Promise<string> {
+    const target = resolveWithinDirectory(sourceFilesDir, relativePath);
+
+    return readFile(target, "utf8");
+  }
+
   return Object.freeze({
     deleteSourceFile,
     hashBytes,
     hashMarkdown,
+    readMarkdownSource,
     writeEpubSource,
     writeMarkdownSource,
     writePdfSource

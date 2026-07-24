@@ -117,6 +117,17 @@ describe("findWorkDuplicateCandidates", () => {
     ]);
   });
 
+  it("treats a brand-new author (null id) proposal as never same-author (exact match stays cross-author)", async () => {
+    await seedWork(db, { entryId: "w-exact", title: "Clean Code", authorId: AUTHOR_MAIN });
+
+    const { log } = recordingLog();
+    const result = await findWorkDuplicateCandidates(db, log, proposal({ authorId: null }));
+
+    expect(result.candidates.map((row) => row.entryId)).toEqual(["w-exact"]);
+    expect(result.candidates[0]?.matchTier).toBe("exact");
+    expect(result.candidates[0]?.evidence.sameAuthor).toBe(false);
+  });
+
   it("excludes authored Works — the learner's own Writing is never an import/manual duplicate (owner isolation)", async () => {
     await seedWork(db, { entryId: "w-authored", title: "Clean Code", origin: "authored" });
     await seedWork(db, { entryId: "w-imported", title: "Clean Code", origin: "imported" });

@@ -24,10 +24,13 @@ import { authors, workMeta } from "../../db/schema.js";
 // nothing and never labels a row a duplicate.
 
 // The proposed metadata under review — the display title (keyed here in SQL), the chosen/created author,
-// and the language/type used for factual difference evidence.
+// and the language/type used for factual difference evidence. `authorId` is `null` when the learner typed
+// a brand-new author name matching no existing Library identity (#747): the author row is created only
+// inside the final Work transaction, so no author exists yet to corroborate — such a proposal can never be
+// same-author and only the stricter cross-author title bar applies.
 export type ProposedWorkMetadataInput = Readonly<{
   title: string;
-  authorId: AuthorId;
+  authorId: AuthorId | null;
   language: WorkLanguage;
   workType: WorkType;
 }>;
