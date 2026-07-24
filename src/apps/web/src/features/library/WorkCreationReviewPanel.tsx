@@ -70,8 +70,20 @@ export function WorkCreationReviewPanel({
 }: WorkCreationReviewPanelProps): React.JSX.Element {
   const { proposed } = review;
 
+  // The Sheet's own dismissals (Close button, Escape, overlay click) still fire while a decision is in
+  // flight, even though the visible actions are disabled. Ignore any dismissal while `pending` so a
+  // close cannot call Back and cancel the still-pending attempt — deleting the staged upload out from
+  // under the Keep separate / Open existing the learner just submitted. Only a real close while idle
+  // routes to Back.
+  const handleOpenChange = (next: boolean): void => {
+    if (next || pending) {
+      return;
+    }
+    onBack();
+  };
+
   return (
-    <Sheet onOpenChange={onBack} open title="Possible duplicate">
+    <Sheet onOpenChange={handleOpenChange} open title="Possible duplicate">
       <div className="flex flex-col gap-5">
         <section className="flex flex-col gap-1">
           <p className="text-text">

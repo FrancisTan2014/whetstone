@@ -197,6 +197,17 @@ describe("WorkCreationReviewPanel", () => {
     expect(onBack).toHaveBeenCalled();
   });
 
+  it("ignores a Sheet dismissal while a decision is pending so Back cannot cancel it", async () => {
+    const { onBack, user } = renderPanel({ pending: true });
+
+    // Escape, the Close control, and the overlay all route through the Sheet's dismissal path. While a
+    // decision is in flight none of them may reach Back — otherwise a close would cancel the still-pending
+    // attempt and delete the staged upload out from under the decision the learner just submitted.
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    expect(onBack).not.toHaveBeenCalled();
+  });
+
   it("disables every action while a decision is pending", () => {
     renderPanel({ pending: true });
 
