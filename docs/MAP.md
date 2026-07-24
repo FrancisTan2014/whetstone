@@ -863,7 +863,9 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
     reviewed candidates only (no #725 stage, `exact_existing` impossible by construction) — no credible
     candidate mints the owned empty-document Work immediately via `createWork` (origin `manual`), a
     credible one parks the shared review, and Keep separate commits the same byte-less way (no stage to
-    transfer). The web
+    transfer). This is the SOLE manual-commit path: the legacy `POST /api/works` (`libraryRoutes.ts`)
+    now refuses `origin: "manual"` (`manual_requires_review`, #749) and only mints imported shells, so no
+    client can commit an unreviewed manual Work around the boundary. The web
     review UI is `features/library/WorkCreationReviewPanel.tsx`
     (presentational "Possible duplicate" panel — proposal + factual candidate evidence + Open
     existing/Keep separate/Back), wired through `libraryApi.ts` (`beginMarkdownCreation`/`beginEpubCreation`/
