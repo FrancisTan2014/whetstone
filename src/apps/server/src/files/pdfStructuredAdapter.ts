@@ -54,7 +54,7 @@ export type StagedFileHandle = Readonly<{
 
 // True only for a handle stamped by `issueStagedFileHandle`. Read defensively (a forged value has no
 // such property at runtime, so the declared `true` type must not short-circuit the check).
-function isServerIssued(handle: StagedFileHandle): boolean {
+export function isServerIssued(handle: StagedFileHandle): boolean {
   return (handle as unknown as Record<symbol, unknown>)[stagedFileHandleWitness] === true;
 }
 
