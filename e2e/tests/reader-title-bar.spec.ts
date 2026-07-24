@@ -21,7 +21,10 @@ const titleStyle = (el: Element) => {
 };
 
 test.describe("reader title bar (#343)", () => {
-  test("mobile: the title reads on an opaque, blurred, full-width top bar", async ({ page, setup }) => {
+  test("mobile: the title reads on an opaque, blurred, full-width top bar", async ({
+    page,
+    setup
+  }) => {
     await page.setViewportSize({ height: MOBILE.height, width: MOBILE.width });
     await page.goto(`${setup.baseURL}#/reader?work=${encodeURIComponent(setup.markdown.entryId)}`);
     await expect(page.locator(anyBlock).first()).toBeVisible();

@@ -282,9 +282,7 @@ describe("mapStructuredDocument", () => {
   });
 
   it("falls back to an unknown node for a list group with no list items", () => {
-    const result = mapped(
-      mapEn(doc([item({ label: "unordered_list", text: "x" })]))
-    );
+    const result = mapped(mapEn(doc([item({ label: "unordered_list", text: "x" })])));
     expect(result.units[0]!.docBlocks[0]!.type).toBe("unknown");
   });
 
@@ -329,9 +327,7 @@ describe("mapStructuredDocument", () => {
   });
 
   it("preserves an unrecognized label as a visible unknown node and records it", () => {
-    const result = mapped(
-      mapEn(doc([item({ label: "some_unknown_label", text: "unsure." })]))
-    );
+    const result = mapped(mapEn(doc([item({ label: "some_unknown_label", text: "unsure." })])));
     const unknown = result.units[0]!.docBlocks[0]!.node;
     expect(unknown.type).toBe("unknown");
     expect((unknown.attrs as { html: string; tag: string }).html).toBe("unsure.");

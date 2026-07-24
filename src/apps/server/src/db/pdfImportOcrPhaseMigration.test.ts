@@ -35,11 +35,14 @@ async function insertPublication(
 ): Promise<void> {
   const workEntryId = fields.workEntryId === undefined ? "NULL" : `'${fields.workEntryId}'`;
   const langPages =
-    fields.ocrLanguageNotEnabledPages === undefined ? "NULL" : `${fields.ocrLanguageNotEnabledPages}`;
+    fields.ocrLanguageNotEnabledPages === undefined
+      ? "NULL"
+      : `${fields.ocrLanguageNotEnabledPages}`;
   const validationPages =
     fields.ocrValidationFailedPages === undefined ? "NULL" : `${fields.ocrValidationFailedPages}`;
   const noContent = fields.noContent === undefined ? "NULL" : `${fields.noContent}`;
-  const images = fields.unpreservableImages === undefined ? "NULL" : `${fields.unpreservableImages}`;
+  const images =
+    fields.unpreservableImages === undefined ? "NULL" : `${fields.unpreservableImages}`;
   await pglite.exec(
     `INSERT INTO pdf_import_publications
        (attempt_id, file_name, work_entry_id, ocr_language_not_enabled_pages,
@@ -68,7 +71,9 @@ describe("0069/0070 English OCR phase migration", () => {
     expect(await columnExists(pglite, "pdf_import_attempts", "phase")).toBe(true);
     expect(await columnExists(pglite, "pdf_import_attempts", "ocr_fingerprint")).toBe(true);
     await insertAttempt(pglite, "a1", "ocr");
-    await pglite.exec("UPDATE pdf_import_attempts SET ocr_fingerprint = 'ocrmypdf-16:eng' WHERE id = 'a1';");
+    await pglite.exec(
+      "UPDATE pdf_import_attempts SET ocr_fingerprint = 'ocrmypdf-16:eng' WHERE id = 'a1';"
+    );
     const rows = await pglite.query<{ phase: string; ocr_fingerprint: string }>(
       "SELECT phase, ocr_fingerprint FROM pdf_import_attempts WHERE id = 'a1';"
     );

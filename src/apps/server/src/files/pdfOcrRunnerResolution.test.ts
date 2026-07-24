@@ -44,7 +44,9 @@ function textItem(pageNumber: number, text: string) {
   };
 }
 
-function fixtureWith(pages: readonly { pageNumber: number; hasNativeText: boolean }[]): RangeConversion {
+function fixtureWith(
+  pages: readonly { pageNumber: number; hasNativeText: boolean }[]
+): RangeConversion {
   const nativeBody = pages
     .filter((p) => p.hasNativeText)
     .map((p) => textItem(p.pageNumber, `native page ${p.pageNumber}`));
@@ -57,10 +59,15 @@ function fixtureWith(pages: readonly { pageNumber: number; hasNativeText: boolea
   } as RangeConversion;
 }
 
-async function stageFixture(fixture: RangeConversion): Promise<ReturnType<typeof issueStagedFileHandle>> {
+async function stageFixture(
+  fixture: RangeConversion
+): Promise<ReturnType<typeof issueStagedFileHandle>> {
   const stageRoot = await makeDir("whetstone-ocr-res-src-");
   const handle = issueStagedFileHandle(stageRoot, "source.pdf");
-  await writeFile(handle.path, `%PDF-1.7\n${STRUCTURED_PDF_FIXTURE_MARKER}\n${JSON.stringify(fixture)}`);
+  await writeFile(
+    handle.path,
+    `%PDF-1.7\n${STRUCTURED_PDF_FIXTURE_MARKER}\n${JSON.stringify(fixture)}`
+  );
   return handle;
 }
 
@@ -79,7 +86,9 @@ describe("ocrTransformFixture", () => {
     ]);
     // The born-digital page's item is untouched; exactly one recovered item is added, for the flipped page.
     expect(transformed.body).toHaveLength(fixture.body.length + 1);
-    const injected = transformed.body.filter((item) => item.text.includes("Recovered English text"));
+    const injected = transformed.body.filter((item) =>
+      item.text.includes("Recovered English text")
+    );
     expect(injected).toHaveLength(1);
     expect(injected[0]?.pageNumber).toBe(2);
   });
@@ -103,18 +112,24 @@ describe("createFixtureOcrTransformAdapter", () => {
     expect(outcome.result.fingerprint.tesseractLanguage).toBe("eng");
     // The derived bytes are themselves a valid fixture whose page is now native and carries recovered text.
     const derived = parseRangeConversion(
-      (await readFile(outcome.result.output.path, "utf8")).split(STRUCTURED_PDF_FIXTURE_MARKER)[1]!.trim()
+      (await readFile(outcome.result.output.path, "utf8"))
+        .split(STRUCTURED_PDF_FIXTURE_MARKER)[1]!
+        .trim()
     );
     if (derived.status !== "ok") throw new Error("expected a valid derived fixture");
     expect(derived.value.pages[0]?.hasNativeText).toBe(true);
-    expect(derived.value.body.some((item) => item.text.includes("Recovered English text"))).toBe(true);
+    expect(derived.value.body.some((item) => item.text.includes("Recovered English text"))).toBe(
+      true
+    );
   });
 
   it("behaves like a missing tool when the staged bytes carry no embedded fixture", async () => {
     const stageRoot = await makeDir("whetstone-ocr-res-nofix-");
     const handle = issueStagedFileHandle(stageRoot, "source.pdf");
     await writeFile(handle.path, new Uint8Array([0x25, 0x50, 0x44, 0x46]));
-    const adapter = createFixtureOcrTransformAdapter({ outputStageRoot: await makeDir("whetstone-ocr-res-out-") });
+    const adapter = createFixtureOcrTransformAdapter({
+      outputStageRoot: await makeDir("whetstone-ocr-res-out-")
+    });
 
     const outcome = await adapter.execute({
       source: handle,
@@ -131,8 +146,13 @@ describe("createFixtureOcrTransformAdapter", () => {
     // the pass fails visibly rather than transforming garbage.
     const stageRoot = await makeDir("whetstone-ocr-res-bad-");
     const handle = issueStagedFileHandle(stageRoot, "source.pdf");
-    await writeFile(handle.path, `%PDF-1.7\n${STRUCTURED_PDF_FIXTURE_MARKER}\n{ not a conversion }`);
-    const adapter = createFixtureOcrTransformAdapter({ outputStageRoot: await makeDir("whetstone-ocr-res-out-") });
+    await writeFile(
+      handle.path,
+      `%PDF-1.7\n${STRUCTURED_PDF_FIXTURE_MARKER}\n{ not a conversion }`
+    );
+    const adapter = createFixtureOcrTransformAdapter({
+      outputStageRoot: await makeDir("whetstone-ocr-res-out-")
+    });
 
     const outcome = await adapter.execute({
       source: handle,
@@ -149,7 +169,9 @@ describe("createFixtureOcrTransformAdapter", () => {
     // swallows as "no fixture" rather than crashing the pass.
     const stageRoot = await makeDir("whetstone-ocr-res-absent-");
     const handle = issueStagedFileHandle(stageRoot, "missing.pdf");
-    const adapter = createFixtureOcrTransformAdapter({ outputStageRoot: await makeDir("whetstone-ocr-res-out-") });
+    const adapter = createFixtureOcrTransformAdapter({
+      outputStageRoot: await makeDir("whetstone-ocr-res-out-")
+    });
 
     const outcome = await adapter.execute({
       source: handle,

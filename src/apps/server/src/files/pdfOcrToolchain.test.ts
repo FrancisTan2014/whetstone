@@ -13,7 +13,9 @@ describe("parseInstalledTraineddata", () => {
   });
 
   it("tolerates CRLF line endings and a case-varied header", () => {
-    expect(parseInstalledTraineddata("LIST OF AVAILABLE LANGUAGES (1):\r\neng\r\n")).toEqual(["eng"]);
+    expect(parseInstalledTraineddata("LIST OF AVAILABLE LANGUAGES (1):\r\neng\r\n")).toEqual([
+      "eng"
+    ]);
   });
 
   it("returns no packs for empty or header-only output", () => {
@@ -47,7 +49,10 @@ describe("createOcrToolchainInspector", () => {
       tesseractBinary: "tesseract",
       probe
     });
-    expect(await inspect()).toEqual({ ocrmypdfAvailable: true, installedTraineddata: ["eng", "osd"] });
+    expect(await inspect()).toEqual({
+      ocrmypdfAvailable: true,
+      installedTraineddata: ["eng", "osd"]
+    });
     expect(probe.calls).toEqual(["ocrmypdf", "tesseract"]);
   });
 

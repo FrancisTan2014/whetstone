@@ -265,7 +265,10 @@ async function convertClaimed(
 
 type ProbePlan = Readonly<{ status: "ok"; pageCount: number; pages: readonly ProbePage[] | null }>;
 
-type ProbeStep = ProbePlan | Readonly<{ status: "fenced" }> | Readonly<{ status: "failure"; failure: PdfStructuredFailure }>;
+type ProbeStep =
+  | ProbePlan
+  | Readonly<{ status: "fenced" }>
+  | Readonly<{ status: "failure"; failure: PdfStructuredFailure }>;
 
 type ProbeReading =
   | Readonly<{ status: "ok"; pageCount: number; pages: readonly ProbePage[] }>
@@ -432,7 +435,11 @@ async function resolveConversionSource(
   try {
     await rm(outputPath, { force: true });
   } catch (cause) {
-    deps.logCleanupFailure({ attemptId: claimed.id, stagePath: outputPath, reason: describeError(cause) });
+    deps.logCleanupFailure({
+      attemptId: claimed.id,
+      stagePath: outputPath,
+      reason: describeError(cause)
+    });
   }
   /* v8 ignore stop */
 

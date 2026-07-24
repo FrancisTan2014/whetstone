@@ -562,7 +562,13 @@ export async function markConverted(
 ): Promise<boolean> {
   const applied = await db
     .update(pdfImportAttempts)
-    .set({ state: "converted", runToken: null, phase: "publication", heartbeatAt: null, updatedAt: now })
+    .set({
+      state: "converted",
+      runToken: null,
+      phase: "publication",
+      heartbeatAt: null,
+      updatedAt: now
+    })
     .where(fencedWhere(id, runToken))
     .returning({ id: pdfImportAttempts.id });
   return applied.length > 0;

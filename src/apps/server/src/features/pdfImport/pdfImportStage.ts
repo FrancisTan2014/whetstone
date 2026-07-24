@@ -163,7 +163,10 @@ export function createPdfImportStageStore(stageRootDir: string): PdfImportStageS
     return issueStagedFileHandle(stageDirFor(stagePath), STAGED_FILE_NAME);
   }
 
-  async function writeDerivedStage(stagePath: string, bytes: Uint8Array): Promise<StagedFileHandle> {
+  async function writeDerivedStage(
+    stagePath: string,
+    bytes: Uint8Array
+  ): Promise<StagedFileHandle> {
     const stageDir = stageDirFor(stagePath);
     // `w` (not `wx`): a re-run of the OCR pass before adoption may legitimately overwrite an earlier,
     // unadopted derived file. The original `staged.pdf` in the same directory is never touched.

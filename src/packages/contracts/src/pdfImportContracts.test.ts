@@ -84,7 +84,9 @@ describe("parsePdfImportStatusDto", () => {
   });
 
   it("accepts a running attempt's durable phase and rejects an unknown one", () => {
-    expect(parsePdfImportStatusDto({ ...baseStatus, state: "running", phase: "ocr" })).toMatchObject({
+    expect(
+      parsePdfImportStatusDto({ ...baseStatus, state: "running", phase: "ocr" })
+    ).toMatchObject({
       phase: "ocr"
     });
     expect(pdfImportPhaseSchema.parse("structured")).toBe("structured");

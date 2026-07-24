@@ -368,7 +368,8 @@ describe("publishConvertedPdfImport", () => {
     expect(rows.length).toBeGreaterThan(0);
     expect(
       rows.every(
-        (row) => row.ocrEngine === "ocrmypdf@16.10.4/tesseract@5.5.1/eng" && row.ocrLanguage === "eng"
+        (row) =>
+          row.ocrEngine === "ocrmypdf@16.10.4/tesseract@5.5.1/eng" && row.ocrLanguage === "eng"
       )
     ).toBe(true);
   });

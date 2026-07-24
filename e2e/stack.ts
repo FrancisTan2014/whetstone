@@ -70,7 +70,9 @@ async function waitForHttp(url: string, label: string, timeoutMs = 60000): Promi
     }
     await sleep(300);
   }
-  throw new Error(`${label} did not become ready at ${url} within ${timeoutMs}ms (last ${lastStatus}).`);
+  throw new Error(
+    `${label} did not become ready at ${url} within ${timeoutMs}ms (last ${lastStatus}).`
+  );
 }
 
 function killChild(child: ChildProcess): Promise<void> {

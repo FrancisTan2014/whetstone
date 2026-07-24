@@ -281,7 +281,11 @@ describe("processNextPdfImport", () => {
       await stageStore.writeDerivedStage("a1", new Uint8Array([1, 2, 3]));
       await db
         .update(pdfImportAttempts)
-        .set({ ocrFingerprint: "ocrmypdf@16.10.4/tesseract@5.5.1/eng", totalPages: 1, totalRanges: 1 })
+        .set({
+          ocrFingerprint: "ocrmypdf@16.10.4/tesseract@5.5.1/eng",
+          totalPages: 1,
+          totalRanges: 1
+        })
         .where(eq(pdfImportAttempts.id, "a1"));
       const throwingOcr: PdfOcrAdapter = {
         execute: () => Promise.reject(new Error("OCR must not run on a resumed adopted attempt"))

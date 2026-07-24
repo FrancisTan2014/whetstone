@@ -152,7 +152,10 @@ export function createFixtureOcrTransformAdapter(
   return createPdfOcrAdapter({
     probe,
     inspectToolchain: () =>
-      Promise.resolve({ ocrmypdfAvailable: true, installedTraineddata: ["eng", "chi_sim", "chi_tra"] }),
+      Promise.resolve({
+        ocrmypdfAvailable: true,
+        installedTraineddata: ["eng", "chi_sim", "chi_tra"]
+      }),
     ocrPass,
     timeoutMs: config.timeoutMs ?? 60_000,
     outputStageRoot: config.outputStageRoot,

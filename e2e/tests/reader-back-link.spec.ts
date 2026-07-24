@@ -19,7 +19,10 @@ for (const [name, viewport] of [
   ["desktop", DESKTOP],
   ["mobile", MOBILE]
 ] as const) {
-  test(`${name}: the Back to Library link is a >=44px hit target (#401)`, async ({ page, setup }) => {
+  test(`${name}: the Back to Library link is a >=44px hit target (#401)`, async ({
+    page,
+    setup
+  }) => {
     await page.setViewportSize({ height: viewport.height, width: viewport.width });
     await page.goto(`${setup.baseURL}#/reader?work=${encodeURIComponent(setup.markdown.entryId)}`);
 

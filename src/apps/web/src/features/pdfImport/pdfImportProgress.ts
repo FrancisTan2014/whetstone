@@ -140,4 +140,3 @@ function inProgressLabel(view: PdfImportViewDto): string {
 
   return `Converting page ${Math.min(completedPages + 1, totalPages)} of ${totalPages}…`;
 }
-
