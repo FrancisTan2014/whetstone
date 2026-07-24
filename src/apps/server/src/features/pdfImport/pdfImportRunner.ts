@@ -7,11 +7,7 @@ import {
   type PdfImportFailureDto,
   type ProbePage
 } from "@whetstone/contracts";
-import {
-  classifyOcrRouting,
-  nextRangeIndex,
-  ocrPassRequired
-} from "@whetstone/domain";
+import { classifyOcrRouting, nextRangeIndex, ocrPassRequired } from "@whetstone/domain";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { formatOcrFingerprint, type PdfOcrAdapter } from "../../files/pdfOcrAdapter.js";

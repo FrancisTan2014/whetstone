@@ -146,7 +146,8 @@ describe("pdfImportStartMetadataSchema", () => {
       ).toBe(override);
     }
     expect(
-      pdfImportStartMetadataSchema.safeParse({ fileName: "x.pdf", ocrLanguageOverride: "fr" }).success
+      pdfImportStartMetadataSchema.safeParse({ fileName: "x.pdf", ocrLanguageOverride: "fr" })
+        .success
     ).toBe(false);
     expect(
       pdfImportStartMetadataSchema.safeParse({ fileName: "x.pdf", ocrLanguageOverride: "" }).success

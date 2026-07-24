@@ -93,9 +93,7 @@ describe("PDF import OCR phase migrations", () => {
     );
     expect(updated.rows[0]?.ocr_language).toBe("zh-CN");
     await expect(
-      pglite.exec(
-        "UPDATE pdf_import_attempts SET ocr_language = 'fr' WHERE id = 'lang-default';"
-      )
+      pglite.exec("UPDATE pdf_import_attempts SET ocr_language = 'fr' WHERE id = 'lang-default';")
     ).rejects.toThrow();
   });
 
