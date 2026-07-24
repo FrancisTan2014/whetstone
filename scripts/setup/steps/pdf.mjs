@@ -1,15 +1,20 @@
-// Optional setup step (#510): make the born-digital PDF ingestion lane work end to end with one
-// command — `pnpm setup:pdf`. A born-digital PDF is converted to structured JSON by the pinned Docling
-// worker (#701) and published as canonical blocks (#702). That lane needs only Python + the pinned
-// Docling runtime + the pinned model snapshot; it ships with OCR disabled, so a scanned/mixed page
-// returns the typed OCR-required outcome rather than being converted here.
+// Optional setup step (#510): make the PDF ingestion capability work end to end with one command —
+// `pnpm setup:pdf`. A born-digital PDF is converted to structured JSON by the pinned Docling worker
+// (#701) and published as canonical blocks (#702). A scanned/mixed ENGLISH PDF now imports too (#745):
+// the runner runs an OCRmyPDF/Tesseract `eng` pre-pass before conversion, so English text is recovered
+// and the document publishes as one canonical Work.
 //
-// This step therefore gates readiness on the BORN-DIGITAL prerequisites alone (Python, pinned Docling,
-// pinned model) and installs what it safely can after explicit consent (Python + the Docling pip
-// package + the model snapshot). OCRmyPDF/Tesseract belong to the future OCR lane (#704); they are
-// reported SEPARATELY as future readiness so a supported born-digital install is never marked "not
-// ready" for lacking out-of-scope OCR tools. Excluded from the base `pnpm setup` (heavy/network);
-// every failure mode returns an actionable { what, remedy }, never a raw crash.
+// Because #745 ships English OCR as a REAL import path, this step gates readiness on BOTH lanes:
+//   - the born-digital prerequisites (Python, the pinned Docling runtime, the pinned model snapshot), and
+//   - the English OCR prerequisites (OCRmyPDF, Tesseract, and the exact `eng` trained-data pack).
+// Missing OCR tooling is a BLOCKING gap with a self-guiding remedy — never a silent informational line —
+// so `pnpm setup:doctor` can never report the PDF capability ready while a scanned/mixed English upload
+// would fail at runtime with a typed tool/language-missing outcome (issue #745 acceptance + the
+// GUIDELINES setup gate for a shipped external tool). Provision installs what it safely can after
+// explicit consent (Python + the Docling pip package + the model snapshot); the OCR system tools are
+// left to the platform installers, so provision surfaces any OCR gap as the same blocking remedy rather
+// than force-installing them. Excluded from the base `pnpm setup` (heavy/network); every failure mode
+// returns an actionable { what, remedy }, never a raw crash.
 
 import { installSystemTool } from "../installSystemTool.mjs";
 import { error, isOk, missing, ok, withOutputTail } from "../step.mjs";
@@ -122,8 +127,8 @@ function ocrmypdfPresent(ctx) {
  * Probe the BORN-DIGITAL PDF lane's prerequisites in order — Python, the Docling package, the pinned
  * runtime versions, then the pinned model snapshot — returning the FIRST gap distinctly (so the report
  * names exactly what is missing), or null when the born-digital lane is ready. Shared by `check` and
- * `verify` so a post-provision probe uses the same logic. OCR tooling is intentionally NOT probed here:
- * it is future scope (#704) reported separately by `probeOcrReadiness`.
+ * `verify` so a post-provision probe uses the same logic. OCR tooling is probed separately by
+ * `probeOcrReadiness`; the step gates on BOTH via `pdfReadiness` (#745).
  *
  * @param {import("../step.mjs").SetupContext} ctx
  * @returns {import("../step.mjs").StepResult | null}
@@ -186,9 +191,10 @@ function englishTraineddataPresent(ctx) {
 
 /**
  * Probe the English OCR lane's tooling (OCRmyPDF, the Tesseract it needs, then the English trained-data
- * pack), returning the first gap distinctly or null when all are present. Reported separately from the
- * born-digital readiness gate: a missing OCR tool never marks the PDF lane not ready — born-digital PDFs
- * still import, and a scanned/mixed English page yields a typed OCR outcome when the tool is absent.
+ * pack), returning the first gap distinctly or null when all are present. Now that English scanned/mixed
+ * OCR ships as a real import path (#745), the step gates on this alongside `probePdfLane`: a missing OCR
+ * tool marks the PDF capability not ready so setup/doctor never claims readiness while a scanned/mixed
+ * English upload would fail at runtime with a typed tool/language-missing outcome.
  *
  * @param {import("../step.mjs").SetupContext} ctx
  * @returns {import("../step.mjs").StepResult | null}
@@ -220,23 +226,18 @@ export function probeOcrReadiness(ctx) {
 }
 
 /**
- * Log the English OCR lane's status as one non-blocking line, so setup surfaces OCR readiness distinctly
- * from — and never gating — the born-digital PDF readiness the step reports.
+ * Combined PDF-capability readiness: the born-digital lane (Python/Docling/model) AND the English OCR
+ * lane (OCRmyPDF/Tesseract/`eng`) must both be present, because #745 ships English scanned/mixed PDF
+ * OCR as a real import path. Returns the FIRST gap distinctly — born-digital prerequisites first (the
+ * base every PDF needs), then the OCR tooling scanned/mixed English pages need — or null when the whole
+ * capability is ready. Shared by `check`, `provision`, and `verify` so every phase gates identically and
+ * a missing OCR prerequisite is a loud, actionable remedy rather than a silent informational line.
  *
  * @param {import("../step.mjs").SetupContext} ctx
- * @returns {void}
+ * @returns {import("../step.mjs").StepResult | null}
  */
-function reportOcrReadiness(ctx) {
-  const gap = probeOcrReadiness(ctx);
-  if (gap === null) {
-    ctx.log("English PDF OCR support (scanned/mixed pages, #745) is available.");
-    return;
-  }
-  ctx.log(
-    `English PDF OCR support (scanned/mixed pages, #745) is not installed: ${gap.what} ` +
-      "Born-digital PDFs import without it; scanned/mixed English pages return a typed OCR outcome " +
-      "until it is installed."
-  );
+export function pdfReadiness(ctx) {
+  return probePdfLane(ctx) ?? probeOcrReadiness(ctx);
 }
 
 /** @type {import("../step.mjs").Step} */
@@ -246,8 +247,7 @@ export const pdfStep = {
   optional: true,
   capability: "pdf",
   check(ctx) {
-    reportOcrReadiness(ctx);
-    return probePdfLane(ctx) ?? ok();
+    return pdfReadiness(ctx) ?? ok();
   },
   provision(ctx) {
     // Consent-gated: offer to install Python 3 after an explicit Y (or `--yes`); on decline, no
@@ -295,14 +295,12 @@ export const pdfStep = {
         );
       }
     }
-    // OCR tooling (#704) is out of scope for the born-digital lane, so provision never installs or
-    // gates on it — it is only reported as future readiness. The step is ready once the born-digital
-    // prerequisites are provisioned.
-    reportOcrReadiness(ctx);
-    return probePdfLane(ctx) ?? ok();
+    // The English OCR system tools (OCRmyPDF/Tesseract/`eng`) are platform installers this step does not
+    // force-install; provision surfaces any remaining OCR gap as the same blocking, self-guiding remedy
+    // (#745) so the capability is never reported ready while a scanned/mixed English upload would fail.
+    return pdfReadiness(ctx) ?? ok();
   },
   verify(ctx) {
-    reportOcrReadiness(ctx);
-    return probePdfLane(ctx) ?? ok();
+    return pdfReadiness(ctx) ?? ok();
   }
 };
