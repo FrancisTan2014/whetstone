@@ -129,4 +129,23 @@ describe("createSourceFileStore", () => {
 
     await expect(store.deleteSourceFile("../escape.epub")).rejects.toThrow();
   });
+
+  it("reads back a retained markdown source by its relative path", async () => {
+    const store = createSourceFileStore(directory);
+    const written = await store.writeMarkdownSource({ id: "source-5", markdown: "# Kept\n\nBody." });
+
+    expect(await store.readMarkdownSource(written.path)).toBe("# Kept\n\nBody.");
+  });
+
+  it("throws when reading a markdown source that is missing", async () => {
+    const store = createSourceFileStore(directory);
+
+    await expect(store.readMarkdownSource("never-written.md")).rejects.toThrow();
+  });
+
+  it("refuses to read a path that escapes the source directory", async () => {
+    const store = createSourceFileStore(directory);
+
+    await expect(store.readMarkdownSource("../escape.md")).rejects.toThrow();
+  });
 });

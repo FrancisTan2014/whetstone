@@ -62,6 +62,8 @@ function pendingInput(
     proposed: overrides.proposed ?? proposal,
     sourceKind: overrides.sourceKind ?? "markdown",
     sourceHash: "sourceHash" in overrides ? overrides.sourceHash! : "a".repeat(64),
+    sourceFileName:
+      "sourceFileName" in overrides ? overrides.sourceFileName! : "notes.md",
     candidates: "candidates" in overrides ? overrides.candidates! : candidates,
     stagePath: "stagePath" in overrides ? overrides.stagePath! : "stage-attempt-1",
     expiresAt: overrides.expiresAt ?? EXPIRES,
@@ -85,6 +87,7 @@ describe("workCreationAttemptStore", () => {
     expect(record.candidateSnapshot).toEqual(candidates);
     expect(record.candidateFingerprint).toBe(fingerprintReviewedCandidates(candidates));
     expect(record.sourceHash).toBe("a".repeat(64));
+    expect(record.sourceFileName).toBe("notes.md");
   });
 
   it("stores no fingerprint when no candidates were reviewed", async () => {

@@ -957,6 +957,10 @@ export const workCreationAttempts = pgTable(
       enum: ["manual", "markdown", "epub", "pdf"] as const
     }).notNull(),
     sourceHash: text("source_hash"),
+    // The uploaded file's original name, carried so a deferred decision can complete the creation with the
+    // same provenance the one-step front door records. Null for a metadata-only manual proposal (no file);
+    // set for an ordinary upload (markdown/epub) whose bytes this attempt stages.
+    sourceFileName: text("source_file_name"),
     // The reviewed candidate EVIDENCE the learner was shown (identity + displayed metadata), and its
     // fingerprint, stored together or not at all. Comparing the fingerprint to a freshly-computed one
     // detects changed evidence — not only new ids — and forces a fresh review. Never Work content.

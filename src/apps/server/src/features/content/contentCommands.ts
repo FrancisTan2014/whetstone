@@ -262,17 +262,34 @@ async function buildProvenance(
 
 type ContentTransaction = Parameters<Parameters<DbClient["transaction"]>[0]>[0];
 
-// Mint an imported Work from an uploaded .md file through the shared uploaded-source claim boundary
-// (#706), so the front door mirrors the EPUB path: identical bytes reopen the owning Work instead of
-// creating a duplicate. The Work, its retained source file, its blocks, and its claim are written in a
-// single transaction; a concurrent loser rolls the whole creation back and reopens the winner. Unlike
-// the per-work content endpoint, this creates the Work, so it also validates the metadata (empty
-// content and an unknown existing-author selection are refused before any source file is staged).
-export async function createImportedMarkdownWork(
+// The input for the shared uploaded-Markdown commit (#706, #747). Either the caller stages nothing and
+// the commit writes the retained `.md` file itself (the one-step front door), or the caller supplies a
+// `stagedSource` it already wrote — a review attempt's owned stage (#725) — whose bytes are transferred
+// to provenance in place rather than re-written. `sha256` keys the single-owner claim either way.
+export type CommitImportedMarkdownInput = Readonly<{
+  author: ImportMarkdownWorkRequest["author"];
+  fileName: string;
+  language: ImportMarkdownWorkRequest["language"];
+  markdown: string;
+  title: string;
+  workType: ImportMarkdownWorkRequest["workType"];
+  // A pre-written stage this commit transfers to provenance instead of writing a new source file. When
+  // absent, the commit writes the `.md` file itself. `path` is the retained source's relative path.
+  stagedSource?: Readonly<{ path: string }>;
+}>;
+
+// Mint an imported Work from uploaded Markdown through the shared uploaded-source claim boundary (#706),
+// so the front door mirrors the EPUB path: identical bytes reopen the owning Work instead of creating a
+// duplicate. The Work, its retained source file, its blocks, and its single-owner claim are written in a
+// single transaction; a concurrent loser rolls the whole creation back and reopens the winner. Empty
+// content and an unknown existing-author selection are refused before any source file is staged. When a
+// `stagedSource` is supplied (the reviewed-creation flow, #747), its already-written bytes become the
+// provenance file in place — the staged upload is transferred, never re-written or double-owned.
+export async function commitImportedMarkdownWork(
   dependencies: ContentDependencies,
-  request: ImportMarkdownWorkRequest
+  input: CommitImportedMarkdownInput
 ): Promise<CreateImportedMarkdownWorkResult> {
-  const decomposed = decomposeMarkdown(request.markdown);
+  const decomposed = decomposeMarkdown(input.markdown);
   const newBlocks = decomposed.flatMap((unit) => unit.blocks);
 
   // Markdown that yields no readable blocks (e.g. image-only input) is unsupported content, not an
@@ -282,15 +299,15 @@ export async function createImportedMarkdownWork(
   }
 
   // Validate an existing-author selection up front (a read) so a bad id never stages a source file.
-  if (request.author.mode === "existing") {
+  if (input.author.mode === "existing") {
     const found = await dependencies.db
       .select({ id: authors.id })
       .from(authors)
-      .where(eq(authors.id, request.author.authorId))
+      .where(eq(authors.id, input.author.authorId))
       .limit(1);
 
     if (found[0] === undefined) {
-      return { status: "author_not_found", authorId: request.author.authorId };
+      return { status: "author_not_found", authorId: input.author.authorId };
     }
   }
 
@@ -301,27 +318,35 @@ export async function createImportedMarkdownWork(
   );
 
   const outcome = await claimUploadedSource(dependencies.db, {
-    sha256: dependencies.sourceFileStore.hashMarkdown(request.markdown),
+    sha256: dependencies.sourceFileStore.hashMarkdown(input.markdown),
+    // Reuse the caller's already-written stage in place when transferring a review attempt's upload
+    // (#747); otherwise write the retained `.md` source now. Either way `commit` points the source row
+    // at `written.path`, so provenance is a single owned file.
     stage: () =>
-      dependencies.sourceFileStore.writeMarkdownSource({
-        id: sourceId,
-        markdown: request.markdown
-      }),
+      input.stagedSource === undefined
+        ? dependencies.sourceFileStore.writeMarkdownSource({
+            id: sourceId,
+            markdown: input.markdown
+          })
+        : Promise.resolve({
+            path: input.stagedSource.path,
+            sha256: dependencies.sourceFileStore.hashMarkdown(input.markdown)
+          }),
     releaseStage: (written) => dependencies.sourceFileStore.deleteSourceFile(written.path),
     commit: async (tx, written) => {
-      const authorId = await resolveWorkAuthor(tx, dependencies, request.author);
+      const authorId = await resolveWorkAuthor(tx, dependencies, input.author);
       const workEntryId = toEntryId(dependencies.createEntryId());
       await tx.insert(entries).values({ id: workEntryId, type: "work" });
       await tx.insert(workMeta).values({
         authorId,
         entryId: workEntryId,
-        language: request.language,
+        language: input.language,
         origin: "imported",
-        title: request.title,
-        workType: request.workType
+        title: input.title,
+        workType: input.workType
       });
       await tx.insert(workSources).values({
-        fileName: request.fileName,
+        fileName: input.fileName,
         filePath: written.path,
         id: sourceId,
         kind: "upload",
@@ -343,10 +368,10 @@ export async function createImportedMarkdownWork(
         work: {
           authorId,
           entryId: workEntryId,
-          language: request.language,
+          language: input.language,
           origin: "imported",
-          title: request.title,
-          workType: request.workType
+          title: input.title,
+          workType: input.workType
         },
         workEntryId
       };
@@ -354,6 +379,22 @@ export async function createImportedMarkdownWork(
   });
 
   return { result: { content: outcome.content, work: outcome.work }, status: outcome.status };
+}
+
+// The one-step Markdown front door (#706): mint an imported Work from an uploaded `.md` file's metadata
+// plus bytes. A thin adapter over the shared commit that always writes its own retained source file.
+export async function createImportedMarkdownWork(
+  dependencies: ContentDependencies,
+  request: ImportMarkdownWorkRequest
+): Promise<CreateImportedMarkdownWorkResult> {
+  return commitImportedMarkdownWork(dependencies, {
+    author: request.author,
+    fileName: request.fileName,
+    language: request.language,
+    markdown: request.markdown,
+    title: request.title,
+    workType: request.workType
+  });
 }
 
 // Resolve the Work's author inside the creation transaction: a `new` selection upserts through the

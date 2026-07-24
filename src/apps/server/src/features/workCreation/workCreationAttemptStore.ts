@@ -41,6 +41,7 @@ export type WorkCreationAttemptRecord = Readonly<{
   proposedWorkType: string;
   sourceKind: WorkCreationSourceKind;
   sourceHash: string | null;
+  sourceFileName: string | null;
   candidateSnapshot: ReviewedCandidateSnapshot | null;
   candidateFingerprint: string | null;
   state: WorkCreationAttemptState;
@@ -64,6 +65,7 @@ function toRecord(row: AttemptRow): WorkCreationAttemptRecord {
     proposedWorkType: row.proposedWorkType,
     sourceKind: row.sourceKind,
     sourceHash: row.sourceHash,
+    sourceFileName: row.sourceFileName,
     candidateSnapshot: row.candidateSnapshot ?? null,
     candidateFingerprint: row.candidateFingerprint,
     state: row.state,
@@ -113,6 +115,7 @@ export type InsertPendingAttemptInput = Readonly<{
   proposed: ProposedMetadataInput;
   sourceKind: WorkCreationSourceKind;
   sourceHash: string | null;
+  sourceFileName: string | null;
   candidates: ReviewedCandidateSnapshot | null;
   stagePath: string | null;
   expiresAt: Date;
@@ -153,6 +156,7 @@ export async function insertPendingAttempt(
       proposedWorkType: input.proposed.workType as AttemptRow["proposedWorkType"],
       sourceKind: input.sourceKind,
       sourceHash: input.sourceHash,
+      sourceFileName: input.sourceFileName,
       candidateSnapshot: input.candidates,
       candidateFingerprint:
         input.candidates === null ? null : fingerprintReviewedCandidates(input.candidates),
