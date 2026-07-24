@@ -27,6 +27,7 @@ import { createWordNetProvider, type WordPosLike } from "./lookup/wordnetProvide
 import { createZhWiktionaryProvider } from "./lookup/zhWiktionaryProvider.js";
 import { readExplainConfig, resolveExplainer } from "./lookup/explainProvider.js";
 import { createServer } from "./http/createServer.js";
+import type { ContentDependencies } from "./features/content/contentCommands.js";
 import { createDefaultCurrentUserProvider } from "./identity/currentUser.js";
 import { createOllamaModel, probeOllamaModel } from "./llm/llmModel.js";
 import { readDiaryTidyConfig } from "./llm/aiUtilityConfig.js";
@@ -61,6 +62,10 @@ const pglite = new PGlite(config.databaseDir);
 await runMigrations(pglite);
 const db = createDbClient(pglite);
 const sourceFileStore = createSourceFileStore(config.sourceFilesDir);
+// A parked Markdown creation-review attempt (#747) holds a single owner slot with staged bytes until the
+// learner decides. After this window an untouched attempt is swept to `expired` and its stage cleaned, so a
+// forgotten review never blocks the next import. Thirty minutes is generous for a human decision.
+const workCreationAttemptTtlMs = 30 * 60 * 1000;
 const epubParser = createEpubParser(
   join(config.sourceFilesDir, "epub-resources"),
   // Expected, recoverable ingestion events (e.g. a manifest resource whose bytes are missing, so the
@@ -189,40 +194,42 @@ const pdfImportCommands: PdfImportCommandDependencies = {
   stageStore: pdfImportStageStore
 };
 
+const contentDependencies = {
+  createAuthorId: () => randomUUID(),
+  createEntryId: () => randomUUID(),
+  createSourceId: () => randomUUID(),
+  db,
+  epubParser,
+  epubUploadLimitBytes: config.epubUploadLimitBytes,
+  imageResourceStore,
+  // Fail-loud (#311): record each unrecognized block-level element to stderr as a structured line
+  // so an unmodelled publisher construct is visible in logs rather than silently dropped.
+  ingestionLogger: (records) => {
+    for (const record of records) {
+      console.warn("[ingestion] unrecognized block element", JSON.stringify(record));
+    }
+  },
+  pdfToMarkdown: composePdfToMarkdown(
+    createOcrmypdfPreprocess({
+      ocrmypdfBinary: config.pdfOcrBinary,
+      timeoutMs: config.pdfTimeoutMs
+    }),
+    createDoclingPdfToMarkdown({
+      pythonBinary: config.pdfPythonBinary,
+      scriptPath: fileURLToPath(new URL("./files/pdf_to_markdown.py", import.meta.url)),
+      timeoutMs: config.pdfTimeoutMs
+    })
+  ),
+  sourceFileStore
+} satisfies ContentDependencies;
+
 const server = createServer({
   authoredWorks: {
     createEntryId: () => randomUUID(),
     db,
     now: () => new Date()
   },
-  content: {
-    createAuthorId: () => randomUUID(),
-    createEntryId: () => randomUUID(),
-    createSourceId: () => randomUUID(),
-    db,
-    epubParser,
-    epubUploadLimitBytes: config.epubUploadLimitBytes,
-    imageResourceStore,
-    // Fail-loud (#311): record each unrecognized block-level element to stderr as a structured line
-    // so an unmodelled publisher construct is visible in logs rather than silently dropped.
-    ingestionLogger: (records) => {
-      for (const record of records) {
-        console.warn("[ingestion] unrecognized block element", JSON.stringify(record));
-      }
-    },
-    pdfToMarkdown: composePdfToMarkdown(
-      createOcrmypdfPreprocess({
-        ocrmypdfBinary: config.pdfOcrBinary,
-        timeoutMs: config.pdfTimeoutMs
-      }),
-      createDoclingPdfToMarkdown({
-        pythonBinary: config.pdfPythonBinary,
-        scriptPath: fileURLToPath(new URL("./files/pdf_to_markdown.py", import.meta.url)),
-        timeoutMs: config.pdfTimeoutMs
-      })
-    ),
-    sourceFileStore
-  },
+  content: contentDependencies,
   currentUser: createDefaultCurrentUserProvider(),
   // A diary capture journals only (#571): it saves the Entry immediately with no tidy or proposal step in
   // the path. The async Tap-and-Talk voice worker (below) owns the tidy pass. Local + private, like v0.
@@ -275,6 +282,18 @@ const server = createServer({
   },
   search: { db },
   today: { db, now: () => new Date() },
+  workCreation: {
+    content: contentDependencies,
+    createAttemptId: () => randomUUID(),
+    createStageId: () => randomUUID(),
+    now: () => new Date(),
+    attemptTtlMs: workCreationAttemptTtlMs,
+    // A structural logger for how many credible duplicate candidates the boundary weighed, mirroring the
+    // library duplicate-candidate query's log shape without depending on Fastify.
+    log: {
+      info: (payload, message) => console.info(`[work-creation] ${message}`, JSON.stringify(payload))
+    }
+  },
   // In a single-origin deploy (#184) the built web client is served from this same server; in
   // dev/tests WEB_DIR is unset and Vite serves the client separately.
   web: config.webDir !== undefined ? { dir: config.webDir } : undefined

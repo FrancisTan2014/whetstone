@@ -132,6 +132,7 @@ describe("outcome vocabularies", () => {
       "created",
       "needs_review",
       "empty_content",
+      "author_not_found",
       "uncertain"
     ]);
   });

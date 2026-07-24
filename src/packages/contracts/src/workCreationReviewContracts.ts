@@ -100,13 +100,15 @@ export function parseWorkCreationReviewDto(value: unknown): WorkCreationReviewDt
 // The closed vocabulary of BEGIN outcomes (POST the uploaded Markdown). `exact_existing` reopened the
 // Work that already owns these exact bytes; `created` committed immediately (no credible candidate);
 // `needs_review` persisted one attempt and returned the review; `empty_content` refused unsupported
-// input; `uncertain` means the candidate query could not be trusted, so nothing was created and the
-// client must retry rather than be shown a false "no duplicates".
+// input; `author_not_found` refused an existing-author selection whose id no longer exists; `uncertain`
+// means the candidate query could not be trusted, so nothing was created and the client must retry
+// rather than be shown a false "no duplicates".
 export const workCreationBeginOutcomes = [
   "exact_existing",
   "created",
   "needs_review",
   "empty_content",
+  "author_not_found",
   "uncertain"
 ] as const;
 
