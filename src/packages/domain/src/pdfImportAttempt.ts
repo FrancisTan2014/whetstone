@@ -24,6 +24,16 @@ export const pdfImportAttemptStates = [
 
 export type PdfImportAttemptState = (typeof pdfImportAttemptStates)[number];
 
+// The durable phase a running attempt is in (#745). OCR is one phase of the SAME attempt, never a second
+// job: `preflight` probes the source and classifies native-vs-scanned pages; `ocr` adds an English text
+// layer to text-less pages (only for an English scanned/mixed Work); `structured` runs #701 range
+// conversion over the adopted source; `publication` marks the converted handoff to #702. The phase is
+// persisted so status can report a truthful named step (e.g. "Adding English text") and so recovery
+// resumes the right stage after a crash. Fenced by the same run token as every other write.
+export const pdfImportPhases = ["preflight", "ocr", "structured", "publication"] as const;
+
+export type PdfImportPhase = (typeof pdfImportPhases)[number];
+
 // Terminal outcomes never re-run and are never cancelled. `converted` is success; `failed`/`cancelled`
 // have already had their stage removed, so there is nothing to resume — the consumer starts a fresh
 // import. A non-terminal attempt (`queued`, `running`, `interrupted`) is the exact set an owner may

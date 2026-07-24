@@ -7,8 +7,15 @@ import {
   mayApplyRunOutput,
   nextRangeIndex,
   pdfImportAttemptStates,
+  pdfImportPhases,
   type PdfImportAttemptState
 } from "./pdfImportAttempt.js";
+
+describe("pdfImportPhases", () => {
+  it("lists the four durable attempt phases in order", () => {
+    expect(pdfImportPhases).toEqual(["preflight", "ocr", "structured", "publication"]);
+  });
+});
 
 describe("pdfImportAttemptStates", () => {
   it("lists the six lifecycle states", () => {
