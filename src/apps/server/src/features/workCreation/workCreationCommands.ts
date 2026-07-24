@@ -731,13 +731,13 @@ export async function keepSeparateWork(
     return { status: "superseded" };
   }
 
-  if (outcome.status === "created" || outcome.status === "exact_existing") {
-    return { status: outcome.status, result: outcome.result };
+  /* v8 ignore next 3 -- the proposal was validated at begin and its bytes were unclaimed above, so the
+     transfer commit can only return created/exact_existing here, never uncertain. */
+  if (outcome.status === "uncertain") {
+    return { status: "uncertain" };
   }
 
-  /* v8 ignore next 2 -- the proposal was validated at begin and its bytes were unclaimed above, so the
-     transfer commit can only return created/exact_existing here. */
-  return { status: "uncertain" };
+  return { status: outcome.status, result: outcome.result };
 }
 
 // Commit a reviewed attempt's staged upload to a Work, transferring the staged file to provenance in place
