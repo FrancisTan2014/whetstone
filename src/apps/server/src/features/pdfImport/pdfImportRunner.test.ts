@@ -358,6 +358,102 @@ describe("processNextPdfImport", () => {
       expect(result).toEqual({ status: "converted", attemptId: "a1" });
       expect((await getAttempt(db, DEFAULT_USER_ID, "a1"))?.ocrFingerprint).toBeNull();
     });
+
+    // Seed a resumed pre-adoption attempt: probe totals are persisted (so the resumed run skips the
+    // once-per-attempt probe), but no OCR stage is adopted (`ocr_fingerprint` null) and no range is
+    // committed (`completedPages` 0). The OCR phase therefore has no probe pages in hand and must
+    // RE-probe the original to classify routing.
+    async function seedResumedPreAdoption(id: string): Promise<void> {
+      await seedStaged(id);
+      await claimNextQueued(db, {
+        runToken: "prior",
+        fingerprint: PDF_IMPORT_ADAPTER_FINGERPRINT,
+        now: new Date()
+      });
+      await setProbeResult(db, {
+        id,
+        runToken: "prior",
+        totalPages: 1,
+        totalRanges: 1,
+        now: new Date()
+      });
+      await recoverInterruptedAttempts(db, new Date());
+      await retryInterrupted(db, DEFAULT_USER_ID, id, new Date());
+    }
+
+    // A resumed run that adopted nothing and committed nothing re-probes the ORIGINAL for routing —
+    // safe because no OCR stage is adopted yet, so re-probing (and re-OCRing) loses nothing. A scanned
+    // re-probe routes the pass, adopts the derived stage, and converts.
+    it("re-probes a resumed pre-adoption run to route OCR, then adopts and converts", async () => {
+      await seedResumedPreAdoption("a1");
+      const result = await processNextPdfImport(
+        buildDeps({
+          runner: createFakeDoclingRunner({ probe: scannedProbe(1), rangePayloads: [rawValid] })
+        })
+      );
+      expect(result).toEqual({ status: "converted", attemptId: "a1" });
+      expect((await getAttempt(db, DEFAULT_USER_ID, "a1"))?.ocrFingerprint).toBe(
+        "ocrmypdf@16.10.4/tesseract@5.5.1/eng"
+      );
+    });
+
+    // The resumed pre-adoption re-probe reads the original through the same probe path; a probe failure
+    // (here the toolchain went missing) fails the attempt visibly and frees its stage — never a silent
+    // publish from a source it could not classify.
+    it("fails a resumed pre-adoption run when the OCR routing re-probe fails", async () => {
+      await seedResumedPreAdoption("a1");
+      const handlePath = stageStore.openStage("a1").path;
+      const failingProbe: DoclingRunner = {
+        probe: () => Promise.resolve({ status: "tool_missing" }),
+        convertRange: () => Promise.resolve({ status: "ok", raw: rawValid })
+      };
+      const result = await processNextPdfImport(buildDeps({ runner: failingProbe }));
+      expect(result).toMatchObject({ status: "failed", attemptId: "a1" });
+      const attempt = await getAttempt(db, DEFAULT_USER_ID, "a1");
+      expect(attempt).toMatchObject({ state: "failed", stagePath: null });
+      expect(attempt?.failure?.kind).toBe("tool_missing");
+      await expect(stat(handlePath)).rejects.toThrow();
+    });
+
+    // A cancel that lands DURING the routing re-probe (after the probe totals were persisted, before the
+    // phase advances to `ocr`) fences the `setPhase("ocr")` write: the run stops (fenced) without failing
+    // the attempt, leaving its terminal state to the superseding run.
+    it("stops (fenced) when a cancel lands before the OCR phase is set on a resumed run", async () => {
+      await seedResumedPreAdoption("a1");
+      const cancellingProbe: DoclingRunner = {
+        probe: async () => {
+          await markCancelled(db, DEFAULT_USER_ID, "a1", new Date());
+          return scannedProbe(1);
+        },
+        convertRange: () => Promise.resolve({ status: "ok", raw: rawValid })
+      };
+      const result = await processNextPdfImport(buildDeps({ runner: cancellingProbe }));
+      expect(result).toEqual({ status: "fenced", attemptId: "a1" });
+      expect((await getAttempt(db, DEFAULT_USER_ID, "a1"))?.state).not.toBe("failed");
+    });
+
+    // A cancel that lands DURING the OCR pass itself (after the phase is `ocr`, before adoption) fences
+    // the atomic `adoptOcrStage` write: the derived bytes were produced but the fingerprint is never
+    // recorded, so the run stops (fenced) and no OCR stage is adopted (`ocr_fingerprint` stays null).
+    it("stops (fenced) when a cancel lands during the OCR pass before adoption", async () => {
+      await seedStaged("a1");
+      const fixtureOcr = createFixturePdfOcrAdapter({ outputStageRoot: join(rootDir, "ocr-out") });
+      const cancelDuringOcr: PdfOcrAdapter = {
+        execute: async (request) => {
+          const outcome = await fixtureOcr.execute(request);
+          await markCancelled(db, DEFAULT_USER_ID, "a1", new Date());
+          return outcome;
+        }
+      };
+      const result = await processNextPdfImport(
+        buildDeps({
+          runner: createFakeDoclingRunner({ probe: scannedProbe(1), rangePayloads: [rawValid] }),
+          ocrAdapter: cancelDuringOcr
+        })
+      );
+      expect(result).toEqual({ status: "fenced", attemptId: "a1" });
+      expect((await getAttempt(db, DEFAULT_USER_ID, "a1"))?.ocrFingerprint).toBeNull();
+    });
   });
 
   it("fails on a malformed range payload", async () => {

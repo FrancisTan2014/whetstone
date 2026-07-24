@@ -22,7 +22,9 @@ function pdfContext({
   eng,
   brew = false,
   pipFails = false,
-  modelDownloadFails = false
+  modelDownloadFails = false,
+  listLangsFails = false,
+  listLangsBlankOutput = false
 } = {}) {
   const state = {
     python,
@@ -71,6 +73,12 @@ function pdfContext({
     if (key === "tesseract --version") return state.tesseract ? OK : FAIL;
     if (key === "tesseract --list-langs") {
       if (!state.tesseract) return FAIL;
+      // A present Tesseract whose `--list-langs` still exits non-zero (a broken tessdata prefix, a
+      // corrupt install) can enumerate no packs, so the English pack is reported missing distinctly.
+      if (listLangsFails) return { code: 1, stdout: "", stderr: "read_params_file: cannot open" };
+      // A zero-exit `--list-langs` that emits no stream at all (no stdout, no stderr): the language
+      // scan falls back to an empty list, so `eng` cannot be confirmed present.
+      if (listLangsBlankOutput) return { code: 0 };
       const langs = state.eng ? "eng\nosd" : "osd";
       return { code: 0, stdout: `List of available languages:\n${langs}\n`, stderr: "" };
     }
@@ -154,6 +162,35 @@ describe("probeOcrReadiness", () => {
     const result = probeOcrReadiness(ctx);
     expect(result?.status).toBe("missing");
     expect(result?.what).toContain("English");
+    expect(result?.what).toContain("eng");
+  });
+
+  it("reports the English pack missing when `tesseract --list-langs` exits non-zero", () => {
+    // Tesseract is present (its `--version` succeeds) but `--list-langs` fails, so no pack — including
+    // `eng` — can be confirmed. The English trained-data gap is surfaced rather than assumed present.
+    const { ctx } = pdfContext({
+      docling: true,
+      ocrmypdf: true,
+      tesseract: true,
+      listLangsFails: true
+    });
+    const result = probeOcrReadiness(ctx);
+    expect(result?.status).toBe("missing");
+    expect(result?.what).toContain("English");
+    expect(result?.what).toContain("eng");
+  });
+
+  it("reports the English pack missing when `tesseract --list-langs` emits no output", () => {
+    // A zero-exit `--list-langs` with neither stdout nor stderr yields an empty language list, so `eng`
+    // is reported missing rather than crashing on the absent streams.
+    const { ctx } = pdfContext({
+      docling: true,
+      ocrmypdf: true,
+      tesseract: true,
+      listLangsBlankOutput: true
+    });
+    const result = probeOcrReadiness(ctx);
+    expect(result?.status).toBe("missing");
     expect(result?.what).toContain("eng");
   });
 
