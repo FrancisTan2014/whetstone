@@ -8,10 +8,12 @@ import {
   concatenateRanges,
   MAX_PAGE_COUNT,
   MAX_STAGED_BYTES,
-  parseProbePageCount,
+  parseProbeClassification,
   parseRangeConversion,
+  type ProbePage,
   type RangeConversion,
-  type StructuredDocument
+  type StructuredDocument,
+  type StructuredPage
 } from "@whetstone/contracts";
 import {
   cancelledFailure,
@@ -73,10 +75,25 @@ export function issueStagedFileHandle(stageRoot: string, stagedName: string): St
 }
 
 export type ProbeOutcome =
-  | Readonly<{ status: "ok"; pageCount: number }>
+  | Readonly<{ status: "ok"; pageCount: number; pages: readonly ProbePage[] }>
   | Readonly<{ status: "password_required" }>
   | Readonly<{ status: "tool_missing" }>
   | Readonly<{ status: "malformed"; detail: string }>;
+
+// Default page box (US Letter, no rotation) for a probe outcome that has only per-page native-text
+// (the in-memory fake and the staged-fixture backend do not carry real page geometry). The OCR
+// pre-pass (#744) supplies real geometry from its own worker probe; these deterministic backends only
+// need consistent, valid geometry so the shared probe shape stays uniform.
+const DEFAULT_PROBE_PAGE_GEOMETRY = Object.freeze({ width: 612, height: 792, rotation: 0 });
+
+// Project a structured page's native-text flag onto the shared probe-page shape with default geometry.
+function probePageFrom(page: StructuredPage): ProbePage {
+  return Object.freeze({
+    pageNumber: page.pageNumber,
+    ...DEFAULT_PROBE_PAGE_GEOMETRY,
+    hasNativeText: page.hasNativeText
+  });
+}
 
 export type RangeRunOutcome =
   | Readonly<{ status: "ok"; raw: string }>
@@ -313,7 +330,11 @@ export type FakeDoclingRunnerConfig = Readonly<{
 }>;
 
 export function createFakeDoclingRunner(config: FakeDoclingRunnerConfig = {}): DoclingRunner {
-  const probe: ProbeOutcome = config.probe ?? { status: "ok", pageCount: 1 };
+  const probe: ProbeOutcome = config.probe ?? {
+    status: "ok",
+    pageCount: 1,
+    pages: [probePageFrom({ pageNumber: 1, hasNativeText: true })]
+  };
   let active = 0;
   let rangeIndex = 0;
 
@@ -444,7 +465,11 @@ export function createStagedFixtureDoclingRunner(): DoclingRunner {
       const fixture = await loadFixture(pdfPath);
       return fixture === null
         ? { status: "tool_missing" }
-        : { status: "ok", pageCount: fixture.pages.length };
+        : {
+            status: "ok",
+            pageCount: fixture.pages.length,
+            pages: fixture.pages.map(probePageFrom)
+          };
     },
     async convertRange(
       pdfPath: string,
@@ -563,9 +588,9 @@ export function createDoclingRunner(dependencies: DoclingRunnerDependencies): Do
       }
       return { status: "malformed", detail: result.failure.what };
     }
-    const parsed = parseProbePageCount(result.stdout);
+    const parsed = parseProbeClassification(result.stdout);
     return parsed.status === "ok"
-      ? { status: "ok", pageCount: parsed.pageCount }
+      ? { status: "ok", pageCount: parsed.pageCount, pages: parsed.pages }
       : { status: "malformed", detail: parsed.detail };
   }
 

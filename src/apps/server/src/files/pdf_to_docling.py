@@ -9,7 +9,10 @@ per-page native-text), and the Node side validates and concatenates ranges.
 
 Two modes:
 
-- ``--probe <file.pdf>``  -> ``{"pageCount": N}`` on stdout. Encrypted input exits
+- ``--probe <file.pdf>``  -> ``{"pageCount": N, "pages": [...]}`` on stdout, where each page carries
+  ``{pageNumber, width, height, rotation, hasNativeText}``. This lightweight classification (page
+  geometry/rotation + native-text availability, no full Docling conversion) is the SOLE classifier
+  #704 routes an OCR pre-pass on, and #744 validates OCR preserved. Encrypted input exits
   ``EXIT_PASSWORD_REQUIRED``; a broken file exits ``EXIT_CONVERSION_FAILED``.
 - ``--range <file.pdf> <start> <end>`` -> one range payload JSON on stdout.
 
@@ -483,6 +486,28 @@ def native_text_prober(pdf_path: str, opener: Callable[[str], Any]) -> Callable[
     return has_text
 
 
+def page_geometry_prober(
+    pdf_path: str, opener: Callable[[str], Any]
+) -> Callable[[int], Mapping[str, float]]:
+    """A per-page geometry predicate: the page's box (width/height in PDF points) and quarter-turn rotation.
+
+    Uses the same backend as the page count. Reported by ``--probe`` so #704 can validate that an OCR
+    pre-pass (#744) preserved page geometry and rotation without a full Docling conversion.
+    """
+    document = opener(pdf_path)  # pragma: no cover - real backend; logic below tested via fake.
+
+    def geometry(page_number: int) -> Mapping[str, float]:  # pragma: no cover - real backend page access.
+        page = document[page_number - 1]
+        width, height = page.get_size()
+        return {
+            "width": float(width),
+            "height": float(height),
+            "rotation": int(page.get_rotation()),
+        }
+
+    return geometry
+
+
 def _write(stream: Any, text: str) -> None:
     """Write ``text`` as UTF-8, bypassing the host locale codec when the stream exposes a buffer."""
     buffer = getattr(stream, "buffer", None)
@@ -496,12 +521,33 @@ def _write(stream: Any, text: str) -> None:
 def run_probe(
     pdf_path: str,
     opener: Callable[[str], Any],
+    prober_factory: Callable[[str], Callable[[int], bool]],
+    geometry_factory: Callable[[str], Callable[[int], Mapping[str, float]]],
     stdout: Any,
     stderr: Any,
 ) -> int:
-    """``--probe`` mode: emit the page count, classifying encryption and corruption distinctly."""
+    """``--probe`` mode: emit the page count AND per-page geometry/rotation/native-text.
+
+    This is the SOLE lightweight classifier #704 routes an OCR pre-pass on (a scanned/mixed document is
+    detected here, so it never pays for a disposable pre-OCR Docling conversion) and #744 validates OCR
+    preserved. Encryption, a missing toolchain, and corruption classify to distinct exit codes.
+    """
     try:
         page_count = count_pages(pdf_path, opener)
+        native_text = prober_factory(pdf_path)
+        geometry = geometry_factory(pdf_path)
+        pages = []
+        for page_number in range(1, page_count + 1):
+            box = geometry(page_number)
+            pages.append(
+                {
+                    "pageNumber": page_number,
+                    "width": float(box["width"]),
+                    "height": float(box["height"]),
+                    "rotation": int(box["rotation"]),
+                    "hasNativeText": bool(native_text(page_number)),
+                }
+            )
     except PasswordRequired:
         _write(stderr, "pdf is encrypted; a password is required to open it.\n")
         return EXIT_PASSWORD_REQUIRED
@@ -511,10 +557,10 @@ def run_probe(
             f"pdf tooling is not installed ({error}); run `pnpm setup:pdf` to enable PDF ingestion.\n",
         )
         return EXIT_MISSING_DEPENDENCY
-    except ConversionFailed as error:
+    except Exception as error:  # noqa: BLE001 - classify any open/geometry failure, never crash raw.
         _write(stderr, f"pdf probe failed for {pdf_path}: {error}\n")
         return EXIT_CONVERSION_FAILED
-    _write(stdout, json.dumps({"pageCount": page_count}))
+    _write(stdout, json.dumps({"pageCount": page_count, "pages": pages}))
     return EXIT_OK
 
 
@@ -574,6 +620,9 @@ def main(
     converter_factory: Callable[[], Any] = build_converter,
     opener: Callable[[str], Any] = open_backend,
     prober_factory: Optional[Callable[[str], Callable[[int], bool]]] = None,
+    geometry_factory: Optional[
+        Callable[[str], Callable[[int], Mapping[str, float]]]
+    ] = None,
     resource_module: Any = "__default__",
     stdout: Any = None,
     stderr: Any = None,
@@ -591,6 +640,8 @@ def main(
         resource_module = _load_resource_module()
     if prober_factory is None:
         prober_factory = lambda path: native_text_prober(path, opener)
+    if geometry_factory is None:
+        geometry_factory = lambda path: page_geometry_prober(path, opener)
     if metadata_reader_factory is None:
         metadata_reader_factory = lambda path: pdf_metadata_reader(path, opener)
 
@@ -606,7 +657,7 @@ def main(
 
     try:
         if len(argv) == 2 and argv[0] == "--probe":
-            return run_probe(argv[1], opener, stdout, stderr)
+            return run_probe(argv[1], opener, prober_factory, geometry_factory, stdout, stderr)
         if len(argv) == 4 and argv[0] == "--range":
             start_page = _parse_positive_int(argv[2])
             end_page = _parse_positive_int(argv[3])

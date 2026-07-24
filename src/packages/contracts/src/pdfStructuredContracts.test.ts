@@ -4,10 +4,12 @@ import {
   concatenateRanges,
   flattenDocItems,
   isSupportedDoclingSchemaVersion,
-  parseProbePageCount,
+  parseProbeClassification,
   parseRangeConversion,
   PINNED_DOCLING_CORE_VERSION,
   PINNED_DOCLING_VERSION,
+  PINNED_OCRMYPDF_VERSION,
+  PINNED_TESSERACT_VERSION,
   RANGE_CONVERSION_SCHEMA_VERSION,
   STRUCTURED_DOCUMENT_SCHEMA_VERSION,
   SUPPORTED_DOCLING_CORE_SCHEMA_VERSIONS,
@@ -133,23 +135,97 @@ describe("parseRangeConversion", () => {
   });
 });
 
-describe("parseProbePageCount", () => {
-  it("accepts a non-negative integer page count", () => {
-    expect(parseProbePageCount(JSON.stringify({ pageCount: 12 }))).toEqual({
+describe("parseProbeClassification", () => {
+  const page = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
+    pageNumber: 1,
+    width: 612,
+    height: 792,
+    rotation: 0,
+    hasNativeText: true,
+    ...overrides
+  });
+
+  it("accepts a page count with matching per-page geometry/rotation/native-text", () => {
+    const raw = JSON.stringify({
+      pageCount: 2,
+      pages: [
+        page({ pageNumber: 1, hasNativeText: true, rotation: 90 }),
+        page({ pageNumber: 2, hasNativeText: false, width: 100.5, height: 200.25 })
+      ]
+    });
+    expect(parseProbeClassification(raw)).toEqual({
       status: "ok",
-      pageCount: 12
+      pageCount: 2,
+      pages: [
+        { pageNumber: 1, width: 612, height: 792, rotation: 90, hasNativeText: true },
+        { pageNumber: 2, width: 100.5, height: 200.25, rotation: 0, hasNativeText: false }
+      ]
+    });
+  });
+
+  it("accepts an empty document (zero pages)", () => {
+    expect(parseProbeClassification(JSON.stringify({ pageCount: 0, pages: [] }))).toEqual({
+      status: "ok",
+      pageCount: 0,
+      pages: []
     });
   });
 
   it("reports invalid JSON as malformed", () => {
-    expect(parseProbePageCount("nope").status).toBe("malformed");
+    expect(parseProbeClassification("nope").status).toBe("malformed");
   });
 
   it("rejects a missing, non-integer, or negative page count", () => {
-    expect(parseProbePageCount(JSON.stringify({})).status).toBe("malformed");
-    expect(parseProbePageCount(JSON.stringify({ pageCount: 1.5 })).status).toBe("malformed");
-    expect(parseProbePageCount(JSON.stringify({ pageCount: -1 })).status).toBe("malformed");
-    expect(parseProbePageCount("null").status).toBe("malformed");
+    expect(parseProbeClassification(JSON.stringify({ pages: [] })).status).toBe("malformed");
+    expect(
+      parseProbeClassification(JSON.stringify({ pageCount: 1.5, pages: [page()] })).status
+    ).toBe("malformed");
+    expect(parseProbeClassification(JSON.stringify({ pageCount: -1, pages: [] })).status).toBe(
+      "malformed"
+    );
+    expect(parseProbeClassification("null").status).toBe("malformed");
+  });
+
+  it("rejects a page-count/records length mismatch", () => {
+    expect(parseProbeClassification(JSON.stringify({ pageCount: 2, pages: [page()] })).status).toBe(
+      "malformed"
+    );
+  });
+
+  it("rejects a duplicate or out-of-range page number", () => {
+    expect(
+      parseProbeClassification(
+        JSON.stringify({ pageCount: 2, pages: [page({ pageNumber: 1 }), page({ pageNumber: 1 })] })
+      ).status
+    ).toBe("malformed");
+    expect(
+      parseProbeClassification(JSON.stringify({ pageCount: 1, pages: [page({ pageNumber: 5 })] }))
+        .status
+    ).toBe("malformed");
+  });
+
+  it("rejects a negative dimension or an unsupported rotation", () => {
+    expect(
+      parseProbeClassification(JSON.stringify({ pageCount: 1, pages: [page({ width: -1 })] }))
+        .status
+    ).toBe("malformed");
+    expect(
+      parseProbeClassification(JSON.stringify({ pageCount: 1, pages: [page({ rotation: 45 })] }))
+        .status
+    ).toBe("malformed");
+  });
+
+  it("rejects a page record carrying an unknown key", () => {
+    expect(
+      parseProbeClassification(JSON.stringify({ pageCount: 1, pages: [page({ dpi: 300 })] })).status
+    ).toBe("malformed");
+  });
+});
+
+describe("pinned OCR toolchain versions", () => {
+  it("pins the exact OCRmyPDF and Tesseract versions the fingerprint records", () => {
+    expect(PINNED_OCRMYPDF_VERSION).toBe("16.10.4");
+    expect(PINNED_TESSERACT_VERSION).toBe("5.5.1");
   });
 });
 
