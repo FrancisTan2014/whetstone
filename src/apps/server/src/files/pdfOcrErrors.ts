@@ -24,6 +24,7 @@ export type PdfOcrFailureKind =
   | "geometry"
   | "native_text"
   | "output_validation"
+  | "stage_write"
   | "cleanup";
 
 export type PdfOcrFailure = Readonly<{
@@ -124,6 +125,19 @@ export function ocrOutputValidationFailure(detail: string): PdfOcrFailure {
     kind: "output_validation",
     what: `The OCR pass produced an output PDF that could not be re-probed: ${detail}`,
     remedy: "Re-run the OCR pass; if it recurs, re-provision the toolchain with `pnpm setup:pdf`."
+  });
+}
+
+// The adapter validated the OCR output, but the runner could not copy it into the attempt-owned
+// derived stage: the transient output was unreadable, or the derived-stage write failed (disk,
+// permission, or a missing stage directory). Surfaced as a typed failure so the attempt is marked
+// failed rather than left running — a rejection here would strand the run token and block every later
+// PDF import until interruption recovery on the next restart.
+export function ocrStageWriteFailure(detail: string): PdfOcrFailure {
+  return Object.freeze({
+    kind: "stage_write",
+    what: `The OCR pass validated its output, but it could not be copied into the attempt's stage: ${detail}`,
+    remedy: "Free disk space/permission on the server stage directory, then start the import again."
   });
 }
 

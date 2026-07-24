@@ -454,6 +454,35 @@ describe("processNextPdfImport", () => {
       expect(result).toEqual({ status: "fenced", attemptId: "a1" });
       expect((await getAttempt(db, DEFAULT_USER_ID, "a1"))?.ocrFingerprint).toBeNull();
     });
+
+    // The OCR pass validated its output, but the runner could not copy it into the attempt-owned derived
+    // stage: the transient output was unreadable, or the derived `ocr.pdf` write failed (disk, permission,
+    // or a missing stage directory). This must fail the attempt VISIBLY (typed `stage_write`) and free its
+    // stage — never reject out of `processNextPdfImport`. A rejection here would leave the attempt `running`
+    // with its run token held, so no later drain tick could claim any PDF import until a restart ran
+    // interruption recovery.
+    it("fails the attempt (never rejects) when the derived OCR stage copy/write fails", async () => {
+      await seedStaged("a1");
+      const handlePath = stageStore.openStage("a1").path;
+      const failingDerivedWrite: PdfImportStageStore = {
+        ...stageStore,
+        writeDerivedStage: () => Promise.reject(new Error("stage directory vanished"))
+      };
+      const result = await processNextPdfImport(
+        buildDeps({
+          runner: createFakeDoclingRunner({ probe: scannedProbe(1), rangePayloads: [rawValid] }),
+          stageStore: failingDerivedWrite
+        })
+      );
+      expect(result).toMatchObject({ status: "failed", attemptId: "a1" });
+      const attempt = await getAttempt(db, DEFAULT_USER_ID, "a1");
+      // A typed failed attempt — never stuck `running`: the run token is released and the stage freed, so
+      // the next drain tick can claim work. The fingerprint was never adopted (the write never landed).
+      expect(attempt).toMatchObject({ state: "failed", stagePath: null });
+      expect(attempt?.ocrFingerprint).toBeNull();
+      expect(attempt?.failure?.kind).toBe("stage_write");
+      await expect(stat(handlePath)).rejects.toThrow();
+    });
   });
 
   it("fails on a malformed range payload", async () => {

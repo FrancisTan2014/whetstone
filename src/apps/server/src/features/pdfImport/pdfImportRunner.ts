@@ -16,6 +16,7 @@ import {
 
 import type { DbClient } from "../../db/dbClient.js";
 import { formatOcrFingerprint, type PdfOcrAdapter } from "../../files/pdfOcrAdapter.js";
+import { ocrStageWriteFailure } from "../../files/pdfOcrErrors.js";
 import {
   pageRangesFor,
   type DoclingRunner,
@@ -424,9 +425,19 @@ async function resolveConversionSource(
   // remove the now-redundant transient output — surfacing a removal failure via the cleanup logger
   // rather than aborting an otherwise-successful OCR pass, since the bytes are already durable in the
   // attempt stage.
+  //
+  // The read + derived-stage write is on the failure-to-data path: an unreadable transient output or a
+  // failed attempt-owned write (disk/permission/missing stage dir) becomes a typed `stage_write`
+  // failure so the caller marks the attempt FAILED. Rejecting here would strand the run token with the
+  // attempt still `running`, blocking every later PDF import until interruption recovery on restart.
   const outputPath = outcome.result.output.path;
-  const bytes = new Uint8Array(await readFile(outputPath));
-  const derived = await deps.stageStore.writeDerivedStage(stagePath, bytes);
+  let derived: StagedFileHandle;
+  try {
+    const bytes = new Uint8Array(await readFile(outputPath));
+    derived = await deps.stageStore.writeDerivedStage(stagePath, bytes);
+  } catch (cause) {
+    return { status: "failure", failure: ocrStageWriteFailure(describeError(cause)) };
+  }
   /* v8 ignore start -- best-effort transient cleanup: the OCR bytes are already durable in the derived
      stage by this point, so a removal failure is surfaced (never swallowed) but is not a product failure.
      Forcing `rm` to throw between the preceding `readFile` and here — without also breaking that read —
