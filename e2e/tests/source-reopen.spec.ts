@@ -69,7 +69,11 @@ test("re-uploading identical EPUB and Markdown bytes reopens one Work each (#706
 }) => {
   await page.setViewportSize(DESKTOP);
   await page.goto(`${setup.baseURL}#/library`);
-  await expect(page.getByRole("button", { name: "Add" })).toBeVisible();
+  // `exact: true`: the shared smoke shelf can carry a Work titled "Add To Review" (seeded at runtime by
+  // reader-annotation-opener.spec.ts), whose "More actions for Add To Review" button substring-matches a
+  // loose "Add" name and makes this settle resolve to two elements. Pin the primary shelf Add affordance
+  // by its exact accessible name so ordering across the shared shelf never breaks this wait.
+  await expect(page.getByRole("button", { name: "Add", exact: true })).toBeVisible();
 
   // The seeded EPUB is already on the shelf exactly once.
   const epubHeading = page.getByRole("heading", { name: setup.epub.title });
