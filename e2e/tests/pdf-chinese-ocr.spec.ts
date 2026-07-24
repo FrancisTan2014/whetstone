@@ -107,7 +107,9 @@ test("imports a scanned Simplified-Chinese PDF via the OCR override, then reads,
   await page.getByRole("searchbox", { name: "Search query" }).fill("简体中文文本");
   await page.getByRole("button", { name: "Search" }).click();
   const results = page.getByRole("list", { name: "Search results" });
-  await expect(results.getByText("Scanned Simplified Chinese Page", { exact: false })).toBeVisible();
+  await expect(
+    results.getByText("Scanned Simplified Chinese Page", { exact: false })
+  ).toBeVisible();
 
   // Annotation + reload operate on the OCR'd canonical blocks with no PDF-specific path (resume).
   await reloadReader(page, readerUrl);

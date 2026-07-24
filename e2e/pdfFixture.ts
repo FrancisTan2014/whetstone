@@ -168,4 +168,6 @@ function scannedFixture(name: string) {
 }
 
 export const pdfScannedChineseSimplifiedFixture = scannedFixture("Scanned Simplified Chinese Page");
-export const pdfScannedChineseTraditionalFixture = scannedFixture("Scanned Traditional Chinese Page");
+export const pdfScannedChineseTraditionalFixture = scannedFixture(
+  "Scanned Traditional Chinese Page"
+);
