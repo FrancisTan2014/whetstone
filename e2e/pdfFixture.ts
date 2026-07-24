@@ -142,3 +142,26 @@ export const pdfMixedFixture = {
   mimeType: "application/pdf",
   name: "Mixed Scan Report.pdf"
 } as const;
+
+// Fully scanned Chinese fixtures (#746): like the English scanned fixture, each single page carries NO
+// native text, so the recovered text is supplied entirely by the fixture OCR lane in the language the
+// pass is asked to recognize. The learner selects the scanned-text language (the pre-import OCR override)
+// before starting, so these bytes publish Simplified- or Traditional-Chinese recovered text — proving the
+// override drives OCR independently of the Work language. Distinct names/titles keep search unambiguous.
+function scannedFixture(name: string) {
+  const scanned = {
+    body: [] as readonly DocItem[],
+    doclingSchema: { name: "DoclingDocument", version: "1.10.0" },
+    furniture: [],
+    pages: [{ hasNativeText: false, pageNumber: 1 }],
+    schemaVersion: RANGE_CONVERSION_SCHEMA_VERSION
+  };
+  return {
+    buffer: Buffer.from(`%PDF-1.7\n${FIXTURE_MARKER}\n${JSON.stringify(scanned)}`, "utf8"),
+    mimeType: "application/pdf",
+    name: `${name}.pdf`
+  } as const;
+}
+
+export const pdfScannedChineseSimplifiedFixture = scannedFixture("Scanned Simplified Chinese Page");
+export const pdfScannedChineseTraditionalFixture = scannedFixture("Scanned Traditional Chinese Page");
