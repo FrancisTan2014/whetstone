@@ -128,6 +128,33 @@ describe("selectWorkDuplicateCandidates", () => {
     expect(excluded).toEqual({ candidates: [], totalCandidateCount: 0 });
   });
 
+  it("treats a brand-new author (null id) as never same-author: a same-author-only fuzzy match drops", () => {
+    // 0.90 similarity qualifies as same-author but is below the 0.94 cross-author bar. With a null
+    // proposed author it can never corroborate as same-author, so it is excluded entirely.
+    const result = selectWorkDuplicateCandidates(proposal({ authorId: null }), [
+      candidate({ entryId: toEntryId("w-same-name"), titleKey: "cleancoder" })
+    ]);
+    expect(result).toEqual({ candidates: [], totalCandidateCount: 0 });
+  });
+
+  it("still surfaces an exact-key match for a brand-new author (null id), marked cross-author", () => {
+    const result = selectWorkDuplicateCandidates(proposal({ authorId: null }), [
+      candidate({ entryId: toEntryId("w-exact") })
+    ]);
+    expect(result.candidates.map((row) => row.matchTier)).toEqual(["exact"]);
+    expect(result.candidates[0]?.evidence.sameAuthor).toBe(false);
+  });
+
+  it("applies the stricter cross-author bar for a brand-new author (null id) fuzzy match", () => {
+    const key = "abcdefghijklmnopq";
+    const near = "abcdefghijklmnopx";
+    const result = selectWorkDuplicateCandidates(proposal({ titleKey: key, authorId: null }), [
+      candidate({ entryId: toEntryId("w-x"), titleKey: near })
+    ]);
+    expect(result.candidates.map((row) => row.matchTier)).toEqual(["cross_author_fuzzy"]);
+    expect(result.candidates[0]?.evidence.sameAuthor).toBe(false);
+  });
+
   it("requires the stricter threshold for a different author (0.90 qualifies same-author, not cross)", () => {
     // "cleancode" -> "cleancoder": one insertion over 10 = 0.90.
     const sameAuthor = selectWorkDuplicateCandidates(proposal(), [

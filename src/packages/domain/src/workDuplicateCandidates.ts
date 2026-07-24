@@ -118,9 +118,13 @@ const matchTierRank: Readonly<Record<WorkDuplicateMatchTier, number>> = {
 
 // The proposed metadata under review. `titleKey` is the database-computed canonical key (never recomputed
 // here); `authorId` identifies the chosen/created author so same-author corroboration is exact, not fuzzy.
+// `authorId` is `null` when the learner typed a BRAND-NEW author name that matches no existing Library
+// identity (#747): such a proposal has no author row yet (it is created only inside the final Work
+// transaction), so it can never be the same author as an existing Work — same-author corroboration is
+// impossible and only the stricter cross-author title bar applies. Author names are never fuzzy-matched.
 export type ProposedWorkMetadata = Readonly<{
   titleKey: string;
-  authorId: AuthorId;
+  authorId: AuthorId | null;
   language: WorkLanguage;
   workType: WorkType;
 }>;
@@ -185,7 +189,9 @@ export function selectWorkDuplicateCandidates(
   const qualified: Array<Readonly<{ candidate: WorkDuplicateCandidate; similarity: number }>> = [];
 
   for (const candidate of pool) {
-    const sameAuthor = candidate.authorId === proposed.authorId;
+    // A brand-new author (`authorId === null`) has no existing identity, so it is never the same author as
+    // any stored Work — only the stricter cross-author title bar can qualify a candidate.
+    const sameAuthor = proposed.authorId !== null && candidate.authorId === proposed.authorId;
     const similarity =
       candidate.titleKey === proposed.titleKey
         ? 1
