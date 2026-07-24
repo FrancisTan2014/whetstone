@@ -14,21 +14,21 @@ const READING = 'article[aria-label="Reading"]';
 const DESKTOP = { height: 900, width: 1280 } as const;
 const NARROW = { height: 851, width: 393 } as const;
 
-// Create a manual Work through the real API. Manual creation writes one canonical, id-stamped empty
-// paragraph (#696's initializer), so the editor opens on an immediately editable document.
+// Create a manual Work through the real review front door (#749). A unique title has no duplicate
+// candidate, so begin mints the owned, canonical empty-document Work immediately (#696's initializer),
+// so the editor opens on an immediately editable document.
 async function createManualWork(page: Page, setup: SetupData, title: string): Promise<string> {
-  const created = await page.request.post(`${setup.baseURL}api/works`, {
+  const created = await page.request.post(`${setup.baseURL}api/works/manual`, {
     data: {
       author: { mode: "new", name: `${title} Author` },
       language: "en",
-      origin: "manual",
       title,
       workType: "book"
     }
   });
   expect(created.status()).toBe(201);
-  const { work } = (await created.json()) as { work: { entryId: string } };
-  return work.entryId;
+  const { result } = (await created.json()) as { result: { work: { entryId: string } } };
+  return result.work.entryId;
 }
 
 // Persist the theme choice the app reads on load (`whetstone-theme`), so every navigation renders in the

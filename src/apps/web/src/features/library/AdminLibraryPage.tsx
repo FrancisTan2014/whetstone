@@ -7,6 +7,7 @@ import type {
   RecitationPlanDto,
   WorkAuthorSelection,
   WorkCreationReviewDto,
+  WorkDto,
   WorkListItemDto
 } from "@whetstone/contracts";
 import {
@@ -42,15 +43,16 @@ import {
 } from "../pdfImport/pdfImportSession";
 import {
   beginEpubCreation,
+  beginManualCreation,
   beginMarkdownCreation,
   cancelWorkCreation,
-  createWork,
   deleteWork,
   fetchWorks,
   fetchWorksWithReadingPosition,
   keepSeparateWork,
   openExistingWork,
   type BeginEpubCreationOutcome,
+  type BeginManualCreationOutcome,
   type BeginMarkdownCreationOutcome,
   type WorkCreationDecisionOutcome
 } from "./libraryApi";
@@ -284,23 +286,14 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
         return;
       }
 
-      // A plain manual entry mints an owned, editable Work with a canonical empty document (#720).
+      // A plain manual entry now enters the SAME server-owned duplicate-review boundary (#749). Manual
+      // creation carries no uploaded bytes, so begin only reviews #724 candidates for the proposed
+      // metadata: with none it mints the owned, editable Work immediately through the canonical
+      // empty-document boundary; with a credible one it parks the shared review before anything is
+      // created. The form is kept intact so the draft survives review/Back/retry; `beginHeldManual` owns
+      // closing/resetting once an outcome resolves.
       if (heldUpload === undefined) {
-        const created = await createWork({
-          author,
-          language,
-          origin: "manual",
-          title: trimmedTitle,
-          workType
-        });
-        resetWorkForm();
-        setPendingUpload(undefined);
-        setAddOpen(false);
-        await reload();
-        toast.success(`Added “${trimmedTitle}”.`);
-        // A manual Work is created with a canonical empty document (#720): open it straight in the
-        // Library's manual editor to start writing, rather than the imported-content panel.
-        navigate(`/library/works/${encodeURIComponent(created.work.entryId)}/edit`);
+        await beginHeldManual(author, trimmedTitle);
         return;
       }
 
@@ -488,12 +481,21 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
   }
 
   // Land a resolved creation/reopen (from begin or a decision): reset the draft, refresh the shelf,
-  // announce it, and drop the learner into Manage content for the resulting Work.
-  async function completeMarkdownCreation(workEntryId: string, message: string): Promise<void> {
+  // announce it, and route by the resulting Work's content authority (#749). A `manual` Work opens
+  // straight in the Library's manual editor to start writing; any other origin (an imported upload, or a
+  // reopened existing Work) drops into Manage content. Routing off the projected `origin` keeps every
+  // lane — Markdown, EPUB, and manual — on one completion path.
+  async function completeCreation(work: WorkDto, message: string): Promise<void> {
     clearMarkdownDraft();
     await reload();
     toast.success(message);
-    onManageContent(workEntryId);
+
+    if (work.origin === "manual") {
+      navigate(`/library/works/${encodeURIComponent(work.entryId)}/edit`);
+      return;
+    }
+
+    onManageContent(work.entryId);
   }
 
   // Begin an imported-Markdown Work through the duplicate-review boundary (#747). Exact bytes reopen the
@@ -532,11 +534,11 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
   ): Promise<void> {
     switch (outcome.status) {
       case "created":
-        await completeMarkdownCreation(outcome.result.work.entryId, `Imported “${workTitle}”.`);
+        await completeCreation(outcome.result.work, `Imported “${workTitle}”.`);
         return;
       case "exact_existing":
-        await completeMarkdownCreation(
-          outcome.result.work.entryId,
+        await completeCreation(
+          outcome.result.work,
           `“${outcome.result.work.title}” is already in your library — opened it.`
         );
         return;
@@ -559,6 +561,53 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
         return;
       /* v8 ignore next 2 -- every begin outcome is handled above; the default only keeps the switch
          exhaustive and is unreachable. */
+      default:
+        return;
+    }
+  }
+
+  // Begin a MANUAL Work through the SAME duplicate-review boundary (#749). Manual creation carries no
+  // uploaded bytes, so begin only reviews #724 candidates: no candidate mints the owned Work immediately
+  // through the canonical empty-document boundary; a credible candidate parks the shared review panel
+  // while keeping the form intact. Author-not-found/uncertain create nothing and leave the Add-work form
+  // open so the learner can adjust and retry. There is no upload, so no busy/kind spinner is shown.
+  async function beginHeldManual(
+    author: CreateWorkRequest["author"],
+    workTitle: string
+  ): Promise<void> {
+    const outcome = await beginManualCreation({
+      author,
+      language,
+      title: workTitle,
+      workType
+    });
+    await applyManualBeginOutcome(outcome, workTitle);
+  }
+
+  async function applyManualBeginOutcome(
+    outcome: BeginManualCreationOutcome,
+    workTitle: string
+  ): Promise<void> {
+    switch (outcome.status) {
+      case "created":
+        // No credible candidate: the owned, editable Work was minted with a canonical empty document.
+        // `completeCreation` routes a manual origin straight into the Library's manual editor.
+        await completeCreation(outcome.result.work, `Added “${workTitle}”.`);
+        return;
+      case "needs_review":
+        // A credible candidate exists: park the review panel and keep the form so Back returns to the
+        // still-filled Add-work form. Nothing has been created yet.
+        setAddOpen(false);
+        setReviewState(outcome.review);
+        return;
+      case "author_not_found":
+        toast.error("That author or source no longer exists. Choose another and try again.");
+        return;
+      case "uncertain":
+        toast.error("Couldn’t check your library for duplicates just now. Please try again.");
+        return;
+      /* v8 ignore next 2 -- every manual begin outcome is handled above; the default only keeps the
+         switch exhaustive and is unreachable. */
       default:
         return;
     }
@@ -607,15 +656,20 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
   async function applyDecisionOutcome(outcome: WorkCreationDecisionOutcome): Promise<void> {
     switch (outcome.status) {
       case "created":
-        await completeMarkdownCreation(
-          outcome.result.work.entryId,
-          `Imported “${outcome.result.work.title}”.`
+        // Keep separate committed the proposal as a distinct Work. Its content authority decides the copy
+        // and destination (#749): a manual Work is "Added" and opens its editor, an imported one is
+        // "Imported" and opens Manage content — `completeCreation` routes off the projected origin.
+        await completeCreation(
+          outcome.result.work,
+          outcome.result.work.origin === "manual"
+            ? `Added “${outcome.result.work.title}”.`
+            : `Imported “${outcome.result.work.title}”.`
         );
         return;
       case "opened":
       case "exact_existing":
-        await completeMarkdownCreation(
-          outcome.result.work.entryId,
+        await completeCreation(
+          outcome.result.work,
           `“${outcome.result.work.title}” is already in your library — opened it.`
         );
         return;

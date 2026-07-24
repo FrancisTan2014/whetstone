@@ -60,9 +60,25 @@ export const createWorkRequestSchema = z
   })
   .strict();
 
+// Begin a MANUAL Work through the duplicate-review boundary (#749). A manual Work is always
+// learner-curated with a canonical empty document, so the origin is implicit (`manual`) and never
+// accepted from the client — this is the same metadata as `createWorkRequestSchema` minus `origin`. The
+// server reviews #724 candidates before any commit; with none it creates immediately through the same
+// canonical empty-document boundary, and with a credible one it parks the shared review. It carries no
+// uploaded bytes, so there is no source hash or stage and an exact-source reopen is impossible.
+export const beginManualWorkRequestSchema = z
+  .object({
+    author: workAuthorSelectionSchema,
+    language: workLanguageDtoSchema,
+    title: z.string().refine(isNonBlank, { message: "Work title must be non-empty." }),
+    workType: workTypeDtoSchema
+  })
+  .strict();
+
 export type CreateAuthorRequest = z.infer<typeof createAuthorRequestSchema>;
 export type WorkAuthorSelection = z.infer<typeof workAuthorSelectionSchema>;
 export type CreateWorkRequest = z.infer<typeof createWorkRequestSchema>;
+export type BeginManualWorkRequest = z.infer<typeof beginManualWorkRequestSchema>;
 export type LibraryCreateOriginDto = LibraryCreateOrigin;
 
 export type AuthorDto = Readonly<{
@@ -108,4 +124,8 @@ export function parseCreateAuthorRequest(value: unknown): CreateAuthorRequest {
 
 export function parseCreateWorkRequest(value: unknown): CreateWorkRequest {
   return createWorkRequestSchema.parse(value);
+}
+
+export function parseBeginManualWorkRequest(value: unknown): BeginManualWorkRequest {
+  return beginManualWorkRequestSchema.parse(value);
 }

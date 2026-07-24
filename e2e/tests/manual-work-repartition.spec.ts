@@ -16,18 +16,17 @@ const READING = 'article[aria-label="Reading"]';
 const DESKTOP = { height: 900, width: 1280 } as const;
 
 async function createManualWork(page: Page, setup: SetupData, title: string): Promise<string> {
-  const created = await page.request.post(`${setup.baseURL}api/works`, {
+  const created = await page.request.post(`${setup.baseURL}api/works/manual`, {
     data: {
       author: { mode: "new", name: `${title} Author` },
       language: "en",
-      origin: "manual",
       title,
       workType: "book"
     }
   });
   expect(created.status()).toBe(201);
-  const { work } = (await created.json()) as { work: { entryId: string } };
-  return work.entryId;
+  const { result } = (await created.json()) as { result: { work: { entryId: string } } };
+  return result.work.entryId;
 }
 
 // The block id of the reader block whose rendered plaintext contains `needle` (never a heading block).

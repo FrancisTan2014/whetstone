@@ -12,7 +12,9 @@ import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
 import {
   authors,
+  blocks,
   entries,
+  personalEntries,
   tocEntries,
   uploadedSourceClaims,
   workCreationAttempts,
@@ -201,6 +203,35 @@ function begin(overrides: Record<string, unknown> = {}): ReturnType<typeof h.ser
 
 const EPUB_TITLE = "史记选读";
 const EPUB_AUTHOR = "司马迁";
+
+// A manual-creation begin: metadata only, no uploaded bytes. The `origin` is implicit (`manual`) and never
+// accepted from the client, so the payload is the same shape as the Markdown begin minus the file fields.
+const MANUAL = {
+  author: { mode: "new", name: "George Orwell" },
+  language: "en",
+  title: TITLE,
+  workType: "essay"
+} as const;
+
+function beginManual(overrides: Record<string, unknown> = {}): ReturnType<typeof h.server.inject> {
+  return h.server.inject({
+    method: "POST",
+    payload: { ...MANUAL, ...overrides },
+    url: "/api/works/manual"
+  });
+}
+
+// Park a manual attempt on a credible duplicate: a Work sharing the proposed title (different author) is a
+// credible #724 candidate, so a plain manual begin returns needs_review with nothing created.
+async function beginManualNeedsReview(): Promise<{ attemptId: string; candidateId: string }> {
+  const candidateId = await seedCandidateWork({
+    authorId: await seedAuthor("existing-author", "Someone Else"),
+    entryId: "candidate-1"
+  });
+  const body = (await beginManual()).json();
+  expect(body.status).toBe("needs_review");
+  return { attemptId: body.review.attemptId as string, candidateId };
+}
 
 function beginEpub(
   bytes: Uint8Array = new Uint8Array([1, 2, 3])
@@ -1086,5 +1117,310 @@ describe("EPUB creation-review keep separate (#748)", () => {
     expect(attempt?.stagePath).toBeNull();
     // The staged EPUB was discarded, not transferred.
     expect(await readdir(h.sourcesDir)).toEqual([]);
+  });
+});
+
+// Async: reopened content resolves to a canonical empty document (#720) — exactly one reading unit whose
+// only PM `docBlocks` node is an empty paragraph, and no legacy mdast blocks (the clean canonical schema
+// a manual Work is created with). This is the shape the manual editor opens on.
+function assertEmptyDocument(result: IngestEpubResultDto): void {
+  expect(result.content.readingUnits).toHaveLength(1);
+  const unit = result.content.readingUnits[0];
+  expect(unit?.blocks ?? []).toHaveLength(0);
+  const docBlocksOfUnit = unit?.docBlocks ?? [];
+  expect(docBlocksOfUnit).toHaveLength(1);
+  expect(docBlocksOfUnit[0]?.type).toBe("paragraph");
+}
+
+describe("Manual creation-review begin (#749)", () => {
+  it("creates the manual Work immediately with a canonical empty document when no duplicate is credible", async () => {
+    const response = await beginManual();
+
+    expect(response.statusCode).toBe(201);
+    const body = response.json() as { result: IngestEpubResultDto; status: string };
+    expect(body.status).toBe("created");
+    expect(body.result.work).toMatchObject({ origin: "manual", title: TITLE, workType: "essay" });
+    assertEmptyDocument(body.result);
+
+    // The Work exists with a manual ownership facet; no review attempt, no upload claim, and — since manual
+    // carries no bytes — nothing was ever staged on disk.
+    expect(await countWorks()).toBe(1);
+    expect(await h.db.select().from(workCreationAttempts)).toHaveLength(0);
+    expect(await h.db.select().from(uploadedSourceClaims)).toHaveLength(0);
+    expect(await readdir(h.sourcesDir)).toEqual([]);
+    const owned = await h.db
+      .select()
+      .from(personalEntries)
+      .where(eq(personalEntries.entryId, body.result.work.entryId));
+    expect(owned).toHaveLength(1);
+    // The new author was created inside the create transaction, not before it.
+    expect(await h.db.select().from(authors)).toHaveLength(1);
+  });
+
+  it("reuses a name-matched existing author instead of creating a duplicate identity", async () => {
+    const existingId = await seedAuthor("orwell", "George Orwell");
+
+    const response = await beginManual();
+
+    expect(response.statusCode).toBe(201);
+    const body = response.json() as { result: IngestEpubResultDto; status: string };
+    expect(body.result.work.authorId).toBe(existingId);
+    expect(await h.db.select().from(authors)).toHaveLength(1);
+  });
+
+  it("parks one metadata-only review attempt when a duplicate is credible, creating nothing", async () => {
+    const candidateId = await seedCandidateWork({
+      authorId: await seedAuthor("existing-author", "Someone Else"),
+      entryId: "candidate-1"
+    });
+
+    const response = await beginManual();
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.status).toBe("needs_review");
+    const review = parseWorkCreationReviewDto(body.review);
+    expect(review.proposed).toEqual({
+      authorName: "George Orwell",
+      language: "en",
+      title: TITLE,
+      workType: "essay"
+    });
+    expect(review.candidates).toHaveLength(1);
+    expect(review.candidates[0]).toMatchObject({ entryId: candidateId });
+
+    // The attempt is metadata-only: manual carries no bytes, so hash / filename / stage are all null and the
+    // store never handed it a stage. No Work, ownership facet, source claim, or staged file was created.
+    const attempts = await h.db.select().from(workCreationAttempts);
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]).toMatchObject({
+      sourceKind: "manual",
+      sourceHash: null,
+      sourceFileName: null,
+      stagePath: null
+    });
+    expect(await countWorks()).toBe(1);
+    expect(await readdir(h.sourcesDir)).toEqual([]);
+    expect(await h.db.select().from(uploadedSourceClaims)).toHaveLength(0);
+    // The proposed new author is NOT created while the attempt is only parked for review.
+    expect(await h.db.select().from(authors)).toHaveLength(1);
+  });
+
+  it("refuses an unknown existing author with 400 author_not_found, creating nothing", async () => {
+    const response = await beginManual({ author: { mode: "existing", authorId: "ghost-author" } });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ status: "author_not_found" });
+    expect(await countWorks()).toBe(0);
+    expect(await h.db.select().from(workCreationAttempts)).toHaveLength(0);
+  });
+
+  it("reports uncertain (503) when the candidate query cannot be trusted, creating nothing", async () => {
+    await h.db.execute(sql`DROP FUNCTION IF EXISTS work_title_key(text) CASCADE`);
+
+    const response = await beginManual();
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toEqual({ status: "uncertain" });
+    expect(await countWorks()).toBe(0);
+    expect(await h.db.select().from(workCreationAttempts)).toHaveLength(0);
+    expect(await readdir(h.sourcesDir)).toEqual([]);
+  });
+
+  it("rejects a malformed begin body with 400 invalid_request", async () => {
+    const response = await h.server.inject({
+      method: "POST",
+      payload: { title: TITLE },
+      url: "/api/works/manual"
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: "invalid_request" });
+  });
+
+  it("rejects an attempt to forge an origin through the manual front door (strict body)", async () => {
+    // `origin` is implicit `manual` and never accepted from the client; a body carrying it is rejected by
+    // the strict schema, so no request can create a non-manual Work through this route.
+    const response = await beginManual({ origin: "imported" });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: "invalid_request" });
+    expect(await countWorks()).toBe(0);
+  });
+
+  it("resumes the owner's existing review when a second manual begin races the single-attempt slot", async () => {
+    const { attemptId } = await beginManualNeedsReview();
+
+    // A second manual begin for the same owner while an attempt is already pending must resume the existing
+    // review rather than double-owning the slot — and there is no staged file to clean up.
+    const second = await beginManual();
+
+    expect(second.statusCode).toBe(200);
+    const body = second.json();
+    expect(body.status).toBe("needs_review");
+    expect(body.review.attemptId).toBe(attemptId);
+    expect(await h.db.select().from(workCreationAttempts)).toHaveLength(1);
+    expect(await readdir(h.sourcesDir)).toEqual([]);
+  });
+});
+
+describe("Manual creation-review open existing (#749)", () => {
+  it("reopens the chosen Work, consuming the metadata-only attempt without creating anything", async () => {
+    const { attemptId, candidateId } = await beginManualNeedsReview();
+
+    const response = await openExisting(attemptId, { entryId: candidateId, revision: 0 });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as { result: IngestEpubResultDto; status: string };
+    expect(body.status).toBe("opened");
+    expect(body.result.work.entryId).toBe(candidateId);
+    // Nothing new was created; the attempt is consumed and — having no stage — leaves the disk untouched.
+    expect(await countWorks()).toBe(1);
+    const attempt = (
+      await h.db.select().from(workCreationAttempts).where(eq(workCreationAttempts.id, attemptId))
+    )[0];
+    expect(attempt?.state).toBe("completed");
+    expect(attempt?.stagePath).toBeNull();
+    expect(await readdir(h.sourcesDir)).toEqual([]);
+  });
+});
+
+describe("Manual creation-review keep separate (#749)", () => {
+  it("commits a distinct manual Work with a canonical empty document and no staged source", async () => {
+    const { attemptId } = await beginManualNeedsReview();
+
+    const response = await keepSeparate(attemptId, { revision: 0 });
+
+    expect(response.statusCode).toBe(201);
+    const body = response.json() as { result: IngestEpubResultDto; status: string };
+    expect(body.status).toBe("created");
+    expect(body.result.work).toMatchObject({ origin: "manual", title: TITLE });
+    assertEmptyDocument(body.result);
+    // A second, distinct Work now exists alongside the reviewed candidate — with an ownership facet, its
+    // empty document persisted, no upload source, and no staged file.
+    expect(await countWorks()).toBe(2);
+    expect(
+      await h.db
+        .select()
+        .from(workSources)
+        .where(eq(workSources.workEntryId, body.result.work.entryId))
+    ).toHaveLength(0);
+    expect(
+      await h.db
+        .select()
+        .from(personalEntries)
+        .where(eq(personalEntries.entryId, body.result.work.entryId))
+    ).toHaveLength(1);
+    // Manual creation writes only the canonical PM document, never a legacy mdast block row.
+    expect(
+      await h.db.select().from(blocks).where(eq(blocks.workEntryId, body.result.work.entryId))
+    ).toHaveLength(0);
+    expect(await readdir(h.sourcesDir)).toEqual([]);
+    const completed = (
+      await h.db.select().from(workCreationAttempts).where(eq(workCreationAttempts.id, attemptId))
+    )[0];
+    expect(completed?.state).toBe("completed");
+  });
+
+  it("creates the new proposed author only at the Keep separate commit, not while parked", async () => {
+    const { attemptId } = await beginManualNeedsReview();
+    // Only the seeded candidate's author exists while the attempt is parked for review.
+    expect(await h.db.select().from(authors)).toHaveLength(1);
+
+    const response = await keepSeparate(attemptId, { revision: 0 });
+
+    expect(response.statusCode).toBe(201);
+    // The proposed "George Orwell" identity is minted inside the commit transaction.
+    expect(await h.db.select().from(authors)).toHaveLength(2);
+  });
+
+  it("commits a distinct manual Work reusing the selected existing author", async () => {
+    const existingId = await seedAuthor("orwell", "George Orwell");
+    await seedCandidateWork({
+      authorId: await seedAuthor("someone-else", "Someone Else"),
+      entryId: "candidate-1"
+    });
+    const begun = (
+      await beginManual({ author: { mode: "existing", authorId: existingId } })
+    ).json();
+    expect(begun.status).toBe("needs_review");
+    const attemptId = begun.review.attemptId as string;
+
+    const response = await keepSeparate(attemptId, { revision: 0 });
+
+    expect(response.statusCode).toBe(201);
+    const body = response.json() as { result: IngestEpubResultDto; status: string };
+    expect(body.result.work).toMatchObject({ authorId: existingId, origin: "manual" });
+    expect(await h.db.select().from(authors)).toHaveLength(2);
+  });
+
+  it("refreshes the panel under a bumped revision when the candidate evidence changed", async () => {
+    const { attemptId } = await beginManualNeedsReview();
+    await seedCandidateWork({
+      authorId: await seedAuthor("second-author", "Another Person"),
+      entryId: "candidate-2"
+    });
+
+    const response = await keepSeparate(attemptId, { revision: 0 });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.status).toBe("needs_review");
+    const review = parseWorkCreationReviewDto(body.review);
+    expect(review.revision).toBe(1);
+    expect(review.candidates).toHaveLength(2);
+    // Nothing was committed: only the two seeded candidate Works exist.
+    expect(await countWorks()).toBe(2);
+  });
+
+  it("answers 409 superseded for a stale revision, committing nothing", async () => {
+    const { attemptId } = await beginManualNeedsReview();
+
+    const response = await keepSeparate(attemptId, { revision: 9 });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({ status: "superseded" });
+    expect(await countWorks()).toBe(1);
+  });
+
+  it("does not commit a second manual Work when Keep separate is replayed after it finalized", async () => {
+    const { attemptId } = await beginManualNeedsReview();
+    const first = await keepSeparate(attemptId, { revision: 0 });
+    expect(first.statusCode).toBe(201);
+    expect(await countWorks()).toBe(2);
+
+    // The consumed attempt is no longer pending at revision 0: a replayed decision is fenced out (409
+    // superseded) and creates nothing more.
+    const replay = await keepSeparate(attemptId, { revision: 0 });
+    expect(replay.statusCode).toBe(409);
+    expect(replay.json()).toEqual({ status: "superseded" });
+    expect(await countWorks()).toBe(2);
+  });
+
+  it("reports uncertain when the candidate recheck cannot be trusted, committing nothing", async () => {
+    const { attemptId } = await beginManualNeedsReview();
+    await h.db.execute(sql`DROP FUNCTION IF EXISTS work_title_key(text) CASCADE`);
+
+    const response = await keepSeparate(attemptId, { revision: 0 });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toEqual({ status: "uncertain" });
+    expect(await countWorks()).toBe(1);
+  });
+});
+
+describe("Manual creation-review cancel / Back (#749)", () => {
+  it("cancels a pending metadata-only attempt with no staged bytes to remove", async () => {
+    const { attemptId } = await beginManualNeedsReview();
+
+    const response = await cancel(attemptId);
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ cancelled: true });
+    const attempt = (
+      await h.db.select().from(workCreationAttempts).where(eq(workCreationAttempts.id, attemptId))
+    )[0];
+    expect(attempt?.state).toBe("cancelled");
+    expect(await countWorks()).toBe(1);
   });
 });

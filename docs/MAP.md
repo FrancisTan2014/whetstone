@@ -803,7 +803,7 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   **Add work manually** — document creation now lives on the Write home (#679); class maps for both menus
   live in the coverage-excluded
   `libraryMenu.tokens.ts`. **Upload file** opens the same file front door as before — an EPUB routes
-  through the #748 review boundary (direct create or the shared review panel), a PDF/Markdown opens the pre-filled **Add work** sheet. The **Add work** sheet's
+  through the #748 review boundary (direct create or the shared review panel), a PDF/Markdown opens the pre-filled **Add work** sheet. Submitting the **Add work** sheet with no upload routes the purely-manual entry through the SAME #749 review boundary (`beginManualCreation`): no credible candidate mints the owned Work and opens its manual editor, a credible one parks the shared review panel. The **Add work** sheet's
   author field is `AuthorSelectField.tsx` — a `downshift` create-or-select combobox over
   `libraryApi.searchAuthors` (`GET /api/authors?query=`) that reuses an existing author by default and
   only offers an explicit **Add** for a genuinely new name, so duplicates can't be created by accident
@@ -836,8 +836,9 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `workCreationStageDir`, deliberately NOT a backed-up data root (`resolveDataRoots`). The pure state
   machine + evidence fingerprint are `@whetstone/domain` `workCreationAttempt.ts`; DTOs (attempt view
   exposes stage presence only, never a filesystem path) in `@whetstone/contracts`
-    `workCreationContracts.ts`. **Imported-upload duplicate-review boundary (#747 Markdown / #748 EPUB,
-    first consumers of #725/#724):** `features/workCreation/` turns the Markdown and EPUB front doors into a
+    `workCreationContracts.ts`. **Work-creation duplicate-review boundary (#747 Markdown / #748 EPUB /
+    #749 manual, first consumers of #725/#724):** `features/workCreation/` turns the Markdown, EPUB, and
+    manual front doors into a
     server-owned review gate.
     `workCreationCommands.ts` is the orchestration core — `beginMarkdownCreation`/`beginEpubCreation` stage
     the upload on the
@@ -856,13 +857,24 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
     extension, `.epub` for an EPUB); `getWorkCreationReview` reads a parked attempt
     into that DTO; `workCreationRoutes.ts` exposes `POST /api/works/markdown` and `POST /api/works/epub`
     (begin), the review GET, and
-    the decision/cancel routes (the `epubContentType` body parser is registered in `createServer`). The web
+    the decision/cancel routes (the `epubContentType` body parser is registered in `createServer`).
+    `beginManualCreation` (`POST /api/works/manual`, #749) routes the manual **Add work** front door
+    through this SAME gate: manual creation carries NO uploaded bytes, so the attempt stores metadata +
+    reviewed candidates only (no #725 stage, `exact_existing` impossible by construction) — no credible
+    candidate mints the owned empty-document Work immediately via `createWork` (origin `manual`), a
+    credible one parks the shared review, and Keep separate commits the same byte-less way (no stage to
+    transfer). This is the SOLE manual-commit path: the legacy `POST /api/works` (`libraryRoutes.ts`)
+    now refuses `origin: "manual"` (`manual_requires_review`, #749) and only mints imported shells, so no
+    client can commit an unreviewed manual Work around the boundary. The web
     review UI is `features/library/WorkCreationReviewPanel.tsx`
     (presentational "Possible duplicate" panel — proposal + factual candidate evidence + Open
     existing/Keep separate/Back), wired through `libraryApi.ts` (`beginMarkdownCreation`/`beginEpubCreation`/
+    `beginManualCreation`/
     `fetchWorkCreationReview`/`openExistingWork`/`keepSeparateWork`/`cancelWorkCreation`) into
     `AdminLibraryPage.tsx`, which holds only the opaque attempt id + revision and preserves the
-    draft/filename across review, Back, and retry. The begin/review/decision vocab +
+    draft/filename across review, Back, and retry (a manual `created` — from begin or Keep separate —
+    opens the new Work's manual editor; imported/reopened land in Manage content). The
+    begin/review/decision vocab +
     `parseWorkCreationReviewDto` live in `@whetstone/contracts` `workCreationReviewContracts.ts`. It
     never absorbs `pdf_import_attempts` — a `pdf` attempt references that
   execution attempt, which keeps sole ownership of the PDF stages. Creating a work auto-opens

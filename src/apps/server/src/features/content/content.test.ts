@@ -2297,19 +2297,21 @@ describe("heading-derived table of contents (#680)", () => {
 
 describe("manual-origin Work rejects legacy content ingestion (#720)", () => {
   async function createManualWork(): Promise<string> {
+    // Manual Works commit only through the #749 duplicate-review front door now (the legacy
+    // `POST /api/works` refuses `origin: "manual"`). A unique title has no candidate, so begin mints the
+    // owned empty-document Work immediately and returns it in the reopen shape.
     const response = await context.server.inject({
       method: "POST",
       payload: {
         author: { mode: "new", name: "Learner Curator" },
         language: "en",
-        origin: "manual",
         title: "Curated reading notes",
         workType: "book"
       },
-      url: "/api/works"
+      url: "/api/works/manual"
     });
 
-    return response.json().work.entryId as string;
+    return response.json().result.work.entryId as string;
   }
 
   it("refuses Markdown ingestion into a manual Work with 409", async () => {

@@ -1,12 +1,15 @@
 import {
   decomposeMarkdown,
+  ownsOrdinaryUploadStage,
   toAuthorId,
   toEntryId,
   fingerprintReviewedCandidates
 } from "@whetstone/domain";
 import type {
+  BeginManualWorkRequest,
   ImportMarkdownWorkRequest,
   IngestEpubResultDto,
+  WorkAuthorSelection,
   WorkCreationReviewDto,
   WorkDto
 } from "@whetstone/contracts";
@@ -15,6 +18,7 @@ import { and, eq, ne } from "drizzle-orm";
 import type { DbClient } from "../../db/dbClient.js";
 import { workMeta } from "../../db/schema.js";
 import type { WorkDuplicateCandidateLog } from "../library/workDuplicateCandidatesQueries.js";
+import { createWork, type LibraryDependencies } from "../library/libraryCommands.js";
 import {
   commitImportedMarkdownWork,
   type ContentDependencies
@@ -78,6 +82,18 @@ export type BeginEpubResult =
   | Readonly<{ status: "invalid_epub" }>
   | Readonly<{ status: "uncertain" }>;
 
+// The MANUAL creation begin outcomes (#749). Manual creation shares the metadata-candidate review but
+// has no uploaded bytes: there is no source hash or stage, so an exact-source reopen is impossible by
+// construction and there is no `exact_existing`/`invalid_epub`/`empty_content` here. `created` committed
+// the manual Work immediately through the canonical empty-document boundary (no credible candidate);
+// `needs_review` parked one metadata-only attempt; `author_not_found` refused an existing-author
+// selection whose id no longer exists; `uncertain` means the candidate query could not be trusted.
+export type BeginManualResult =
+  | Readonly<{ status: "created"; result: IngestEpubResultDto }>
+  | Readonly<{ status: "needs_review"; review: WorkCreationReviewDto }>
+  | Readonly<{ status: "author_not_found" }>
+  | Readonly<{ status: "uncertain" }>;
+
 export type ReviewResult =
   | Readonly<{ status: "ok"; review: WorkCreationReviewDto }>
   | Readonly<{ status: "not_found" }>
@@ -93,6 +109,75 @@ export type BackResult = Readonly<{ cancelled: boolean }>;
 
 function db(deps: WorkCreationDependencies): DbClient {
   return deps.content.db;
+}
+
+// The library command dependencies, derived from the shared content wiring plus the attempt clock, so a
+// manual Work commits through the SAME canonical empty-document boundary the Library create endpoint uses
+// (#749). Deriving them here keeps a single wiring point — the manual review path never re-implements
+// author resolution, ownership stamping, or empty-document initialization.
+function libraryDeps(deps: WorkCreationDependencies): LibraryDependencies {
+  return {
+    createAuthorId: deps.content.createAuthorId,
+    createEntryId: deps.content.createEntryId,
+    db: deps.content.db,
+    now: deps.now
+  };
+}
+
+// The author selection stored on a parked attempt, reconstructed for the final commit: a resolved
+// existing/name-matched id reuses that author, and a genuinely new name (null id) is created only inside
+// the Work transaction — so a cancelled or expired attempt leaves no orphan identity.
+function selectionFromAttempt(attempt: WorkCreationAttemptRecord): WorkAuthorSelection {
+  return attempt.proposedAuthorId === null
+    ? { mode: "new", name: attempt.proposedAuthorName }
+    : { mode: "existing", authorId: toAuthorId(attempt.proposedAuthorId) };
+}
+
+// Commit a manual Work through the canonical empty-document boundary (#749): resolve/create the author,
+// stamp `origin = manual` and the ownership facet, and initialize one empty id-stamped paragraph — all in
+// `createWork`'s single transaction — then load it back in the reopen shape so the decision result is
+// uniform with every other commit/reopen. The author was validated at begin (existing) or is a new name
+// (always resolvable), so `author_not_found` is unreachable single-threaded and degrades to `uncertain`.
+async function commitManualWork(
+  deps: WorkCreationDependencies,
+  userId: string,
+  selection: WorkAuthorSelection,
+  proposal: Readonly<{
+    title: string;
+    language: BeginManualWorkRequest["language"];
+    workType: BeginManualWorkRequest["workType"];
+  }>
+): Promise<
+  Readonly<{ status: "created"; result: IngestEpubResultDto }> | Readonly<{ status: "uncertain" }>
+> {
+  const created = await createWork(
+    libraryDeps(deps),
+    {
+      author: selection,
+      language: proposal.language,
+      origin: "manual",
+      title: proposal.title,
+      workType: proposal.workType
+    },
+    userId
+  );
+
+  /* v8 ignore next 3 -- the author was validated at begin (existing) or is a new name createWork always
+     resolves, so author_not_found is unreachable single-threaded; degrade to uncertain rather than commit
+     a partial state. */
+  if (created.status === "author_not_found") {
+    return { status: "uncertain" };
+  }
+
+  const result = await loadReopenableWork(db(deps), created.work.work.entryId);
+
+  /* v8 ignore next 3 -- the Work was just created above with a manual (non-authored) origin, so the reopen
+     read cannot miss single-threaded; the guard defends a delete racing the read. */
+  if (result === undefined) {
+    return { status: "uncertain" };
+  }
+
+  return { status: "created", result };
 }
 
 // Sweep every attempt past its TTL to `expired` and remove each one's staged bytes, then confirm the
@@ -149,9 +234,10 @@ async function loadReopenableWork(
   return { content: await loadWorkContent(database, workEntryId), work };
 }
 
-// The proposal, in the store's persisted shape (author name carried even for a brand-new author).
+// The proposal, in the store's persisted shape (author name carried even for a brand-new author). Takes
+// only the metadata fields, so both the Markdown upload request and the manual creation request satisfy it.
 function proposedMetadata(
-  request: ImportMarkdownWorkRequest,
+  request: Pick<ImportMarkdownWorkRequest, "language" | "title" | "workType">,
   authorId: string | null,
   authorName: string
 ): ProposedMetadataInput {
@@ -449,6 +535,92 @@ export async function beginEpubCreation(
   }
 }
 
+// Begin a MANUAL creation (#749). Manual creation shares the metadata-candidate review but carries no
+// uploaded bytes, so there is no exact-source reopen and nothing is staged: the author is resolved WITHOUT
+// creating one (an unknown existing id is refused before commit; a new name is kept as proposed evidence),
+// #724 candidates are weighed, and with none the manual Work is committed immediately through the same
+// canonical empty-document boundary the Library create endpoint uses. With a credible candidate exactly one
+// metadata-only attempt is persisted (no hash, no stage, no filename) and the review is returned. A
+// candidate-query failure yields `uncertain`, never a false "no duplicates".
+export async function beginManualCreation(
+  deps: WorkCreationDependencies,
+  userId: string,
+  request: BeginManualWorkRequest
+): Promise<BeginManualResult> {
+  const nowDate = deps.now();
+  await sweepExpired(deps, nowDate);
+
+  // Resolve the proposed author against the canonical identity WITHOUT creating one: an unknown existing
+  // selection is refused before anything is committed, a name-equivalent existing author corroborates a
+  // same-author duplicate, and a genuinely new name resolves to a null id (created only at final commit).
+  const author = await resolveProposedAuthor(db(deps), request.author);
+
+  if (!author.found) {
+    return { status: "author_not_found" };
+  }
+
+  let review;
+
+  try {
+    review = await computeReviewCandidates(db(deps), deps.log, {
+      title: request.title,
+      authorId: author.authorId,
+      language: request.language,
+      workType: request.workType
+    });
+  } catch {
+    return { status: "uncertain" };
+  }
+
+  if (review.candidates.length === 0) {
+    // No credible candidate: create the manual Work immediately through the canonical empty-document
+    // boundary, resolving/creating the author inside that transaction. `commitManualWork` already
+    // yields either `created` or (its v8-ignored, single-threaded-unreachable) `uncertain`, both of
+    // which are valid begin outcomes, so forward it directly rather than re-branching.
+    return commitManualWork(deps, userId, request.author, request);
+  }
+
+  // A credible candidate exists: persist ONE metadata-only pending attempt with the reviewed snapshot.
+  // Manual carries no bytes, so `sourceHash`/`sourceFileName`/`stagePath` are all null and the store's
+  // ownership check keeps this attempt from ever being handed a stage. A concurrent active attempt for
+  // this owner loses the single-active-attempt index: resume the existing review instead of double-owning
+  // the slot (there is no just-staged file to discard).
+  try {
+    const attempt = await insertPendingAttempt(db(deps), {
+      id: deps.createAttemptId(),
+      userId,
+      proposed: proposedMetadata(request, author.authorId, author.authorName),
+      sourceKind: "manual",
+      sourceHash: null,
+      sourceFileName: null,
+      candidates: review.snapshot,
+      stagePath: null,
+      expiresAt: new Date(nowDate.getTime() + deps.attemptTtlMs),
+      now: nowDate
+    });
+
+    return { status: "needs_review", review: buildReviewDto(attempt, review) };
+  } catch (error) {
+    /* v8 ignore next -- a non-unique-violation insert failure is an unexpected infrastructure error; the
+       false branch falls through to the rethrow below. */
+    if (isUniqueViolation(error)) {
+      const active = await getActiveAttemptForUser(db(deps), userId);
+
+      /* v8 ignore next -- a unique violation always leaves a resumable active attempt; the non-pending
+         fallthrough guards a begin racing a concurrent decision mid-finalize (rethrown below). */
+      if (active !== null && active.state === "pending") {
+        return {
+          status: "needs_review",
+          review: await refreshPersistedReview(deps, active, nowDate)
+        };
+      }
+    }
+
+    /* v8 ignore next -- a non-unique insert failure is an unexpected infrastructure error; surface it. */
+    throw error;
+  }
+}
+
 // Load an attempt's current review for its owner, refreshing candidates (persisting the refreshed snapshot
 // under a bumped revision when the evidence changed, so the shown candidates and revision are exactly what a
 // later decision accepts) and expiry. A missing or non-pending attempt is `not_found` (or `expired` once
@@ -517,14 +689,15 @@ async function guardPendingAttempt(
 }
 
 // Discard the staged bytes of a just-completed attempt: remove the file, then confirm the clear. The
-// attempt is already terminal, so this is leftover cleanup, not a live-decision transfer.
+// attempt is already terminal, so this is leftover cleanup, not a live-decision transfer. An ordinary
+// upload attempt owns a staged file to remove; a MANUAL attempt (#749) never staged bytes, so only the
+// (already-null) stage marker is confirmed clear.
 async function discardStage(
   deps: WorkCreationDependencies,
   userId: string,
   attempt: WorkCreationAttemptRecord,
   nowDate: Date
 ): Promise<void> {
-  /* v8 ignore next -- a markdown attempt always carries a stage path into discard; the guard is defensive. */
   if (attempt.stagePath !== null) {
     await deps.content.sourceFileStore.deleteSourceFile(attempt.stagePath);
   }
@@ -615,45 +788,43 @@ export async function keepSeparateWork(
   }
 
   const attempt = guard.attempt;
-  // An uploaded creation attempt (Markdown or EPUB) always carries its uploaded hash and stage; assert
-  // for the type narrowing.
-  const sha256 = attempt.sourceHash;
 
-  /* v8 ignore next -- an uploaded creation attempt always records its uploaded hash; guard for types. */
-  if (sha256 === null) {
-    return { status: "uncertain" };
-  }
+  // Ordinary uploads (Markdown/EPUB) recheck exact identity first: if the same bytes were claimed since
+  // the review opened, reopen that owner instead of committing a second Work. A MANUAL attempt carries no
+  // uploaded bytes (#749), so `sourceHash` is null, there is nothing to reclaim, and this step is skipped
+  // entirely — an exact-source reopen is impossible for manual creation by construction.
+  if (attempt.sourceHash !== null) {
+    const existing = await findClaimedWork(db(deps), attempt.sourceHash);
 
-  const existing = await findClaimedWork(db(deps), sha256);
+    if (existing !== undefined) {
+      const fencedExisting = await beginFinalizeAttempt(db(deps), {
+        userId,
+        id: attemptId,
+        expectedRevision: revision,
+        now: nowDate
+      });
 
-  if (existing !== undefined) {
-    const fenced = await beginFinalizeAttempt(db(deps), {
-      userId,
-      id: attemptId,
-      expectedRevision: revision,
-      now: nowDate
-    });
+      /* v8 ignore next -- guarded pending revision; fence can only miss under an untestable concurrent race. */
+      if (fencedExisting === null) {
+        return { status: "superseded" };
+      }
 
-    /* v8 ignore next -- guarded pending revision; fence can only miss under an untestable concurrent race. */
-    if (fenced === null) {
-      return { status: "superseded" };
+      const completedExisting = await completeAttempt(db(deps), {
+        userId,
+        id: attemptId,
+        expectedRevision: fencedExisting.revision,
+        now: nowDate
+      });
+
+      /* v8 ignore next -- completion follows begin-finalize at its bumped revision; cannot miss single-threaded. */
+      if (completedExisting === null) {
+        return { status: "superseded" };
+      }
+
+      await discardStage(deps, userId, attempt, nowDate);
+
+      return { status: "exact_existing", result: existing };
     }
-
-    const completed = await completeAttempt(db(deps), {
-      userId,
-      id: attemptId,
-      expectedRevision: fenced.revision,
-      now: nowDate
-    });
-
-    /* v8 ignore next -- completion follows begin-finalize at its bumped revision; cannot miss single-threaded. */
-    if (completed === null) {
-      return { status: "superseded" };
-    }
-
-    await discardStage(deps, userId, attempt, nowDate);
-
-    return { status: "exact_existing", result: existing };
   }
 
   let review;
@@ -690,8 +861,9 @@ export async function keepSeparateWork(
     return { status: "needs_review", review: buildReviewDto(updated, review) };
   }
 
-  // Evidence unchanged: claim the decision slot, transfer the staged bytes to provenance, and commit the
-  // Work exactly once.
+  // Evidence unchanged: claim the decision slot and commit the Work exactly once. An ordinary upload
+  // transfers its staged bytes to provenance; a manual Work is created through the canonical
+  // empty-document boundary with no stage to move.
   const fenced = await beginFinalizeAttempt(db(deps), {
     userId,
     id: attemptId,
@@ -704,40 +876,70 @@ export async function keepSeparateWork(
     return { status: "superseded" };
   }
 
-  const detached = await detachStagePath(db(deps), {
+  if (ownsOrdinaryUploadStage(attempt.sourceKind)) {
+    const detached = await detachStagePath(db(deps), {
+      userId,
+      id: attemptId,
+      expectedRevision: fenced.revision,
+      now: nowDate
+    });
+
+    /* v8 ignore next -- the fenced attempt holds the slot with an ordinary upload stage, so the detach cannot
+       miss single-threaded; the guard stays as defense-in-depth. */
+    if (detached === null) {
+      return { status: "uncertain" };
+    }
+
+    const outcome = await commitReviewedUpload(deps, attempt, detached.stagePath);
+
+    const completed = await completeAttempt(db(deps), {
+      userId,
+      id: attemptId,
+      expectedRevision: detached.revision,
+      now: nowDate
+    });
+
+    /* v8 ignore next -- completion follows the detach at its bumped revision; cannot miss single-threaded. */
+    if (completed === null) {
+      return { status: "superseded" };
+    }
+
+    /* v8 ignore next 3 -- the proposal was validated at begin and its bytes were unclaimed above, so the
+       transfer commit can only return created/exact_existing here, never uncertain. */
+    if (outcome.status === "uncertain") {
+      return { status: "uncertain" };
+    }
+
+    return { status: outcome.status, result: outcome.result };
+  }
+
+  // Manual (#749): no staged bytes. Create the distinct Work through the canonical empty-document boundary,
+  // resolving/creating the proposed author inside that transaction, then complete the attempt.
+  const manual = await commitManualWork(deps, userId, selectionFromAttempt(attempt), {
+    title: attempt.proposedTitle,
+    language: attempt.proposedLanguage as BeginManualWorkRequest["language"],
+    workType: attempt.proposedWorkType as BeginManualWorkRequest["workType"]
+  });
+
+  const completedManual = await completeAttempt(db(deps), {
     userId,
     id: attemptId,
     expectedRevision: fenced.revision,
     now: nowDate
   });
 
-  /* v8 ignore next -- the fenced attempt holds the slot with an ordinary upload stage, so the detach cannot
-     miss single-threaded; the guard stays as defense-in-depth. */
-  if (detached === null) {
-    return { status: "uncertain" };
-  }
-
-  const outcome = await commitReviewedUpload(deps, attempt, detached.stagePath);
-
-  const completed = await completeAttempt(db(deps), {
-    userId,
-    id: attemptId,
-    expectedRevision: detached.revision,
-    now: nowDate
-  });
-
-  /* v8 ignore next -- completion follows the detach at its bumped revision; cannot miss single-threaded. */
-  if (completed === null) {
+  /* v8 ignore next -- completion follows begin-finalize at its bumped revision; cannot miss single-threaded. */
+  if (completedManual === null) {
     return { status: "superseded" };
   }
 
-  /* v8 ignore next 3 -- the proposal was validated at begin and its bytes were unclaimed above, so the
-     transfer commit can only return created/exact_existing here, never uncertain. */
-  if (outcome.status === "uncertain") {
+  /* v8 ignore next 3 -- the author was validated at begin and a new name always resolves, so the manual
+     commit can only return created here; the guard stays as defense-in-depth. */
+  if (manual.status === "uncertain") {
     return { status: "uncertain" };
   }
 
-  return { status: outcome.status, result: outcome.result };
+  return { status: "created", result: manual.result };
 }
 
 // Commit a reviewed attempt's staged upload to a Work, transferring the staged file to provenance in place

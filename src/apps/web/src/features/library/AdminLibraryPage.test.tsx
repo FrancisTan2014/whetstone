@@ -13,6 +13,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 
 vi.mock("./libraryApi", () => ({
   beginEpubCreation: vi.fn(),
+  beginManualCreation: vi.fn(),
   beginMarkdownCreation: vi.fn(),
   cancelWorkCreation: vi.fn(),
   createWork: vi.fn(),
@@ -88,6 +89,7 @@ vi.mock("react-router-dom", async (importOriginal) => ({
 
 import {
   beginEpubCreation,
+  beginManualCreation,
   beginMarkdownCreation,
   cancelWorkCreation,
   createWork,
@@ -149,6 +151,7 @@ const mockedFetchWorksWithReadingPosition = vi.mocked(fetchWorksWithReadingPosit
 const mockedCreateWork = vi.mocked(createWork);
 const mockedDeleteWork = vi.mocked(deleteWork);
 const mockedBeginEpubCreation = vi.mocked(beginEpubCreation);
+const mockedBeginManualCreation = vi.mocked(beginManualCreation);
 const mockedBeginMarkdownCreation = vi.mocked(beginMarkdownCreation);
 const mockedCancelWorkCreation = vi.mocked(cancelWorkCreation);
 const mockedKeepSeparateWork = vi.mocked(keepSeparateWork);
@@ -229,6 +232,19 @@ const reopenResult = {
   content: { readingUnits: [], workEntryId: essayWorkItem.work.entryId },
   work: essayWorkItem.work
 };
+
+// A manual begin `created` outcome (#749): no credible candidate, so the owned empty-document Work is
+// minted. Its `manual` origin routes completion into the Library's manual editor.
+function manualCreated(work: WorkListItemDto["work"] = essayWorkItem.work) {
+  const manualWork = { ...work, origin: "manual" as const };
+  return {
+    result: {
+      content: { readingUnits: [], workEntryId: manualWork.entryId },
+      work: manualWork
+    },
+    status: "created" as const
+  };
+}
 
 // The EPUB counterpart of duplicateReview: a credible same-author candidate against the embedded OPF
 // metadata. The panel is format-agnostic, so it frames the attempt by the derived `<title>.epub` label.
@@ -380,6 +396,16 @@ async function reachReview(user: ReturnType<typeof userEvent.setup>): Promise<vo
   await screen.findByText("Possible duplicate");
 }
 
+// Drive the MANUAL front door to the duplicate-review panel (#749): open Add work manually, name the
+// proposed author + title, and submit. The caller seeds `beginManualCreation` with a `needs_review`
+// outcome first. There is no upload — manual review only weighs candidates for the typed metadata.
+async function reachManualReview(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  await openAddWork(user);
+  await user.type(screen.getByLabelText("Title"), "Politics and the English Language");
+  await user.type(screen.getByLabelText("New author or source name"), "George Orwell");
+  await user.click(screen.getByRole("button", { name: "Create work" }));
+  await screen.findByText("Possible duplicate");
+}
 describe("AdminLibraryPage", () => {
   it("shows an explicit empty state once loaded with no works", async () => {
     await renderReady();
@@ -501,12 +527,12 @@ describe("AdminLibraryPage", () => {
       screen.getByText("Select an existing author or source, or name a new one.")
     ).toBeDefined();
 
-    expect(mockedCreateWork).not.toHaveBeenCalled();
+    expect(mockedBeginManualCreation).not.toHaveBeenCalled();
   });
 
   it("offers exactly the three supported languages and submits the chosen code", async () => {
     const user = await renderReady();
-    mockedCreateWork.mockResolvedValue(essayWorkItem);
+    mockedBeginManualCreation.mockResolvedValue(manualCreated());
     mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
     await openAddWork(user);
 
@@ -523,10 +549,9 @@ describe("AdminLibraryPage", () => {
     await user.click(screen.getByRole("button", { name: "Create work" }));
 
     await waitFor(() => {
-      expect(mockedCreateWork).toHaveBeenCalledWith({
+      expect(mockedBeginManualCreation).toHaveBeenCalledWith({
         author: { mode: "new", name: "吳楚材" },
         language: "zh-TW",
-        origin: "manual",
         title: "古文觀止",
         workType: "book"
       });
@@ -535,7 +560,7 @@ describe("AdminLibraryPage", () => {
 
   it("creates a work with a new inline author and shows it grouped", async () => {
     const user = await renderReady();
-    mockedCreateWork.mockResolvedValue(essayWorkItem);
+    mockedBeginManualCreation.mockResolvedValue(manualCreated());
     mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
     await openAddWork(user);
 
@@ -548,10 +573,9 @@ describe("AdminLibraryPage", () => {
       await screen.findByRole("heading", { name: "Politics and the English Language" })
     ).toBeDefined();
     expect(await screen.findByText("Added “Politics and the English Language”.")).toBeDefined();
-    expect(mockedCreateWork).toHaveBeenCalledWith({
+    expect(mockedBeginManualCreation).toHaveBeenCalledWith({
       author: { mode: "new", name: "George Orwell" },
       language: "en",
-      origin: "manual",
       title: "Politics and the English Language",
       workType: "essay"
     });
@@ -570,7 +594,7 @@ describe("AdminLibraryPage", () => {
         workType: "book"
       }
     };
-    mockedCreateWork.mockResolvedValue(bookItem);
+    mockedBeginManualCreation.mockResolvedValue(manualCreated(bookItem.work));
     mockedFetchWorks.mockResolvedValue({ works: [bookItem] });
     await openAddWork(user);
 
@@ -579,10 +603,9 @@ describe("AdminLibraryPage", () => {
     await user.click(screen.getByRole("button", { name: "Create work" }));
 
     expect(await screen.findByRole("heading", { name: "A Tale of Two Cities" })).toBeDefined();
-    expect(mockedCreateWork).toHaveBeenCalledWith({
+    expect(mockedBeginManualCreation).toHaveBeenCalledWith({
       author: { authorId: dickens.id, mode: "existing" },
       language: "en",
-      origin: "manual",
       title: "A Tale of Two Cities",
       workType: "book"
     });
@@ -590,7 +613,7 @@ describe("AdminLibraryPage", () => {
 
   it("opens the manual editor for a freshly created manual work", async () => {
     const onManageContent = vi.fn();
-    mockedCreateWork.mockResolvedValue(essayWorkItem);
+    mockedBeginManualCreation.mockResolvedValue(manualCreated());
     mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
     const user = await renderReady(onManageContent);
     await openAddWork(user);
@@ -609,7 +632,7 @@ describe("AdminLibraryPage", () => {
 
   it("shows an error when creating a work fails", async () => {
     const user = await renderReady();
-    mockedCreateWork.mockRejectedValue(new Error("boom"));
+    mockedBeginManualCreation.mockRejectedValue(new Error("boom"));
     await openAddWork(user);
 
     await user.type(screen.getByLabelText("Title"), "Doomed");
@@ -617,6 +640,68 @@ describe("AdminLibraryPage", () => {
     await user.click(screen.getByRole("button", { name: "Create work" }));
 
     expect(await screen.findByText("Could not save the work. Please try again.")).toBeDefined();
+  });
+
+  it("parks the shared review panel when a manual entry hits a credible candidate", async () => {
+    mockedBeginManualCreation.mockResolvedValue({
+      review: duplicateReview(),
+      status: "needs_review"
+    });
+    const user = await renderReady();
+
+    await reachManualReview(user);
+
+    const list = screen.getByRole("list", { name: "Possible duplicates" });
+    expect(within(list).getByText("Politics and the English Language")).toBeDefined();
+    // Nothing is created while the review is open.
+    expect(mockedOpenExistingWork).not.toHaveBeenCalled();
+    expect(mockedKeepSeparateWork).not.toHaveBeenCalled();
+  });
+
+  it("surfaces manual author-not-found and uncertain begin outcomes without creating a Work", async () => {
+    const onManageContent = vi.fn();
+    const user = await renderReady(onManageContent);
+
+    for (const [status, message] of [
+      ["author_not_found", "That author or source no longer exists. Choose another and try again."],
+      ["uncertain", "Couldn’t check your library for duplicates just now. Please try again."]
+    ] as const) {
+      mockedBeginManualCreation.mockResolvedValue({ status });
+      await openAddWork(user);
+      await user.type(screen.getByLabelText("Title"), "Politics and the English Language");
+      await user.type(screen.getByLabelText("New author or source name"), "George Orwell");
+      await user.click(screen.getByRole("button", { name: "Create work" }));
+
+      expect(await screen.findByText(message)).toBeDefined();
+      // The Add-work form stays open so the learner can adjust and retry; nothing was created.
+      expect(screen.getByLabelText("Title")).toBeDefined();
+      await user.click(screen.getByRole("button", { name: "Close" }));
+      await waitFor(() => expect(screen.queryByLabelText("Title")).toBeNull());
+    }
+    expect(navigateSpy).not.toHaveBeenCalled();
+    expect(onManageContent).not.toHaveBeenCalled();
+  });
+
+  it("commits a distinct manual Work and opens its editor when the learner keeps it separate", async () => {
+    const onManageContent = vi.fn();
+    mockedBeginManualCreation.mockResolvedValue({
+      review: duplicateReview(),
+      status: "needs_review"
+    });
+    mockedKeepSeparateWork.mockResolvedValue(manualCreated());
+    mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
+    const user = await renderReady(onManageContent);
+
+    await reachManualReview(user);
+    await user.click(screen.getByRole("button", { name: "Keep separate" }));
+
+    await waitFor(() => {
+      expect(mockedKeepSeparateWork).toHaveBeenCalledWith("attempt-1", { revision: 0 });
+    });
+    // A manual Keep separate is "Added" and routes into the manual editor, not Manage content (#749).
+    await waitFor(() => expect(navigateSpy).toHaveBeenCalledWith("/library/works/work-1/edit"));
+    expect(await screen.findByText("Added “Politics and the English Language”.")).toBeDefined();
+    expect(onManageContent).not.toHaveBeenCalled();
   });
 
   it("gives every Add work sheet control a >=44px hit target (#479)", async () => {
@@ -639,10 +724,10 @@ describe("AdminLibraryPage", () => {
   });
 
   it("disables the create button while the work is saving so it cannot double-submit", async () => {
-    let resolveCreate: (value: WorkListItemDto) => void = () => {};
-    mockedCreateWork.mockImplementation(
+    let resolveCreate: (value: ReturnType<typeof manualCreated>) => void = () => {};
+    mockedBeginManualCreation.mockImplementation(
       () =>
-        new Promise<WorkListItemDto>((resolve) => {
+        new Promise<ReturnType<typeof manualCreated>>((resolve) => {
           resolveCreate = resolve;
         })
     );
@@ -659,9 +744,9 @@ describe("AdminLibraryPage", () => {
       expect(createButton.getAttribute("aria-busy")).toBe("true");
     });
     expect(createButton.disabled).toBe(true);
-    expect(mockedCreateWork).toHaveBeenCalledTimes(1);
+    expect(mockedBeginManualCreation).toHaveBeenCalledTimes(1);
 
-    resolveCreate(essayWorkItem);
+    resolveCreate(manualCreated());
     await waitFor(() => {
       expect(screen.queryByRole("button", { name: "Create work" })).toBeNull();
     });
@@ -1470,7 +1555,7 @@ describe("AdminLibraryPage", () => {
 
   it("drops a held upload when the Add-work sheet is dismissed", async () => {
     const onManageContent = vi.fn();
-    mockedCreateWork.mockResolvedValue(essayWorkItem);
+    mockedBeginManualCreation.mockResolvedValue(manualCreated());
     mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
     const user = await renderReady(onManageContent);
 

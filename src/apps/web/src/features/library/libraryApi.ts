@@ -2,6 +2,7 @@ import { epubContentType } from "@whetstone/contracts";
 import type {
   AuthorDto,
   AuthorSearchDto,
+  BeginManualWorkRequest,
   CreateAuthorRequest,
   CreateWorkRequest,
   ImportMarkdownWorkRequest,
@@ -76,6 +77,52 @@ export async function createWork(request: CreateWorkRequest): Promise<WorkListIt
     headers: jsonHeaders,
     method: "POST"
   });
+}
+
+// The front-door outcome of BEGINNING a MANUAL Work through the duplicate-review boundary (#749).
+// `created` committed the manual Work immediately through the canonical empty-document boundary (no
+// credible candidate); `needs_review` persisted one metadata-only owner-scoped attempt and returned the
+// review to present before anything is created; `author_not_found` refused an existing-author selection
+// whose id no longer exists; `uncertain` means the candidate query could not be trusted (so nothing was
+// created and the client must retry rather than be shown a false "no duplicates"). Manual creation
+// carries no uploaded bytes, so there is no exact-source reopen and no empty-content refusal.
+export type BeginManualCreationOutcome =
+  | Readonly<{ result: IngestEpubResultDto; status: "created" }>
+  | Readonly<{ review: WorkCreationReviewDto; status: "needs_review" }>
+  | Readonly<{ status: "author_not_found" | "uncertain" }>;
+
+// Begin a MANUAL Work (#749): the server reviews #724 candidates for the proposed metadata and either
+// creates immediately when there is none or parks one metadata-only review attempt when there is. Every
+// begin response carries the full outcome object (its `status` plus a `result` or `review`), so the
+// client trusts the body's discriminant rather than the HTTP code and never decides candidate policy.
+export async function beginManualCreation(
+  request: BeginManualWorkRequest
+): Promise<BeginManualCreationOutcome> {
+  const path = apiUrl("/works/manual");
+  const response = await fetch(path, {
+    body: JSON.stringify(request),
+    headers: jsonHeaders,
+    method: "POST"
+  });
+
+  const body = (await response.json()) as { status?: unknown };
+
+  if (body.status === "needs_review") {
+    return {
+      review: parseWorkCreationReviewDto((body as { review: unknown }).review),
+      status: "needs_review"
+    };
+  }
+
+  if (body.status === "created") {
+    return { result: (body as { result: IngestEpubResultDto }).result, status: "created" };
+  }
+
+  if (body.status === "author_not_found" || body.status === "uncertain") {
+    return { status: body.status };
+  }
+
+  throw new Error(`Request to ${path} returned an unexpected begin outcome.`);
 }
 
 // The front-door outcome of BEGINNING an imported EPUB Work through the duplicate-review boundary

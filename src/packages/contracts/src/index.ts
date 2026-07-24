@@ -341,9 +341,11 @@ export type {
 } from "./lookupContracts.js";
 export {
   authorIdDtoSchema,
+  beginManualWorkRequestSchema,
   createAuthorRequestSchema,
   createWorkRequestSchema,
   libraryCreateOriginDtoSchema,
+  parseBeginManualWorkRequest,
   parseCreateAuthorRequest,
   parseCreateWorkRequest,
   workAuthorSelectionSchema
@@ -351,6 +353,7 @@ export {
 export type {
   AuthorDto,
   AuthorSearchDto,
+  BeginManualWorkRequest,
   CreateAuthorRequest,
   CreateWorkRequest,
   LibraryCreateOriginDto,

@@ -2,7 +2,12 @@ import { PGlite } from "@electric-sql/pglite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { createTextDocument, documentText, type DocumentNodeJSON } from "@whetstone/document";
-import { RECALL_REQUEST_RETENTION, toEntryId } from "@whetstone/domain";
+import {
+  RECALL_REQUEST_RETENTION,
+  toEntryId,
+  type WorkLanguage,
+  type WorkType
+} from "@whetstone/domain";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
@@ -36,6 +41,7 @@ import {
   workMeta,
   workSources
 } from "../../db/schema.js";
+import { createWork } from "./libraryCommands.js";
 import type { LibraryRouteDependencies } from "./libraryRoutes.js";
 import { updateManualWorkContent, addManualWorkSection } from "./manualWorkContentCommands.js";
 import { loadManualWorkForEditing, loadManualWorkUnit } from "./manualWorkContentQueries.js";
@@ -51,6 +57,10 @@ type TestContext = Readonly<{
   deletedPaths: string[];
   // When set, the injected unlink throws this error for every path (to exercise the best-effort path).
   failUnlinkWith: { error: Error | undefined };
+  // The wired library command dependencies, exposed so a test can seed a manual Work through the
+  // `createWork` command directly — the `POST /api/works` route only mints imported shells now (#749),
+  // so manual seeds call the command with the same id/clock deps the route would.
+  library: LibraryRouteDependencies;
   // Structured unlink failures the command logged (best-effort path).
   unlinkFailures: Array<{ error: unknown; filePath: string }>;
   server: ReturnType<typeof createServer>;
@@ -87,6 +97,7 @@ async function buildContext(): Promise<TestContext> {
     db,
     deletedPaths,
     failUnlinkWith,
+    library: dependencies,
     unlinkFailures,
     server: createServer({ library: dependencies, logger: false })
   };
@@ -200,7 +211,7 @@ describe("library routes", () => {
       payload: {
         author: { mode: "new", name: "George Orwell" },
         language: "en",
-        origin: "manual",
+        origin: "imported",
         title: "Animal Farm",
         workType: "book"
       }
@@ -212,7 +223,7 @@ describe("library routes", () => {
       payload: {
         author: { mode: "new", name: "george\u3000orwell" },
         language: "en",
-        origin: "manual",
+        origin: "imported",
         title: "1984",
         workType: "book"
       }
@@ -263,7 +274,7 @@ describe("library routes", () => {
       payload: {
         author: { mode: "new", name: "George Orwell" },
         language: "en",
-        origin: "manual",
+        origin: "imported",
         title: "Politics and the English Language",
         workType: "essay"
       }
@@ -276,7 +287,7 @@ describe("library routes", () => {
         authorId: "author-1",
         entryId: "work-1",
         language: "en",
-        origin: "manual",
+        origin: "imported",
         title: "Politics and the English Language",
         workType: "essay"
       }
@@ -299,7 +310,7 @@ describe("library routes", () => {
             authorId: "author-1",
             entryId: "work-1",
             language: "en",
-            origin: "manual",
+            origin: "imported",
             title: "Politics and the English Language",
             workType: "essay"
           }
@@ -322,7 +333,7 @@ describe("library routes", () => {
       payload: {
         author: { authorId, mode: "existing" },
         language: "en",
-        origin: "manual",
+        origin: "imported",
         title: "A Tale of Two Cities",
         workType: "book"
       }
@@ -335,7 +346,7 @@ describe("library routes", () => {
         authorId: "author-1",
         entryId: "work-1",
         language: "en",
-        origin: "manual",
+        origin: "imported",
         title: "A Tale of Two Cities",
         workType: "book"
       }
@@ -349,7 +360,7 @@ describe("library routes", () => {
       payload: {
         author: { authorId: "missing-author", mode: "existing" },
         language: "en",
-        origin: "manual",
+        origin: "imported",
         title: "Orphan Work",
         workType: "book"
       }
@@ -378,7 +389,7 @@ describe("library routes", () => {
       payload: {
         author: { mode: "new", name: "x" },
         language: "en",
-        origin: "manual",
+        origin: "imported",
         title: "t",
         workType: "magazine"
       }
@@ -432,22 +443,53 @@ describe("library routes", () => {
     expect(response.json()).toEqual({ error: "invalid_request" });
   });
 
-  it("seeds the current user's ownership facet when a manual Work is created", async () => {
-    const created = await context.server.inject({
+  it("refuses to create a manual Work through the legacy route (manual goes through review, #749)", async () => {
+    const response = await context.server.inject({
       method: "POST",
       url: "/api/works",
       payload: {
+        author: { mode: "new", name: "Bypass Author" },
+        language: "en",
+        origin: "manual",
+        title: "Unreviewed Manual Work",
+        workType: "book"
+      }
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: "manual_requires_review" });
+
+    // The refusal fires before any write, so a manual Work can never be committed — nor its author
+    // created/resolved as a side effect — around the `POST /api/works/manual` duplicate-review boundary.
+    const works = await context.server.inject({ method: "GET", url: "/api/works" });
+    expect(works.json()).toEqual({ works: [] });
+    const authors = await context.server.inject({ method: "GET", url: "/api/authors" });
+    expect(authors.json()).toEqual({ authors: [], cleanedQuery: "", exactMatchId: null });
+  });
+
+  it("seeds the current user's ownership facet when a manual Work is created", async () => {
+    // Manual Works are committed through the `createWork` command (invoked by the `POST /api/works/manual`
+    // review front door, #749), never the legacy `POST /api/works` route. This asserts the command's
+    // manual branch directly: stamping `origin = manual` seeds the caller's `personal_entries` ownership
+    // facet in the same transaction.
+    const created = await createWork(
+      context.library,
+      {
         author: { mode: "new", name: "George Orwell" },
         language: "en",
         origin: "manual",
         title: "Politics and the English Language",
         workType: "essay"
-      }
-    });
+      },
+      DEFAULT_USER_ID
+    );
 
-    expect(created.statusCode).toBe(201);
-    expect(created.json().work.origin).toBe("manual");
-    const entryId = created.json().work.entryId as string;
+    expect(created.status).toBe("created");
+    if (created.status !== "created") {
+      throw new Error("expected the manual Work to be created");
+    }
+    expect(created.work.work.origin).toBe("manual");
+    const entryId = created.work.work.entryId;
 
     const owners = await context.db
       .select()
@@ -974,21 +1016,27 @@ describe("DELETE /api/works/:workEntryId", () => {
 
 describe("manual work editor (#720, sections #697)", () => {
   async function createManualWork(
-    payload?: Partial<{ language: string; title: string; workType: string }>
+    payload?: Partial<{ language: WorkLanguage; title: string; workType: WorkType }>
   ): Promise<string> {
-    const created = await context.server.inject({
-      method: "POST",
-      url: "/api/works",
-      payload: {
+    // The `POST /api/works` route no longer commits a manual Work (#749); its author-resolution +
+    // canonical empty-document boundary is exercised through the `createWork` command, which is what the
+    // `POST /api/works/manual` review front door commits with. Seed editor fixtures the same byte-less way.
+    const created = await createWork(
+      context.library,
+      {
         author: { mode: "new", name: "George Orwell" },
         language: payload?.language ?? "en",
         origin: "manual",
         title: payload?.title ?? "Reading notes",
         workType: payload?.workType ?? "book"
-      }
-    });
-    expect(created.statusCode).toBe(201);
-    return created.json().work.entryId as string;
+      },
+      DEFAULT_USER_ID
+    );
+    expect(created.status).toBe("created");
+    if (created.status !== "created") {
+      throw new Error("expected the manual Work fixture to be created");
+    }
+    return created.work.work.entryId;
   }
 
   async function createImportedWork(): Promise<string> {
