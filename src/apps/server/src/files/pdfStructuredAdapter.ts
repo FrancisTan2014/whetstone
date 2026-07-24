@@ -81,9 +81,9 @@ export type ProbeOutcome =
   | Readonly<{ status: "malformed"; detail: string }>;
 
 // Default page box (US Letter, no rotation) for a probe outcome that has only per-page native-text
-// (the in-memory fake and the staged-fixture backend do not carry real page geometry). The OCR
-// pre-pass (#744) supplies real geometry from its own worker probe; these deterministic backends only
-// need consistent, valid geometry so the shared probe shape stays uniform.
+// (the in-memory fake and the staged-fixture backend do not carry real page geometry). The real
+// worker `--probe` supplies real geometry; these deterministic backends only need consistent, valid
+// geometry so the shared probe shape stays uniform.
 const DEFAULT_PROBE_PAGE_GEOMETRY = Object.freeze({ width: 612, height: 792, rotation: 0 });
 
 // Project a structured page's native-text flag onto the shared probe-page shape with default geometry.

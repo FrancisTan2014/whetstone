@@ -8,8 +8,6 @@ import {
   parseRangeConversion,
   PINNED_DOCLING_CORE_VERSION,
   PINNED_DOCLING_VERSION,
-  PINNED_OCRMYPDF_VERSION,
-  PINNED_TESSERACT_VERSION,
   RANGE_CONVERSION_SCHEMA_VERSION,
   STRUCTURED_DOCUMENT_SCHEMA_VERSION,
   SUPPORTED_DOCLING_CORE_SCHEMA_VERSIONS,
@@ -219,13 +217,6 @@ describe("parseProbeClassification", () => {
     expect(
       parseProbeClassification(JSON.stringify({ pageCount: 1, pages: [page({ dpi: 300 })] })).status
     ).toBe("malformed");
-  });
-});
-
-describe("pinned OCR toolchain versions", () => {
-  it("pins the exact OCRmyPDF and Tesseract versions the fingerprint records", () => {
-    expect(PINNED_OCRMYPDF_VERSION).toBe("16.10.4");
-    expect(PINNED_TESSERACT_VERSION).toBe("5.5.1");
   });
 });
 

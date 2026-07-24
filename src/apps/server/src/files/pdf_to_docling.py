@@ -12,7 +12,7 @@ Two modes:
 - ``--probe <file.pdf>``  -> ``{"pageCount": N, "pages": [...]}`` on stdout, where each page carries
   ``{pageNumber, width, height, rotation, hasNativeText}``. This lightweight classification (page
   geometry/rotation + native-text availability, no full Docling conversion) is the SOLE classifier
-  #704 routes an OCR pre-pass on, and #744 validates OCR preserved. Encrypted input exits
+  #704 routes an OCR pre-pass on, and a later bounded OCR adapter (#755) validates OCR preserved. Encrypted input exits
   ``EXIT_PASSWORD_REQUIRED``; a broken file exits ``EXIT_CONVERSION_FAILED``.
 - ``--range <file.pdf> <start> <end>`` -> one range payload JSON on stdout.
 
@@ -491,8 +491,8 @@ def page_geometry_prober(
 ) -> Callable[[int], Mapping[str, float]]:
     """A per-page geometry predicate: the page's box (width/height in PDF points) and quarter-turn rotation.
 
-    Uses the same backend as the page count. Reported by ``--probe`` so #704 can validate that an OCR
-    pre-pass (#744) preserved page geometry and rotation without a full Docling conversion.
+    Uses the same backend as the page count. Reported by ``--probe`` so #704 can validate that a later
+    OCR pre-pass (#755) preserved page geometry and rotation without a full Docling conversion.
     """
     document = opener(pdf_path)  # pragma: no cover - real backend; logic below tested via fake.
 
@@ -529,8 +529,8 @@ def run_probe(
     """``--probe`` mode: emit the page count AND per-page geometry/rotation/native-text.
 
     This is the SOLE lightweight classifier #704 routes an OCR pre-pass on (a scanned/mixed document is
-    detected here, so it never pays for a disposable pre-OCR Docling conversion) and #744 validates OCR
-    preserved. Encryption, a missing toolchain, and corruption classify to distinct exit codes.
+    detected here, so it never pays for a disposable pre-OCR Docling conversion) and a later bounded OCR
+    adapter (#755) validates OCR preserved. Encryption, a missing toolchain, and corruption classify to distinct exit codes.
     """
     try:
         page_count = count_pages(pdf_path, opener)

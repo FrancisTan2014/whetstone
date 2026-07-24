@@ -27,13 +27,6 @@ export const SUPPORTED_DOCLING_CORE_SCHEMA_VERSIONS: readonly string[] = Object.
 // lockstep with scripts/setup/steps/pdf.mjs (which cannot import this TS module).
 export const PINNED_DOCLING_VERSION = "2.114.0";
 export const PINNED_DOCLING_CORE_VERSION = "2.87.1";
-// The pinned OCR toolchain the OCR pre-pass (#744) runs. OCRmyPDF (MPL-2.0) drives Tesseract
-// (Apache-2.0) — permissive tools only. These are the MINIMUM versions the adapter records in its
-// reported fingerprint and setup/doctor verify; an older engine is reported so a stale toolchain is
-// visible rather than silently trusted. Kept as product pins (asserted by tests), not style tokens.
-export const PINNED_OCRMYPDF_VERSION = "16.10.4";
-export const PINNED_TESSERACT_VERSION = "5.5.1";
-
 // The pinned Docling layout/table model artifacts. We pin the IMMUTABLE commit SHA, never the mutable
 // `v2.3.0` Git/Hugging Face tag: a tag can be moved to different artifacts and still pass readiness,
 // so setup downloads and verifies this EXACT commit. `PINNED_MODEL_TAG` is the human-readable label
