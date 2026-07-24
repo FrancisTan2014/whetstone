@@ -94,3 +94,51 @@ export const pdfFixture = {
   mimeType: "application/pdf",
   name: "Multi Section Sample.pdf"
 } as const;
+
+// A fully scanned English fixture (#745): its single page carries NO native text, so the born-digital
+// journey would publish nothing. The env-gated fixture OCR lane (PDF_IMPORT_FIXTURE_OCR=1, set in
+// stack.ts) reads these bytes, flips the text-less page to native, and injects recovered English text —
+// so after OCR the upload publishes one canonical Work whose body is the recovered text. Input-derived,
+// never canned.
+const scannedConversion = {
+  body: [] as readonly DocItem[],
+  doclingSchema: { name: "DoclingDocument", version: "1.10.0" },
+  furniture: [],
+  pages: [{ hasNativeText: false, pageNumber: 1 }],
+  schemaVersion: RANGE_CONVERSION_SCHEMA_VERSION
+};
+
+export const pdfScannedFixture = {
+  buffer: Buffer.from(`%PDF-1.7\n${FIXTURE_MARKER}\n${JSON.stringify(scannedConversion)}`, "utf8"),
+  mimeType: "application/pdf",
+  name: "Scanned English Page.pdf"
+} as const;
+
+// A mixed English fixture (#745): page 1 is born-digital (a title + paragraph with native text) and page
+// 2 is scanned (text-less). OCR must preserve the native page's text and ordering while adding recovered
+// English text for the scanned page, so the published Work carries both — proving mixed documents keep
+// native-page content and OCR only fills the gaps.
+const mixedBody: readonly DocItem[] = [
+  item({ label: "title", text: "Mixed Scan Report" }),
+  item({
+    label: "text",
+    text: "This first page is born-digital and keeps its native text through the OCR phase."
+  })
+];
+
+const mixedConversion = {
+  body: mixedBody,
+  doclingSchema: { name: "DoclingDocument", version: "1.10.0" },
+  furniture: [],
+  pages: [
+    { hasNativeText: true, pageNumber: 1 },
+    { hasNativeText: false, pageNumber: 2 }
+  ],
+  schemaVersion: RANGE_CONVERSION_SCHEMA_VERSION
+};
+
+export const pdfMixedFixture = {
+  buffer: Buffer.from(`%PDF-1.7\n${FIXTURE_MARKER}\n${JSON.stringify(mixedConversion)}`, "utf8"),
+  mimeType: "application/pdf",
+  name: "Mixed Scan Report.pdf"
+} as const;

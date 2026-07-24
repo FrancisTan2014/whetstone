@@ -1,14 +1,22 @@
-import { stat } from "node:fs/promises";
+import { readFile, rm, stat } from "node:fs/promises";
 
 import {
   MAX_PAGE_COUNT,
   MAX_STAGED_BYTES,
   parseRangeConversion,
-  type PdfImportFailureDto
+  type PdfImportFailureDto,
+  type ProbePage
 } from "@whetstone/contracts";
-import { nextRangeIndex } from "@whetstone/domain";
+import {
+  classifyOcrRouting,
+  nextRangeIndex,
+  ocrPassRequired,
+  resolveWorkLanguage
+} from "@whetstone/domain";
 
 import type { DbClient } from "../../db/dbClient.js";
+import { formatOcrFingerprint, type PdfOcrAdapter } from "../../files/pdfOcrAdapter.js";
+import { ocrStageWriteFailure } from "../../files/pdfOcrErrors.js";
 import {
   pageRangesFor,
   type DoclingRunner,
@@ -26,12 +34,15 @@ import {
 import type { PdfImportStageStore } from "./pdfImportStage.js";
 import {
   PDF_IMPORT_ADAPTER_FINGERPRINT,
+  adoptOcrStage,
   claimNextQueued,
   clearStagePath,
   commitRange,
   getCommittedRangeIndices,
+  getPublication,
   markConverted,
   markFailed,
+  setPhase,
   setProbeResult,
   type PdfImportAttemptRecord
 } from "./pdfImportStore.js";
@@ -77,6 +88,7 @@ export function createPdfImportActiveRuns(): PdfImportActiveRuns {
 export type PdfImportRunnerDependencies = Readonly<{
   db: DbClient;
   runner: DoclingRunner;
+  ocrAdapter: PdfOcrAdapter;
   stageStore: PdfImportStageStore;
   activeRuns: PdfImportActiveRuns;
   createRunToken: () => string;
@@ -95,7 +107,10 @@ export type PdfImportRunResult =
 
 const DEFAULT_PAGE_RANGE_SIZE = 50;
 
-function toFailureDto(failure: PdfStructuredFailure): PdfImportFailureDto {
+// Both the structured-conversion (#701) and OCR (#755) boundaries return the same `{kind, what, remedy}`
+// failure shape, so one projection serves both. `PdfImportFailureDto.kind` accepts any non-empty string,
+// so an OCR failure kind flows through the contract unchanged.
+function toFailureDto(failure: RunnerFailure): PdfImportFailureDto {
   return { kind: failure.kind, message: failure.what, remedy: failure.remedy };
 }
 
@@ -175,6 +190,28 @@ async function convertClaimed(
     return fail(deps, claimed, runToken, stagePath, probed.failure);
   }
 
+  // The durable OCR phase (#745), before structured conversion: decide (from the source's per-page
+  // native-text classification and the Work language) whether to OCR, run the bounded pass, validate it,
+  // and atomically adopt its output as the conversion source. A born-digital document, or one whose
+  // language pack is not yet enabled, converts the ORIGINAL untouched. Once an OCR stage is adopted the
+  // attempt resumes from the derived `ocr.pdf`.
+  const source = await resolveConversionSource(
+    deps,
+    claimed,
+    runToken,
+    handle,
+    stagePath,
+    probed,
+    signal
+  );
+  if (source.status !== "ok") {
+    if (source.status === "fenced") {
+      return { status: "fenced", attemptId: claimed.id };
+    }
+    return fail(deps, claimed, runToken, stagePath, source.failure);
+  }
+  const conversionHandle = source.handle;
+
   const ranges = pageRangesFor(probed.pageCount, pageRangeSize);
   const committed = await getCommittedRangeIndices(deps.db, claimed.id, fingerprint);
   // Resume after the last committed range; committed ranges are already validated and idempotent, so a
@@ -184,7 +221,7 @@ async function convertClaimed(
       return { status: "fenced", attemptId: claimed.id };
     }
     const { startPage, endPage } = ranges[index]!;
-    const run = await deps.runner.convertRange(handle.path, startPage, endPage, signal);
+    const run = await deps.runner.convertRange(conversionHandle.path, startPage, endPage, signal);
     if (run.status === "failure") {
       if (run.failure.kind === "cancelled") {
         return { status: "fenced", attemptId: claimed.id };
@@ -227,28 +264,25 @@ async function convertClaimed(
   return { status: "converted", attemptId: claimed.id };
 }
 
+type ProbePlan = Readonly<{ status: "ok"; pageCount: number; pages: readonly ProbePage[] | null }>;
+
 type ProbeStep =
-  | Readonly<{ status: "ok"; pageCount: number }>
+  | ProbePlan
   | Readonly<{ status: "fenced" }>
   | Readonly<{ status: "failure"; failure: PdfStructuredFailure }>;
 
-// Probe the source once and persist the total page/range plan (fenced). A resumed attempt that already
-// has its totals skips the probe and reuses the plan, so a restart never re-probes.
-async function ensureProbed(
-  deps: PdfImportRunnerDependencies,
-  claimed: PdfImportAttemptRecord,
-  runToken: string,
-  handle: StagedFileHandle,
-  pageRangeSize: number,
-  signal: AbortSignal
-): Promise<ProbeStep> {
-  // A resumed attempt that already has its probe totals skips the probe and reuses the plan; totalPages
-  // and totalRanges are always persisted together by `setProbeResult`, so testing totalPages alone is
-  // sufficient (and keeps the resume decision a single branch).
-  if (claimed.totalPages !== null) {
-    return { status: "ok", pageCount: claimed.totalPages };
-  }
+type ProbeReading =
+  | Readonly<{ status: "ok"; pageCount: number; pages: readonly ProbePage[] }>
+  | Readonly<{ status: "failure"; failure: PdfStructuredFailure }>;
 
+// Run one probe and map its outcome to a named failure or the page plan. Shared by `ensureProbed` (the
+// once-per-attempt plan probe) and the OCR routing re-probe on a resumed pre-adoption run, so both
+// classify a source through exactly one probe implementation and one failure mapping.
+async function readProbe(
+  deps: PdfImportRunnerDependencies,
+  handle: StagedFileHandle,
+  signal: AbortSignal
+): Promise<ProbeReading> {
   const probe = await deps.runner.probe(handle.path, signal);
   if (probe.status === "tool_missing") {
     return { status: "failure", failure: toolMissingFailure() };
@@ -262,26 +296,187 @@ async function ensureProbed(
   if (probe.pageCount > MAX_PAGE_COUNT) {
     return { status: "failure", failure: tooManyPagesFailure(probe.pageCount, MAX_PAGE_COUNT) };
   }
+  return { status: "ok", pageCount: probe.pageCount, pages: probe.pages };
+}
 
-  const totalRanges = pageRangesFor(probe.pageCount, pageRangeSize).length;
+// Probe the source once and persist the total page/range plan (fenced). A resumed attempt that already
+// has its totals skips the probe and reuses the plan, so a restart never re-probes; it therefore returns
+// `pages: null` on resume (the fresh probe pages are unavailable), and the OCR phase re-probes for
+// routing only when it still needs them.
+async function ensureProbed(
+  deps: PdfImportRunnerDependencies,
+  claimed: PdfImportAttemptRecord,
+  runToken: string,
+  handle: StagedFileHandle,
+  pageRangeSize: number,
+  signal: AbortSignal
+): Promise<ProbeStep> {
+  // A resumed attempt that already has its probe totals skips the probe and reuses the plan; totalPages
+  // and totalRanges are always persisted together by `setProbeResult`, so testing totalPages alone is
+  // sufficient (and keeps the resume decision a single branch).
+  if (claimed.totalPages !== null) {
+    return { status: "ok", pageCount: claimed.totalPages, pages: null };
+  }
+
+  const reading = await readProbe(deps, handle, signal);
+  if (reading.status === "failure") {
+    return reading;
+  }
+
+  const totalRanges = pageRangesFor(reading.pageCount, pageRangeSize).length;
   const applied = await setProbeResult(deps.db, {
     id: claimed.id,
     runToken,
-    totalPages: probe.pageCount,
+    totalPages: reading.pageCount,
     totalRanges,
     now: deps.now()
   });
-  return applied ? { status: "ok", pageCount: probe.pageCount } : { status: "fenced" };
+  return applied
+    ? { status: "ok", pageCount: reading.pageCount, pages: reading.pages }
+    : { status: "fenced" };
+}
+
+type RunnerFailure = Readonly<{ kind: string; what: string; remedy: string }>;
+
+type ConversionSource =
+  | Readonly<{ status: "ok"; handle: StagedFileHandle }>
+  | Readonly<{ status: "fenced" }>
+  | Readonly<{ status: "failure"; failure: RunnerFailure }>;
+
+// Decide which staged file structured conversion reads, running the durable OCR phase when required:
+//   - an attempt that already adopted an OCR stage (`ocr_fingerprint` set) resumes from the derived
+//     `ocr.pdf` — the recovery boundary is crossed, so the pass never re-runs;
+//   - an attempt with no adopted stage but already-committed ranges was routed `native` on its first run
+//     (a text-less document adopts an OCR stage BEFORE any range commits, so a committed range with no
+//     fingerprint can only be born-digital): resume converting the ORIGINAL without re-probing. Recovery
+//     recomputes from the fingerprint and the committed ranges — never a re-probe — as the store contract
+//     requires;
+//   - otherwise (fresh run, or a resumed run that adopted nothing and committed nothing) classify routing
+//     from the source's per-page native-text flags and the Work language: a born-digital document, or a
+//     text-less one whose language pack is not yet enabled, converts the ORIGINAL untouched (publication
+//     reports the text-less pages for the not-yet-enabled case);
+//   - a text-less document in an enabled language runs one bounded OCR pass, then — only after the
+//     adapter validated geometry/rotation/native-text — transfers the output into the attempt stage as
+//     `ocr.pdf` and atomically adopts it (recording the fingerprint) before any range commits, so a
+//     committed range always implies a settled routing decision (adopted OCR, or native).
+async function resolveConversionSource(
+  deps: PdfImportRunnerDependencies,
+  claimed: PdfImportAttemptRecord,
+  runToken: string,
+  handle: StagedFileHandle,
+  stagePath: string,
+  probed: ProbePlan,
+  signal: AbortSignal
+): Promise<ConversionSource> {
+  if (claimed.ocrFingerprint !== null) {
+    return { status: "ok", handle: deps.stageStore.openDerivedStage(stagePath) };
+  }
+
+  // No adopted OCR stage, but ranges already committed → routed `native` on the first run; resume the
+  // ORIGINAL without re-probing (recovery never re-probes once real work is committed).
+  if (claimed.completedPages > 0) {
+    return { status: "ok", handle };
+  }
+
+  // The Work language drives the OCR decision (whether to run, and in which Tesseract language). It is
+  // read from the publication intent; a raw enqueue without intent has no language, so default to
+  // English rather than guessing from page content.
+  const publication = await getPublication(deps.db, claimed.id);
+  const language = resolveWorkLanguage(publication?.enteredLanguage ?? null);
+
+  // Fresh run: the probe pages are in hand. Resumed pre-adoption run: re-probe the ORIGINAL for routing —
+  // safe because no OCR stage has been adopted (fingerprint null), so re-probing and re-OCRing loses
+  // nothing.
+  let pages: readonly ProbePage[];
+  if (probed.pages !== null) {
+    pages = probed.pages;
+  } else {
+    const reading = await readProbe(deps, handle, signal);
+    if (reading.status === "failure") {
+      return { status: "failure", failure: reading.failure };
+    }
+    pages = reading.pages;
+  }
+
+  const routing = classifyOcrRouting(
+    pages.map((page) => ({ pageNumber: page.pageNumber, hasNativeText: page.hasNativeText }))
+  );
+  if (!ocrPassRequired(routing.kind, language)) {
+    return { status: "ok", handle };
+  }
+
+  const phased = await setPhase(deps.db, claimed.id, runToken, "ocr", deps.now());
+  if (!phased) {
+    return { status: "fenced" };
+  }
+
+  const outcome = await deps.ocrAdapter.execute({ source: handle, routing, language, signal });
+  if (!outcome.ok) {
+    // A cancelled OCR pass is a supersede, not a product failure: report it as fenced so the run stops
+    // without failing the attempt (its terminal state is owned by the newer run).
+    if (outcome.failure.kind === "cancelled") {
+      return { status: "fenced" };
+    }
+    return { status: "failure", failure: outcome.failure };
+  }
+
+  // The adapter validated and transferred a caller-owned output. Copy its bytes into THIS attempt's
+  // stage directory as the derived `ocr.pdf` (one cleanup surface with the immutable original), then
+  // remove the now-redundant transient output — surfacing a removal failure via the cleanup logger
+  // rather than aborting an otherwise-successful OCR pass, since the bytes are already durable in the
+  // attempt stage.
+  //
+  // The read + derived-stage write is on the failure-to-data path: an unreadable transient output or a
+  // failed attempt-owned write (disk/permission/missing stage dir) becomes a typed `stage_write`
+  // failure so the caller marks the attempt FAILED. Rejecting here would strand the run token with the
+  // attempt still `running`, blocking every later PDF import until interruption recovery on restart.
+  const outputPath = outcome.result.output.path;
+  let derived: StagedFileHandle;
+  try {
+    const bytes = new Uint8Array(await readFile(outputPath));
+    derived = await deps.stageStore.writeDerivedStage(stagePath, bytes);
+  } catch (cause) {
+    return { status: "failure", failure: ocrStageWriteFailure(describeError(cause)) };
+  }
+  /* v8 ignore start -- best-effort transient cleanup: the OCR bytes are already durable in the derived
+     stage by this point, so a removal failure is surfaced (never swallowed) but is not a product failure.
+     Forcing `rm` to throw between the preceding `readFile` and here — without also breaking that read —
+     cannot be driven deterministically across platforms, so this logging branch is exercised only in the
+     field. The identical `logCleanupFailure` callback is covered on the stage-cleanup path. */
+  try {
+    await rm(outputPath, { force: true });
+  } catch (cause) {
+    deps.logCleanupFailure({
+      attemptId: claimed.id,
+      stagePath: outputPath,
+      reason: describeError(cause)
+    });
+  }
+  /* v8 ignore stop */
+
+  // Atomic adoption: record the fingerprint (crossing the recovery boundary) and advance the phase to
+  // `structured`. Fenced here means a newer run superseded this one after the pass; stop without failing.
+  const adopted = await adoptOcrStage(
+    deps.db,
+    claimed.id,
+    runToken,
+    formatOcrFingerprint(outcome.result.fingerprint),
+    deps.now()
+  );
+  if (!adopted) {
+    return { status: "fenced" };
+  }
+  return { status: "ok", handle: derived };
 }
 
 // Mark the attempt failed (fenced) and free its stage. A fenced markFailed means the run was superseded,
-// so it is reported as `fenced`, not `failed`.
+// so it is reported as `fenced`, not `failed`. Accepts either boundary's `{kind, what, remedy}` failure.
 async function fail(
   deps: PdfImportRunnerDependencies,
   claimed: PdfImportAttemptRecord,
   runToken: string,
   stagePath: string | null,
-  failure: PdfStructuredFailure
+  failure: RunnerFailure
 ): Promise<PdfImportRunResult> {
   const dto = toFailureDto(failure);
   const applied = await markFailed(deps.db, claimed.id, runToken, dto, deps.now());

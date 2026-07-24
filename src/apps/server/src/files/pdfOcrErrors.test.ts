@@ -7,7 +7,8 @@ import {
   ocrLanguageMissingFailure,
   ocrNativeTextFailure,
   ocrOutputValidationFailure,
-  ocrRoutingMismatchFailure
+  ocrRoutingMismatchFailure,
+  ocrStageWriteFailure
 } from "./pdfOcrErrors.js";
 
 describe("classifyOcrmypdfFailure", () => {
@@ -110,6 +111,13 @@ describe("named OCR failures carry an actionable remedy", () => {
   it("output_validation and cleanup carry their detail", () => {
     expect(ocrOutputValidationFailure("bad pdf").what).toContain("bad pdf");
     expect(ocrCleanupFailure("EACCES").what).toContain("EACCES");
+  });
+
+  it("stage_write carries the detail and points at the stage directory", () => {
+    const failure = ocrStageWriteFailure("ENOSPC");
+    expect(failure.kind).toBe("stage_write");
+    expect(failure.what).toContain("ENOSPC");
+    expect(failure.remedy).toContain("stage directory");
   });
 
   it("routing_mismatch carries the detail and tells the caller to re-derive from a fresh probe", () => {

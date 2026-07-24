@@ -21,6 +21,14 @@ export function isWorkLanguage(value: unknown): value is WorkLanguage {
   return workLanguageSet.has(value);
 }
 
+// Accept an entered language only when it is one of the supported Work languages; otherwise fall back to
+// English, so an unrecognized or absent value never blocks import routing or publication. The exact
+// three-value set is the single source of truth (`isWorkLanguage`), reused by both the OCR runner (which
+// language to OCR in) and publication (which language a Work is created in).
+export function resolveWorkLanguage(entered: string | null): WorkLanguage {
+  return isWorkLanguage(entered) ? entered : "en";
+}
+
 export const workLanguageLabels: Readonly<Record<WorkLanguage, string>> = {
   en: "English",
   "zh-CN": "中文（简体） Simplified Chinese",

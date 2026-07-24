@@ -5,6 +5,12 @@ import { describe, expect, it } from "vitest";
 
 import { mapStructuredDocument, type PdfCanonicalMappingResult } from "./pdfCanonicalMapping.js";
 
+// Most cases assert the language-independent mapping (native pages, so no OCR routing); wrap the common
+// English call. The language-aware OCR-refusal cases call `mapStructuredDocument` directly with a locale.
+function mapEn(document: StructuredDocument): PdfCanonicalMappingResult {
+  return mapStructuredDocument(document, "en");
+}
+
 function item(partial: Partial<StructuredDocItem> & { label: string }): StructuredDocItem {
   return {
     boundingBox: { bottom: 20, left: 0, right: 100, top: 0 },
@@ -50,7 +56,9 @@ function unitTypes(
 }
 
 describe("mapStructuredDocument", () => {
-  it("refuses a document with any non-native-text page as ocr_required and maps no content", () => {
+  it("refuses a text-less English document as ocr_validation_failed and maps no content", () => {
+    // An enabled OCR language (English) still carrying text-less pages here means the OCR pass and the
+    // full conversion disagreed, or OCR was incomplete — the whole publication is refused, no partial Work.
     const result = mapStructuredDocument(
       doc(
         [item({ label: "text", text: "Body" })],
@@ -59,14 +67,32 @@ describe("mapStructuredDocument", () => {
           { hasNativeText: false, pageNumber: 2 },
           { hasNativeText: false, pageNumber: 3 }
         ]
-      )
+      ),
+      "en"
     );
-    expect(result).toEqual({ pagesNeedingOcr: 2, status: "ocr_required" });
+    expect(result).toEqual({ pagesNeedingOcr: 2, status: "ocr_validation_failed" });
+  });
+
+  it("refuses a text-less document in a not-yet-enabled language as ocr_language_not_enabled", () => {
+    // A language whose OCR pack is not yet enabled (Chinese until #746) is refused with a distinct typed
+    // outcome, so the UI can explain the pack is coming rather than blaming OCR quality.
+    const result = mapStructuredDocument(
+      doc(
+        [item({ label: "text", text: "Body" })],
+        [
+          { hasNativeText: true, pageNumber: 1 },
+          { hasNativeText: false, pageNumber: 2 },
+          { hasNativeText: false, pageNumber: 3 }
+        ]
+      ),
+      "zh-CN"
+    );
+    expect(result).toEqual({ pagesNeedingOcr: 2, status: "ocr_language_not_enabled" });
   });
 
   it("projects title to a level-1 heading and section_header to a level-2 heading", () => {
     const result = mapped(
-      mapStructuredDocument(
+      mapEn(
         doc([
           item({ label: "title", text: "The Work" }),
           item({ label: "section_header", text: "First Section" })
@@ -86,7 +112,7 @@ describe("mapStructuredDocument", () => {
 
   it("projects text, paragraph, and top-level caption labels to paragraphs", () => {
     const result = mapped(
-      mapStructuredDocument(
+      mapEn(
         doc([
           item({ label: "text", text: "Plain text." }),
           item({ label: "paragraph", text: "A paragraph." }),
@@ -99,7 +125,7 @@ describe("mapStructuredDocument", () => {
 
   it("projects formula and code labels to code blocks, preserving text verbatim", () => {
     const result = mapped(
-      mapStructuredDocument(
+      mapEn(
         doc([
           item({ label: "formula", text: "E = mc^2" }),
           item({ label: "code", text: "print(1)" })
@@ -113,7 +139,7 @@ describe("mapStructuredDocument", () => {
 
   it("projects footnote, endnote, and reference labels to footnote targets", () => {
     const result = mapped(
-      mapStructuredDocument(
+      mapEn(
         doc([
           item({ label: "footnote", text: "1. A note." }),
           item({ label: "endnote", text: "2. An endnote." }),
@@ -125,7 +151,7 @@ describe("mapStructuredDocument", () => {
   });
 
   it("refuses a document with a picture as image_unsupported and maps no content", () => {
-    const result = mapStructuredDocument(
+    const result = mapEn(
       doc([
         item({ label: "text", text: "Body" }),
         item({
@@ -142,12 +168,12 @@ describe("mapStructuredDocument", () => {
   });
 
   it("refuses a figure label as image_unsupported", () => {
-    const result = mapStructuredDocument(doc([item({ label: "figure", text: "Inline figure." })]));
+    const result = mapEn(doc([item({ label: "figure", text: "Inline figure." })]));
     expect(result.status).toBe("image_unsupported");
   });
 
   it("counts pictures nested inside other constructs when refusing", () => {
-    const result = mapStructuredDocument(
+    const result = mapEn(
       doc([
         item({
           children: [
@@ -170,7 +196,7 @@ describe("mapStructuredDocument", () => {
 
   it("projects a table with rows into a table, marking header cells", () => {
     const result = mapped(
-      mapStructuredDocument(
+      mapEn(
         doc([
           item({
             children: [
@@ -201,14 +227,14 @@ describe("mapStructuredDocument", () => {
   });
 
   it("falls back to an unknown node for a table with no rows", () => {
-    const result = mapped(mapStructuredDocument(doc([item({ label: "table", text: "orphan" })])));
+    const result = mapped(mapEn(doc([item({ label: "table", text: "orphan" })])));
     expect(result.units[0]!.docBlocks[0]!.type).toBe("unknown");
     expect(result.unmappedLabels).toContain("table");
   });
 
   it("skips non-row children and empty rows while still building a table", () => {
     const result = mapped(
-      mapStructuredDocument(
+      mapEn(
         doc([
           item({
             children: [
@@ -229,7 +255,7 @@ describe("mapStructuredDocument", () => {
 
   it("projects an ordered list group with nested lists", () => {
     const result = mapped(
-      mapStructuredDocument(
+      mapEn(
         doc([
           item({
             children: [
@@ -256,15 +282,13 @@ describe("mapStructuredDocument", () => {
   });
 
   it("falls back to an unknown node for a list group with no list items", () => {
-    const result = mapped(
-      mapStructuredDocument(doc([item({ label: "unordered_list", text: "x" })]))
-    );
+    const result = mapped(mapEn(doc([item({ label: "unordered_list", text: "x" })])));
     expect(result.units[0]!.docBlocks[0]!.type).toBe("unknown");
   });
 
   it("ignores non-list and empty nested groups inside a list item", () => {
     const result = mapped(
-      mapStructuredDocument(
+      mapEn(
         doc([
           item({
             children: [
@@ -289,7 +313,7 @@ describe("mapStructuredDocument", () => {
 
   it("groups a run of top-level list items into one bullet list", () => {
     const result = mapped(
-      mapStructuredDocument(
+      mapEn(
         doc([
           item({ label: "list_item", text: "One" }),
           item({ label: "list_item", text: "Two" }),
@@ -303,9 +327,7 @@ describe("mapStructuredDocument", () => {
   });
 
   it("preserves an unrecognized label as a visible unknown node and records it", () => {
-    const result = mapped(
-      mapStructuredDocument(doc([item({ label: "some_unknown_label", text: "unsure." })]))
-    );
+    const result = mapped(mapEn(doc([item({ label: "some_unknown_label", text: "unsure." })])));
     const unknown = result.units[0]!.docBlocks[0]!.node;
     expect(unknown.type).toBe("unknown");
     expect((unknown.attrs as { html: string; tag: string }).html).toBe("unsure.");
@@ -315,7 +337,7 @@ describe("mapStructuredDocument", () => {
 
   it("puts a leading run before the first heading into a neutral Start unit", () => {
     const result = mapped(
-      mapStructuredDocument(
+      mapEn(
         doc([
           item({ label: "text", text: "Preamble." }),
           item({ label: "title", text: "Chapter" }),
@@ -330,24 +352,24 @@ describe("mapStructuredDocument", () => {
   });
 
   it("treats a whitespace-only heading as an untitled unit", () => {
-    const result = mapped(mapStructuredDocument(doc([item({ label: "title", text: "   " })])));
+    const result = mapped(mapEn(doc([item({ label: "title", text: "   " })])));
     expect(result.units[0]!.title).toBeUndefined();
   });
 
   it("projects an empty-text block to a block with no inline content", () => {
-    const result = mapped(mapStructuredDocument(doc([item({ label: "text", text: "" })])));
+    const result = mapped(mapEn(doc([item({ label: "text", text: "" })])));
     const block = result.units[0]!.docBlocks[0]!.node;
     expect(block.type).toBe("paragraph");
     expect(block.content ?? []).toEqual([]);
   });
 
   it("refuses an empty body as no_content, creating no units", () => {
-    expect(mapStructuredDocument(doc([]))).toEqual({ status: "no_content" });
+    expect(mapEn(doc([]))).toEqual({ status: "no_content" });
   });
 
   it("keys additive evidence to each block's stable id with page geometry and confidence", () => {
     const result = mapped(
-      mapStructuredDocument(
+      mapEn(
         doc([
           item({
             boundingBox: { bottom: 40, left: 10, right: 90, top: 20 },
@@ -376,7 +398,7 @@ describe("mapStructuredDocument", () => {
 
   it("produces schema-valid documents for every projected unit", () => {
     const result = mapped(
-      mapStructuredDocument(
+      mapEn(
         doc([
           item({ label: "title", text: "Doc" }),
           item({ label: "text", text: "Para" }),

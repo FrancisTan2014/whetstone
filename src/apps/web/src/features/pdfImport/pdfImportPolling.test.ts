@@ -18,6 +18,7 @@ function runningView(): PdfImportViewDto {
       createdAt: "2026-01-01T00:00:00.000Z",
       failure: null,
       heartbeatAt: null,
+      phase: null,
       sourceHash: sha,
       stage: { bound: true },
       state: "running",

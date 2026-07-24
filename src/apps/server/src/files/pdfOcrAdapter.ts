@@ -205,6 +205,18 @@ export function buildOcrFingerprint(language: WorkLanguage): OcrFingerprint {
   });
 }
 
+// The compact, deterministic string persisted on an attempt's `ocr_fingerprint` column when a validated
+// OCR stage is adopted (#745). Non-null is the recovery boundary; the value also identifies the exact
+// engine/versions/language every produced block carries as per-block OCR evidence. Pure and exported so
+// the store adoption, publication block-evidence, and tests share one format.
+export function formatOcrFingerprint(fingerprint: OcrFingerprint): string {
+  return [
+    `${fingerprint.engine}@${fingerprint.ocrmypdfVersion}`,
+    `tesseract@${fingerprint.tesseractVersion}`,
+    fingerprint.tesseractLanguage
+  ].join("/");
+}
+
 const OCR_OUTPUT_FILENAME = "ocr-output.pdf";
 
 function toGeometry(pages: readonly ProbePage[]): OcrPageGeometry[] {

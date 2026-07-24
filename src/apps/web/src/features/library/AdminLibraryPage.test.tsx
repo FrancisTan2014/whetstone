@@ -1118,6 +1118,7 @@ describe("AdminLibraryPage", () => {
       createdAt: "2026-01-01T00:00:00.000Z",
       failure: null,
       heartbeatAt: null,
+      phase: null,
       sourceHash: "a".repeat(64),
       stage: { bound: true },
       state: "queued",
@@ -1201,14 +1202,14 @@ describe("AdminLibraryPage", () => {
     expect(mockedRememberActivePdfImport).not.toHaveBeenCalled();
   });
 
-  it("refuses a scanned/mixed PDF with the sequenced OCR-limitation message and publishes no Work (#702)", async () => {
+  it("refuses a scanned/mixed PDF in a not-yet-enabled language and publishes no Work (#745)", async () => {
     mockedBeginPdfImport.mockResolvedValue({
       attemptId: "attempt-1",
       outcome: "queued",
       status: pdfStatus()
     });
     mockedFetchPdfImportView.mockResolvedValue(
-      pdfView({ pagesNeedingOcr: 2, status: "ocr_required" })
+      pdfView({ pagesNeedingOcr: 2, status: "ocr_language_not_enabled" })
     );
     const user = await renderReady();
 
@@ -1217,7 +1218,33 @@ describe("AdminLibraryPage", () => {
     await user.type(screen.getByLabelText("New author or source name"), "Nobody");
     await user.click(screen.getByRole("button", { name: "Create work" }));
 
-    expect(await screen.findByText(/OCR support is not available yet\./)).toBeDefined();
+    expect(
+      await screen.findByText(/text recognition for a language that isn't enabled yet/)
+    ).toBeDefined();
+    // No Work is published, so the Reader is never opened.
+    expect(navigateSpy).not.toHaveBeenCalledWith(expect.stringContaining("/reader"));
+    expect(mockedForgetActivePdfImport).toHaveBeenCalled();
+  });
+
+  it("refuses an English PDF whose OCR left text-less pages and publishes no Work (#745)", async () => {
+    mockedBeginPdfImport.mockResolvedValue({
+      attemptId: "attempt-1",
+      outcome: "queued",
+      status: pdfStatus()
+    });
+    mockedFetchPdfImportView.mockResolvedValue(
+      pdfView({ pagesNeedingOcr: 1, status: "ocr_validation_failed" })
+    );
+    const user = await renderReady();
+
+    const file = new File([new Uint8Array([1])], "scan.pdf", { type: "application/pdf" });
+    await user.upload(screen.getByLabelText("Upload"), file);
+    await user.type(screen.getByLabelText("New author or source name"), "Nobody");
+    await user.click(screen.getByRole("button", { name: "Create work" }));
+
+    expect(
+      await screen.findByText(/Some pages could not be read even after text recognition/)
+    ).toBeDefined();
     // No Work is published, so the Reader is never opened.
     expect(navigateSpy).not.toHaveBeenCalledWith(expect.stringContaining("/reader"));
     expect(mockedForgetActivePdfImport).toHaveBeenCalled();

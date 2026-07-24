@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   classifyOcrRouting,
+  isOcrLanguageEnabled,
   OCR_GEOMETRY_TOLERANCE_PT,
+  ocrPassRequired,
   ocrTesseractLanguage,
   requiredTesseractTraineddata,
   resolveOcrLanguage,
@@ -11,6 +13,24 @@ import {
   type OcrPageGeometry
 } from "./pdfOcr.js";
 import { workLanguages, type WorkLanguage } from "./work.js";
+
+describe("ocr language enablement", () => {
+  it("enables English OCR and leaves Chinese disabled until #746", () => {
+    expect(isOcrLanguageEnabled("en")).toBe(true);
+    expect(isOcrLanguageEnabled("zh-CN")).toBe(false);
+    expect(isOcrLanguageEnabled("zh-TW")).toBe(false);
+  });
+
+  it("runs the OCR pass only for a text-less document in an enabled language", () => {
+    // English scanned/mixed → OCR; English native → never; Chinese scanned → skipped (no pack yet).
+    expect(ocrPassRequired("scanned", "en")).toBe(true);
+    expect(ocrPassRequired("mixed", "en")).toBe(true);
+    expect(ocrPassRequired("native", "en")).toBe(false);
+    expect(ocrPassRequired("scanned", "zh-CN")).toBe(false);
+    expect(ocrPassRequired("mixed", "zh-TW")).toBe(false);
+    expect(ocrPassRequired("native", "zh-CN")).toBe(false);
+  });
+});
 
 describe("ocr language selection", () => {
   it("maps each Work language to its exact Tesseract -l value", () => {

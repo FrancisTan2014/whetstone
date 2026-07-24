@@ -10,6 +10,7 @@ import {
   MAX_PAGE_COUNT,
   MAX_STAGED_BYTES,
   RANGE_CONVERSION_SCHEMA_VERSION,
+  type ProbePage,
   type RangeConversion
 } from "@whetstone/contracts";
 
@@ -17,6 +18,8 @@ import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
 import { pdfImportAttempts } from "../../db/schema.js";
 import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
+import { createFixturePdfOcrAdapter, type PdfOcrAdapter } from "../../files/pdfOcrAdapter.js";
+import { ocrToolMissingFailure } from "../../files/pdfOcrErrors.js";
 import {
   createFakeDoclingRunner,
   createUnavailableDoclingRunner,
@@ -65,6 +68,29 @@ const rawUnsupported = JSON.stringify({
   doclingSchema: { name: "docling-core", version: "9.9.9" }
 });
 
+// Build a probe outcome whose pages are all born-digital (native text), the default a #744 probe reports
+// for a text-bearing PDF. Every existing runner test asserts the born-digital path (no OCR), so it routes
+// `native` and the OCR phase is skipped — keeping those assertions unchanged while the probe now carries
+// the per-page native-text flags the OCR routing reads.
+function nativeProbe(pageCount: number): ProbeOutcome {
+  const pages: ProbePage[] = [];
+  for (let n = 1; n <= pageCount; n += 1) {
+    pages.push({ pageNumber: n, width: 612, height: 792, rotation: 0, hasNativeText: true });
+  }
+  return { status: "ok", pageCount, pages };
+}
+
+// Build a probe outcome whose pages are all text-less (scanned), so the runner routes the source through
+// the OCR phase. Geometry matches `nativeProbe` so a fixture OCR adapter's before/after geometry checks
+// pass; only the native-text flags differ.
+function scannedProbe(pageCount: number): ProbeOutcome {
+  const pages: ProbePage[] = [];
+  for (let n = 1; n <= pageCount; n += 1) {
+    pages.push({ pageNumber: n, width: 612, height: 792, rotation: 0, hasNativeText: false });
+  }
+  return { status: "ok", pageCount, pages };
+}
+
 async function buildDb(): Promise<DbClient> {
   const pglite = new PGlite();
   await runMigrations(pglite);
@@ -108,10 +134,13 @@ describe("processNextPdfImport", () => {
       logCleanupFailure: overrides.logCleanupFailure ?? (() => undefined),
       now: overrides.now ?? (() => new Date()),
       pageRangeSize: overrides.pageRangeSize,
+      ocrAdapter:
+        overrides.ocrAdapter ??
+        createFixturePdfOcrAdapter({ outputStageRoot: join(rootDir, "ocr-out") }),
       runner:
         overrides.runner ??
         createFakeDoclingRunner({
-          probe: { status: "ok", pageCount: 1 },
+          probe: nativeProbe(1),
           rangePayloads: [rawValid]
         }),
       stageStore: overrides.stageStore ?? stageStore
@@ -127,7 +156,7 @@ describe("processNextPdfImport", () => {
     const handlePath = stageStore.openStage("a1").path;
     const deps = buildDeps({
       runner: createFakeDoclingRunner({
-        probe: { status: "ok", pageCount: 5 },
+        probe: nativeProbe(5),
         rangePayloads: [rawValid]
       }),
       pageRangeSize: 2
@@ -227,12 +256,241 @@ describe("processNextPdfImport", () => {
     await expect(stat(handlePath)).rejects.toThrow();
   });
 
+  describe("durable OCR phase (#745)", () => {
+    // A text-less English source (all pages scanned) routes through the OCR pass. The default fixture OCR
+    // adapter classifies its own single text-less page, "OCRs" it, and transfers a validated output; the
+    // runner adopts that as the derived `ocr.pdf` (recording the fingerprint) and then converts it.
+    it("runs the OCR pass for a scanned English source and adopts the derived stage", async () => {
+      await seedStaged("a1");
+      const result = await processNextPdfImport(
+        buildDeps({
+          runner: createFakeDoclingRunner({ probe: scannedProbe(1), rangePayloads: [rawValid] })
+        })
+      );
+      expect(result).toEqual({ status: "converted", attemptId: "a1" });
+      const attempt = await getAttempt(db, DEFAULT_USER_ID, "a1");
+      // The adopted fingerprint (non-null) is the recovery boundary; it records the pinned engine/language.
+      expect(attempt?.ocrFingerprint).toBe("ocrmypdf@16.10.4/tesseract@5.5.1/eng");
+      expect(attempt).toMatchObject({ state: "converted" });
+    });
+
+    // Once an OCR stage is adopted (`ocr_fingerprint` set), a resumed run converts the derived `ocr.pdf`
+    // and NEVER re-runs the pass — the adapter would throw if invoked.
+    it("resumes from the adopted OCR stage without re-running the pass", async () => {
+      await seedStaged("a1");
+      await stageStore.writeDerivedStage("a1", new Uint8Array([1, 2, 3]));
+      await db
+        .update(pdfImportAttempts)
+        .set({
+          ocrFingerprint: "ocrmypdf@16.10.4/tesseract@5.5.1/eng",
+          totalPages: 1,
+          totalRanges: 1
+        })
+        .where(eq(pdfImportAttempts.id, "a1"));
+      const throwingOcr: PdfOcrAdapter = {
+        execute: () => Promise.reject(new Error("OCR must not run on a resumed adopted attempt"))
+      };
+      const result = await processNextPdfImport(
+        buildDeps({
+          runner: createFakeDoclingRunner({ probe: scannedProbe(1), rangePayloads: [rawValid] }),
+          ocrAdapter: throwingOcr
+        })
+      );
+      expect(result).toEqual({ status: "converted", attemptId: "a1" });
+    });
+
+    // A cancelled OCR pass is a supersede, not a product failure: the run stops (fenced) without failing
+    // the attempt, so the newer run owns its terminal state.
+    it("stops (fenced) when the OCR pass reports cancellation", async () => {
+      await seedStaged("a1");
+      const cancelledOcr: PdfOcrAdapter = {
+        execute: () =>
+          Promise.resolve({
+            ok: false,
+            failure: { kind: "cancelled", what: "cancelled", remedy: "retry" }
+          })
+      };
+      const result = await processNextPdfImport(
+        buildDeps({
+          runner: createFakeDoclingRunner({ probe: scannedProbe(1), rangePayloads: [rawValid] }),
+          ocrAdapter: cancelledOcr
+        })
+      );
+      expect(result).toEqual({ status: "fenced", attemptId: "a1" });
+      // The attempt is NOT failed — it stays claimable for the superseding run.
+      expect((await getAttempt(db, DEFAULT_USER_ID, "a1"))?.state).not.toBe("failed");
+    });
+
+    // A non-cancelled OCR failure fails the attempt visibly and frees its stage — never a silent publish.
+    it("fails the attempt and frees the stage when the OCR pass fails", async () => {
+      await seedStaged("a1");
+      const handlePath = stageStore.openStage("a1").path;
+      const failingOcr: PdfOcrAdapter = {
+        execute: () => Promise.resolve({ ok: false, failure: ocrToolMissingFailure() })
+      };
+      const result = await processNextPdfImport(
+        buildDeps({
+          runner: createFakeDoclingRunner({ probe: scannedProbe(1), rangePayloads: [rawValid] }),
+          ocrAdapter: failingOcr
+        })
+      );
+      expect(result).toMatchObject({ status: "failed", attemptId: "a1" });
+      const attempt = await getAttempt(db, DEFAULT_USER_ID, "a1");
+      expect(attempt).toMatchObject({ state: "failed", stagePath: null });
+      expect(attempt?.failure?.kind).toBe("tool_missing");
+      await expect(stat(handlePath)).rejects.toThrow();
+    });
+
+    // A born-digital source never touches the OCR adapter: routing is `native`, so the original converts
+    // untouched and no fingerprint is recorded.
+    it("skips the OCR pass for a born-digital source", async () => {
+      await seedStaged("a1");
+      const throwingOcr: PdfOcrAdapter = {
+        execute: () => Promise.reject(new Error("OCR must not run for a born-digital source"))
+      };
+      const result = await processNextPdfImport(
+        buildDeps({
+          runner: createFakeDoclingRunner({ probe: nativeProbe(2), rangePayloads: [rawValid] }),
+          ocrAdapter: throwingOcr,
+          pageRangeSize: 2
+        })
+      );
+      expect(result).toEqual({ status: "converted", attemptId: "a1" });
+      expect((await getAttempt(db, DEFAULT_USER_ID, "a1"))?.ocrFingerprint).toBeNull();
+    });
+
+    // Seed a resumed pre-adoption attempt: probe totals are persisted (so the resumed run skips the
+    // once-per-attempt probe), but no OCR stage is adopted (`ocr_fingerprint` null) and no range is
+    // committed (`completedPages` 0). The OCR phase therefore has no probe pages in hand and must
+    // RE-probe the original to classify routing.
+    async function seedResumedPreAdoption(id: string): Promise<void> {
+      await seedStaged(id);
+      await claimNextQueued(db, {
+        runToken: "prior",
+        fingerprint: PDF_IMPORT_ADAPTER_FINGERPRINT,
+        now: new Date()
+      });
+      await setProbeResult(db, {
+        id,
+        runToken: "prior",
+        totalPages: 1,
+        totalRanges: 1,
+        now: new Date()
+      });
+      await recoverInterruptedAttempts(db, new Date());
+      await retryInterrupted(db, DEFAULT_USER_ID, id, new Date());
+    }
+
+    // A resumed run that adopted nothing and committed nothing re-probes the ORIGINAL for routing —
+    // safe because no OCR stage is adopted yet, so re-probing (and re-OCRing) loses nothing. A scanned
+    // re-probe routes the pass, adopts the derived stage, and converts.
+    it("re-probes a resumed pre-adoption run to route OCR, then adopts and converts", async () => {
+      await seedResumedPreAdoption("a1");
+      const result = await processNextPdfImport(
+        buildDeps({
+          runner: createFakeDoclingRunner({ probe: scannedProbe(1), rangePayloads: [rawValid] })
+        })
+      );
+      expect(result).toEqual({ status: "converted", attemptId: "a1" });
+      expect((await getAttempt(db, DEFAULT_USER_ID, "a1"))?.ocrFingerprint).toBe(
+        "ocrmypdf@16.10.4/tesseract@5.5.1/eng"
+      );
+    });
+
+    // The resumed pre-adoption re-probe reads the original through the same probe path; a probe failure
+    // (here the toolchain went missing) fails the attempt visibly and frees its stage — never a silent
+    // publish from a source it could not classify.
+    it("fails a resumed pre-adoption run when the OCR routing re-probe fails", async () => {
+      await seedResumedPreAdoption("a1");
+      const handlePath = stageStore.openStage("a1").path;
+      const failingProbe: DoclingRunner = {
+        probe: () => Promise.resolve({ status: "tool_missing" }),
+        convertRange: () => Promise.resolve({ status: "ok", raw: rawValid })
+      };
+      const result = await processNextPdfImport(buildDeps({ runner: failingProbe }));
+      expect(result).toMatchObject({ status: "failed", attemptId: "a1" });
+      const attempt = await getAttempt(db, DEFAULT_USER_ID, "a1");
+      expect(attempt).toMatchObject({ state: "failed", stagePath: null });
+      expect(attempt?.failure?.kind).toBe("tool_missing");
+      await expect(stat(handlePath)).rejects.toThrow();
+    });
+
+    // A cancel that lands DURING the routing re-probe (after the probe totals were persisted, before the
+    // phase advances to `ocr`) fences the `setPhase("ocr")` write: the run stops (fenced) without failing
+    // the attempt, leaving its terminal state to the superseding run.
+    it("stops (fenced) when a cancel lands before the OCR phase is set on a resumed run", async () => {
+      await seedResumedPreAdoption("a1");
+      const cancellingProbe: DoclingRunner = {
+        probe: async () => {
+          await markCancelled(db, DEFAULT_USER_ID, "a1", new Date());
+          return scannedProbe(1);
+        },
+        convertRange: () => Promise.resolve({ status: "ok", raw: rawValid })
+      };
+      const result = await processNextPdfImport(buildDeps({ runner: cancellingProbe }));
+      expect(result).toEqual({ status: "fenced", attemptId: "a1" });
+      expect((await getAttempt(db, DEFAULT_USER_ID, "a1"))?.state).not.toBe("failed");
+    });
+
+    // A cancel that lands DURING the OCR pass itself (after the phase is `ocr`, before adoption) fences
+    // the atomic `adoptOcrStage` write: the derived bytes were produced but the fingerprint is never
+    // recorded, so the run stops (fenced) and no OCR stage is adopted (`ocr_fingerprint` stays null).
+    it("stops (fenced) when a cancel lands during the OCR pass before adoption", async () => {
+      await seedStaged("a1");
+      const fixtureOcr = createFixturePdfOcrAdapter({ outputStageRoot: join(rootDir, "ocr-out") });
+      const cancelDuringOcr: PdfOcrAdapter = {
+        execute: async (request) => {
+          const outcome = await fixtureOcr.execute(request);
+          await markCancelled(db, DEFAULT_USER_ID, "a1", new Date());
+          return outcome;
+        }
+      };
+      const result = await processNextPdfImport(
+        buildDeps({
+          runner: createFakeDoclingRunner({ probe: scannedProbe(1), rangePayloads: [rawValid] }),
+          ocrAdapter: cancelDuringOcr
+        })
+      );
+      expect(result).toEqual({ status: "fenced", attemptId: "a1" });
+      expect((await getAttempt(db, DEFAULT_USER_ID, "a1"))?.ocrFingerprint).toBeNull();
+    });
+
+    // The OCR pass validated its output, but the runner could not copy it into the attempt-owned derived
+    // stage: the transient output was unreadable, or the derived `ocr.pdf` write failed (disk, permission,
+    // or a missing stage directory). This must fail the attempt VISIBLY (typed `stage_write`) and free its
+    // stage — never reject out of `processNextPdfImport`. A rejection here would leave the attempt `running`
+    // with its run token held, so no later drain tick could claim any PDF import until a restart ran
+    // interruption recovery.
+    it("fails the attempt (never rejects) when the derived OCR stage copy/write fails", async () => {
+      await seedStaged("a1");
+      const handlePath = stageStore.openStage("a1").path;
+      const failingDerivedWrite: PdfImportStageStore = {
+        ...stageStore,
+        writeDerivedStage: () => Promise.reject(new Error("stage directory vanished"))
+      };
+      const result = await processNextPdfImport(
+        buildDeps({
+          runner: createFakeDoclingRunner({ probe: scannedProbe(1), rangePayloads: [rawValid] }),
+          stageStore: failingDerivedWrite
+        })
+      );
+      expect(result).toMatchObject({ status: "failed", attemptId: "a1" });
+      const attempt = await getAttempt(db, DEFAULT_USER_ID, "a1");
+      // A typed failed attempt — never stuck `running`: the run token is released and the stage freed, so
+      // the next drain tick can claim work. The fingerprint was never adopted (the write never landed).
+      expect(attempt).toMatchObject({ state: "failed", stagePath: null });
+      expect(attempt?.ocrFingerprint).toBeNull();
+      expect(attempt?.failure?.kind).toBe("stage_write");
+      await expect(stat(handlePath)).rejects.toThrow();
+    });
+  });
+
   it("fails on a malformed range payload", async () => {
     await seedStaged("a1");
     const result = await processNextPdfImport(
       buildDeps({
         runner: createFakeDoclingRunner({
-          probe: { status: "ok", pageCount: 1 },
+          probe: nativeProbe(1),
           rangePayloads: ["{not json"]
         })
       })
@@ -246,7 +504,7 @@ describe("processNextPdfImport", () => {
     const result = await processNextPdfImport(
       buildDeps({
         runner: createFakeDoclingRunner({
-          probe: { status: "ok", pageCount: 1 },
+          probe: nativeProbe(1),
           rangePayloads: [rawUnsupported]
         })
       })
@@ -260,7 +518,7 @@ describe("processNextPdfImport", () => {
     const result = await processNextPdfImport(
       buildDeps({
         runner: createFakeDoclingRunner({
-          probe: { status: "ok", pageCount: 1 },
+          probe: nativeProbe(1),
           failRangeWith: malformedFailure("boom")
         })
       })
@@ -274,7 +532,7 @@ describe("processNextPdfImport", () => {
     const result = await processNextPdfImport(
       buildDeps({
         runner: createFakeDoclingRunner({
-          probe: { status: "ok", pageCount: 1 },
+          probe: nativeProbe(1),
           failRangeWith: { kind: "cancelled", what: "cancelled", remedy: "retry" }
         })
       })
@@ -296,7 +554,7 @@ describe("processNextPdfImport", () => {
     };
     let calls = 0;
     const abortingRunner: DoclingRunner = {
-      probe: () => Promise.resolve({ status: "ok", pageCount: 2 }),
+      probe: () => Promise.resolve(nativeProbe(2)),
       convertRange: () => {
         calls += 1;
         if (calls === 1) {
@@ -318,7 +576,7 @@ describe("processNextPdfImport", () => {
     const cancellingRunner: DoclingRunner = {
       probe: async () => {
         await markCancelled(db, DEFAULT_USER_ID, "a1", new Date());
-        return { status: "ok", pageCount: 1 };
+        return nativeProbe(1);
       },
       convertRange: () => Promise.resolve({ status: "ok", raw: rawValid })
     };
@@ -329,7 +587,7 @@ describe("processNextPdfImport", () => {
   it("fences a range commit when a cancel lands mid-range", async () => {
     await seedStaged("a1");
     const cancellingRunner: DoclingRunner = {
-      probe: () => Promise.resolve({ status: "ok", pageCount: 1 }),
+      probe: () => Promise.resolve(nativeProbe(1)),
       convertRange: async () => {
         await markCancelled(db, DEFAULT_USER_ID, "a1", new Date());
         return { status: "ok", raw: rawValid };
@@ -343,7 +601,7 @@ describe("processNextPdfImport", () => {
   it("fences the failure write when a cancel lands with a range failure", async () => {
     await seedStaged("a1");
     const cancellingRunner: DoclingRunner = {
-      probe: () => Promise.resolve({ status: "ok", pageCount: 1 }),
+      probe: () => Promise.resolve(nativeProbe(1)),
       convertRange: async () => {
         await markCancelled(db, DEFAULT_USER_ID, "a1", new Date());
         return { status: "failure", failure: malformedFailure("boom") };

@@ -32,6 +32,7 @@ export async function buildPdfImportStatus(
     createdAt: record.createdAt.toISOString(),
     failure: record.failure,
     heartbeatAt: record.heartbeatAt === null ? null : record.heartbeatAt.toISOString(),
+    phase: record.phase,
     sourceHash: record.sourceHash,
     stage: { bound: record.stagePath !== null },
     state: record.state,
@@ -53,7 +54,8 @@ export async function getPdfImportStatus(
 }
 
 // Project the #702 publication record into its outcome DTO: no intent -> `none`; a resolved Work ->
-// `published`; a resolved OCR refusal -> `ocr_required`; a resolved no-content refusal -> `no_content`; a
+// `published`; a not-yet-enabled text-less refusal -> `ocr_language_not_enabled`; an English OCR
+// validation refusal -> `ocr_validation_failed`; a resolved no-content refusal -> `no_content`; a
 // resolved unsupported-image refusal -> `image_unsupported`; otherwise still `pending`.
 export async function buildPdfImportPublicationOutcome(
   db: DbClient,
@@ -66,8 +68,17 @@ export async function buildPdfImportPublicationOutcome(
   if (publication.workEntryId !== null) {
     return { status: "published", workEntryId: publication.workEntryId };
   }
-  if (publication.ocrRequiredPages !== null) {
-    return { pagesNeedingOcr: publication.ocrRequiredPages, status: "ocr_required" };
+  if (publication.ocrLanguageNotEnabledPages !== null) {
+    return {
+      pagesNeedingOcr: publication.ocrLanguageNotEnabledPages,
+      status: "ocr_language_not_enabled"
+    };
+  }
+  if (publication.ocrValidationFailedPages !== null) {
+    return {
+      pagesNeedingOcr: publication.ocrValidationFailedPages,
+      status: "ocr_validation_failed"
+    };
   }
   if (publication.noContent !== null) {
     return { status: "no_content" };

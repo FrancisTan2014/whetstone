@@ -125,6 +125,7 @@ export type {
 export {
   isWorkLanguage,
   normalizeWorkLanguage,
+  resolveWorkLanguage,
   workLanguageLabels,
   workLanguages
 } from "./work.js";
@@ -142,14 +143,17 @@ export {
   isTerminalAttemptState,
   mayApplyRunOutput,
   nextRangeIndex,
-  pdfImportAttemptStates
+  pdfImportAttemptStates,
+  pdfImportPhases
 } from "./pdfImportAttempt.js";
-export type { PdfImportAttemptState } from "./pdfImportAttempt.js";
+export type { PdfImportAttemptState, PdfImportPhase } from "./pdfImportAttempt.js";
 export { buildSearchSnippet, SEARCH_SNIPPET_MAX_CODE_POINTS } from "./searchSnippet.js";
 export type { BuildSearchSnippetInput, SearchSnippet } from "./searchSnippet.js";
 export {
   classifyOcrRouting,
+  isOcrLanguageEnabled,
   OCR_GEOMETRY_TOLERANCE_PT,
+  ocrPassRequired,
   ocrTesseractLanguage,
   requiredTesseractTraineddata,
   resolveOcrLanguage,
