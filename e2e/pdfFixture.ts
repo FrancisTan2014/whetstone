@@ -148,11 +148,15 @@ export const pdfMixedFixture = {
 // pass is asked to recognize. The learner selects the scanned-text language (the pre-import OCR override)
 // before starting, so these bytes publish Simplified- or Traditional-Chinese recovered text — proving the
 // override drives OCR independently of the Work language. Distinct names/titles keep search unambiguous.
+// Each fixture also embeds its own `metadata.title`, so the two scanned documents carry DISTINCT bytes —
+// exactly as two real scanned PDFs would — and neither the content-addressed source store nor any OCR
+// staging collapses them onto one shared result when both are imported in the same run.
 function scannedFixture(name: string) {
   const scanned = {
     body: [] as readonly DocItem[],
     doclingSchema: { name: "DoclingDocument", version: "1.10.0" },
     furniture: [],
+    metadata: { author: null, title: name },
     pages: [{ hasNativeText: false, pageNumber: 1 }],
     schemaVersion: RANGE_CONVERSION_SCHEMA_VERSION
   };
