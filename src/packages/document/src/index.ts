@@ -16,8 +16,14 @@ export {
   nearMatchLengthBand,
   nearMatchScore
 } from "./nearMatchScore.js";
-export { NEAR_MATCH_THRESHOLD, selectNearMatches } from "./nearMatchRanking.js";
+export {
+  NEAR_MATCH_EVIDENCE_VERSION,
+  NEAR_MATCH_THRESHOLD,
+  selectNearMatches
+} from "./nearMatchRanking.js";
 export type { NearMatchCandidate, NearMatchPoolEntry } from "./nearMatchRanking.js";
+export { describeNearMatchDifferences } from "./nearMatchDifferences.js";
+export type { NearMatchDifference } from "./nearMatchDifferences.js";
 export { documentSchema } from "./schema.js";
 export {
   assignNodeIds,

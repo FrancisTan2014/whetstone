@@ -363,16 +363,49 @@ export const materialReviewCandidateDtoSchema = z
 
 export type MaterialReviewCandidateDto = z.infer<typeof materialReviewCandidateDtoSchema>;
 
+// One concise, factual word-level difference between a near-match candidate note and the drafted Answer
+// (#714): the candidate's wording (`before`) against the draft's (`after`). An empty `before` is a word the
+// draft added; an empty `after` is a word the candidate has that the draft dropped; both non-empty is a
+// changed word (e.g. `terms` → `term`). Derived server-side from the normalized keys — never a similarity
+// score and never trusted from the client — so the panel renders it without recomputing eligibility.
+export const nearMatchDifferenceDtoSchema = z
+  .object({ before: z.string(), after: z.string() })
+  .strict();
+
+export type NearMatchDifferenceDto = z.infer<typeof nearMatchDifferenceDtoSchema>;
+
+// One high-precision NEAR-match candidate the New-card review surfaced under "Possible duplicate" (#714): an
+// owned note whose material is very similar prose to the drafted Answer but NOT identical (an exact match is
+// its own group). It carries the same factual evidence as an exact candidate — a readable Answer excerpt,
+// the anchor source context when anchored, and how many cards the note already owns — PLUS the concrete word
+// `differences` so the learner can compare meaning. It is never a "duplicate" verdict, never ordered or
+// preselected by anything a learner sees, and the fuzzy score is never exposed.
+export const nearMaterialReviewCandidateDtoSchema = z
+  .object({
+    answerExcerpt: z.string(),
+    cardCount: z.number().int().nonnegative(),
+    differences: z.array(nearMatchDifferenceDtoSchema),
+    noteId: z.string(),
+    sourceContext: z.string().nullable()
+  })
+  .strict();
+
+export type NearMaterialReviewCandidateDto = z.infer<typeof nearMaterialReviewCandidateDtoSchema>;
+
 // The full owner-scoped material review a New-card save returns when the drafted Answer already exists in
-// Notes (#712): the opaque attempt id and its revision fence (echoed on a decision), the reviewed
-// candidates, and their `candidateFingerprint` so a client can notice the reviewed evidence changed. The
-// server always rechecks in the decision transaction, so this fingerprint is advisory. Carries no draft
-// content and no server key.
+// Notes, exactly or as a high-precision near match (#712, #714): the opaque attempt id and its revision
+// fence (echoed on a decision), two SEPARATE typed candidate groups — `candidates` (exact material already
+// in Notes) and `nearCandidates` ("Possible duplicate": very similar wording, with factual differences) —
+// and their `candidateFingerprint` so a client can notice the reviewed evidence changed. The fingerprint
+// binds BOTH groups plus the near evidence-policy version, so any new/changed/deleted candidate in either
+// group refreshes review. The server always rechecks in the decision transaction, so this fingerprint is
+// advisory. Carries no draft content and no server key.
 export const materialReviewDtoSchema = z
   .object({
     attemptId: z.string(),
     candidateFingerprint: z.string(),
     candidates: z.array(materialReviewCandidateDtoSchema),
+    nearCandidates: z.array(nearMaterialReviewCandidateDtoSchema),
     revision: z.number().int().nonnegative()
   })
   .strict();
@@ -406,8 +439,16 @@ export const exactMaterialQueryRequestSchema = z
 
 export type ExactMaterialQueryRequest = z.infer<typeof exactMaterialQueryRequestSchema>;
 
+// The advisory material query (#712, #714): the client debounces this over a valid non-blank Answer draft to
+// warn before save. It is READ-ONLY and never authoritative — the save always reprojects and rechecks in its
+// transaction — so a stale or missed hint can never change what is created. Only the Answer document is sent;
+// its exact material and near-match candidates are both projected server-side and returned as separate typed
+// groups.
 export const exactMaterialQueryResponseSchema = z
-  .object({ candidates: z.array(materialReviewCandidateDtoSchema) })
+  .object({
+    candidates: z.array(materialReviewCandidateDtoSchema),
+    nearCandidates: z.array(nearMaterialReviewCandidateDtoSchema)
+  })
   .strict();
 
 export type ExactMaterialQueryResponse = z.infer<typeof exactMaterialQueryResponseSchema>;
