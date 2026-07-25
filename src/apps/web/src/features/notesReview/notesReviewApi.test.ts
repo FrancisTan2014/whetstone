@@ -132,6 +132,7 @@ describe("createDirectCard", () => {
         candidates: [
           { answerExcerpt: "Paris.", cardCount: 1, noteId: "note-9", sourceContext: null }
         ],
+        nearCandidates: [],
         revision: 0
       },
       status: "needs_material_review"
@@ -180,16 +181,29 @@ describe("createDirectCard", () => {
   });
 });
 
-describe("fetchMaterialMatches (#712)", () => {
+describe("fetchMaterialMatches (#712, #714)", () => {
   const answerDoc = createTextDocument("Paris is the capital of France.");
   const candidates = [
     { answerExcerpt: "Paris.", cardCount: 1, noteId: "note-9", sourceContext: null }
   ];
+  const nearCandidates = [
+    {
+      answerExcerpt: "Paris.",
+      cardCount: 2,
+      differences: [{ after: "capital", before: "capitol" }],
+      noteId: "note-8",
+      sourceContext: null
+    }
+  ];
 
-  it("POSTs only the answer document and returns the parsed candidates", async () => {
-    const fetchMock = stubFetch({ body: { candidates }, ok: true });
+  it("POSTs only the answer document and returns both parsed groups", async () => {
+    const fetchMock = stubFetch({ body: { candidates, nearCandidates }, ok: true });
 
-    await expect(fetchMaterialMatches(answerDoc)).resolves.toEqual(candidates);
+    await expect(fetchMaterialMatches(answerDoc)).resolves.toEqual({
+      status: "ok",
+      exact: candidates,
+      near: nearCandidates
+    });
     expect(fetchMock).toHaveBeenCalledWith("/api/notes/review/material-matches", {
       body: JSON.stringify({ answerDoc }),
       headers: { "content-type": "application/json" },
@@ -197,13 +211,13 @@ describe("fetchMaterialMatches (#712)", () => {
     });
   });
 
-  it("resolves to an empty list on a non-2xx response (advisory only)", async () => {
+  it("resolves to an error status on a non-2xx response so the composer can offer Retry", async () => {
     stubFetch({ ok: false, status: 500 });
 
-    await expect(fetchMaterialMatches(answerDoc)).resolves.toEqual([]);
+    await expect(fetchMaterialMatches(answerDoc)).resolves.toEqual({ status: "error" });
   });
 
-  it("resolves to an empty list when fetch itself rejects", async () => {
+  it("resolves to an error status when fetch itself rejects", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => {
@@ -211,7 +225,7 @@ describe("fetchMaterialMatches (#712)", () => {
       })
     );
 
-    await expect(fetchMaterialMatches(answerDoc)).resolves.toEqual([]);
+    await expect(fetchMaterialMatches(answerDoc)).resolves.toEqual({ status: "error" });
   });
 });
 

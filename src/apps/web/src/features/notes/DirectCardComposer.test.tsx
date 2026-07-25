@@ -3,14 +3,11 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type {
-  DirectCardResultDto,
-  MaterialReviewCandidateDto,
-  MaterialReviewDto
-} from "@whetstone/contracts";
+import type { DirectCardResultDto, MaterialReviewDto } from "@whetstone/contracts";
 import { documentText } from "@whetstone/document";
 
 import type * as NotesReviewApi from "../notesReview/notesReviewApi";
+import type { MaterialMatchesResult } from "../notesReview/notesReviewApi";
 import { DirectCardComposer } from "./DirectCardComposer";
 import {
   createDirectCard,
@@ -28,7 +25,7 @@ vi.mock("../notesReview/notesReviewApi", async () => {
   return {
     ...actual,
     createDirectCard: vi.fn(),
-    fetchMaterialMatches: vi.fn(async () => []),
+    fetchMaterialMatches: vi.fn(async () => ({ status: "ok", exact: [], near: [] })),
     keepSeparateMaterial: vi.fn(),
     reuseExistingMaterial: vi.fn()
   };
@@ -110,6 +107,7 @@ function materialReview(overrides: Partial<MaterialReviewDto> = {}): MaterialRev
         sourceContext: null
       }
     ],
+    nearCandidates: [],
     revision: 0,
     ...overrides
   };
@@ -527,9 +525,11 @@ describe("DirectCardComposer", () => {
   describe("advisory material hint", () => {
     it("warns after the answer settles when matching material exists", async () => {
       const user = userEvent.setup();
-      vi.mocked(fetchMaterialMatches).mockResolvedValue([
-        { answerExcerpt: "Paris.", cardCount: 1, noteId: "note-9", sourceContext: null }
-      ]);
+      vi.mocked(fetchMaterialMatches).mockResolvedValue({
+        status: "ok",
+        exact: [{ answerExcerpt: "Paris.", cardCount: 1, noteId: "note-9", sourceContext: null }],
+        near: []
+      });
       renderComposer();
 
       await user.type(screen.getByLabelText("Answer"), "Paris.");
@@ -540,9 +540,49 @@ describe("DirectCardComposer", () => {
       expect(documentText(vi.mocked(fetchMaterialMatches).mock.calls.at(-1)![0])).toBe("Paris.");
     });
 
+    it("warns of a possible duplicate after the answer settles when near material exists", async () => {
+      const user = userEvent.setup();
+      vi.mocked(fetchMaterialMatches).mockResolvedValue({
+        status: "ok",
+        exact: [],
+        near: [
+          {
+            answerExcerpt: "Paris.",
+            cardCount: 1,
+            differences: [{ after: "capital", before: "capitol" }],
+            noteId: "note-8",
+            sourceContext: null
+          }
+        ]
+      });
+      renderComposer();
+
+      await user.type(screen.getByLabelText("Answer"), "Paris.");
+
+      // A near match shows the softer "Similar material" hint, not the exact-match one.
+      expect(await screen.findByText(/Similar material may already be in Notes\./)).toBeTruthy();
+      expect(screen.queryByText(/This material is already in Notes\./)).toBeNull();
+    });
+
+    it("offers Retry when the advisory query fails, then clears once it succeeds", async () => {
+      const user = userEvent.setup();
+      vi.mocked(fetchMaterialMatches)
+        .mockResolvedValueOnce({ status: "error" })
+        .mockResolvedValue({ status: "ok", exact: [], near: [] });
+      renderComposer();
+
+      await user.type(screen.getByLabelText("Answer"), "Paris.");
+
+      const retry = await screen.findByRole("button", { name: "Retry" });
+      await user.click(retry);
+
+      // A successful re-query with no matches clears the advisory entirely.
+      await waitFor(() => expect(screen.queryByRole("button", { name: "Retry" })).toBeNull());
+    });
+
     it("debounces so continuous typing fires a single query for the latest answer", async () => {
       const user = userEvent.setup({ delay: null });
-      vi.mocked(fetchMaterialMatches).mockResolvedValue([]);
+      vi.mocked(fetchMaterialMatches).mockResolvedValue({ status: "ok", exact: [], near: [] });
       renderComposer();
 
       // `delay: null` types the whole string without pausing, so the debounce never elapses between
@@ -555,7 +595,7 @@ describe("DirectCardComposer", () => {
 
     it("ignores a stale response that resolves after the answer moved on", async () => {
       const user = userEvent.setup({ delay: null });
-      const deferred: Array<(value: MaterialReviewCandidateDto[]) => void> = [];
+      const deferred: Array<(value: MaterialMatchesResult) => void> = [];
       vi.mocked(fetchMaterialMatches).mockImplementation(
         () =>
           new Promise((resolve) => {
@@ -573,8 +613,12 @@ describe("DirectCardComposer", () => {
 
       // The current (second) request resolves empty; then the stale (first) request resolves with a
       // match. The stale response must not resurrect the hint.
-      deferred[1]!([]);
-      deferred[0]!([{ answerExcerpt: "old", cardCount: 1, noteId: "note-x", sourceContext: null }]);
+      deferred[1]!({ status: "ok", exact: [], near: [] });
+      deferred[0]!({
+        status: "ok",
+        exact: [{ answerExcerpt: "old", cardCount: 1, noteId: "note-x", sourceContext: null }],
+        near: []
+      });
       await waitFor(() => expect(fetchMaterialMatches).toHaveBeenCalledTimes(2));
 
       expect(screen.queryByText(/This material is already in Notes\./)).toBeNull();

@@ -290,8 +290,9 @@ can navigate them from another package.
 - Review exact Note material before card creation (#712): a New-card save whose Answer already exists in Notes
   is authoritatively reviewed INSIDE the save transaction, never as a client-only warning. `notesReview/`
   server: `createDirectCard.ts` now takes a `pg_advisory_xact_lock` (`cardMaterialLock.acquireCardMaterialLock`
-  from owner+answer-fingerprint keys) then reprojects and rechecks exact matches (`exactMaterialQuery.queryExactMaterial`,
-  wrapping #711's `findExactMaterialNotes`); on a hit it records an owner-scoped, expiring `card_creation_attempt`
+  from owner+answer-fingerprint keys) then reprojects and rechecks both exact and near matches
+  (`exactMaterialQuery.queryMaterialMatches`, wrapping #711's `findExactMaterialNotes` and #713's
+  `findNearMatchNotes`, returning `{ candidates, nearCandidates }`); on a hit it records an owner-scoped, expiring `card_creation_attempt`
   (`cardCreationAttemptStore.ts`: insert/get/refresh/consume/discard/`expireCardCreationAttempts`, binding the
   draft fingerprint + candidate-note fingerprint + revision) and returns the discriminated `needs_material_review`
   instead of creating. `reviewMaterialCommands.ts` resolves a parked attempt under the same lock+recheck:
@@ -308,6 +309,21 @@ can navigate them from another package.
   with monotonic cancellation, stacked `notes/MaterialReviewPanel.tsx` over the intact draft, Use-existing/Keep-separate/Back,
   created-vs-reused announcement in `NotesPage.tsx`);   `notesReview/notesReviewApi.ts` adds `fetchMaterialMatches`/`reuseExistingMaterial`/`keepSeparateMaterial` +
   `MaterialDecisionError`. E2E: `e2e/tests/notes-material-review.spec.ts`.
+- Review near-duplicate Note material before card creation (#714): the SAME reviewed command + `card_creation_attempt`
+  lifecycle (#712) also parks a review when the drafted Answer is a high-precision NEAR match (#713), surfaced as a
+  SEPARATE "Possible duplicate" group — no new matcher, attempt table, writer, or mutation path. Disjoint by
+  construction (the near matcher excludes exact/case-only). Domain: `document/nearMatchDifferences.ts`
+  (`describeNearMatchDifferences`, pure word-level `{ before, after }` diff over two case-sensitive keys) +
+  `NEAR_MATCH_EVIDENCE_VERSION` (`nearMatchRanking.ts`). Server: `noteNearMatchQuery.ts` carries each candidate's
+  `caseSensitiveKey`; `materialReviewCandidates.loadNearMaterialReviewCandidates` adds server-computed `differences`;
+  `cardCreationAttemptStore.fingerprintReviewCandidates` binds `{ exactNoteIds, nearNoteIds }` + the evidence version
+  so any change in EITHER group refreshes review; `createDirectCard`/`reviewMaterialCommands` run both matchers, park on
+  exact OR near, and accept a chosen note ∈ exact∪near. Contracts: `nearMaterialReviewCandidateDtoSchema` (+ `differences`),
+  `materialReviewDtoSchema.nearCandidates`, `exactMaterialQueryResponseSchema.nearCandidates`. Web:
+  `MaterialReviewPanel.tsx` renders the two groups separately ("Possible duplicate" + compare-the-meaning subtext + factual
+  word differences, never a score); `DirectCardComposer.tsx` shows a near hint and a Retry on query failure;
+  `notesReviewApi.fetchMaterialMatches` returns a discriminated `{ status, exact, near }`. E2E:
+  `e2e/tests/notes-near-duplicate-review.spec.ts`.
 - Import notebook lists into Notes (#661): the `notes` feature owns pasting a notebook list as many
   standalone Notes — the import surface replaced the retired Memory batch import (the Memory
   `importMemoryBatch` command was removed with the Memory experience, #662) with an owner-scoped Notes boundary. Server: `POST /api/notes/import` (`noteRoutes.ts`) →

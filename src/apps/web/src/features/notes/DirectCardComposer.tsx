@@ -3,7 +3,6 @@ import { useEffect, useRef, useState } from "react";
 import type {
   DirectCardResultDto,
   DirectCardSaveResultDto,
-  MaterialReviewCandidateDto,
   MaterialReviewDto
 } from "@whetstone/contracts";
 import { type DocumentNodeJSON } from "@whetstone/document";
@@ -23,7 +22,8 @@ import {
   MaterialDecisionError,
   reuseExistingMaterial,
   type CreateDirectCardErrorKind,
-  type MaterialDecisionErrorKind
+  type MaterialDecisionErrorKind,
+  type MaterialMatchesResult
 } from "../notesReview/notesReviewApi";
 import { RichContentEditor } from "../../shared/editor/index.js";
 import { createEmptyDocument } from "../../shared/editor/editorDocument.js";
@@ -90,36 +90,39 @@ export function DirectCardComposer({
   // A retryable error shown INSIDE the panel after a decision failed transiently (`network`/`invalid`) or
   // the reviewed evidence changed, so the learner can decide again without losing the panel.
   const [reviewError, setReviewError] = useState<string | null>(null);
-  // The advisory exact-material matches for the current Answer draft. Non-empty renders the pre-save hint.
-  // Purely informational: the save always reprojects and rechecks, so a stale or missing hint is harmless.
-  const [hint, setHint] = useState<ReadonlyArray<MaterialReviewCandidateDto>>([]);
+  // The advisory material-matches result for the current Answer draft, or null before the first result. It
+  // carries both the exact and near candidate groups, or an error so the composer offers Retry. Purely
+  // informational: the save always reprojects and rechecks, so a stale, missing, or failed hint is harmless.
+  const [hint, setHint] = useState<MaterialMatchesResult | null>(null);
   // A monotonic sequence so only the most recently scheduled hint request is applied: every Answer change
   // bumps it, so any earlier in-flight response is stale and ignored (cancellation + out-of-order safety).
   const hintSeq = useRef(0);
+  // Bumped when the learner retries a failed hint, so the effect re-runs its request without an Answer edit.
+  const [hintRetry, setHintRetry] = useState(0);
 
   const answerBlank = isDocumentBlank(answerDoc);
 
   useEffect(() => {
-    // Every Answer change (or the panel opening) bumps the sequence so an in-flight response from a prior
-    // draft is stale and ignored. While the Answer is blank or the review panel owns the surface there is no
-    // advisory: return without scheduling — the render gate already hides any prior hint, and no synchronous
-    // setState runs in the effect body, so there is no cascading render.
+    // Every Answer change (or the panel opening, or a Retry) bumps the sequence so an in-flight response from
+    // a prior draft is stale and ignored. While the Answer is blank or the review panel owns the surface there
+    // is no advisory: return without scheduling — the render gate already hides any prior hint, and no
+    // synchronous setState runs in the effect body, so there is no cascading render.
     const seq = (hintSeq.current += 1);
     if (answerBlank || review !== null) {
       return;
     }
     const handle = setTimeout(() => {
-      void fetchMaterialMatches(answerDoc).then((candidates) => {
+      void fetchMaterialMatches(answerDoc).then((result) => {
         // Ignore a response the Answer has since moved past: only the latest scheduled request wins.
         if (seq === hintSeq.current) {
-          setHint(candidates);
+          setHint(result);
         }
       });
     }, MATERIAL_HINT_DEBOUNCE_MS);
     return () => {
       clearTimeout(handle);
     };
-  }, [answerBlank, answerDoc, review]);
+  }, [answerBlank, answerDoc, hintRetry, review]);
 
   function requestClose(): void {
     // A create or decision in flight owns the sheet: dismissing mid-request could strand a card the
@@ -317,10 +320,27 @@ export function DirectCardComposer({
                   Write what you want to be able to recall or do.
                 </p>
               ) : null}
-              {hint.length > 0 && review === null && !answerBlank ? (
-                <p className="text-text-muted" role="status">
-                  This material is already in Notes. You can still create this card.
-                </p>
+              {review === null && !answerBlank && hint !== null ? (
+                hint.status === "error" ? (
+                  <p className="text-text-muted" role="status">
+                    Whetstone could not check whether this material is already in Notes.{" "}
+                    <Button
+                      onClick={() => setHintRetry((count) => count + 1)}
+                      type="button"
+                      variant="ghost"
+                    >
+                      Retry
+                    </Button>
+                  </p>
+                ) : hint.exact.length > 0 ? (
+                  <p className="text-text-muted" role="status">
+                    This material is already in Notes. You can still create this card.
+                  </p>
+                ) : hint.near.length > 0 ? (
+                  <p className="text-text-muted" role="status">
+                    Similar material may already be in Notes. You can still create this card.
+                  </p>
+                ) : null
               ) : null}
             </>
           }

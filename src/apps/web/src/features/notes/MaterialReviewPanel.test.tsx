@@ -1,7 +1,11 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { MaterialReviewCandidateDto, MaterialReviewDto } from "@whetstone/contracts";
+import type {
+  MaterialReviewCandidateDto,
+  MaterialReviewDto,
+  NearMaterialReviewCandidateDto
+} from "@whetstone/contracts";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { MaterialReviewPanel } from "./MaterialReviewPanel";
@@ -48,11 +52,25 @@ function candidate(
   };
 }
 
+function nearCandidate(
+  overrides: Partial<NearMaterialReviewCandidateDto> = {}
+): NearMaterialReviewCandidateDto {
+  return {
+    answerExcerpt: "The Seine flows through Paris.",
+    cardCount: 1,
+    differences: [{ after: "flows", before: "flow" }],
+    noteId: "near-1",
+    sourceContext: null,
+    ...overrides
+  };
+}
+
 function review(overrides: Partial<MaterialReviewDto> = {}): MaterialReviewDto {
   return {
     attemptId: "attempt-1",
     candidateFingerprint: "fp-1",
     candidates: [candidate()],
+    nearCandidates: [],
     revision: 0,
     ...overrides
   };
@@ -196,5 +214,78 @@ describe("MaterialReviewPanel", () => {
     renderPanel({ error: "Could not complete that just now. Please try again." });
 
     expect(screen.getByText("Could not complete that just now. Please try again.")).toBeTruthy();
+  });
+
+  describe("possible-duplicate near group (#714)", () => {
+    it("presents near matches under a Possible duplicate group with a compare-the-meaning prompt", () => {
+      renderPanel({
+        review: review({ candidates: [], nearCandidates: [nearCandidate()] })
+      });
+
+      // A near-only review titles the sheet "Possible duplicate" (and repeats it as the group heading), and
+      // never claims the material is already present.
+      expect(screen.getAllByText("Possible duplicate").length).toBeGreaterThanOrEqual(2);
+      expect(
+        screen.getByText("The wording is very similar. Compare the meaning before deciding.")
+      ).toBeTruthy();
+      expect(screen.queryByText("This material is already in Notes")).toBeNull();
+    });
+
+    it("lists the concrete word differences as factual evidence, with no fuzzy score", () => {
+      renderPanel({
+        review: review({
+          candidates: [],
+          nearCandidates: [
+            nearCandidate({
+              differences: [
+                { after: "flows", before: "flow" },
+                { after: "", before: "gently" },
+                { after: "Paris", before: "" }
+              ]
+            })
+          ]
+        })
+      });
+
+      const list = screen.getByRole("list", { name: "Possible duplicate" });
+      const differences = within(list).getByRole("list", { name: "Wording differences" });
+      expect(within(differences).getByText("flow → flows")).toBeTruthy();
+      expect(within(differences).getByText("removed “gently”")).toBeTruthy();
+      expect(within(differences).getByText("added “Paris”")).toBeTruthy();
+      // The panel shows what differs, never a similarity percentage or score.
+      expect(screen.queryByText(/%/)).toBeNull();
+      expect(screen.queryByText(/score/i)).toBeNull();
+    });
+
+    it("routes Use existing material on a near candidate to its note id", async () => {
+      const { onUseExisting, user } = renderPanel({
+        review: review({
+          candidates: [],
+          nearCandidates: [nearCandidate({ noteId: "near-7" })]
+        })
+      });
+
+      await user.click(
+        screen.getByRole("button", {
+          name: "Use existing material from The Seine flows through Paris."
+        })
+      );
+      expect(onUseExisting).toHaveBeenCalledWith("near-7");
+    });
+
+    it("shows both groups separately when a save matches exact and near material", () => {
+      renderPanel({
+        review: review({ candidates: [candidate()], nearCandidates: [nearCandidate()] })
+      });
+
+      // Both headings render as distinct sections; the exact group keeps its own list. The exact label
+      // appears twice — the Sheet title and the section heading — while the near heading is unique.
+      expect(
+        screen.getAllByRole("heading", { name: "This material is already in Notes" }).length
+      ).toBeGreaterThanOrEqual(2);
+      expect(screen.getByRole("heading", { name: "Possible duplicate" })).toBeTruthy();
+      expect(screen.getByRole("list", { name: "Existing material" })).toBeTruthy();
+      expect(screen.getByRole("list", { name: "Possible duplicate" })).toBeTruthy();
+    });
   });
 });
