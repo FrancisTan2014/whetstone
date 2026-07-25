@@ -139,6 +139,12 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
   const [reviewState, setReviewState] = useState<WorkCreationReviewDto | undefined>(undefined);
   const [decisionPending, setDecisionPending] = useState(false);
 
+  // When the open review came from a converted PDF (#750) rather than a held Markdown/EPUB/manual upload,
+  // this holds the PDF import attempt id (#721) that is still parked at `awaiting_review` server-side.
+  // Undefined for a held-file review. It marks the review as PDF-backed so Back and expiry resume that
+  // poll to re-mint a fresh review instead of orphaning the expensive conversion behind the closed panel.
+  const [pdfReviewAttemptId, setPdfReviewAttemptId] = useState<string | undefined>(undefined);
+
   // A born-digital import (#702) left in flight when the page was last closed or navigated away is remembered
   // by its #721 attempt id; reading it once on mount (lazy initial state, never in an effect) re-enters the
   // poll loop below so the progress card reappears and completion still opens the Reader.
@@ -391,11 +397,30 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
     toast.success("Import cancelled.");
   }
 
-  // Apply a terminal poll outcome (#702/#745): open the Reader on a published Work, or surface the
-  // OCR-refusal (validation-failed), empty-document (no_content), unsupported-image, or named-failure
-  // copy. `gone` means the remembered attempt no longer exists for this user (a stale reopened id), so we
-  // simply drop it.
-  async function applyPdfImportTerminal(result: PdfImportPollResult): Promise<void> {
+  // Park a PDF-sourced duplicate review (#750). Unlike every other terminal outcome, a converted PDF that
+  // hit a credible duplicate must NOT be forgotten: the attempt stays parked at `awaiting_review`
+  // server-side, so we keep its id remembered (a reload resumes it), stop the live poll, hide the progress
+  // card, and hand the review to the shared panel. `pdfReviewAttemptId` marks the open review as PDF-backed
+  // so Back and expiry resume this poll instead of dropping to the Add-work form and orphaning the
+  // expensive conversion.
+  function parkPdfReview(attemptId: string, review: WorkCreationReviewDto): void {
+    rememberActivePdfImport(attemptId);
+    setActivePdfImportId(undefined);
+    setPdfImportLabel(undefined);
+    setUploadBusy(false);
+    setUploadKind(undefined);
+    setPdfReviewAttemptId(attemptId);
+    setReviewState(review);
+  }
+
+  // Apply a terminal poll outcome (#702/#745/#750): park a duplicate review, open the Reader on a published
+  // Work, or surface the OCR-refusal (validation-failed), empty-document (no_content), unsupported-image, or
+  // named-failure copy. `gone` means the remembered attempt no longer exists for this user (a stale reopened
+  // id), so we simply drop it.
+  async function applyPdfImportTerminal(
+    attemptId: string,
+    result: PdfImportPollResult
+  ): Promise<void> {
     if (result.kind !== "terminal") {
       // `gone` (a stale reopened id) or a late `aborted`: no Work to open, just drop the session.
       finishPdfImport();
@@ -403,20 +428,21 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
     }
 
     const { progress } = result;
+
+    if (progress.kind === "needs_review") {
+      // A credible duplicate parked the shared review panel: the converted attempt keeps its bytes and
+      // ranges while the learner decides. The SAME Open existing / Keep separate / Back handlers drive it —
+      // no PDF-specific duplicate UI — and the attempt stays remembered so Back/expiry can re-review it.
+      parkPdfReview(attemptId, progress.review);
+      return;
+    }
+
     finishPdfImport();
 
     if (progress.kind === "published") {
       await reload();
       toast.success("Your PDF is ready to read.");
       openReader(progress.workEntryId);
-      return;
-    }
-
-    if (progress.kind === "needs_review") {
-      // A credible duplicate parked the shared review panel (#750): the converted attempt keeps its bytes
-      // and ranges while the learner decides. The review DTO carries the creation-review attempt id, so the
-      // SAME Open existing / Keep separate / Back handlers drive it — no PDF-specific duplicate UI.
-      setReviewState(progress.review);
       return;
     }
 
@@ -468,7 +494,7 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
       if (aborted || result.kind === "aborted") {
         return;
       }
-      await applyPdfImportTerminal(result);
+      await applyPdfImportTerminal(attemptId, result);
     })();
 
     return () => {
@@ -496,6 +522,40 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
     setAddOpen(true);
   }
 
+  // Drop any remembered PDF review context once a creation/reopen truly resolves: the decision consumed both
+  // the work-creation attempt and (for a PDF) its converted source, so forget the stored attempt id and
+  // clear the PDF-review marker so a later reload never resumes a spent import. A no-op for held-file flows,
+  // where no PDF import is remembered.
+  function clearPdfReviewContext(): void {
+    forgetActivePdfImport();
+    setPdfReviewAttemptId(undefined);
+  }
+
+  // Leave a PDF-sourced review by resuming its `awaiting_review` poll: drop the panel and show the neutral
+  // "checking" progress card. The caller restarts the poll (after any cleanup) by setting the active import
+  // id, so the server re-mints a fresh review and the converted attempt reappears in the shared panel
+  // instead of being orphaned.
+  function showPdfReviewChecking(): void {
+    setReviewState(undefined);
+    setPdfReviewAttemptId(undefined);
+    setPdfImportLabel("Checking your library for duplicates…");
+    setUploadBusy(true);
+    setUploadKind("pdf");
+  }
+
+  // A spent review (expired / superseded / concurrently finalized) leaves the panel. A PDF-backed review
+  // resumes its still-parked `awaiting_review` poll to re-mint a fresh review; a held-file review drops back
+  // to the still-filled Add-work form so the learner can adjust and retry.
+  function leaveSpentReview(): void {
+    const pdfAttemptId = pdfReviewAttemptId;
+    if (pdfAttemptId !== undefined) {
+      showPdfReviewChecking();
+      setActivePdfImportId(pdfAttemptId);
+      return;
+    }
+    returnToAddForm();
+  }
+
   // Land a resolved creation/reopen (from begin or a decision): reset the draft, refresh the shelf,
   // announce it, and route by the resulting Work's content authority (#749). A `manual` Work opens
   // straight in the Library's manual editor to start writing; any other origin (an imported upload, or a
@@ -503,6 +563,7 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
   // lane — Markdown, EPUB, and manual — on one completion path.
   async function completeCreation(work: WorkDto, message: string): Promise<void> {
     clearMarkdownDraft();
+    clearPdfReviewContext();
     await reload();
     toast.success(message);
 
@@ -705,8 +766,9 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
       case "superseded":
       case "not_found":
         // The attempt outlived its TTL, was fenced by a stale revision / concurrent finalization, or no
-        // longer exists: drop the spent review back to the still-filled form so the learner can retry.
-        returnToAddForm();
+        // longer exists: drop the spent review. A held-file review returns to the still-filled form; a
+        // PDF-backed review resumes its parked poll so the converted attempt is re-reviewed, not stranded.
+        leaveSpentReview();
         toast.error("This review is no longer valid. Please try again.");
         return;
       /* v8 ignore next 2 -- every decision outcome is handled above; the default only keeps the switch
@@ -746,12 +808,25 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
     }
   }
 
-  // Back: abandon the review and return to the still-filled Add-work form. Cancelling the attempt (and
-  // its staged bytes) is best-effort — an expired attempt is swept server-side anyway — so a failed
-  // cleanup never blocks returning to the form.
+  // Back: abandon the review. A held-file review (Markdown/EPUB/manual) returns to the still-filled
+  // Add-work form so the learner can adjust and retry; cancelling the attempt (and its staged bytes) is
+  // best-effort — an expired attempt is swept server-side anyway — so a failed cleanup never blocks
+  // returning to the form. A PDF-sourced review must NOT throw away the expensive conversion: hide the
+  // panel behind the "checking" progress, cancel the spent work-creation attempt so the server hands the
+  // PDF back as a FRESH `awaiting_review` review, then resume the poll on the remembered attempt id so the
+  // converted attempt stays visible and re-reviewable instead of being orphaned.
   async function backFromReview(review: WorkCreationReviewDto): Promise<void> {
-    returnToAddForm();
+    const pdfAttemptId = pdfReviewAttemptId;
+
+    if (pdfAttemptId === undefined) {
+      returnToAddForm();
+      await cancelWorkCreation(review.attemptId).catch(() => undefined);
+      return;
+    }
+
+    showPdfReviewChecking();
     await cancelWorkCreation(review.attemptId).catch(() => undefined);
+    setActivePdfImportId(pdfAttemptId);
   }
 
   async function onSelectUpload(event: ChangeEvent<HTMLInputElement>): Promise<void> {
