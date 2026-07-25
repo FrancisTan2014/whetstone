@@ -7,6 +7,7 @@ export {
   uniqueIdExtension
 } from "./nodes.js";
 export { isSafeDocumentLinkHref } from "./linkSafety.js";
+export { BlankNoteMaterialError, projectNoteMaterial } from "./noteMaterial.js";
 export { documentSchema } from "./schema.js";
 export {
   assignNodeIds,
