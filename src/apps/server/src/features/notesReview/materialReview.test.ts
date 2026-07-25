@@ -225,6 +225,37 @@ describe("New-card save material-review gate", () => {
     expect(await listNotes()).toHaveLength(1);
     expect(await listCards()).toHaveLength(1);
   });
+
+  it("mints a fresh review identity when the draft changed under the same submission, so a decision succeeds", async () => {
+    // Back -> edit draft -> save against existing material -> decision succeeds. The composer keeps the same
+    // submissionId when the learner backs out of the review panel and edits the Question, so a save that
+    // still matches existing material must NOT resume the attempt bound to the original draft — otherwise the
+    // follow-on decision fails `changed_payload` forever against the stale attempt.
+    await seedMaterial("seed");
+
+    const first = await parkReview("sub-review");
+
+    const editedQuestion = questionDoc("Which stable sort runs in O(n log n)? (edited)");
+    const resaved = await saveDirect(
+      currentNoteRequest({ submissionId: "sub-review", questionDoc: editedQuestion })
+    );
+    expect(resaved.statusCode).toBe(200);
+    const body = resaved.json() as ReviewBody;
+    expect(body.status).toBe("needs_material_review");
+    // A fresh review identity bound to the edited draft — not the stale attempt.
+    expect(body.review.attemptId).not.toBe(first.attemptId);
+
+    const decided = await keepSeparate({
+      submissionId: "sub-review",
+      attemptId: body.review.attemptId,
+      revision: body.review.revision,
+      questionDoc: editedQuestion,
+      answerDoc: answerDoc(),
+      target: { kind: "current_note" }
+    } satisfies KeepSeparateMaterialRequest);
+    expect(decided.statusCode).toBe(200);
+    expect((decided.json() as CreatedBody).status).toBe("created");
+  });
 });
 
 describe("POST /api/notes/review/material-matches", () => {

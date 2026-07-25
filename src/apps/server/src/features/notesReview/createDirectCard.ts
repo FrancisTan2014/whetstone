@@ -213,10 +213,13 @@ export function toMaterialReviewDto(
 // chooses Use existing material or Keep separate. The review is never a client-only warning: the advisory
 // query is advisory; THIS transaction is the source of truth.
 //
-// Retry-safety: a save retry with the same `submissionId` resumes the SAME review (refreshing its candidates
-// under the revision fence) rather than minting a second attempt — the partial-unique index guarantees one
-// pending review per (owner, submission). Once a card is created the receipt makes further identical saves
-// replay the original result.
+// Retry-safety: a save retry with the same `submissionId` AND the same draft resumes the SAME review
+// (refreshing its candidates under the revision fence) rather than minting a second attempt — the
+// partial-unique index guarantees one pending review per (owner, submission). If the learner backed out of
+// the review and EDITED the draft under that same submission, the pending attempt is bound to the old draft
+// and is discarded so a fresh review identity is minted for the current draft — otherwise a later decision
+// would fail `changed_payload` against the stale attempt forever. Once a card is created the receipt makes
+// further identical saves replay the original result.
 export async function createDirectCard(
   dependencies: CreateDirectCardDependencies,
   userId: string,
@@ -254,7 +257,18 @@ export async function createDirectCard(
       const noteIds = matches.map((note) => note.noteEntryId);
       const candidates = await loadMaterialReviewCandidates(tx, userId, matches);
 
-      if (pending === null) {
+      // A pending attempt is only resumable when it is bound to the SAME draft. The composer keeps the
+      // submissionId across a Back-then-edit, so a pending attempt whose draftFingerprint no longer matches
+      // the just-submitted draft is stale: resuming it would hand back a review whose later decision fails
+      // `changed_payload` forever (the old row never leaves `pending`). Discard the stale attempt and mint a
+      // fresh review identity bound to the current draft instead.
+      const resumable =
+        pending !== null && pending.draftFingerprint === draft.fingerprint ? pending : null;
+      if (pending !== null && resumable === null) {
+        await discardPendingAttempt(tx, userId, pending.id);
+      }
+
+      if (resumable === null) {
         const attempt = await insertPendingCardCreationAttempt(tx, {
           candidateNoteIds: noteIds,
           draftFingerprint: draft.fingerprint,
@@ -270,21 +284,22 @@ export async function createDirectCard(
         };
       }
 
-      // A save retry: resume the same review, refreshing its persisted candidates (and bumping the fence)
-      // only when the evidence changed, so the revision the client will decide against is exactly current.
-      const changed = fingerprintCandidateNotes(noteIds) !== pending.candidateFingerprint;
-      let attempt = pending;
+      // A save retry with the same draft: resume the same review, refreshing its persisted candidates (and
+      // bumping the fence) only when the evidence changed, so the revision the client will decide against is
+      // exactly current.
+      const changed = fingerprintCandidateNotes(noteIds) !== resumable.candidateFingerprint;
+      let attempt = resumable;
       if (changed) {
         const refreshed = await refreshAttemptReview(tx, {
           candidateNoteIds: noteIds,
-          expectedRevision: pending.revision,
-          id: pending.id,
+          expectedRevision: resumable.revision,
+          id: resumable.id,
           now,
           userId
         });
         /* v8 ignore next -- refreshAttemptReview only misses under a concurrent decision the advisory lock
-           serializes out; the `?? pending` fallback keeps the type total. */
-        attempt = refreshed ?? pending;
+           serializes out; the `?? resumable` fallback keeps the type total. */
+        attempt = refreshed ?? resumable;
       }
       return { status: "needs_material_review", review: toMaterialReviewDto(attempt, candidates) };
     }
