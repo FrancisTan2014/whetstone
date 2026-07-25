@@ -1082,8 +1082,9 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   block, marks, undo/redo), navigates sections with save-before-switch and stale-revision conflict
   retention (`saveManualWorkContent(workEntryId, unitEntryId, document, revision)` → `PUT
   /api/manual-works/:id/units/:unitId/content`), and **Add section** appends a heading-seeded section
-  (`addManualWorkSection` → `POST /api/manual-works/:id/units`) then focuses it. The revision is
-  work-level (`personal_entries.updatedAt`), bumped atomically by both save and add. On save the draft's
+  (`addManualWorkSection` → `POST /api/manual-works/:id/units`) then focuses it. The revision is the
+  Work-scoped `work_meta.content_revision` (a monotonic non-negative integer), claimed atomically by both
+  save and add; `personal_entries.updatedAt` is owner chronology only, never the revision truth. On save the draft's
   ordered PM blocks are substituted into the Work's block stream and the affected span is
   **repartitioned at every heading** (`content/editableWorkContent.repartitionEditableWorkContent` over
   the pure `domain/workRepartition.planSectionRepartition`): a surviving leading heading keeps its
