@@ -512,6 +512,36 @@ export type {
   UseExistingMaterialRequest
 } from "./noteReviewContracts.js";
 export {
+  lexicalPartOfSpeechSchema,
+  lexicalRelationDirectionSchema,
+  lexicalRelationTypeSchema,
+  parseRelatedMaterialRelationsRequest,
+  parseRelatedMaterialRelationsResponse,
+  parseRelatedMaterialSensesRequest,
+  parseRelatedMaterialSensesResponse,
+  relatedMaterialGroupDtoSchema,
+  relatedMaterialNoteDtoSchema,
+  relatedMaterialRelationsRequestSchema,
+  relatedMaterialRelationsResponseSchema,
+  relatedMaterialSenseDtoSchema,
+  relatedMaterialSenseRefSchema,
+  relatedMaterialSensesRequestSchema,
+  relatedMaterialSensesResponseSchema
+} from "./relatedMaterialContracts.js";
+export type {
+  LexicalPartOfSpeechDto,
+  LexicalRelationDirectionDto,
+  LexicalRelationTypeDto,
+  RelatedMaterialGroupDto,
+  RelatedMaterialNoteDto,
+  RelatedMaterialRelationsRequest,
+  RelatedMaterialRelationsResponse,
+  RelatedMaterialSenseDto,
+  RelatedMaterialSenseRef,
+  RelatedMaterialSensesRequest,
+  RelatedMaterialSensesResponse
+} from "./relatedMaterialContracts.js";
+export {
   glossSuggestionDtoSchema,
   importNotesRequestSchema,
   importNotesResultDtoSchema,
