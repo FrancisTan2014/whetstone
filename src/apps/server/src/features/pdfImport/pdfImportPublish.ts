@@ -26,7 +26,6 @@ import type { PdfImportCleanupLogger } from "./pdfImportRunner.js";
 import type { PdfImportStageStore } from "./pdfImportStage.js";
 import {
   clearStagePath,
-  findConvertedPendingPublications,
   getAttemptById,
   getCommittedRanges,
   getPublication,
@@ -35,6 +34,7 @@ import {
   markPublicationImagesUnsupported,
   markPublicationNoContent,
   markPublicationOcrValidationFailed,
+  markReviewPublished,
   PDF_IMPORT_ADAPTER_FINGERPRINT
 } from "./pdfImportStore.js";
 
@@ -286,13 +286,13 @@ export async function publishConvertedPdfImport(
   }
 
   const attempt = await getAttemptById(deps.db, attemptId);
-  if (attempt === null || attempt.state !== "converted") {
+  if (attempt === null || attempt.state !== "awaiting_review") {
     return { status: "not_ready" };
   }
 
-  // A converted attempt always retains its bound stage: the runner clears `stagePath` only on a
-  // failure/cancel cleanup, and a non-converted attempt returned `not_ready` above.
-  /* v8 ignore next 3 -- unreachable for a converted attempt (see above); the guard keeps the retained
+  // An awaiting-review attempt always retains its bound stage: the runner clears `stagePath` only on a
+  // failure/cancel cleanup, and a non-awaiting-review attempt returned `not_ready` above.
+  /* v8 ignore next 3 -- unreachable for an awaiting-review attempt (see above); the guard keeps the retained
      source bytes required for provenance rather than publishing a Work with no source file. */
   if (attempt.stagePath === null) {
     throw new Error(
@@ -322,6 +322,7 @@ export async function publishConvertedPdfImport(
       deps.now()
     );
     await removeRetainedStage(deps, attemptId, stagePath);
+    await markReviewPublished(deps.db, attemptId, deps.now());
     return { status: "ocr_validation_failed", pagesNeedingOcr: mapping.pagesNeedingOcr };
   }
   if (mapping.status === "no_content") {
@@ -330,6 +331,7 @@ export async function publishConvertedPdfImport(
     // the retained bytes, exactly as the OCR-required path does.
     await markPublicationNoContent(deps.db, attemptId, deps.now());
     await removeRetainedStage(deps, attemptId, stagePath);
+    await markReviewPublished(deps.db, attemptId, deps.now());
     return { status: "no_content" };
   }
   if (mapping.status === "image_unsupported") {
@@ -343,6 +345,7 @@ export async function publishConvertedPdfImport(
       deps.now()
     );
     await removeRetainedStage(deps, attemptId, stagePath);
+    await markReviewPublished(deps.db, attemptId, deps.now());
     return { status: "image_unsupported", unpreservableImages: mapping.unpreservableImages };
   }
 
@@ -431,37 +434,65 @@ export async function publishConvertedPdfImport(
   // The Work's source bytes now live durably in the source-file store (a fresh create) or already did (a
   // reopen), so the retained stage is redundant: free it.
   await removeRetainedStage(deps, attemptId, stagePath);
+  // The review decision resolved: transition the awaiting-review attempt to its terminal `converted` state
+  // so no further review attempt is ever minted for it. Idempotent (fenced on `awaiting_review`).
+  await markReviewPublished(deps.db, attemptId, deps.now());
   return { status: "published", work: outcome.work, reopened: outcome.status === "exact_existing" };
 }
 
-// The outcome of trying to republish one stranded attempt during recovery: either a
-// `PublishConvertedResult` status, or an isolated `error` (the publication threw for this attempt).
-export type PendingPublicationRecoveryResult =
-  | Readonly<{ attemptId: string; status: PublishConvertedResult["status"] }>
-  | Readonly<{ attemptId: string; status: "error"; reason: string }>;
+// The metadata + provenance a converted attempt exposes to the shared Work-creation duplicate review
+// (#750), read WITHOUT publishing anything. `not_awaiting` = the attempt is not `awaiting_review` (still
+// converting, already resolved, or gone), so there is nothing to review; `refused` = the reconstructed
+// document maps to a typed refusal (OCR-required / no-content / unsupported-image), which must be
+// published as that refusal rather than reviewed; `ready` = the resolved title/author/language (through
+// the same entered -> info-dict -> filename ladder publication uses) plus the source hash and file name
+// the review scores duplicate candidates against. Only reads (getAttemptById/getPublication/ranges +
+// pure mapping), so a repeated poll is side-effect-free until a decision publishes or discards.
+export type PdfReviewSourceResult =
+  | Readonly<{ status: "not_awaiting" }>
+  | Readonly<{ status: "refused" }>
+  | Readonly<{
+      status: "ready";
+      sourceHash: string;
+      fileName: string | null;
+      title: string;
+      authorName: string;
+      language: WorkLanguage;
+    }>;
 
-// Durable publication recovery (#702). Republish every `converted` attempt whose publication is still
-// pending, idempotently. This is the drain path that recovers work stranded outside the normal flow:
-// an attempt whose process died after `markConverted` committed but before publication finished, or one
-// whose publication threw once on a prior drain tick. Neither the queue runner (it only claims `queued`
-// attempts) nor startup interrupt-recovery (it only moves abandoned `running` attempts) would ever pick
-// these up, so without this scan a converted attempt reports "Finishing up..." forever with no Work and
-// no retry path. Each attempt is isolated: a throw on one is captured as an `error` result rather than
-// aborting the sweep, so a single poisoned attempt cannot starve the others (or the queue drain that
-// follows), and the next tick retries it. `publishConvertedPdfImport` is a no-op (`already_published`)
-// for an attempt a prior tick already resolved, so re-running the sweep never double-publishes.
-export async function drainPendingPdfPublications(
-  deps: PdfImportPublishDependencies
-): Promise<readonly PendingPublicationRecoveryResult[]> {
-  const pending = await findConvertedPendingPublications(deps.db);
-  const results: PendingPublicationRecoveryResult[] = [];
-  for (const attemptId of pending) {
-    try {
-      const outcome = await publishConvertedPdfImport(deps, attemptId);
-      results.push({ attemptId, status: outcome.status });
-    } catch (cause) {
-      results.push({ attemptId, status: "error", reason: describeError(cause) });
-    }
+export async function loadPdfReviewSource(
+  deps: Pick<PdfImportPublishDependencies, "db">,
+  attemptId: string
+): Promise<PdfReviewSourceResult> {
+  const attempt = await getAttemptById(deps.db, attemptId);
+  if (attempt === null || attempt.state !== "awaiting_review") {
+    return { status: "not_awaiting" };
   }
-  return results;
+
+  const publication = await getPublication(deps.db, attemptId);
+  /* v8 ignore next 3 -- an awaiting-review attempt was started through `beginPdfImport`, which inserts the
+     publication intent atomically with the queued row, so its intent always exists; the guard is defensive. */
+  if (publication === null) {
+    return { status: "not_awaiting" };
+  }
+
+  const fingerprint = attempt.adapterFingerprint ?? PDF_IMPORT_ADAPTER_FINGERPRINT;
+  const ranges = await getCommittedRanges(deps.db, attemptId, fingerprint);
+  const document = concatenateRanges(
+    { sha256: attempt.sourceHash, byteLength: 0, pageCount: attempt.totalPages ?? 0 },
+    ranges
+  );
+
+  if (mapStructuredDocument(document).status !== "mapped") {
+    return { status: "refused" };
+  }
+
+  return {
+    status: "ready",
+    sourceHash: attempt.sourceHash,
+    fileName: publication.fileName,
+    title: resolveTitle(publication.enteredTitle, document.metadata?.title, publication.fileName),
+    authorName: resolveAuthorName(publication.enteredAuthor, document.metadata?.author),
+    language: resolveWorkLanguage(publication.enteredLanguage)
+  };
 }

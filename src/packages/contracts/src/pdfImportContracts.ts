@@ -2,6 +2,8 @@ import { z } from "zod";
 
 import { pdfImportAttemptStates, pdfImportPhases, workLanguages } from "@whetstone/domain";
 
+import { workCreationReviewDtoSchema } from "./workCreationReviewContracts.js";
+
 // The narrow, owner-scoped contract for the recoverable staged PDF import (#721). An attempt owns import
 // EXECUTION state only — staged bytes, a bounded conversion run, and its per-range checkpoints — and
 // never a Work, ReadingUnit, or Block. Publication (#702) is a separate owner. These are the shapes the
@@ -177,9 +179,18 @@ export type PdfImportPublicationOutcomeDto = z.infer<typeof pdfImportPublication
 
 // The full pollable view of one born-digital PDF import (#702): its #721 execution status plus its #702
 // publication outcome, so a client can drive the upload -> queued -> processing -> ready/ocr/failure
-// journey from a single endpoint.
+// journey from a single endpoint. `review` (#750) is the shared Work-creation duplicate review the first
+// status read after conversion idempotently opens: non-null only while the converted attempt is parked
+// `awaiting_review` with a credible duplicate candidate, it carries the same proposal + candidate snapshot
+// every other import format shows, so the client renders the ONE shared review panel and no PDF-specific
+// duplicate UI. It is null whenever there is nothing to review (still converting, immediately created with
+// no candidate, exact-reopened, a typed refusal, or already published through a decision).
 export const pdfImportViewDtoSchema = z
-  .object({ publication: pdfImportPublicationOutcomeDtoSchema, status: pdfImportStatusDtoSchema })
+  .object({
+    publication: pdfImportPublicationOutcomeDtoSchema,
+    review: workCreationReviewDtoSchema.nullable(),
+    status: pdfImportStatusDtoSchema
+  })
   .strict();
 
 export type PdfImportViewDto = z.infer<typeof pdfImportViewDtoSchema>;

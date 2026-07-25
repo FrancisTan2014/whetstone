@@ -788,7 +788,15 @@ export const pdfImportAttempts = pgTable(
     userId: text("user_id").notNull(),
     sourceHash: text("source_hash").notNull(),
     state: text("state", {
-      enum: ["queued", "running", "converted", "failed", "cancelled", "interrupted"] as const
+      enum: [
+        "queued",
+        "running",
+        "awaiting_review",
+        "converted",
+        "failed",
+        "cancelled",
+        "interrupted"
+      ] as const
     }).notNull(),
     runToken: text("run_token"),
     // The durable phase of a running attempt (#745): preflight probe, OCR text layer, structured (#701)
@@ -832,7 +840,7 @@ export const pdfImportAttempts = pgTable(
     // unknown attempt state.
     check(
       "pdf_import_attempts_state_ck",
-      sql`${table.state} in ('queued', 'running', 'converted', 'failed', 'cancelled', 'interrupted')`
+      sql`${table.state} in ('queued', 'running', 'awaiting_review', 'converted', 'failed', 'cancelled', 'interrupted')`
     ),
     // A typed failure is stored on (and only on) a `failed` attempt, so a non-failed row never carries
     // a stale failure and a failed row always explains itself.
@@ -989,6 +997,13 @@ export const workCreationAttempts = pgTable(
       enum: ["manual", "markdown", "epub", "pdf"] as const
     }).notNull(),
     sourceHash: text("source_hash"),
+    // For a `pdf` creation attempt (#750): the referenced #721 execution attempt whose validated,
+    // converted source this review governs. The PDF import attempt stays the SOLE owner of the PDF stages
+    // and committed ranges; this column is a reference/lock, never a file path. Null for manual/markdown/
+    // epub (which own no PDF attempt); set exactly when `source_kind = 'pdf'` (enforced below). The partial
+    // unique index restricts a PDF attempt to at most ONE active (pending/finalizing) creation-review
+    // attempt, so concurrent status polls cannot mint two decisions over one converted source.
+    pdfImportAttemptId: text("pdf_import_attempt_id").references(() => pdfImportAttempts.id),
     // The uploaded file's original name, carried so a deferred decision can complete the creation with the
     // same provenance the one-step front door records. Null for a metadata-only manual proposal (no file);
     // set for an ordinary upload (markdown/epub) whose bytes this attempt stages.
@@ -1027,6 +1042,13 @@ export const workCreationAttempts = pgTable(
     uniqueIndex("work_creation_attempts_single_active")
       .on(table.userId)
       .where(sql`${table.state} in ('pending', 'finalizing')`),
+    // At most ONE active (pending/finalizing) creation-review attempt PER referenced PDF import attempt
+    // (#750): a partial unique index over `pdf_import_attempt_id` for active rows. So the first status read
+    // after conversion idempotently creates the review and concurrent polls cannot mint a second decision
+    // over one converted source — the reference is fenced by the database, not only by the caller.
+    uniqueIndex("work_creation_attempts_single_active_pdf")
+      .on(table.pdfImportAttemptId)
+      .where(sql`${table.pdfImportAttemptId} is not null and ${table.state} in ('pending', 'finalizing')`),
     // Enforce the closed state set in the database so no writer (or restored dump) can land an unknown
     // attempt state.
     check(
@@ -1037,6 +1059,13 @@ export const workCreationAttempts = pgTable(
     check(
       "work_creation_attempts_source_kind_ck",
       sql`${table.sourceKind} in ('manual', 'markdown', 'epub', 'pdf')`
+    ),
+    // A PDF import attempt reference belongs to (and only to) a `pdf` creation attempt: a non-pdf attempt
+    // owns no PDF execution attempt, and a pdf attempt must reference exactly the one it reviews. So the
+    // reference is present iff the source kind is `pdf` — no phantom or missing lock (#750).
+    check(
+      "work_creation_attempts_pdf_ref_ck",
+      sql`(${table.sourceKind} = 'pdf') = (${table.pdfImportAttemptId} is not null)`
     ),
     // A stage may only ever belong to an ORDINARY upload (markdown/epub). A manual proposal has no bytes,
     // and a pdf attempt's stage is owned by `pdf_import_attempts`, so a `stage_path` on either would be a

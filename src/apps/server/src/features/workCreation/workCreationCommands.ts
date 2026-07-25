@@ -40,6 +40,7 @@ import {
   detachStagePath,
   expireAttempts,
   getActiveAttemptForUser,
+  getActiveCreationAttemptForPdf,
   getAttempt,
   insertPendingAttempt,
   updateAttemptReview,
@@ -63,6 +64,49 @@ export type WorkCreationDependencies = Readonly<{
   now: () => Date;
   attemptTtlMs: number;
   log: WorkDuplicateCandidateLog;
+  // The PDF-import bridge port (#750): the small surface the review boundary needs from the pdfImport
+  // feature to route a converted PDF through the SAME duplicate review, WITHOUT importing its internals.
+  // `loadForReview` reads a converted attempt's resolved metadata (or reports a refusal / not-awaiting);
+  // `publish` turns it into a Work (create or exact-reopen) and transitions it terminal; `discard` drops a
+  // redundant converted attempt when the review reopened an existing Work instead. Wired in the composition
+  // root from the pdfImport publish/command functions.
+  pdf: PdfReviewPort;
+}>;
+
+// The metadata a converted PDF attempt exposes to duplicate review, or why it cannot be reviewed:
+// `not_awaiting` = it is not parked `awaiting_review` (still converting, already resolved, or gone);
+// `refused` = its reconstructed document maps to a typed refusal that must be published as such, never
+// reviewed; `ready` = the resolved proposal plus the source hash/file name the review scores against.
+export type PdfReviewSource =
+  | Readonly<{ status: "not_awaiting" | "refused" }>
+  | Readonly<{
+      status: "ready";
+      sourceHash: string;
+      fileName: string | null;
+      title: string;
+      authorName: string;
+      language: BeginManualWorkRequest["language"];
+    }>;
+
+// The outcome of publishing a converted PDF through a review decision. `published` carries the created (or
+// exact-reopened) Work entry id and whether identical bytes reopened it; every other status is a refusal or
+// idempotency guard that a decision only reaches under an untestable concurrent race (defensive).
+export type PdfReviewPublishOutcome =
+  | Readonly<{ status: "published"; workEntryId: string; reopened: boolean }>
+  | Readonly<{
+      status:
+        | "ocr_validation_failed"
+        | "no_content"
+        | "image_unsupported"
+        | "not_ready"
+        | "already_published"
+        | "skipped";
+    }>;
+
+export type PdfReviewPort = Readonly<{
+  loadForReview: (attemptId: string) => Promise<PdfReviewSource>;
+  publish: (attemptId: string) => Promise<PdfReviewPublishOutcome>;
+  discard: (attemptId: string, userId: string) => Promise<void>;
 }>;
 
 export type BeginResult =
@@ -106,6 +150,18 @@ export type DecisionResult =
   | Readonly<{ status: "existing_gone" | "expired" | "superseded" | "uncertain" | "not_found" }>;
 
 export type BackResult = Readonly<{ cancelled: boolean }>;
+
+// The outcome of the first status read after a PDF finishes converting (#750), which idempotently opens or
+// resumes the shared duplicate review. `needs_review` = a credible duplicate parked one review attempt the
+// client renders in the shared panel; `created`/`exact_existing` = no candidate (or identical bytes), so
+// the Work was published/reopened immediately and the client observes it through the view's publication
+// field; `refused` = the converted document mapped to a typed refusal (published as such, no Work);
+// `not_awaiting` = the attempt is not parked awaiting review (still converting, already resolved, or gone),
+// so there is nothing to do; `uncertain` = a candidate-query failure or a busy owner slot, retried on the
+// next poll rather than surfaced as a false "no duplicates".
+export type BeginPdfReviewResult =
+  | Readonly<{ status: "needs_review"; review: WorkCreationReviewDto }>
+  | Readonly<{ status: "created" | "exact_existing" | "refused" | "not_awaiting" | "uncertain" }>;
 
 function db(deps: WorkCreationDependencies): DbClient {
   return deps.content.db;
@@ -621,10 +677,147 @@ export async function beginManualCreation(
   }
 }
 
-// Load an attempt's current review for its owner, refreshing candidates (persisting the refreshed snapshot
-// under a bumped revision when the evidence changed, so the shown candidates and revision are exactly what a
-// later decision accepts) and expiry. A missing or non-pending attempt is `not_found` (or `expired` once
-// swept); a candidate-query failure is `uncertain`.
+// Begin (or idempotently resume) the shared duplicate review for a converted PDF import (#750). Called by
+// the first PDF status read that observes `awaiting_review`, this is the ONE bridge that routes a converted
+// PDF into the SAME boundary Markdown/EPUB/manual use: an already-open review resumes (a repeated poll or a
+// racing first poll never mints a second attempt); a document that maps to a typed refusal is published as
+// that refusal; identical bytes already owning a Work reopen it; with no credible candidate the Work is
+// created immediately; and with a credible candidate exactly one pending review attempt is persisted
+// (metadata + snapshot + a REFERENCE to the PDF attempt, never its stage) and the review returned. Publish
+// and discard go through the injected PDF port so this feature never reaches into pdfImport internals.
+export async function beginPdfReview(
+  deps: WorkCreationDependencies,
+  userId: string,
+  pdfImportAttemptId: string
+): Promise<BeginPdfReviewResult> {
+  const nowDate = deps.now();
+  await sweepExpired(deps, nowDate);
+
+  // Resume an already-open review for this exact PDF attempt (idempotency): a repeated poll, or a second
+  // poll that raced the first insert, returns the same review instead of a duplicate.
+  const open = await getActiveCreationAttemptForPdf(db(deps), userId, pdfImportAttemptId);
+
+  if (open !== null && open.state === "pending") {
+    try {
+      return { status: "needs_review", review: await refreshPersistedReview(deps, open, nowDate) };
+    } catch {
+      return { status: "uncertain" };
+    }
+  }
+
+  // A review already mid-decision (finalizing) for this PDF attempt: leave it to that decision rather than
+  // touching it, and report nothing to review this tick.
+  if (open !== null) {
+    return { status: "not_awaiting" };
+  }
+
+  const source = await deps.pdf.loadForReview(pdfImportAttemptId);
+
+  if (source.status !== "ready") {
+    if (source.status === "refused") {
+      // The reconstructed document maps to a typed refusal (OCR-required / no-content / unsupported-image):
+      // publish it as that refusal (records the terminal outcome, transitions the attempt out of review), and
+      // report it — the client observes the refusal through the view's publication field.
+      await deps.pdf.publish(pdfImportAttemptId);
+      return { status: "refused" };
+    }
+
+    // The attempt is not parked awaiting review (still converting, already resolved, or gone).
+    return { status: "not_awaiting" };
+  }
+
+  // Identical bytes already own a Work: publish reopens it (its internal exact-source claim), links the
+  // publication, and transitions the attempt terminal — no review is parked.
+  const existing = await findClaimedWork(db(deps), source.sourceHash);
+
+  if (existing !== undefined) {
+    await deps.pdf.publish(pdfImportAttemptId);
+    return { status: "exact_existing" };
+  }
+
+  // Resolve the resolved author against the canonical identity WITHOUT creating one (as EPUB does), so a
+  // name-equivalent existing author corroborates a same-author duplicate and a genuinely new name is minted
+  // only inside the final Work transaction publication runs.
+  const author = await resolveProposedAuthor(db(deps), { mode: "new", name: source.authorName });
+
+  /* v8 ignore next 2 -- a `new` author selection always resolves to found:true; the guard only narrows the
+     union and degrades a future resolver change to a retryable uncertain rather than a crash. */
+  if (!author.found) {
+    return { status: "uncertain" };
+  }
+
+  let review;
+
+  try {
+    review = await computeReviewCandidates(db(deps), deps.log, {
+      title: source.title,
+      authorId: author.authorId,
+      language: source.language,
+      workType: "book"
+    });
+  } catch {
+    return { status: "uncertain" };
+  }
+
+  if (review.candidates.length === 0) {
+    // No credible candidate: publish immediately (creates the Work, or reopens under an untestable claim
+    // race). The client observes the created Work through the view's publication field.
+    await deps.pdf.publish(pdfImportAttemptId);
+    return { status: "created" };
+  }
+
+  // A credible candidate exists: persist ONE pending review attempt that REFERENCES the PDF attempt (no
+  // stage of its own — the PDF attempt keeps its bytes). A concurrent first poll that already inserted the
+  // attempt loses the per-PDF single-active index: resume that review instead of double-owning the slot.
+  try {
+    const attempt = await insertPendingAttempt(db(deps), {
+      id: deps.createAttemptId(),
+      userId,
+      proposed: {
+        title: source.title,
+        authorId: author.authorId,
+        authorName: author.authorName,
+        language: source.language,
+        workType: "book"
+      },
+      sourceKind: "pdf",
+      sourceHash: source.sourceHash,
+      sourceFileName: source.fileName,
+      pdfImportAttemptId,
+      candidates: review.snapshot,
+      stagePath: null,
+      expiresAt: new Date(nowDate.getTime() + deps.attemptTtlMs),
+      now: nowDate
+    });
+
+    return { status: "needs_review", review: buildReviewDto(attempt, review) };
+  } catch (error) {
+    /* v8 ignore next -- a non-unique-violation insert failure is an unexpected infrastructure error; the
+       false branch falls through to the rethrow below. */
+    if (isUniqueViolation(error)) {
+      const active = await getActiveCreationAttemptForPdf(db(deps), userId, pdfImportAttemptId);
+
+      if (active !== null && active.state === "pending") {
+        return {
+          status: "needs_review",
+          review: await refreshPersistedReview(deps, active, nowDate)
+        };
+      }
+
+      // The owner already holds an active review for a DIFFERENT source (the per-owner slot, not this PDF):
+      // there is one review at a time, so retry on the next poll once that resolves.
+      return { status: "uncertain" };
+    }
+
+    /* v8 ignore next -- a non-unique insert failure is an unexpected infrastructure error; surface it. */
+    throw error;
+  }
+}
+
+
+// Read the current review for one owner-scoped attempt (the poll behind the shared review panel): sweep
+// expired attempts first, then return the refreshed persisted review, or a typed miss when the attempt is
+// gone/expired/no longer pending.
 export async function getWorkCreationReview(
   deps: WorkCreationDependencies,
   userId: string,
@@ -691,7 +884,9 @@ async function guardPendingAttempt(
 // Discard the staged bytes of a just-completed attempt: remove the file, then confirm the clear. The
 // attempt is already terminal, so this is leftover cleanup, not a live-decision transfer. An ordinary
 // upload attempt owns a staged file to remove; a MANUAL attempt (#749) never staged bytes, so only the
-// (already-null) stage marker is confirmed clear.
+// (already-null) stage marker is confirmed clear. A PDF-sourced attempt (#750) owns no stage of its own,
+// but its decision reopened an EXISTING Work, so the converted PDF attempt it references is now redundant:
+// discard it (freeing its retained bytes) through the injected port.
 async function discardStage(
   deps: WorkCreationDependencies,
   userId: string,
@@ -700,6 +895,10 @@ async function discardStage(
 ): Promise<void> {
   if (attempt.stagePath !== null) {
     await deps.content.sourceFileStore.deleteSourceFile(attempt.stagePath);
+  }
+
+  if (attempt.pdfImportAttemptId !== null) {
+    await deps.pdf.discard(attempt.pdfImportAttemptId, userId);
   }
 
   await clearStagePath(db(deps), { userId, id: attempt.id, now: nowDate });
@@ -911,6 +1110,42 @@ export async function keepSeparateWork(
     }
 
     return { status: outcome.status, result: outcome.result };
+  }
+
+  // PDF (#750): no stage of its own to transfer — the converted PDF attempt owns its bytes. Publish it
+  // through the injected port (maps the reconstructed document to a canonical Work, persists the original
+  // PDF as provenance, transitions the PDF attempt terminal), then complete the review attempt. Identical
+  // bytes reopened meanwhile surface as `exact_existing`, mirroring the ordinary-upload commit.
+  if (attempt.pdfImportAttemptId !== null) {
+    const published = await deps.pdf.publish(attempt.pdfImportAttemptId);
+
+    const completedPdf = await completeAttempt(db(deps), {
+      userId,
+      id: attemptId,
+      expectedRevision: fenced.revision,
+      now: nowDate
+    });
+
+    /* v8 ignore next -- completion follows begin-finalize at its bumped revision; cannot miss single-threaded. */
+    if (completedPdf === null) {
+      return { status: "superseded" };
+    }
+
+    /* v8 ignore next 3 -- the document mapped and its bytes were unclaimed above, so publish can only return
+       `published` here; any refusal/idempotency status is an untestable concurrent race, degraded to uncertain. */
+    if (published.status !== "published") {
+      return { status: "uncertain" };
+    }
+
+    const result = await loadReopenableWork(db(deps), published.workEntryId);
+
+    /* v8 ignore next 3 -- the Work was just published above, so the reopen read cannot miss single-threaded;
+       the guard defends a delete racing the read. */
+    if (result === undefined) {
+      return { status: "uncertain" };
+    }
+
+    return { status: published.reopened ? "exact_existing" : "created", result };
   }
 
   // Manual (#749): no staged bytes. Create the distinct Work through the canonical empty-document boundary,

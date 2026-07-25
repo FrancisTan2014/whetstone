@@ -1133,7 +1133,7 @@ describe("AdminLibraryPage", () => {
     publication: PdfImportViewDto["publication"],
     statusOverrides: Partial<PdfImportStatusDto> = {}
   ): PdfImportViewDto {
-    return { publication, status: pdfStatus(statusOverrides) };
+    return { publication, review: null, status: pdfStatus(statusOverrides) };
   }
 
   it("imports a born-digital PDF: forwards the entered metadata, then opens the published Work in the Reader (#702)", async () => {

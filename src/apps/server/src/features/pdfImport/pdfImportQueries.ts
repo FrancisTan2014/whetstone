@@ -96,6 +96,7 @@ export async function getPdfImportView(
   }
   return {
     publication: await buildPdfImportPublicationOutcome(db, record.id),
+    review: null,
     status: await buildPdfImportStatus(db, record)
   };
 }

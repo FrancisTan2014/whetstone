@@ -44,13 +44,21 @@ import {
   type PdfImportRunnerDependencies
 } from "./features/pdfImport/pdfImportRunner.js";
 import { createPdfImportStageStore } from "./features/pdfImport/pdfImportStage.js";
-import type { PdfImportCommandDependencies } from "./features/pdfImport/pdfImportCommands.js";
 import {
-  drainPendingPdfPublications,
+  cancelPdfImport,
+  type PdfImportCommandDependencies
+} from "./features/pdfImport/pdfImportCommands.js";
+import {
+  loadPdfReviewSource,
   publishConvertedPdfImport,
   type PdfImportPublishDependencies
 } from "./features/pdfImport/pdfImportPublish.js";
 import { recoverInterruptedAttempts } from "./features/pdfImport/pdfImportStore.js";
+import {
+  beginPdfReview,
+  type PdfReviewPort,
+  type WorkCreationDependencies
+} from "./features/workCreation/workCreationCommands.js";
 import { resolveStructuredPdfRunner } from "./files/pdfStructuredRunnerResolution.js";
 import { resolvePdfOcrAdapter } from "./files/pdfOcrRunnerResolution.js";
 import { createFakeSpeechInput } from "./speech/fakeSpeechInput.js";
@@ -224,6 +232,56 @@ const contentDependencies = {
   sourceFileStore
 } satisfies ContentDependencies;
 
+// #702 publishes a converted attempt into a canonical Work (doc_blocks only). Since #750 this happens ONLY
+// through a serialized Work-creation review decision (never the drain loop), so the deps are built here —
+// before the server — and shared by the review bridge's PDF port below.
+const pdfImportPublish: PdfImportPublishDependencies = {
+  createAuthorId: () => randomUUID(),
+  createEntryId: () => randomUUID(),
+  createSourceId: () => randomUUID(),
+  db,
+  // Publication retains the original uploaded PDF through the immutable source-file boundary, reading it
+  // back from the attempt's retained stage; a failed cleanup of that redundant stage stays visible.
+  logCleanupFailure: logPdfImportCleanupFailure,
+  now: () => new Date(),
+  sourceFileStore,
+  stageStore: pdfImportStageStore
+};
+
+// The PDF-import bridge port (#750) the Work-creation review boundary uses to route a converted PDF through
+// the SAME duplicate review without importing pdfImport internals: read a converted attempt's resolved
+// metadata, publish it as a Work (create or exact-reopen) under a decision, or discard it when the review
+// reopened an existing Work instead. `publish` narrows the publication result to the entry id + reopen flag
+// the review needs; a non-`published` status is an idempotency/refusal guard the decision only sees under an
+// untestable concurrent race.
+const pdfReviewPort: PdfReviewPort = {
+  loadForReview: (attemptId) => loadPdfReviewSource(pdfImportPublish, attemptId),
+  publish: async (attemptId) => {
+    const outcome = await publishConvertedPdfImport(pdfImportPublish, attemptId);
+    return outcome.status === "published"
+      ? { status: "published", workEntryId: outcome.work.entryId, reopened: outcome.reopened }
+      : { status: outcome.status };
+  },
+  discard: async (attemptId, userId) => {
+    await cancelPdfImport(pdfImportCommands, { attemptId, userId });
+  }
+};
+
+// The Work-creation review boundary (#747-#750), shared by the review routes and the PDF status bridge.
+const workCreationDependencies: WorkCreationDependencies = {
+  content: contentDependencies,
+  createAttemptId: () => randomUUID(),
+  createStageId: () => randomUUID(),
+  now: () => new Date(),
+  attemptTtlMs: workCreationAttemptTtlMs,
+  // A structural logger for how many credible duplicate candidates the boundary weighed, mirroring the
+  // library duplicate-candidate query's log shape without depending on Fastify.
+  log: {
+    info: (payload, message) => console.info(`[work-creation] ${message}`, JSON.stringify(payload))
+  },
+  pdf: pdfReviewPort
+};
+
 const server = createServer({
   authoredWorks: {
     createEntryId: () => randomUUID(),
@@ -271,7 +329,10 @@ const server = createServer({
   },
   pdfImport: {
     commands: pdfImportCommands,
-    uploadLimitBytes: config.pdfUploadLimitBytes
+    uploadLimitBytes: config.pdfUploadLimitBytes,
+    // First status read after conversion idempotently parks the converted attempt at the shared Work-creation
+    // review boundary (#750); the route attaches the resulting review to the view.
+    beginReview: (userId, attemptId) => beginPdfReview(workCreationDependencies, userId, attemptId)
   },
   readingPosition: { db },
   preferences: { db },
@@ -283,19 +344,7 @@ const server = createServer({
   },
   search: { db },
   today: { db, now: () => new Date() },
-  workCreation: {
-    content: contentDependencies,
-    createAttemptId: () => randomUUID(),
-    createStageId: () => randomUUID(),
-    now: () => new Date(),
-    attemptTtlMs: workCreationAttemptTtlMs,
-    // A structural logger for how many credible duplicate candidates the boundary weighed, mirroring the
-    // library duplicate-candidate query's log shape without depending on Fastify.
-    log: {
-      info: (payload, message) =>
-        console.info(`[work-creation] ${message}`, JSON.stringify(payload))
-    }
-  },
+  workCreation: workCreationDependencies,
   // In a single-origin deploy (#184) the built web client is served from this same server; in
   // dev/tests WEB_DIR is unset and Vite serves the client separately.
   web: config.webDir !== undefined ? { dir: config.webDir } : undefined
@@ -389,57 +438,21 @@ const pdfImportRunner: PdfImportRunnerDependencies = {
   }),
   stageStore: pdfImportStageStore
 };
-// #702 publishes a converted attempt into a canonical Work (doc_blocks only) once the drain loop reports
-// it converted. Idempotent: an attempt with no publication intent, or one already resolved, is a no-op.
-const pdfImportPublish: PdfImportPublishDependencies = {
-  createAuthorId: () => randomUUID(),
-  createEntryId: () => randomUUID(),
-  createSourceId: () => randomUUID(),
-  db,
-  // Publication retains the original uploaded PDF through the immutable source-file boundary, reading it
-  // back from the attempt's retained stage; a failed cleanup of that redundant stage stays visible.
-  logCleanupFailure: logPdfImportCleanupFailure,
-  now: () => new Date(),
-  sourceFileStore,
-  stageStore: pdfImportStageStore
-};
 const PDF_IMPORT_POLL_MS = 1_000;
 let pdfImportDraining = false;
 // Convert one attempt at a time to empty on each tick (single admission is DB-enforced too); never
-// overlap ticks so a slow conversion cannot double-claim the slot. Each converted attempt is published
-// immediately (deterministic, no user wait). Failures are logged; the loop continues on the next tick.
+// overlap ticks so a slow conversion cannot double-claim the slot. A converted attempt is parked as
+// `awaiting_review` (#750) — publication no longer happens here; it is driven later by a serialized
+// Work-creation review decision, so this loop never writes a Work or bypasses the duplicate-review
+// boundary. Failures are logged; the loop continues on the next tick.
 const drainPdfImportQueue = async (): Promise<void> => {
   if (pdfImportDraining) {
     return;
   }
   pdfImportDraining = true;
   try {
-    // Durable publication recovery first: republish any `converted` attempt whose publication is still
-    // pending — stranded by a process crash after `markConverted` committed but before publication
-    // finished, or by a transient publication throw on a prior tick. Idempotent, and isolated per
-    // attempt so one poisoned attempt cannot block the queue drain that follows.
-    for (const recovered of await drainPendingPdfPublications(pdfImportPublish)) {
-      if (recovered.status === "error") {
-        server.log.error(
-          { attemptId: recovered.attemptId, reason: recovered.reason },
-          "pdf_import_publish_recovery_failed"
-        );
-      } else {
-        server.log.info(
-          { attemptId: recovered.attemptId, outcome: recovered.status },
-          "pdf_import_published_recovered"
-        );
-      }
-    }
     let result = await processNextPdfImport(pdfImportRunner);
     while (result.status !== "idle") {
-      if (result.status === "converted") {
-        const outcome = await publishConvertedPdfImport(pdfImportPublish, result.attemptId);
-        server.log.info(
-          { attemptId: result.attemptId, outcome: outcome.status },
-          "pdf_import_published"
-        );
-      }
       result = await processNextPdfImport(pdfImportRunner);
     }
   } catch (error) {

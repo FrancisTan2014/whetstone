@@ -39,7 +39,7 @@ function view(
   publication: PdfImportPublicationOutcomeDto,
   statusOverrides: Partial<PdfImportStatusDto> = {}
 ): PdfImportViewDto {
-  return { publication, status: status(statusOverrides) };
+  return { publication, review: null, status: status(statusOverrides) };
 }
 
 describe("describePdfImport", () => {
