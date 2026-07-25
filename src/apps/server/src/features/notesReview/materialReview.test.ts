@@ -2,7 +2,6 @@ import { PGlite } from "@electric-sql/pglite";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type {
@@ -311,7 +310,9 @@ describe("POST /api/notes/review/material-review/use-existing", () => {
   it("rejects a blank answer with 400 invalid_answer before touching the attempt", async () => {
     await seedMaterial("seed");
     const review = await parkReview("sub-review");
-    const response = await decide(review, { answerDoc: blankDoc() as UseExistingMaterialRequest["answerDoc"] });
+    const response = await decide(review, {
+      answerDoc: blankDoc() as UseExistingMaterialRequest["answerDoc"]
+    });
     expect(response.statusCode).toBe(400);
     expect(response.json()).toEqual({ error: "invalid_answer" });
   });

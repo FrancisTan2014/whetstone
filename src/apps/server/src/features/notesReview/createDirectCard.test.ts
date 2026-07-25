@@ -29,7 +29,12 @@ import type { LibraryDependencies } from "../library/libraryCommands.js";
 import { deleteNoteInTx } from "../notes/noteCommands.js";
 import type { NotesDependencies } from "../notes/noteCommands.js";
 import { deleteReviewCard } from "../review/reviewCardCommands.js";
-import { createDirectCard, prepareDirectCardDraft, writeDirectCardInTx, type CreateDirectCardDependencies } from "./createDirectCard.js";
+import {
+  createDirectCard,
+  prepareDirectCardDraft,
+  writeDirectCardInTx,
+  type CreateDirectCardDependencies
+} from "./createDirectCard.js";
 import { useExistingMaterial } from "./reviewMaterialCommands.js";
 import type { NotesReviewRouteDependencies } from "./notesReviewRoutes.js";
 
@@ -616,7 +621,11 @@ describe("writeDirectCardInTx receipt replay", () => {
 // failure.
 describe("useExistingMaterial write failure", () => {
   it("rolls back and rethrows a mid-write database error", async () => {
-    await createDirectCard(context.deps, DEFAULT_USER_ID, currentNoteRequest({ submissionId: "seed" }));
+    await createDirectCard(
+      context.deps,
+      DEFAULT_USER_ID,
+      currentNoteRequest({ submissionId: "seed" })
+    );
     const parked = await createDirectCard(
       context.deps,
       DEFAULT_USER_ID,
@@ -627,7 +636,10 @@ describe("useExistingMaterial write failure", () => {
     }
     const review = parked.review;
 
-    const failing = { ...context.deps, db: dbFailingOnInsert(context.db, memoryPrompts as PgTable) };
+    const failing = {
+      ...context.deps,
+      db: dbFailingOnInsert(context.db, memoryPrompts as PgTable)
+    };
     await expect(
       useExistingMaterial(failing, DEFAULT_USER_ID, {
         submissionId: "sub-reuse",

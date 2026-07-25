@@ -638,7 +638,12 @@ describe("material review contracts (#712)", () => {
   it("parses a needs_material_review save result and rejects an unknown status", () => {
     const parsed = parseDirectCardSaveResultDto({
       status: "needs_material_review",
-      review: { attemptId: "attempt-1", candidateFingerprint: "fp", candidates: [candidate], revision: 3 }
+      review: {
+        attemptId: "attempt-1",
+        candidateFingerprint: "fp",
+        candidates: [candidate],
+        revision: 3
+      }
     });
     if (parsed.status !== "needs_material_review") {
       throw new Error("expected needs_material_review");
@@ -648,8 +653,14 @@ describe("material review contracts (#712)", () => {
   });
 
   it("parses created and reused save results carrying the shared direct-card payload", () => {
-    const created = parseDirectCardSaveResultDto({ status: "created", result: { noteId: "n1", promptId: "p1", review } });
-    const reused = parseDirectCardSaveResultDto({ status: "reused", result: { noteId: "n1", promptId: "p2", review } });
+    const created = parseDirectCardSaveResultDto({
+      status: "created",
+      result: { noteId: "n1", promptId: "p1", review }
+    });
+    const reused = parseDirectCardSaveResultDto({
+      status: "reused",
+      result: { noteId: "n1", promptId: "p2", review }
+    });
     expect(created.status).toBe("created");
     expect(reused.status).toBe("reused");
   });
@@ -669,7 +680,13 @@ describe("material review contracts (#712)", () => {
     expect(() =>
       parseDirectCardSaveResultDto({
         status: "needs_material_review",
-        review: { attemptId: "attempt-1", candidateFingerprint: "fp", candidates: [], revision: 0, extra: true }
+        review: {
+          attemptId: "attempt-1",
+          candidateFingerprint: "fp",
+          candidates: [],
+          revision: 0,
+          extra: true
+        }
       })
     ).toThrow();
   });

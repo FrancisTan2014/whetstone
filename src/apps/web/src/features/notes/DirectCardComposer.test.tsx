@@ -1,27 +1,44 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { DirectCardResultDto } from "@whetstone/contracts";
+import type {
+  DirectCardResultDto,
+  MaterialReviewCandidateDto,
+  MaterialReviewDto
+} from "@whetstone/contracts";
 import { documentText } from "@whetstone/document";
 
 import type * as NotesReviewApi from "../notesReview/notesReviewApi";
 import { DirectCardComposer } from "./DirectCardComposer";
-import { createDirectCard, CreateDirectCardError } from "../notesReview/notesReviewApi";
+import {
+  createDirectCard,
+  CreateDirectCardError,
+  fetchMaterialMatches,
+  keepSeparateMaterial,
+  MaterialDecisionError,
+  reuseExistingMaterial
+} from "../notesReview/notesReviewApi";
 
-// Replace only the network call; keep the real `CreateDirectCardError` so the composer's `instanceof`
-// mapping is exercised, not restubbed.
+// Replace only the network calls; keep the real `CreateDirectCardError`/`MaterialDecisionError` so the
+// composer's `instanceof` mapping is exercised, not restubbed.
 vi.mock("../notesReview/notesReviewApi", async () => {
   const actual = await vi.importActual<typeof NotesReviewApi>("../notesReview/notesReviewApi");
-  return { ...actual, createDirectCard: vi.fn() };
+  return {
+    ...actual,
+    createDirectCard: vi.fn(),
+    fetchMaterialMatches: vi.fn(async () => []),
+    keepSeparateMaterial: vi.fn(),
+    reuseExistingMaterial: vi.fn()
+  };
 });
 
 // The shared editor stands in as a textarea keyed by its aria-label so the Answer, Question, and Success
 // check documents can be driven and read as plain text.
 vi.mock("../../shared/editor/index.js", async () => {
   const React = await import("react");
-  const { createTextDocument, documentText: read } = await import("@whetstone/document");
+  const { createTextDocument: make, documentText: read } = await import("@whetstone/document");
   return {
     RichContentEditor: ({
       ariaLabel,
@@ -34,11 +51,36 @@ vi.mock("../../shared/editor/index.js", async () => {
     }) =>
       React.createElement("textarea", {
         "aria-label": ariaLabel,
-        onChange: (event: { target: { value: string } }) =>
-          onChange(createTextDocument(event.target.value)),
+        onChange: (event: { target: { value: string } }) => onChange(make(event.target.value)),
         value: read(document as never)
       })
   };
+});
+
+beforeAll(() => {
+  // Radix Dialog reads pointer-capture and layout APIs jsdom lacks; stub them so the stacked review Sheet
+  // does not throw during interaction tests.
+  for (const method of [
+    "hasPointerCapture",
+    "setPointerCapture",
+    "releasePointerCapture",
+    "scrollIntoView"
+  ]) {
+    Object.defineProperty(HTMLElement.prototype, method, {
+      configurable: true,
+      value: () => false
+    });
+  }
+  window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+    addEventListener: vi.fn(),
+    addListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+    matches: false,
+    media: query,
+    onchange: null,
+    removeEventListener: vi.fn(),
+    removeListener: vi.fn()
+  }));
 });
 
 const review = {
@@ -55,6 +97,23 @@ const review = {
 } as const;
 
 const result: DirectCardResultDto = { noteId: "note-1", promptId: "prompt-1", review };
+
+function materialReview(overrides: Partial<MaterialReviewDto> = {}): MaterialReviewDto {
+  return {
+    attemptId: "attempt-1",
+    candidateFingerprint: "fp-1",
+    candidates: [
+      {
+        answerExcerpt: "Paris is the capital of France.",
+        cardCount: 2,
+        noteId: "note-9",
+        sourceContext: null
+      }
+    ],
+    revision: 0,
+    ...overrides
+  };
+}
 
 beforeEach(() => {
   vi.spyOn(crypto, "randomUUID").mockReturnValue("11111111-1111-4111-8111-111111111111");
@@ -74,6 +133,12 @@ function renderComposer(): {
   const onCreated = vi.fn();
   render(<DirectCardComposer onClose={onClose} onCreated={onCreated} />);
   return { onClose, onCreated };
+}
+
+async function fillAndSave(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  await user.type(screen.getByLabelText("Answer"), "Paris is the capital of France.");
+  await user.type(screen.getByLabelText("Question"), "Capital of France?");
+  await user.click(screen.getByRole("button", { name: "Create card" }));
 }
 
 describe("DirectCardComposer", () => {
@@ -101,16 +166,14 @@ describe("DirectCardComposer", () => {
     expect(onCreated).not.toHaveBeenCalled();
   });
 
-  it("creates a card that grades against the whole note and reports the result", async () => {
+  it("creates a card that grades against the whole note and announces it as created", async () => {
     const user = userEvent.setup();
-    vi.mocked(createDirectCard).mockResolvedValue(result);
+    vi.mocked(createDirectCard).mockResolvedValue({ result, status: "created" });
     const { onCreated } = renderComposer();
 
-    await user.type(screen.getByLabelText("Answer"), "Paris is the capital of France.");
-    await user.type(screen.getByLabelText("Question"), "Capital of France?");
-    await user.click(screen.getByRole("button", { name: "Create card" }));
+    await fillAndSave(user);
 
-    await waitFor(() => expect(onCreated).toHaveBeenCalledWith(result));
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith(result, "created"));
     const request = vi.mocked(createDirectCard).mock.calls[0]![0];
     expect(request.submissionId).toBe("11111111-1111-4111-8111-111111111111");
     expect(request.target).toEqual({ kind: "current_note" });
@@ -120,7 +183,7 @@ describe("DirectCardComposer", () => {
 
   it("creates a card that grades against an authored success check", async () => {
     const user = userEvent.setup();
-    vi.mocked(createDirectCard).mockResolvedValue(result);
+    vi.mocked(createDirectCard).mockResolvedValue({ result, status: "created" });
     renderComposer();
 
     await user.type(screen.getByLabelText("Answer"), "Paris is the capital of France.");
@@ -172,7 +235,7 @@ describe("DirectCardComposer", () => {
     const user = userEvent.setup();
     vi.mocked(createDirectCard)
       .mockRejectedValueOnce(new CreateDirectCardError("network"))
-      .mockResolvedValueOnce(result);
+      .mockResolvedValueOnce({ result, status: "created" });
     const { onCreated } = renderComposer();
 
     await user.type(screen.getByLabelText("Answer"), "Paris.");
@@ -183,7 +246,7 @@ describe("DirectCardComposer", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "Create card" }));
-    await waitFor(() => expect(onCreated).toHaveBeenCalledWith(result));
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith(result, "created"));
 
     const first = vi.mocked(createDirectCard).mock.calls[0]![0].submissionId;
     const second = vi.mocked(createDirectCard).mock.calls[1]![0].submissionId;
@@ -192,11 +255,9 @@ describe("DirectCardComposer", () => {
 
   it("mints a fresh submission id after a conflict so the edited card is not trapped", async () => {
     const user = userEvent.setup();
-    // The server burned the first id (a receipt with different wording already exists), then accepts the
-    // genuinely new card. `gone` behaves identically; `conflict` stands in for both burned-receipt paths.
     vi.mocked(createDirectCard)
       .mockRejectedValueOnce(new CreateDirectCardError("conflict"))
-      .mockResolvedValueOnce(result);
+      .mockResolvedValueOnce({ result, status: "created" });
     let minted = 0;
     vi.mocked(crypto.randomUUID).mockImplementation(
       () => `0000000${minted++}-0000-4000-8000-000000000000` as ReturnType<typeof crypto.randomUUID>
@@ -210,10 +271,9 @@ describe("DirectCardComposer", () => {
       expect(screen.getByText(/This card was already started with different wording/)).toBeTruthy()
     );
 
-    // The learner edits and retries exactly as the copy tells them to; the burned id must not be reused.
     await user.type(screen.getByLabelText("Question"), " (of France)");
     await user.click(screen.getByRole("button", { name: "Create card" }));
-    await waitFor(() => expect(onCreated).toHaveBeenCalledWith(result));
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith(result, "created"));
 
     const first = vi.mocked(createDirectCard).mock.calls[0]![0].submissionId;
     const second = vi.mocked(createDirectCard).mock.calls[1]![0].submissionId;
@@ -231,9 +291,9 @@ describe("DirectCardComposer", () => {
 
   it("ignores a close while a create is in flight", async () => {
     const user = userEvent.setup();
-    let settle: ((value: DirectCardResultDto) => void) | undefined;
+    let settle: ((value: { result: DirectCardResultDto; status: "created" }) => void) | undefined;
     vi.mocked(createDirectCard).mockReturnValue(
-      new Promise<DirectCardResultDto>((resolve) => {
+      new Promise((resolve) => {
         settle = resolve;
       })
     );
@@ -243,13 +303,293 @@ describe("DirectCardComposer", () => {
     await user.type(screen.getByLabelText("Question"), "Capital?");
     await user.click(screen.getByRole("button", { name: "Create card" }));
 
-    // The parent's Cancel is disabled while pending, and the sheet's own Close affordance is guarded too:
-    // dismissing mid-request is ignored so a card the retry-safe id would recover is never stranded.
     expect(screen.getByRole("button", { name: "Cancel" })).toHaveProperty("disabled", true);
     await user.click(screen.getByRole("button", { name: "Close" }));
     expect(onClose).not.toHaveBeenCalled();
 
-    settle?.(result);
-    await waitFor(() => expect(onCreated).toHaveBeenCalledWith(result));
+    settle?.({ result, status: "created" });
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith(result, "created"));
+  });
+
+  describe("material review", () => {
+    it("parks the review panel over the intact draft when the saved answer already exists", async () => {
+      const user = userEvent.setup();
+      vi.mocked(createDirectCard).mockResolvedValue({
+        review: materialReview(),
+        status: "needs_material_review"
+      });
+      const { onCreated } = renderComposer();
+
+      await fillAndSave(user);
+
+      await waitFor(() =>
+        expect(
+          screen.getByRole("heading", { name: "This material is already in Notes" })
+        ).toBeTruthy()
+      );
+      expect(onCreated).not.toHaveBeenCalled();
+    });
+
+    it("adds the card to a chosen existing note and announces it as reused", async () => {
+      const user = userEvent.setup();
+      vi.mocked(createDirectCard).mockResolvedValue({
+        review: materialReview(),
+        status: "needs_material_review"
+      });
+      vi.mocked(reuseExistingMaterial).mockResolvedValue({ result, status: "reused" });
+      const { onCreated } = renderComposer();
+
+      await fillAndSave(user);
+      await screen.findByRole("heading", { name: "This material is already in Notes" });
+      await user.click(
+        screen.getByRole("button", {
+          name: "Use existing material from Paris is the capital of France."
+        })
+      );
+
+      await waitFor(() => expect(onCreated).toHaveBeenCalledWith(result, "reused"));
+      const request = vi.mocked(reuseExistingMaterial).mock.calls[0]![0];
+      expect(request.attemptId).toBe("attempt-1");
+      expect(request.revision).toBe(0);
+      expect(request.noteEntryId).toBe("note-9");
+      expect(request.submissionId).toBe("11111111-1111-4111-8111-111111111111");
+      expect(documentText(request.answerDoc)).toBe("Paris is the capital of France.");
+    });
+
+    it("mints a distinct note on Keep separate and announces it as created", async () => {
+      const user = userEvent.setup();
+      vi.mocked(createDirectCard).mockResolvedValue({
+        review: materialReview(),
+        status: "needs_material_review"
+      });
+      vi.mocked(keepSeparateMaterial).mockResolvedValue({ result, status: "created" });
+      const { onCreated } = renderComposer();
+
+      await fillAndSave(user);
+      await screen.findByRole("heading", { name: "This material is already in Notes" });
+      await user.click(screen.getByRole("button", { name: "Keep separate" }));
+
+      await waitFor(() => expect(onCreated).toHaveBeenCalledWith(result, "created"));
+      const request = vi.mocked(keepSeparateMaterial).mock.calls[0]![0];
+      expect(request.attemptId).toBe("attempt-1");
+      expect(request.revision).toBe(0);
+      expect(documentText(request.questionDoc)).toBe("Capital of France?");
+    });
+
+    it("restores the intact draft with the same submission id when Back is pressed", async () => {
+      const user = userEvent.setup();
+      vi.mocked(createDirectCard).mockResolvedValue({
+        review: materialReview(),
+        status: "needs_material_review"
+      });
+      renderComposer();
+
+      await fillAndSave(user);
+      await screen.findByRole("heading", { name: "This material is already in Notes" });
+      await user.click(screen.getByRole("button", { name: "Back" }));
+
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("heading", { name: "This material is already in Notes" })
+        ).toBeNull()
+      );
+      expect((screen.getByLabelText("Answer") as HTMLTextAreaElement).value).toBe(
+        "Paris is the capital of France."
+      );
+
+      vi.mocked(createDirectCard).mockResolvedValue({ result, status: "created" });
+      await user.click(screen.getByRole("button", { name: "Create card" }));
+      await waitFor(() => expect(createDirectCard).toHaveBeenCalledTimes(2));
+      const first = vi.mocked(createDirectCard).mock.calls[0]![0].submissionId;
+      const second = vi.mocked(createDirectCard).mock.calls[1]![0].submissionId;
+      expect(second).toBe(first);
+    });
+
+    it("keeps the panel and shows a retryable error when a decision fails transiently", async () => {
+      const user = userEvent.setup();
+      vi.mocked(createDirectCard).mockResolvedValue({
+        review: materialReview(),
+        status: "needs_material_review"
+      });
+      vi.mocked(keepSeparateMaterial)
+        .mockRejectedValueOnce(new MaterialDecisionError("network"))
+        .mockResolvedValueOnce({ result, status: "created" });
+      const { onCreated } = renderComposer();
+
+      await fillAndSave(user);
+      await screen.findByRole("heading", { name: "This material is already in Notes" });
+      await user.click(screen.getByRole("button", { name: "Keep separate" }));
+
+      await waitFor(() =>
+        expect(screen.getByText("Could not complete that just now. Please try again.")).toBeTruthy()
+      );
+      expect(onCreated).not.toHaveBeenCalled();
+
+      await user.click(screen.getByRole("button", { name: "Keep separate" }));
+      await waitFor(() => expect(onCreated).toHaveBeenCalledWith(result, "created"));
+    });
+
+    it("refreshes the review in place when the evidence changed under a decision", async () => {
+      const user = userEvent.setup();
+      vi.mocked(createDirectCard).mockResolvedValue({
+        review: materialReview(),
+        status: "needs_material_review"
+      });
+      vi.mocked(keepSeparateMaterial).mockResolvedValue({
+        review: materialReview({ revision: 1 }),
+        status: "needs_material_review"
+      });
+      renderComposer();
+
+      await fillAndSave(user);
+      await screen.findByRole("heading", { name: "This material is already in Notes" });
+      await user.click(screen.getByRole("button", { name: "Keep separate" }));
+
+      await waitFor(() =>
+        expect(
+          screen.getByText("The existing material changed — please review it again.")
+        ).toBeTruthy()
+      );
+    });
+
+    it("returns to the composer with a re-save notice when the attempt is superseded", async () => {
+      const user = userEvent.setup();
+      vi.mocked(createDirectCard).mockResolvedValue({
+        review: materialReview(),
+        status: "needs_material_review"
+      });
+      vi.mocked(keepSeparateMaterial).mockRejectedValue(new MaterialDecisionError("superseded"));
+      renderComposer();
+
+      await fillAndSave(user);
+      await screen.findByRole("heading", { name: "This material is already in Notes" });
+      await user.click(screen.getByRole("button", { name: "Keep separate" }));
+
+      await waitFor(() =>
+        expect(
+          screen.getByText("This review is no longer available. Save again to re-check your Notes.")
+        ).toBeTruthy()
+      );
+      expect(
+        screen.queryByRole("heading", { name: "This material is already in Notes" })
+      ).toBeNull();
+    });
+
+    it("maps a plain (non-typed) decision rejection to the retryable network message", async () => {
+      const user = userEvent.setup();
+      vi.mocked(createDirectCard).mockResolvedValue({
+        review: materialReview(),
+        status: "needs_material_review"
+      });
+      vi.mocked(keepSeparateMaterial).mockRejectedValue(new Error("offline"));
+      renderComposer();
+
+      await fillAndSave(user);
+      await screen.findByRole("heading", { name: "This material is already in Notes" });
+      await user.click(screen.getByRole("button", { name: "Keep separate" }));
+
+      // A rejection that is not a MaterialDecisionError is treated as a transient network blip: keep the
+      // panel and offer a retry rather than stranding the learner.
+      await waitFor(() =>
+        expect(screen.getByText("Could not complete that just now. Please try again.")).toBeTruthy()
+      );
+      expect(
+        screen.getByRole("heading", { name: "This material is already in Notes" })
+      ).toBeTruthy();
+    });
+
+    it("mints a fresh submission after a burned-receipt decision so the draft is not trapped", async () => {
+      const user = userEvent.setup();
+      vi.mocked(createDirectCard).mockResolvedValue({
+        review: materialReview(),
+        status: "needs_material_review"
+      });
+      vi.mocked(keepSeparateMaterial).mockRejectedValue(new MaterialDecisionError("conflict"));
+      renderComposer();
+
+      await fillAndSave(user);
+      await screen.findByRole("heading", { name: "This material is already in Notes" });
+      await user.click(screen.getByRole("button", { name: "Keep separate" }));
+
+      // A conflict/gone burned the receipt: the panel is dismissed and the composer asks the learner to edit
+      // a field, minting a fresh submission id so the drafted card is not trapped behind a spent id.
+      await waitFor(() =>
+        expect(
+          screen.getByText("That draft can no longer be used. Edit a field to start a fresh card.")
+        ).toBeTruthy()
+      );
+      expect(
+        screen.queryByRole("heading", { name: "This material is already in Notes" })
+      ).toBeNull();
+    });
+  });
+
+  describe("advisory material hint", () => {
+    it("warns after the answer settles when matching material exists", async () => {
+      const user = userEvent.setup();
+      vi.mocked(fetchMaterialMatches).mockResolvedValue([
+        { answerExcerpt: "Paris.", cardCount: 1, noteId: "note-9", sourceContext: null }
+      ]);
+      renderComposer();
+
+      await user.type(screen.getByLabelText("Answer"), "Paris.");
+
+      // The advisory fires only after the Answer settles (350ms debounce), then the hint appears.
+      expect(await screen.findByText(/This material is already in Notes\./)).toBeTruthy();
+      expect(fetchMaterialMatches).toHaveBeenCalled();
+      expect(documentText(vi.mocked(fetchMaterialMatches).mock.calls.at(-1)![0])).toBe("Paris.");
+    });
+
+    it("debounces so continuous typing fires a single query for the latest answer", async () => {
+      const user = userEvent.setup({ delay: null });
+      vi.mocked(fetchMaterialMatches).mockResolvedValue([]);
+      renderComposer();
+
+      // `delay: null` types the whole string without pausing, so the debounce never elapses between
+      // keystrokes: exactly one query fires, and it carries the final Answer.
+      await user.type(screen.getByLabelText("Answer"), "Paris");
+
+      await waitFor(() => expect(fetchMaterialMatches).toHaveBeenCalledTimes(1));
+      expect(documentText(vi.mocked(fetchMaterialMatches).mock.calls[0]![0])).toBe("Paris");
+    });
+
+    it("ignores a stale response that resolves after the answer moved on", async () => {
+      const user = userEvent.setup({ delay: null });
+      const deferred: Array<(value: MaterialReviewCandidateDto[]) => void> = [];
+      vi.mocked(fetchMaterialMatches).mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            deferred.push(resolve);
+          })
+      );
+      renderComposer();
+
+      const answer = screen.getByLabelText("Answer");
+      await user.type(answer, "old");
+      await waitFor(() => expect(deferred).toHaveLength(1));
+      await user.clear(answer);
+      await user.type(answer, "new");
+      await waitFor(() => expect(deferred).toHaveLength(2));
+
+      // The current (second) request resolves empty; then the stale (first) request resolves with a
+      // match. The stale response must not resurrect the hint.
+      deferred[1]!([]);
+      deferred[0]!([{ answerExcerpt: "old", cardCount: 1, noteId: "note-x", sourceContext: null }]);
+      await waitFor(() => expect(fetchMaterialMatches).toHaveBeenCalledTimes(2));
+
+      expect(screen.queryByText(/This material is already in Notes\./)).toBeNull();
+    });
+
+    it("resolves the save without waiting on the advisory query", async () => {
+      const user = userEvent.setup();
+      vi.mocked(createDirectCard).mockResolvedValue({ result, status: "created" });
+      const { onCreated } = renderComposer();
+
+      await fillAndSave(user);
+
+      // The authoritative save resolves the flow regardless of the advisory query's timing.
+      await waitFor(() => expect(onCreated).toHaveBeenCalledWith(result, "created"));
+      expect(createDirectCard).toHaveBeenCalledTimes(1);
+    });
   });
 });

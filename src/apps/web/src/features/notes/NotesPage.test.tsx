@@ -158,17 +158,31 @@ vi.mock("./DirectCardComposer", async () => {
   return {
     DirectCardComposer: (props: {
       onClose: () => void;
-      onCreated: (result: { noteId: string; promptId: string; review: unknown }) => void;
+      onCreated: (
+        result: { noteId: string; promptId: string; review: unknown },
+        outcome: "created" | "reused"
+      ) => void;
     }) =>
       React.createElement("div", { "data-testid": "composer" }, [
         React.createElement(
           "button",
           {
             key: "cr",
-            onClick: () => props.onCreated({ noteId: "note-9", promptId: "prompt-9", review: {} }),
+            onClick: () =>
+              props.onCreated({ noteId: "note-9", promptId: "prompt-9", review: {} }, "created"),
             type: "button"
           },
           "stub-create"
+        ),
+        React.createElement(
+          "button",
+          {
+            key: "re",
+            onClick: () =>
+              props.onCreated({ noteId: "note-9", promptId: "prompt-9", review: {} }, "reused"),
+            type: "button"
+          },
+          "stub-reuse"
         ),
         React.createElement(
           "button",
@@ -323,6 +337,20 @@ describe("NotesPage (#659)", () => {
       expect(document.activeElement?.getAttribute("aria-label")).toMatch(/ninth/)
     );
     expect(screen.queryByRole("button", { name: "View card" })).toBeNull();
+  });
+
+  it("announces a reused card distinctly when the learner used existing material", async () => {
+    mockedFetch.mockResolvedValueOnce({ notes: [note("note-1", "first")] });
+    mockedFetch.mockResolvedValue({ notes: [note("note-9", "ninth"), note("note-1", "first")] });
+
+    render(<NotesPage />);
+    await screen.findByText("first");
+
+    await userEvent.click(screen.getByRole("button", { name: "New card" }));
+    await userEvent.click(screen.getByRole("button", { name: "stub-reuse" }));
+
+    expect(screen.queryByTestId("composer")).toBeNull();
+    expect(await screen.findByText("Card added to existing note. Due now.")).toBeDefined();
   });
 
   it("offers View card when a filter hides the new card's note, and reveals it on click", async () => {

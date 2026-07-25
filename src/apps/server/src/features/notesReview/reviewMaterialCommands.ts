@@ -244,47 +244,47 @@ export async function keepSeparateMaterial(
   const now = dependencies.now();
   const outcome = await dependencies.db.transaction(
     async (tx): Promise<KeepSeparateMaterialOutcome> => {
-    const prepared = prepareDirectCardDraft(request);
-    if (prepared.status !== "ok") {
-      return { status: prepared.status };
-    }
-    await acquireCardMaterialLock(tx, userId, prepared.draft.fingerprint);
+      const prepared = prepareDirectCardDraft(request);
+      if (prepared.status !== "ok") {
+        return { status: prepared.status };
+      }
+      await acquireCardMaterialLock(tx, userId, prepared.draft.fingerprint);
 
-    const guard = await guardDecision(tx, userId, request, prepared.draft, now);
-    if (!guard.ok) {
-      return guard.outcome;
-    }
-    const { attempt, draft, noteIds } = guard.context;
+      const guard = await guardDecision(tx, userId, request, prepared.draft, now);
+      if (!guard.ok) {
+        return guard.outcome;
+      }
+      const { attempt, draft, noteIds } = guard.context;
 
-    if (
-      noteIds.length > 0 &&
-      fingerprintCandidateNotes(noteIds) !== attempt.candidateFingerprint
-    ) {
-      return refreshDecisionReview(tx, userId, guard.context, now);
-    }
+      if (
+        noteIds.length > 0 &&
+        fingerprintCandidateNotes(noteIds) !== attempt.candidateFingerprint
+      ) {
+        return refreshDecisionReview(tx, userId, guard.context, now);
+      }
 
-    const write = await writeDirectCardInTx(tx, {
-      draft,
-      noteEntryId: toEntryId(dependencies.createId()),
-      now,
-      promptId: dependencies.createId(),
-      submissionId: request.submissionId,
-      userId
-    });
-    /* v8 ignore next 3 -- the parked save wrote no receipt, so Keep separate is the first to claim its
+      const write = await writeDirectCardInTx(tx, {
+        draft,
+        noteEntryId: toEntryId(dependencies.createId()),
+        now,
+        promptId: dependencies.createId(),
+        submissionId: request.submissionId,
+        userId
+      });
+      /* v8 ignore next 3 -- the parked save wrote no receipt, so Keep separate is the first to claim its
        submission's receipt and the writer always returns `ok`; conflict/gone are unreachable here. */
-    if (write.status !== "ok") {
-      return { status: write.status };
+      if (write.status !== "ok") {
+        return { status: write.status };
+      }
+      await consumeAttempt(tx, {
+        decision: "keep_separate",
+        expectedRevision: attempt.revision,
+        id: attempt.id,
+        now,
+        userId
+      });
+      return { status: "created", result: write.value };
     }
-    await consumeAttempt(tx, {
-      decision: "keep_separate",
-      expectedRevision: attempt.revision,
-      id: attempt.id,
-      now,
-      userId
-    });
-    return { status: "created", result: write.value };
-  }
   );
   await expireCardCreationAttempts(dependencies.db, now);
   return outcome;

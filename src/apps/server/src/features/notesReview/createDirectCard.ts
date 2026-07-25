@@ -264,7 +264,10 @@ export async function createDirectCard(
           submissionId: request.submissionId,
           userId
         });
-        return { status: "needs_material_review", review: toMaterialReviewDto(attempt, candidates) };
+        return {
+          status: "needs_material_review",
+          review: toMaterialReviewDto(attempt, candidates)
+        };
       }
 
       // A save retry: resume the same review, refreshing its persisted candidates (and bumping the fence)

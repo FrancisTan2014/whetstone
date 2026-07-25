@@ -434,7 +434,10 @@ export function registerNotesReviewRoutes(
     );
     if (result.status === "reused") {
       request.log.info(
-        { noteId: result.result.noteId, route: "POST /api/notes/review/material-review/use-existing" },
+        {
+          noteId: result.result.noteId,
+          route: "POST /api/notes/review/material-review/use-existing"
+        },
         "note_review_material_reused"
       );
     }
@@ -457,7 +460,10 @@ export function registerNotesReviewRoutes(
     );
     if (result.status === "created") {
       request.log.info(
-        { noteId: result.result.noteId, route: "POST /api/notes/review/material-review/keep-separate" },
+        {
+          noteId: result.result.noteId,
+          route: "POST /api/notes/review/material-review/keep-separate"
+        },
         "note_review_material_kept_separate"
       );
     }

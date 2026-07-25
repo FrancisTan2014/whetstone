@@ -50,10 +50,7 @@ export async function loadMaterialReviewCandidates(
     .from(memoryPrompts)
     .innerJoin(
       reviewCards,
-      and(
-        eq(reviewCards.targetEntryId, memoryPrompts.entryId),
-        eq(reviewCards.userId, userId)
-      )
+      and(eq(reviewCards.targetEntryId, memoryPrompts.entryId), eq(reviewCards.userId, userId))
     )
     .where(inArray(memoryPrompts.noteEntryId, noteIds))
     .groupBy(memoryPrompts.noteEntryId);
