@@ -242,12 +242,38 @@ describe("pdfImportPublicationOutcomeDtoSchema", () => {
 });
 
 describe("parsePdfImportViewDto", () => {
-  it("accepts a view pairing execution status with a publication outcome", () => {
-    const view = { publication: { status: "pending" }, status: baseStatus };
+  it("accepts a view pairing execution status with a null review and a publication outcome", () => {
+    const view = { publication: { status: "pending" }, review: null, status: baseStatus };
+    expect(parsePdfImportViewDto(view)).toEqual(view);
+  });
+
+  it("accepts a view carrying a parked duplicate-review payload", () => {
+    const review = {
+      attemptId: "attempt-1",
+      candidateFingerprint: "fp",
+      candidates: [],
+      proposed: {
+        authorName: "Aesop",
+        language: "en",
+        title: "Fables",
+        workType: "classical_text"
+      },
+      revision: 1,
+      sourceFileName: "fables.pdf"
+    };
+    const view = {
+      publication: { status: "pending" },
+      review,
+      status: { ...baseStatus, state: "awaiting_review" }
+    };
     expect(parsePdfImportViewDto(view)).toEqual(view);
   });
 
   it("rejects a view missing its publication outcome", () => {
-    expect(() => parsePdfImportViewDto({ status: baseStatus })).toThrow();
+    expect(() => parsePdfImportViewDto({ review: null, status: baseStatus })).toThrow();
+  });
+
+  it("rejects a view missing its review field", () => {
+    expect(() => parsePdfImportViewDto({ publication: { status: "pending" }, status: baseStatus })).toThrow();
   });
 });
