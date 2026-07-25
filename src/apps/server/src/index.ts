@@ -34,6 +34,7 @@ import { readDiaryTidyConfig } from "./llm/aiUtilityConfig.js";
 import { checkAiUtilityHealth } from "./llm/aiUtilityHealth.js";
 import { resolveDiaryTidy } from "./features/diary/diaryTidy.js";
 import { backfillNoteMaterialFingerprints } from "./features/notes/noteMaterialFingerprintBackfill.js";
+import { expireCardCreationAttempts } from "./features/notesReview/cardCreationAttemptStore.js";
 import {
   processNextVoiceCapture,
   requeueStalledVoiceCaptures,
@@ -75,6 +76,14 @@ const db = createDbClient(pglite);
 // document-package projection after the pure-SQL migration, then VALIDATEs the shape constraint. It is
 // idempotent (only NULL note rows), so a restart re-runs it harmlessly.
 await backfillNoteMaterialFingerprints(db);
+// A parked New-card material-review attempt (#712) holds one pending review per (owner, submission) until
+// the learner chooses Use existing material or Keep separate. An untouched attempt expires after this window
+// and is swept at startup and after each attempt operation, so a forgotten review never lingers; no
+// scheduler is added. Thirty minutes matches the Work-creation review window — generous for a human decision.
+const cardCreationAttemptTtlMs = 30 * 60 * 1000;
+// Sweep any material-review attempts left expired across a restart (#712), so a crash mid-review never
+// strands a pending slot. Idempotent and cheap (a single delete of `expires_at <= now`).
+await expireCardCreationAttempts(db, new Date());
 const sourceFileStore = createSourceFileStore(config.sourceFilesDir);
 // A parked Markdown creation-review attempt (#747) holds a single owner slot with staged bytes until the
 // learner decides. After this window an untouched attempt is swept to `expired` and its stage cleaned, so a
@@ -328,6 +337,7 @@ const server = createServer({
     resolveOfflineGloss
   },
   notesReview: {
+    attemptTtlMs: cardCreationAttemptTtlMs,
     createId: () => randomUUID(),
     db,
     now: () => new Date()

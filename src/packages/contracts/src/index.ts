@@ -437,6 +437,12 @@ export {
   editNotePromptQuestionRequestSchema,
   createDirectCardRequestSchema,
   directCardResultDtoSchema,
+  directCardSaveResultDtoSchema,
+  exactMaterialQueryRequestSchema,
+  exactMaterialQueryResponseSchema,
+  keepSeparateMaterialRequestSchema,
+  materialReviewCandidateDtoSchema,
+  materialReviewDtoSchema,
   notePromptCardStateDtoSchema,
   notePromptRevealPolicyDtoSchema,
   notePromptSettingsDtoSchema,
@@ -452,7 +458,11 @@ export {
   parseAuthorNoteCardRequest,
   parseCreateDirectCardRequest,
   parseDirectCardResultDto,
+  parseDirectCardSaveResultDto,
   parseEditNotePromptQuestionRequest,
+  parseExactMaterialQueryRequest,
+  parseExactMaterialQueryResponse,
+  parseKeepSeparateMaterialRequest,
   parseNotePromptSettingsDto,
   parseNotePromptSettingsListDto,
   parseNoteReviewNextDto,
@@ -463,15 +473,23 @@ export {
   parseNoteRevealDto,
   parseReviewHistoryPageDto,
   parseSetNoteGradingTargetRequest,
+  parseUseExistingMaterialRequest,
   reviewHistoryEventDtoSchema,
   reviewHistoryPageDtoSchema,
-  setNoteGradingTargetRequestSchema
+  setNoteGradingTargetRequestSchema,
+  useExistingMaterialRequestSchema
 } from "./noteReviewContracts.js";
 export type {
   AuthorNoteCardRequest,
   CreateDirectCardRequest,
   DirectCardResultDto,
+  DirectCardSaveResultDto,
   EditNotePromptQuestionRequest,
+  ExactMaterialQueryRequest,
+  ExactMaterialQueryResponse,
+  KeepSeparateMaterialRequest,
+  MaterialReviewCandidateDto,
+  MaterialReviewDto,
   NoteGradingTarget,
   NotePromptCardStateDto,
   NotePromptRevealPolicyDto,
@@ -486,7 +504,8 @@ export type {
   NoteReviewSummaryDto,
   ReviewHistoryEventDto,
   ReviewHistoryPageDto,
-  SetNoteGradingTargetRequest
+  SetNoteGradingTargetRequest,
+  UseExistingMaterialRequest
 } from "./noteReviewContracts.js";
 export {
   glossSuggestionDtoSchema,

@@ -346,6 +346,125 @@ export function parseDirectCardResultDto(value: unknown): DirectCardResultDto {
   return directCardResultDtoSchema.parse(value);
 }
 
+// One reviewed existing-material candidate the New-card save surfaced (#712): the owned note whose exact
+// semantic material equals the drafted Answer. `answerExcerpt` is a short readable projection of that
+// note's body (derived server-side, never trusted from the client); `sourceContext` is the note's anchor
+// selected-text snapshot when it is anchored to a Work, else null; `cardCount` is how many review cards
+// the note already owns. It is FACTUAL evidence that the material exists — never a "duplicate" verdict and
+// never ordered/preselected by recency, source, or card count; the learner decides.
+export const materialReviewCandidateDtoSchema = z
+  .object({
+    answerExcerpt: z.string(),
+    cardCount: z.number().int().nonnegative(),
+    noteId: z.string(),
+    sourceContext: z.string().nullable()
+  })
+  .strict();
+
+export type MaterialReviewCandidateDto = z.infer<typeof materialReviewCandidateDtoSchema>;
+
+// The full owner-scoped material review a New-card save returns when the drafted Answer already exists in
+// Notes (#712): the opaque attempt id and its revision fence (echoed on a decision), the reviewed
+// candidates, and their `candidateFingerprint` so a client can notice the reviewed evidence changed. The
+// server always rechecks in the decision transaction, so this fingerprint is advisory. Carries no draft
+// content and no server key.
+export const materialReviewDtoSchema = z
+  .object({
+    attemptId: z.string(),
+    candidateFingerprint: z.string(),
+    candidates: z.array(materialReviewCandidateDtoSchema),
+    revision: z.number().int().nonnegative()
+  })
+  .strict();
+
+export type MaterialReviewDto = z.infer<typeof materialReviewDtoSchema>;
+
+// The discriminated result of a New-card save (#712, wrapping #689). `created` minted a fresh standalone
+// note + prompt + card (no matching material existed); `reused` — reachable only via a decision — added the
+// drafted contract to an existing note; `needs_material_review` created nothing and returned the review so
+// the learner can decide. The `created`/`reused` payloads reuse `directCardResultDtoSchema` so the follow-on
+// composer can rely on identical ids/state whether the save created directly or a decision resolved it.
+export const directCardSaveResultDtoSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("created"), result: directCardResultDtoSchema }).strict(),
+  z.object({ status: z.literal("reused"), result: directCardResultDtoSchema }).strict(),
+  z.object({ status: z.literal("needs_material_review"), review: materialReviewDtoSchema }).strict()
+]);
+
+export type DirectCardSaveResultDto = z.infer<typeof directCardSaveResultDtoSchema>;
+
+export function parseDirectCardSaveResultDto(value: unknown): DirectCardSaveResultDto {
+  return directCardSaveResultDtoSchema.parse(value);
+}
+
+// The advisory exact-material query (#712): the client debounces this over a valid non-blank Answer draft to
+// warn "This material is already in Notes" before save. It is READ-ONLY and never authoritative — the save
+// always reprojects and rechecks in its transaction — so a stale or missed hint can never change what is
+// created. Only the Answer document is sent; its material is projected server-side.
+export const exactMaterialQueryRequestSchema = z
+  .object({ answerDoc: noteReviewDocumentSchema })
+  .strict();
+
+export type ExactMaterialQueryRequest = z.infer<typeof exactMaterialQueryRequestSchema>;
+
+export const exactMaterialQueryResponseSchema = z
+  .object({ candidates: z.array(materialReviewCandidateDtoSchema) })
+  .strict();
+
+export type ExactMaterialQueryResponse = z.infer<typeof exactMaterialQueryResponseSchema>;
+
+export function parseExactMaterialQueryRequest(value: unknown): ExactMaterialQueryRequest {
+  return exactMaterialQueryRequestSchema.parse(value);
+}
+
+export function parseExactMaterialQueryResponse(value: unknown): ExactMaterialQueryResponse {
+  return exactMaterialQueryResponseSchema.parse(value);
+}
+
+// Use existing material (#712): the learner chose one reviewed candidate note to receive the drafted
+// retrieval contract instead of minting a new note. It carries the SAME full draft the save posted (so the
+// server recomputes the draft fingerprint and rejects an edited Answer as a changed payload), the opaque
+// `attemptId` + `revision` fence, the client's stable `submissionId` (so the composed add-card write is
+// retry-safe), and the chosen `noteEntryId` (which must be a candidate the review surfaced and still
+// exist). React never submits a canonical key or bypass flag — only the real documents.
+export const useExistingMaterialRequestSchema = z
+  .object({
+    submissionId: z.string().trim().min(1),
+    attemptId: z.string().trim().min(1),
+    revision: z.number().int().nonnegative(),
+    noteEntryId: z.string().trim().min(1),
+    questionDoc: noteReviewDocumentSchema,
+    answerDoc: noteReviewDocumentSchema,
+    target: noteGradingTargetSchema
+  })
+  .strict();
+
+export type UseExistingMaterialRequest = z.infer<typeof useExistingMaterialRequestSchema>;
+
+// Keep separate (#712): the learner deliberately commits distinct material despite the review. It carries
+// the SAME full draft, the `attemptId` + `revision` fence, and the `submissionId`. The server reacquires the
+// lock and rechecks: a new/changed/deleted candidate refreshes review; otherwise it creates through the
+// canonical direct-card writer.
+export const keepSeparateMaterialRequestSchema = z
+  .object({
+    submissionId: z.string().trim().min(1),
+    attemptId: z.string().trim().min(1),
+    revision: z.number().int().nonnegative(),
+    questionDoc: noteReviewDocumentSchema,
+    answerDoc: noteReviewDocumentSchema,
+    target: noteGradingTargetSchema
+  })
+  .strict();
+
+export type KeepSeparateMaterialRequest = z.infer<typeof keepSeparateMaterialRequestSchema>;
+
+export function parseUseExistingMaterialRequest(value: unknown): UseExistingMaterialRequest {
+  return useExistingMaterialRequestSchema.parse(value);
+}
+
+export function parseKeepSeparateMaterialRequest(value: unknown): KeepSeparateMaterialRequest {
+  return keepSeparateMaterialRequestSchema.parse(value);
+}
+
 export function parseNotePromptSettingsListDto(value: unknown): NotePromptSettingsListDto {
   return notePromptSettingsListDtoSchema.parse(value);
 }

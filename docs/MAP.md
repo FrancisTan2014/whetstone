@@ -271,6 +271,27 @@ can navigate them from another package.
   The client boundary is `notesReview/notesReviewApi.ts`'s `createDirectCard` (raw `fetch`, mapping the #689
   server outcomes to a discriminated `CreateDirectCardError` — `conflict`/`gone`/`invalid`/`network`) against
   `POST /api/notes/review/direct-cards`; no new server or schema work (the #689 command is the whole backend).
+- Review exact Note material before card creation (#712): a New-card save whose Answer already exists in Notes
+  is authoritatively reviewed INSIDE the save transaction, never as a client-only warning. `notesReview/`
+  server: `createDirectCard.ts` now takes a `pg_advisory_xact_lock` (`cardMaterialLock.acquireCardMaterialLock`
+  from owner+answer-fingerprint keys) then reprojects and rechecks exact matches (`exactMaterialQuery.queryExactMaterial`,
+  wrapping #711's `findExactMaterialNotes`); on a hit it records an owner-scoped, expiring `card_creation_attempt`
+  (`cardCreationAttemptStore.ts`: insert/get/refresh/consume/discard/`expireCardCreationAttempts`, binding the
+  draft fingerprint + candidate-note fingerprint + revision) and returns the discriminated `needs_material_review`
+  instead of creating. `reviewMaterialCommands.ts` resolves a parked attempt under the same lock+recheck:
+  `useExistingMaterial` composes #688's `authorNoteCard` writer to add the drafted contract to a chosen existing
+  note (→ `reused`), `keepSeparateMaterial` mints a distinct note via the #689 writer (→ `created`); a changed
+  Answer, new/changed/deleted candidate, or expired/superseded/cross-owner attempt fails by name (refreshing the
+  review when the evidence moved). `materialReviewCandidates.ts` builds each candidate's readable Answer excerpt +
+  card count. Routes (`notesReviewRoutes.ts`): `POST /api/notes/review/material-matches` (advisory pre-save query),
+  `.../material-review/use-existing`, `.../material-review/keep-separate`; startup `index.ts` calls
+  `expireCardCreationAttempts`. Attempts are operational state (excluded from Entries/Timeline/Today/backup;
+  migration `0075`). DTOs in `@whetstone/contracts` `noteReviewContracts.ts` (`directCardSaveResultDtoSchema`
+  discriminated `created`|`reused`|`needs_material_review`, `materialReviewDtoSchema`/candidate, decision requests).
+  Web: `notes/DirectCardComposer.tsx` owns the save→review→decision state machine (debounced 350ms advisory hint
+  with monotonic cancellation, stacked `notes/MaterialReviewPanel.tsx` over the intact draft, Use-existing/Keep-separate/Back,
+  created-vs-reused announcement in `NotesPage.tsx`);   `notesReview/notesReviewApi.ts` adds `fetchMaterialMatches`/`reuseExistingMaterial`/`keepSeparateMaterial` +
+  `MaterialDecisionError`. E2E: `e2e/tests/notes-material-review.spec.ts`.
 - Import notebook lists into Notes (#661): the `notes` feature owns pasting a notebook list as many
   standalone Notes — the import surface replaced the retired Memory batch import (the Memory
   `importMemoryBatch` command was removed with the Memory experience, #662) with an owner-scoped Notes boundary. Server: `POST /api/notes/import` (`noteRoutes.ts`) →

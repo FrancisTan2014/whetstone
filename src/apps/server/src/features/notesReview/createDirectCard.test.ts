@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { CreateDirectCardRequest } from "@whetstone/contracts";
 import { createTextDocument, documentReadableText, documentText } from "@whetstone/document";
-import { RECALL_REQUEST_RETENTION } from "@whetstone/domain";
+import { RECALL_REQUEST_RETENTION, toEntryId } from "@whetstone/domain";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
@@ -29,7 +29,13 @@ import type { LibraryDependencies } from "../library/libraryCommands.js";
 import { deleteNoteInTx } from "../notes/noteCommands.js";
 import type { NotesDependencies } from "../notes/noteCommands.js";
 import { deleteReviewCard } from "../review/reviewCardCommands.js";
-import { createDirectCard, type CreateDirectCardDependencies } from "./createDirectCard.js";
+import {
+  createDirectCard,
+  prepareDirectCardDraft,
+  writeDirectCardInTx,
+  type CreateDirectCardDependencies
+} from "./createDirectCard.js";
+import { useExistingMaterial } from "./reviewMaterialCommands.js";
 import type { NotesReviewRouteDependencies } from "./notesReviewRoutes.js";
 
 const now = new Date("2026-03-01T08:00:00.000Z");
@@ -72,11 +78,16 @@ async function buildContext(): Promise<TestContext> {
     db,
     now: () => clock
   };
-  const notesReview: NotesReviewRouteDependencies = { createId, db, now: () => clock };
+  const notesReview: NotesReviewRouteDependencies = {
+    attemptTtlMs: 30 * 60 * 1000,
+    createId,
+    db,
+    now: () => clock
+  };
 
   return {
     db,
-    deps: { createId, db, now: () => clock },
+    deps: { attemptTtlMs: 30 * 60 * 1000, createId, db, now: () => clock },
     server: createServer({ content, library, logger: false, notes: noteDeps, notesReview }),
     setNow: (when) => {
       clock = when;
@@ -183,17 +194,17 @@ describe("createDirectCard", () => {
     const request = currentNoteRequest();
     const result = await createDirectCard(context.deps, DEFAULT_USER_ID, request);
 
-    expect(result.status).toBe("ok");
-    if (result.status !== "ok") {
-      throw new Error("expected ok");
+    expect(result.status).toBe("created");
+    if (result.status !== "created") {
+      throw new Error("expected created");
     }
-    expect(result.value.review.due).toBe(now.toISOString());
+    expect(result.result.review.due).toBe(now.toISOString());
 
     const noteRows = await listNotes();
     expect(noteRows).toHaveLength(1);
     expect(noteRows[0]).toMatchObject({
       captureSource: "manual",
-      entryId: result.value.noteId,
+      entryId: result.result.noteId,
       kind: "note",
       bodyText: documentReadableText(request.answerDoc)
     });
@@ -204,17 +215,17 @@ describe("createDirectCard", () => {
       answerDoc: null,
       answerText: null,
       cueText: documentReadableText(request.questionDoc),
-      entryId: result.value.promptId,
+      entryId: result.result.promptId,
       lifecycle: "ready",
-      noteEntryId: result.value.noteId,
+      noteEntryId: result.result.noteId,
       revealKind: "current_note"
     });
 
     const contains = await listContains();
     expect(contains).toEqual([
       expect.objectContaining({
-        fromEntryId: result.value.noteId,
-        toEntryId: result.value.promptId
+        fromEntryId: result.result.noteId,
+        toEntryId: result.result.promptId
       })
     ]);
 
@@ -223,7 +234,7 @@ describe("createDirectCard", () => {
     expect(cards[0]).toMatchObject({
       requestedRetention: RECALL_REQUEST_RETENTION,
       status: "active",
-      targetEntryId: result.value.promptId,
+      targetEntryId: result.result.promptId,
       userId: DEFAULT_USER_ID
     });
     expect(cards[0]!.dueAt.getTime()).toBe(now.getTime());
@@ -233,8 +244,8 @@ describe("createDirectCard", () => {
     const receipts = await listReceipts();
     expect(receipts).toHaveLength(1);
     expect(receipts[0]).toMatchObject({
-      noteEntryId: result.value.noteId,
-      promptEntryId: result.value.promptId,
+      noteEntryId: result.result.noteId,
+      promptEntryId: result.result.promptId,
       submissionId: "sub-1",
       userId: DEFAULT_USER_ID
     });
@@ -248,7 +259,7 @@ describe("createDirectCard", () => {
     });
 
     const result = await createDirectCard(context.deps, DEFAULT_USER_ID, request);
-    expect(result.status).toBe("ok");
+    expect(result.status).toBe("created");
 
     const promptRows = await listPrompts();
     expect(promptRows).toHaveLength(1);
@@ -301,7 +312,7 @@ describe("createDirectCard", () => {
   it("returns the original result on an identical retry without writing a second card", async () => {
     const request = currentNoteRequest();
     const first = await createDirectCard(context.deps, DEFAULT_USER_ID, request);
-    expect(first.status).toBe("ok");
+    expect(first.status).toBe("created");
 
     context.setNow(later);
     const retry = await createDirectCard(context.deps, DEFAULT_USER_ID, request);
@@ -313,21 +324,21 @@ describe("createDirectCard", () => {
     expect(await listCards()).toHaveLength(1);
 
     // The replayed result still carries the ORIGINAL due instant, not the advanced clock.
-    if (retry.status !== "ok") {
-      throw new Error("expected ok");
+    if (retry.status !== "created") {
+      throw new Error("expected created");
     }
-    expect(retry.value.review.due).toBe(now.toISOString());
+    expect(retry.result.review.due).toBe(now.toISOString());
 
     const owner = await context.db
       .select({ updatedAt: personalEntries.updatedAt })
       .from(personalEntries)
-      .where(eq(personalEntries.entryId, retry.value.noteId));
+      .where(eq(personalEntries.entryId, retry.result.noteId));
     expect(owner[0]!.updatedAt.getTime()).toBe(now.getTime());
   });
 
   it("reports a conflict when the same submission id carries a changed payload", async () => {
     const first = await createDirectCard(context.deps, DEFAULT_USER_ID, currentNoteRequest());
-    expect(first.status).toBe("ok");
+    expect(first.status).toBe("created");
 
     const conflict = await createDirectCard(
       context.deps,
@@ -344,12 +355,12 @@ describe("createDirectCard", () => {
     const mine = await createDirectCard(context.deps, DEFAULT_USER_ID, currentNoteRequest());
     const theirs = await createDirectCard(context.deps, otherUser, currentNoteRequest());
 
-    expect(mine.status).toBe("ok");
-    expect(theirs.status).toBe("ok");
-    if (mine.status !== "ok" || theirs.status !== "ok") {
-      throw new Error("expected ok");
+    expect(mine.status).toBe("created");
+    expect(theirs.status).toBe("created");
+    if (mine.status !== "created" || theirs.status !== "created") {
+      throw new Error("expected created");
     }
-    expect(mine.value.noteId).not.toBe(theirs.value.noteId);
+    expect(mine.result.noteId).not.toBe(theirs.result.noteId);
     expect(await listNotes()).toHaveLength(2);
     expect(await listCards()).toHaveLength(2);
     expect(await listReceipts(DEFAULT_USER_ID)).toHaveLength(1);
@@ -359,12 +370,12 @@ describe("createDirectCard", () => {
   it("reports gone and never recreates a deleted result on replay", async () => {
     const request = currentNoteRequest();
     const first = await createDirectCard(context.deps, DEFAULT_USER_ID, request);
-    expect(first.status).toBe("ok");
-    if (first.status !== "ok") {
-      throw new Error("expected ok");
+    expect(first.status).toBe("created");
+    if (first.status !== "created") {
+      throw new Error("expected created");
     }
 
-    await context.db.transaction((tx) => deleteNoteInTx(tx, first.value.noteId));
+    await context.db.transaction((tx) => deleteNoteInTx(tx, first.result.noteId));
     expect(await listNotes()).toHaveLength(0);
 
     const replay = await createDirectCard(context.deps, DEFAULT_USER_ID, request);
@@ -378,14 +389,14 @@ describe("createDirectCard", () => {
   it("reports gone when only the review card was removed, keeping the note", async () => {
     const request = currentNoteRequest();
     const first = await createDirectCard(context.deps, DEFAULT_USER_ID, request);
-    expect(first.status).toBe("ok");
-    if (first.status !== "ok") {
-      throw new Error("expected ok");
+    expect(first.status).toBe("created");
+    if (first.status !== "created") {
+      throw new Error("expected created");
     }
 
     // Remove ONLY the seeded card through the existing unenroll boundary; the note, prompt, contains link,
     // and review history all survive. A later replay must not dereference the now-missing card row.
-    await context.db.transaction((tx) => deleteReviewCard(tx, first.value.promptId));
+    await context.db.transaction((tx) => deleteReviewCard(tx, first.result.promptId));
     expect(await listCards()).toHaveLength(0);
     expect(await listNotes()).toHaveLength(1);
     expect(await listPrompts()).toHaveLength(1);
@@ -408,13 +419,13 @@ describe("createDirectCard", () => {
       createDirectCard(context.deps, DEFAULT_USER_ID, request)
     ]);
 
-    expect(a.status).toBe("ok");
-    expect(b.status).toBe("ok");
-    if (a.status !== "ok" || b.status !== "ok") {
-      throw new Error("expected ok");
+    expect(a.status).toBe("created");
+    expect(b.status).toBe("created");
+    if (a.status !== "created" || b.status !== "created") {
+      throw new Error("expected created");
     }
-    expect(a.value.noteId).toBe(b.value.noteId);
-    expect(a.value.promptId).toBe(b.value.promptId);
+    expect(a.result.noteId).toBe(b.result.noteId);
+    expect(a.result.promptId).toBe(b.result.promptId);
 
     expect(await listNotes()).toHaveLength(1);
     expect(await listPrompts()).toHaveLength(1);
@@ -450,12 +461,16 @@ describe("POST /api/notes/review/direct-cards", () => {
   it("creates a card and returns the result for a current-note target", async () => {
     const response = await post(currentNoteRequest());
     expect(response.statusCode).toBe(200);
-    const body = response.json() as { noteId: string; promptId: string; review: { due: string } };
-    expect(body.review.due).toBe(now.toISOString());
+    const body = response.json() as {
+      status: string;
+      result: { noteId: string; promptId: string; review: { due: string } };
+    };
+    expect(body.status).toBe("created");
+    expect(body.result.review.due).toBe(now.toISOString());
 
     const cards = await listCards();
     expect(cards).toHaveLength(1);
-    expect(cards[0]!.targetEntryId).toBe(body.promptId);
+    expect(cards[0]!.targetEntryId).toBe(body.result.promptId);
   });
 
   it("creates a card for an expected-response target", async () => {
@@ -515,11 +530,130 @@ describe("POST /api/notes/review/direct-cards", () => {
 
   it("returns 410 when the original note has been deleted", async () => {
     const created = await post(currentNoteRequest());
-    const noteId = (created.json() as { noteId: string }).noteId;
+    const noteId = (created.json() as { result: { noteId: string } }).result.noteId;
     await context.db.transaction((tx) => deleteNoteInTx(tx, noteId));
 
     const response = await post(currentNoteRequest());
     expect(response.statusCode).toBe(410);
     expect(response.json()).toEqual({ error: "submission_gone" });
+  });
+});
+
+// Exercise the shared writer's internal receipt-replay branch directly. The save command's own outer
+// `findReceiptReplay` pre-empts this on the create path, so a decision (Keep separate) is the real caller —
+// but the primitive is what carries the retry-safety, so we assert its replay classification head-on.
+describe("writeDirectCardInTx receipt replay", () => {
+  function prepared() {
+    const result = prepareDirectCardDraft(currentNoteRequest());
+    if (result.status !== "ok") {
+      throw new Error("expected a valid prepared draft");
+    }
+    return result.draft;
+  }
+
+  it("replays the original result when the same submission re-runs the writer", async () => {
+    const draft = prepared();
+    const first = await context.db.transaction((tx) =>
+      writeDirectCardInTx(tx, {
+        draft,
+        noteEntryId: toEntryId("note-replay-a"),
+        now,
+        promptId: "prompt-replay-a",
+        submissionId: "sub-replay",
+        userId: DEFAULT_USER_ID
+      })
+    );
+    const second = await context.db.transaction((tx) =>
+      writeDirectCardInTx(tx, {
+        draft,
+        noteEntryId: toEntryId("note-replay-b"),
+        now,
+        promptId: "prompt-replay-b",
+        submissionId: "sub-replay",
+        userId: DEFAULT_USER_ID
+      })
+    );
+
+    if (first.status !== "ok" || second.status !== "ok") {
+      throw new Error("expected both writes to resolve ok");
+    }
+    expect(second.value).toEqual(first.value);
+    expect(await listNotes()).toHaveLength(1);
+    expect(await listCards()).toHaveLength(1);
+  });
+
+  it("reports a conflict when the same submission re-runs with a changed payload", async () => {
+    const firstDraft = prepared();
+    const changed = prepareDirectCardDraft(
+      currentNoteRequest({ answerDoc: answerDoc("A completely different answer.") })
+    );
+    if (changed.status !== "ok") {
+      throw new Error("expected a valid changed draft");
+    }
+
+    await context.db.transaction((tx) =>
+      writeDirectCardInTx(tx, {
+        draft: firstDraft,
+        noteEntryId: toEntryId("note-conflict-a"),
+        now,
+        promptId: "prompt-conflict-a",
+        submissionId: "sub-conflict",
+        userId: DEFAULT_USER_ID
+      })
+    );
+    const second = await context.db.transaction((tx) =>
+      writeDirectCardInTx(tx, {
+        draft: changed.draft,
+        noteEntryId: toEntryId("note-conflict-b"),
+        now,
+        promptId: "prompt-conflict-b",
+        submissionId: "sub-conflict",
+        userId: DEFAULT_USER_ID
+      })
+    );
+
+    expect(second.status).toBe("conflict");
+  });
+});
+
+// A genuine mid-write DB error inside Use existing material must roll the decision transaction back and
+// propagate unchanged — the rollback sentinel only intercepts the (untestable) not_found race, never a real
+// failure.
+describe("useExistingMaterial write failure", () => {
+  it("rolls back and rethrows a mid-write database error", async () => {
+    await createDirectCard(
+      context.deps,
+      DEFAULT_USER_ID,
+      currentNoteRequest({ submissionId: "seed" })
+    );
+    const parked = await createDirectCard(
+      context.deps,
+      DEFAULT_USER_ID,
+      currentNoteRequest({ submissionId: "sub-reuse" })
+    );
+    if (parked.status !== "needs_material_review") {
+      throw new Error("expected the second save to park a review");
+    }
+    const review = parked.review;
+
+    const failing = {
+      ...context.deps,
+      db: dbFailingOnInsert(context.db, memoryPrompts as PgTable)
+    };
+    await expect(
+      useExistingMaterial(failing, DEFAULT_USER_ID, {
+        submissionId: "sub-reuse",
+        attemptId: review.attemptId,
+        revision: review.revision,
+        noteEntryId: review.candidates[0]!.noteId,
+        questionDoc: questionDoc(),
+        answerDoc: answerDoc(),
+        target: { kind: "current_note" }
+      })
+    ).rejects.toThrow("injected write failure");
+
+    // The seed's receipt survives; the failed decision's freshly claimed receipt rolled back with the tx.
+    expect(await listReceipts()).toHaveLength(1);
+    expect(await listCards()).toHaveLength(1);
   });
 });

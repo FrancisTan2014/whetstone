@@ -16,17 +16,21 @@ import {
   createDirectCard,
   CreateDirectCardError,
   editNotePromptQuestion,
+  fetchMaterialMatches,
   fetchNextNotePrompt,
   fetchNotePromptHistory,
   fetchNotePromptSettings,
   fetchNoteReveal,
+  keepSeparateMaterial,
+  MaterialDecisionError,
   pauseNotePromptCard,
   rateNotePrompt,
   removeNotePromptCard,
   restartNotePromptCard,
   resumeNotePromptCard,
   setNoteGradingTarget,
-  SetNoteGradingTargetError
+  SetNoteGradingTargetError,
+  reuseExistingMaterial
 } from "./notesReviewApi";
 
 const review = {
@@ -108,16 +112,33 @@ describe("createDirectCard", () => {
     target: { kind: "current_note" as const }
   };
 
-  it("POSTs the request as JSON and returns the parsed result", async () => {
-    const result = { noteId: "note-1", promptId: "prompt-1", review };
-    const fetchMock = stubFetch({ body: result, ok: true });
+  it("POSTs the request as JSON and returns the parsed created save result", async () => {
+    const body = { result: { noteId: "note-1", promptId: "prompt-1", review }, status: "created" };
+    const fetchMock = stubFetch({ body, ok: true });
 
-    await expect(createDirectCard(request)).resolves.toEqual(result);
+    await expect(createDirectCard(request)).resolves.toEqual(body);
     expect(fetchMock).toHaveBeenCalledWith("/api/notes/review/direct-cards", {
       body: JSON.stringify(request),
       headers: { "content-type": "application/json" },
       method: "POST"
     });
+  });
+
+  it("parses a needs_material_review save result", async () => {
+    const body = {
+      review: {
+        attemptId: "attempt-1",
+        candidateFingerprint: "fp-1",
+        candidates: [
+          { answerExcerpt: "Paris.", cardCount: 1, noteId: "note-9", sourceContext: null }
+        ],
+        revision: 0
+      },
+      status: "needs_material_review"
+    };
+    stubFetch({ body, ok: true });
+
+    await expect(createDirectCard(request)).resolves.toEqual(body);
   });
 
   it("throws a conflict error on a 409 (same id, changed payload)", async () => {
@@ -156,6 +177,152 @@ describe("createDirectCard", () => {
     const error = await createDirectCard(request).catch((thrown: unknown) => thrown);
     expect(error).toBeInstanceOf(CreateDirectCardError);
     expect((error as CreateDirectCardError).kind).toBe("network");
+  });
+});
+
+describe("fetchMaterialMatches (#712)", () => {
+  const answerDoc = createTextDocument("Paris is the capital of France.");
+  const candidates = [
+    { answerExcerpt: "Paris.", cardCount: 1, noteId: "note-9", sourceContext: null }
+  ];
+
+  it("POSTs only the answer document and returns the parsed candidates", async () => {
+    const fetchMock = stubFetch({ body: { candidates }, ok: true });
+
+    await expect(fetchMaterialMatches(answerDoc)).resolves.toEqual(candidates);
+    expect(fetchMock).toHaveBeenCalledWith("/api/notes/review/material-matches", {
+      body: JSON.stringify({ answerDoc }),
+      headers: { "content-type": "application/json" },
+      method: "POST"
+    });
+  });
+
+  it("resolves to an empty list on a non-2xx response (advisory only)", async () => {
+    stubFetch({ ok: false, status: 500 });
+
+    await expect(fetchMaterialMatches(answerDoc)).resolves.toEqual([]);
+  });
+
+  it("resolves to an empty list when fetch itself rejects", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("offline");
+      })
+    );
+
+    await expect(fetchMaterialMatches(answerDoc)).resolves.toEqual([]);
+  });
+});
+
+describe("material review decisions (#712)", () => {
+  const base = {
+    answerDoc: createTextDocument("Paris is the capital of France."),
+    attemptId: "attempt-1",
+    questionDoc: createTextDocument("Capital of France?"),
+    revision: 0,
+    submissionId: "submission-1",
+    target: { kind: "current_note" as const }
+  };
+  const useExistingRequest = { ...base, noteEntryId: "note-9" };
+  const savedReused = {
+    result: { noteId: "note-9", promptId: "prompt-9", review },
+    status: "reused" as const
+  };
+  const savedCreated = {
+    result: { noteId: "note-1", promptId: "prompt-1", review },
+    status: "created" as const
+  };
+
+  it("reuseExistingMaterial POSTs the request and returns the reused result", async () => {
+    const fetchMock = stubFetch({ body: savedReused, ok: true });
+
+    await expect(reuseExistingMaterial(useExistingRequest)).resolves.toEqual(savedReused);
+    expect(fetchMock).toHaveBeenCalledWith("/api/notes/review/material-review/use-existing", {
+      body: JSON.stringify(useExistingRequest),
+      headers: { "content-type": "application/json" },
+      method: "POST"
+    });
+  });
+
+  it("keepSeparateMaterial POSTs the request and returns the created result", async () => {
+    const fetchMock = stubFetch({ body: savedCreated, ok: true });
+
+    await expect(keepSeparateMaterial(base)).resolves.toEqual(savedCreated);
+    expect(fetchMock).toHaveBeenCalledWith("/api/notes/review/material-review/keep-separate", {
+      body: JSON.stringify(base),
+      headers: { "content-type": "application/json" },
+      method: "POST"
+    });
+  });
+
+  it("maps a 404 to attempt_not_found", async () => {
+    stubFetch({ ok: false, status: 404 });
+
+    await expect(keepSeparateMaterial(base)).rejects.toMatchObject({
+      kind: "attempt_not_found",
+      name: "MaterialDecisionError"
+    });
+  });
+
+  it("maps a 410 to expired, or gone when the submission's note vanished", async () => {
+    stubFetch({ body: { error: "attempt_expired" }, ok: false, status: 410 });
+    await expect(keepSeparateMaterial(base)).rejects.toMatchObject({ kind: "expired" });
+
+    stubFetch({ body: { error: "submission_gone" }, ok: false, status: 410 });
+    await expect(keepSeparateMaterial(base)).rejects.toMatchObject({ kind: "gone" });
+  });
+
+  it("maps 409 errors to changed_payload, conflict, or superseded", async () => {
+    stubFetch({ body: { error: "changed_payload" }, ok: false, status: 409 });
+    await expect(keepSeparateMaterial(base)).rejects.toMatchObject({ kind: "changed_payload" });
+
+    stubFetch({ body: { error: "submission_conflict" }, ok: false, status: 409 });
+    await expect(keepSeparateMaterial(base)).rejects.toMatchObject({ kind: "conflict" });
+
+    stubFetch({ body: { error: "attempt_superseded" }, ok: false, status: 409 });
+    await expect(keepSeparateMaterial(base)).rejects.toMatchObject({ kind: "superseded" });
+  });
+
+  it("maps any other 4xx to invalid and a 5xx to network", async () => {
+    stubFetch({ body: { error: "invalid_answer" }, ok: false, status: 400 });
+    await expect(reuseExistingMaterial(useExistingRequest)).rejects.toMatchObject({
+      kind: "invalid"
+    });
+
+    stubFetch({ ok: false, status: 503 });
+    await expect(reuseExistingMaterial(useExistingRequest)).rejects.toMatchObject({
+      kind: "network"
+    });
+  });
+
+  it("falls back to a null error body when the 409 payload is not JSON", async () => {
+    // A malformed error body must not throw while mapping; the null fallback lands on the default 409 kind.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        json: async () => {
+          throw new Error("not json");
+        },
+        ok: false,
+        status: 409
+      }))
+    );
+
+    await expect(keepSeparateMaterial(base)).rejects.toMatchObject({ kind: "superseded" });
+  });
+
+  it("maps a fetch rejection to network", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("offline");
+      })
+    );
+
+    const error = await keepSeparateMaterial(base).catch((thrown: unknown) => thrown);
+    expect(error).toBeInstanceOf(MaterialDecisionError);
+    expect((error as MaterialDecisionError).kind).toBe("network");
   });
 });
 

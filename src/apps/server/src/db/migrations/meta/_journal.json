@@ -526,6 +526,13 @@
       "when": 1784971817192,
       "tag": "0074_note_material_fingerprint",
       "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1784977439586,
+      "tag": "0075_free_killmonger",
+      "breakpoints": true
     }
   ]
 }

@@ -748,6 +748,54 @@ export const cardCreationReceipts = pgTable(
   (table) => [primaryKey({ columns: [table.userId, table.submissionId] })]
 );
 
+// The owner-scoped, expiring review attempt minted ONLY when a New-card save (#712) finds the drafted
+// Answer already exact-projected in the learner's Notes. It is operational state — never an Entry, never
+// on the Timeline/Today, excluded from backup — that binds one pending material review so a follow-on
+// decision (Use existing material / Keep separate) is authoritative and fenced. It stores no learning
+// content: `draft_fingerprint` is the opaque sha256 of the full authored draft (answer+question+target),
+// so a decision whose draft changed (an edited Answer) is detected without persisting the draft;
+// `candidate_note_ids` are the reviewed candidate note ids and `candidate_fingerprint` their opaque
+// digest, so a new/changed/deleted candidate since review is detected and forces a refresh. `revision`
+// fences a decision against a stale client; `source` records where review was raised (`ui`). A partial
+// unique index keeps at most one PENDING attempt per (owner, submission), so a save retry resumes the
+// same review instead of minting a second. The row is swept at its `expires_at` on startup and on each
+// attempt operation; it has no foreign key into the note cascade, so a deleted candidate simply fails a
+// later recheck rather than resurrecting anything.
+export const cardCreationAttempts = pgTable(
+  "card_creation_attempts",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id").notNull(),
+    submissionId: text("submission_id").notNull(),
+    draftFingerprint: text("draft_fingerprint").notNull(),
+    candidateNoteIds: jsonb("candidate_note_ids").$type<ReadonlyArray<string>>().notNull(),
+    candidateFingerprint: text("candidate_fingerprint").notNull(),
+    source: text("source", { enum: ["ui"] as const }).notNull(),
+    state: text("state", { enum: ["pending", "consumed"] as const }).notNull(),
+    decision: text("decision", { enum: ["reuse", "keep_separate"] as const }),
+    revision: integer("revision").notNull().default(0),
+    expiresAt: timestamp("expires_at", { mode: "date", withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    index("card_creation_attempts_user_idx").on(table.userId),
+    // At most ONE pending review per (owner, submission): a save retry for the same submission resumes
+    // the existing review rather than minting a duplicate. A consumed attempt is terminal, so it never
+    // participates in the active predicate.
+    uniqueIndex("card_creation_attempts_single_pending")
+      .on(table.userId, table.submissionId)
+      .where(sql`${table.state} = 'pending'`),
+    // A decision is recorded only on a consumed attempt, and a pending attempt never carries one: the
+    // biconditional keeps the terminal state and its decision in lockstep so a half-written row is
+    // impossible.
+    check(
+      "card_creation_attempts_decision_state_ck",
+      sql`(${table.state} = 'consumed' and ${table.decision} is not null) or (${table.state} = 'pending' and ${table.decision} is null)`
+    )
+  ]
+);
+
 // The shared ownership + chronology facet for personal (owned) Entries (#571): owner and the three
 // timestamps a logical Timeline needs — `occurred_at` (when the entry happened, the Timeline sort key),
 // `created_at` (when it was captured), and `updated_at` (last edit). Every personal Entry carries exactly

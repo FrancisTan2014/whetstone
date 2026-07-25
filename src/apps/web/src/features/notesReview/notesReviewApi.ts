@@ -1,5 +1,7 @@
 import {
   parseDirectCardResultDto,
+  parseDirectCardSaveResultDto,
+  parseExactMaterialQueryResponse,
   parseNotePromptSettingsDto,
   parseNotePromptSettingsListDto,
   parseNoteRevealDto,
@@ -9,14 +11,18 @@ import {
   type AuthorNoteCardRequest,
   type CreateDirectCardRequest,
   type DirectCardResultDto,
+  type DirectCardSaveResultDto,
   type EditNotePromptQuestionRequest,
+  type KeepSeparateMaterialRequest,
+  type MaterialReviewCandidateDto,
   type NotePromptSettingsDto,
   type NotePromptSettingsListDto,
   type NoteReviewPromptDto,
   type NoteRevealDto,
   type NoteReviewRatingResultDto,
   type ReviewHistoryPageDto,
-  type SetNoteGradingTargetRequest
+  type SetNoteGradingTargetRequest,
+  type UseExistingMaterialRequest
 } from "@whetstone/contracts";
 import { type ReviewRating } from "@whetstone/domain";
 
@@ -248,14 +254,16 @@ export class CreateDirectCardError extends Error {
   }
 }
 
-// Create one review card directly from an authored Question/Answer pair (#689, #690), retry-safe via the
-// composer's stable `submissionId`. A same-payload retry returns the ORIGINAL result (200), so a lost
-// response never double-creates. On failure this throws a `CreateDirectCardError` whose `kind` maps the
-// server outcome — 409 → `conflict`, 410 → `gone`, 4xx → `invalid`, anything else → `network` — so the
-// composer keeps every draft and offers the right recovery.
+// Create one review card directly from an authored Question/Answer pair (#689, #690, reviewed by #712),
+// retry-safe via the composer's stable `submissionId`. The 200 body is the discriminated save outcome: a
+// `created` card, or `needs_material_review` when the Answer already exists in Notes so the learner resolves
+// it (never a client-only warning). A same-payload retry replays the ORIGINAL outcome, so a lost response
+// never double-creates. On a non-2xx this throws a `CreateDirectCardError` whose `kind` maps the server —
+// 409 → `conflict`, 410 → `gone`, 4xx → `invalid`, anything else → `network` — so the composer keeps every
+// draft and offers the right recovery.
 export async function createDirectCard(
   request: CreateDirectCardRequest
-): Promise<DirectCardResultDto> {
+): Promise<DirectCardSaveResultDto> {
   let response: Response;
   try {
     response = await fetch(apiUrl("/notes/review/direct-cards"), {
@@ -278,7 +286,109 @@ export async function createDirectCard(
     }
     throw new CreateDirectCardError("network");
   }
-  return parseDirectCardResultDto(await response.json());
+  return parseDirectCardSaveResultDto(await response.json());
+}
+
+// The advisory exact-material hint (#712): the composer debounces this over a valid, non-blank Answer draft
+// to warn "This material is already in Notes" BEFORE save. It is read-only and never authoritative — the save
+// always reprojects and rechecks — so a stale or failed hint is harmless. Any non-2xx or transport error
+// resolves to an empty list rather than throwing: a broken hint must never block or alarm the composer.
+export async function fetchMaterialMatches(
+  answerDoc: CreateDirectCardRequest["answerDoc"]
+): Promise<ReadonlyArray<MaterialReviewCandidateDto>> {
+  let response: Response;
+  try {
+    response = await fetch(apiUrl("/notes/review/material-matches"), {
+      body: JSON.stringify({ answerDoc }),
+      headers: jsonHeaders,
+      method: "POST"
+    });
+  } catch {
+    return [];
+  }
+  if (!response.ok) {
+    return [];
+  }
+  return parseExactMaterialQueryResponse(await response.json()).candidates;
+}
+
+// Why a material-review DECISION failed (#712), kept as a closed set so the composer can restore the draft
+// and report the exact reason. `attempt_not_found`/`expired`/`superseded` mean the parked review no longer
+// applies; `changed_payload` means the resubmitted Answer was edited; `conflict`/`gone` are the underlying
+// writer's receipt outcomes; `invalid` is a blank/malformed draft; `network` is a lost response.
+export type MaterialDecisionErrorKind =
+  | "attempt_not_found"
+  | "changed_payload"
+  | "conflict"
+  | "expired"
+  | "gone"
+  | "invalid"
+  | "network"
+  | "superseded";
+
+export class MaterialDecisionError extends Error {
+  readonly kind: MaterialDecisionErrorKind;
+
+  constructor(kind: MaterialDecisionErrorKind) {
+    super(`Material review decision failed: ${kind}.`);
+    this.name = "MaterialDecisionError";
+    this.kind = kind;
+  }
+}
+
+async function sendMaterialDecision(
+  path: string,
+  request: UseExistingMaterialRequest | KeepSeparateMaterialRequest
+): Promise<DirectCardSaveResultDto> {
+  let response: Response;
+  try {
+    response = await fetch(apiUrl(path), {
+      body: JSON.stringify(request),
+      headers: jsonHeaders,
+      method: "POST"
+    });
+  } catch {
+    throw new MaterialDecisionError("network");
+  }
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { error?: string } | null;
+    if (response.status === 404) {
+      throw new MaterialDecisionError("attempt_not_found");
+    }
+    if (response.status === 410) {
+      throw new MaterialDecisionError(body?.error === "submission_gone" ? "gone" : "expired");
+    }
+    if (response.status === 409) {
+      if (body?.error === "changed_payload") {
+        throw new MaterialDecisionError("changed_payload");
+      }
+      throw new MaterialDecisionError(
+        body?.error === "submission_conflict" ? "conflict" : "superseded"
+      );
+    }
+    if (response.status >= 400 && response.status < 500) {
+      throw new MaterialDecisionError("invalid");
+    }
+    throw new MaterialDecisionError("network");
+  }
+  return parseDirectCardSaveResultDto(await response.json());
+}
+
+// Use existing material (#712): add the drafted retrieval contract to one reviewed candidate note through
+// #688's canonical writer instead of minting a new note. Resolves to `reused` on success, or
+// `needs_material_review` when the candidate evidence changed since the learner decided.
+export function reuseExistingMaterial(
+  request: UseExistingMaterialRequest
+): Promise<DirectCardSaveResultDto> {
+  return sendMaterialDecision("/notes/review/material-review/use-existing", request);
+}
+
+// Keep separate (#712): mint a distinct note despite the match through the canonical direct-card writer.
+// Resolves to `created` on success, or `needs_material_review` when the candidate set changed.
+export function keepSeparateMaterial(
+  request: KeepSeparateMaterialRequest
+): Promise<DirectCardSaveResultDto> {
+  return sendMaterialDecision("/notes/review/material-review/keep-separate", request);
 }
 
 // Why authoring a card over an existing saved note failed (#687; independent directions in #688), kept as a

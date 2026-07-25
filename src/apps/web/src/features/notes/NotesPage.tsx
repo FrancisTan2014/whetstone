@@ -193,9 +193,11 @@ export function NotesPage({
     setComposerOpen(true);
   }
 
-  function onCardCreated(result: DirectCardResultDto): void {
+  function onCardCreated(result: DirectCardResultDto, outcome: "created" | "reused"): void {
     setComposerOpen(false);
-    setCardMessage("Card created. Due now.");
+    setCardMessage(
+      outcome === "reused" ? "Card added to existing note. Due now." : "Card created. Due now."
+    );
     cardFocusId.current = result.noteId;
     setFocusEntryId(result.noteId);
     pendingCardFocus.current = true;
