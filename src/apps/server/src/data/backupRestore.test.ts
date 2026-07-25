@@ -146,9 +146,11 @@ describe("backup/restore round-trip", () => {
     const verifyPglite = new PGlite(join(targetDir, "database"));
     await verifyPglite.waitReady;
     const authors = await verifyPglite.query<{ name: string }>("select name from authors");
-    const work = await verifyPglite.query<{ title: string; origin: string; content_revision: number }>(
-      "select title, origin, content_revision from work_meta"
-    );
+    const work = await verifyPglite.query<{
+      title: string;
+      origin: string;
+      content_revision: number;
+    }>("select title, origin, content_revision from work_meta");
     const note = await verifyPglite.query<{ body_text: string }>(
       "select body_text from notes order by body_text"
     );
