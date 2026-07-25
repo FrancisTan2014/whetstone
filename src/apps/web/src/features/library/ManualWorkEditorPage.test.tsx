@@ -90,7 +90,7 @@ function makeWork(overrides: Partial<ManualWorkDto> = {}): ManualWorkDto {
     document: loadedDocument,
     entryId: "work-1",
     language: "en",
-    revision: "2026-01-01T00:00:00.000Z",
+    revision: 0,
     sections: [{ orderIndex: 0, unitEntryId: "work-2" }],
     title: "A Tale of Two Cities",
     unitEntryId: "work-2",
@@ -273,7 +273,7 @@ describe("ManualWorkEditorPage", () => {
         content: [{ content: [{ text: "Hi", type: "text" }], type: "paragraph" }],
         type: "doc"
       },
-      revision: "2026-02-02T00:00:00.000Z"
+      revision: 2
     });
     mockedSave.mockResolvedValue({ status: "saved", work: saved });
     const { textbox, user } = await renderReadyEditor();
@@ -288,14 +288,14 @@ describe("ManualWorkEditorPage", () => {
     const [entryId, unitEntryId, , revision] = mockedSave.mock.calls[0]!;
     expect(entryId).toBe("work-1");
     expect(unitEntryId).toBe("work-2");
-    expect(revision).toBe("2026-01-01T00:00:00.000Z");
+    expect(revision).toBe(0);
     await waitFor(() => {
       expect(screen.getByRole("status").textContent).toContain("Saved");
     });
   });
 
   it("saves from the editor's Ctrl+S shortcut", async () => {
-    mockedSave.mockResolvedValue({ status: "saved", work: makeWork({ revision: "r2" }) });
+    mockedSave.mockResolvedValue({ status: "saved", work: makeWork({ revision: 1 }) });
     const { textbox, user } = await renderReadyEditor();
 
     await user.click(textbox);
@@ -311,7 +311,7 @@ describe("ManualWorkEditorPage", () => {
   it("keeps local edits and adopts the newer revision on a conflict", async () => {
     mockedSave.mockResolvedValue({ status: "conflict" });
     mockedFetch.mockResolvedValueOnce(makeWork());
-    mockedFetch.mockResolvedValueOnce(makeWork({ revision: "2026-03-03T00:00:00.000Z" }));
+    mockedFetch.mockResolvedValueOnce(makeWork({ revision: 2 }));
     const user = userEvent.setup();
     renderPage();
     const textbox = await screen.findByRole("textbox", { name: "Edit A Tale of Two Cities" });
@@ -329,7 +329,7 @@ describe("ManualWorkEditorPage", () => {
     await waitFor(() => {
       expect(mockedSave).toHaveBeenCalledTimes(2);
     });
-    expect(mockedSave.mock.calls[1]![3]).toBe("2026-03-03T00:00:00.000Z");
+    expect(mockedSave.mock.calls[1]![3]).toBe(2);
   });
 
   it("surfaces an error when the conflict refetch itself fails", async () => {
@@ -397,7 +397,7 @@ describe("ManualWorkEditorPage", () => {
     fireEvent.keyDown(textbox, { ctrlKey: true, key: "s" });
     expect(mockedSave).toHaveBeenCalledTimes(1);
 
-    resolveSave({ status: "saved", work: makeWork({ revision: "r2" }) });
+    resolveSave({ status: "saved", work: makeWork({ revision: 1 }) });
     await waitFor(() => {
       expect(screen.getByRole("status").textContent).toContain("Saved");
     });
@@ -432,7 +432,7 @@ describe("ManualWorkEditorPage", () => {
             }
           ]
         } as ManualWorkDto["document"],
-        revision: "2026-02-02T00:00:00.000Z"
+        revision: 2
       })
     });
     const user = userEvent.setup();
@@ -568,7 +568,7 @@ describe("ManualWorkEditorPage", () => {
     await user.click(screen.getByRole("button", { name: "Add section" }));
     expect(mockedAdd).not.toHaveBeenCalled();
 
-    resolveSave({ status: "saved", work: makeMultiWork({ revision: "r2" }) });
+    resolveSave({ status: "saved", work: makeMultiWork({ revision: 1 }) });
     await waitFor(() => {
       expect(screen.getByRole("status").textContent).toContain("Saved");
     });
@@ -576,7 +576,7 @@ describe("ManualWorkEditorPage", () => {
 
   it("saves the current section before switching (save-before-switch)", async () => {
     mockedFetch.mockResolvedValue(makeMultiWork());
-    mockedSave.mockResolvedValue({ status: "saved", work: makeMultiWork({ revision: "r2" }) });
+    mockedSave.mockResolvedValue({ status: "saved", work: makeMultiWork({ revision: 1 }) });
     mockedFetchUnit.mockResolvedValue(unitB());
     const user = userEvent.setup();
     renderPage();
@@ -598,7 +598,7 @@ describe("ManualWorkEditorPage", () => {
 
   it("aborts the switch and keeps the section when the pre-switch save conflicts", async () => {
     mockedFetch.mockResolvedValueOnce(makeMultiWork());
-    mockedFetch.mockResolvedValueOnce(makeMultiWork({ revision: "r2" }));
+    mockedFetch.mockResolvedValueOnce(makeMultiWork({ revision: 1 }));
     mockedSave.mockResolvedValue({ status: "conflict" });
     const user = userEvent.setup();
     renderPage();
@@ -633,7 +633,7 @@ describe("ManualWorkEditorPage", () => {
     mockedFetch.mockResolvedValue(makeMultiWork());
     const added = makeMultiWork({
       document: emptyHeadingDocument,
-      revision: "r2",
+      revision: 1,
       sections: [
         { orderIndex: 0, unitEntryId: "unit-a" },
         { headingLevel: 1, orderIndex: 1, title: "Chapter One", unitEntryId: "unit-b" },
@@ -649,7 +649,7 @@ describe("ManualWorkEditorPage", () => {
     await user.click(screen.getByRole("button", { name: "Add section" }));
 
     await waitFor(() => {
-      expect(mockedAdd).toHaveBeenCalledWith("work-1", "2026-01-01T00:00:00.000Z");
+      expect(mockedAdd).toHaveBeenCalledWith("work-1", 0);
     });
     // The new empty-heading section is the active outline entry.
     await waitFor(() => {
@@ -661,10 +661,10 @@ describe("ManualWorkEditorPage", () => {
 
   it("saves the current section before adding a new one", async () => {
     mockedFetch.mockResolvedValue(makeMultiWork());
-    mockedSave.mockResolvedValue({ status: "saved", work: makeMultiWork({ revision: "r2" }) });
+    mockedSave.mockResolvedValue({ status: "saved", work: makeMultiWork({ revision: 1 }) });
     mockedAdd.mockResolvedValue({
       status: "added",
-      work: makeMultiWork({ revision: "r3", unitEntryId: "unit-b" })
+      work: makeMultiWork({ revision: 1, unitEntryId: "unit-b" })
     });
     const user = userEvent.setup();
     renderPage();
@@ -685,7 +685,7 @@ describe("ManualWorkEditorPage", () => {
 
   it("aborts the add when the pre-add save conflicts", async () => {
     mockedFetch.mockResolvedValueOnce(makeMultiWork());
-    mockedFetch.mockResolvedValueOnce(makeMultiWork({ revision: "r2" }));
+    mockedFetch.mockResolvedValueOnce(makeMultiWork({ revision: 1 }));
     mockedSave.mockResolvedValue({ status: "conflict" });
     const user = userEvent.setup();
     renderPage();
@@ -703,7 +703,7 @@ describe("ManualWorkEditorPage", () => {
 
   it("keeps state and adopts the revision when add-section conflicts", async () => {
     mockedFetch.mockResolvedValueOnce(makeMultiWork());
-    mockedFetch.mockResolvedValueOnce(makeMultiWork({ revision: "2026-09-09T00:00:00.000Z" }));
+    mockedFetch.mockResolvedValueOnce(makeMultiWork({ revision: 2 }));
     mockedAdd.mockResolvedValue({ status: "conflict" });
     const user = userEvent.setup();
     renderPage();
@@ -717,11 +717,11 @@ describe("ManualWorkEditorPage", () => {
     // A repeat add works against the adopted revision.
     mockedAdd.mockResolvedValueOnce({
       status: "added",
-      work: makeMultiWork({ revision: "r3", unitEntryId: "unit-b" })
+      work: makeMultiWork({ revision: 1, unitEntryId: "unit-b" })
     });
     await user.click(screen.getByRole("button", { name: "Add section" }));
     await waitFor(() => {
-      expect(mockedAdd).toHaveBeenLastCalledWith("work-1", "2026-09-09T00:00:00.000Z");
+      expect(mockedAdd).toHaveBeenLastCalledWith("work-1", 2);
     });
   });
 
@@ -775,7 +775,7 @@ describe("ManualWorkEditorPage", () => {
     await user.click(screen.getByRole("button", { name: "Chapter One" }));
     expect(mockedFetchUnit).not.toHaveBeenCalled();
 
-    resolveAdd({ status: "added", work: makeMultiWork({ revision: "r3", unitEntryId: "unit-b" }) });
+    resolveAdd({ status: "added", work: makeMultiWork({ revision: 1, unitEntryId: "unit-b" }) });
     await waitFor(() => {
       expect(screen.queryByRole("button", { name: "Adding…" })).toBeNull();
     });
@@ -805,7 +805,7 @@ describe("ManualWorkEditorPage", () => {
     await user.click(screen.getByRole("button", { name: "Chapter One" }));
     expect(mockedFetchUnit).not.toHaveBeenCalled();
 
-    resolveSave({ status: "saved", work: makeMultiWork({ revision: "r2" }) });
+    resolveSave({ status: "saved", work: makeMultiWork({ revision: 1 }) });
     await waitFor(() => {
       expect(screen.getByRole("status").textContent).toContain("Saved");
     });
@@ -895,7 +895,7 @@ describe("ManualWorkEditorPage", () => {
       ]
     });
     const mergedWork = makeWork({
-      revision: "r2",
+      revision: 1,
       unitEntryId: "unit-a",
       document: {
         type: "doc",

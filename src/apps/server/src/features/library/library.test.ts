@@ -1060,8 +1060,8 @@ describe("manual work editor (#720, sections #697)", () => {
     expect(dto.title).toBe("Reading notes");
     expect(dto.language).toBe("en");
     expect(dto.workType).toBe("book");
-    expect(typeof dto.revision).toBe("string");
-    expect(dto.revision).toBe(dto.updatedAt);
+    expect(typeof dto.revision).toBe("number");
+    expect(dto.revision).toBe(0);
     expect(dto.document.type).toBe("doc");
     expect(dto.document.content).toHaveLength(1);
     expect(dto.document.content[0].type).toBe("paragraph");
@@ -1210,17 +1210,16 @@ describe("manual work editor (#720, sections #697)", () => {
     expect(["A", "B"]).toContain(documentText(reopened.document as DocumentNodeJSON));
   });
 
-  it("bumps the revision past a non-advancing clock so a stale save cannot be replayed", async () => {
+  it("increments the revision on each save so a stale save cannot be replayed", async () => {
     const workEntryId = await createManualWork();
     const loaded = await load(workEntryId);
-    const frozenClock = (): Date => new Date(loaded.revision as string);
 
     const first = await updateManualWorkContent(
-      commandDeps(frozenClock),
+      commandDeps(),
       toEntryId(workEntryId),
       toEntryId(loaded.unitEntryId as string),
       { content: [paragraph("Winner")], type: "doc" },
-      loaded.revision as string,
+      loaded.revision as number,
       DEFAULT_USER_ID
     );
 
@@ -1228,16 +1227,15 @@ describe("manual work editor (#720, sections #697)", () => {
     if (first.status !== "updated") {
       throw new Error("expected the first save to land");
     }
-    expect(new Date(first.work.revision).getTime()).toBeGreaterThan(
-      new Date(loaded.revision as string).getTime()
-    );
+    // The integer content revision advances by exactly one, independent of any wall clock.
+    expect(first.work.revision).toBe((loaded.revision as number) + 1);
 
     const replay = await updateManualWorkContent(
-      commandDeps(frozenClock),
+      commandDeps(),
       toEntryId(workEntryId),
       toEntryId(loaded.unitEntryId as string),
       { content: [paragraph("Loser")], type: "doc" },
-      loaded.revision as string,
+      loaded.revision as number,
       DEFAULT_USER_ID
     );
 
@@ -1247,14 +1245,15 @@ describe("manual work editor (#720, sections #697)", () => {
     expect(documentText(reopened.document as DocumentNodeJSON)).toBe("Winner");
   });
 
-  it("treats a non-timestamp revision as a conflict rather than crashing", async () => {
+  it("treats a stale numeric revision as a conflict rather than crashing", async () => {
     const workEntryId = await createManualWork();
     const loaded = await load(workEntryId);
 
+    // A well-formed but never-issued revision passes Zod, then loses the compare-and-set.
     const response = await context.server.inject({
       method: "PUT",
       url: `/api/manual-works/${workEntryId}/units/${loaded.unitEntryId}/content`,
-      payload: { document: { content: [paragraph("x")], type: "doc" }, revision: "not-a-timestamp" }
+      payload: { document: { content: [paragraph("x")], type: "doc" }, revision: 999 }
     });
 
     expect(response.statusCode).toBe(409);
@@ -1268,12 +1267,12 @@ describe("manual work editor (#720, sections #697)", () => {
     const unknown = await context.server.inject({
       method: "PUT",
       url: "/api/manual-works/work-missing/units/unit-x/content",
-      payload: { document, revision: "2026-01-01T00:00:00.000Z" }
+      payload: { document, revision: 0 }
     });
     const imported = await context.server.inject({
       method: "PUT",
       url: `/api/manual-works/${importedEntryId}/units/unit-x/content`,
-      payload: { document, revision: "2026-01-01T00:00:00.000Z" }
+      payload: { document, revision: 0 }
     });
 
     expect(unknown.statusCode).toBe(404);
@@ -1305,7 +1304,7 @@ describe("manual work editor (#720, sections #697)", () => {
       toEntryId(workEntryId),
       toEntryId(loaded.unitEntryId as string),
       { content: [paragraph("Intruder")], type: "doc" },
-      loaded.revision as string,
+      loaded.revision as number,
       "another-user"
     );
 
@@ -1343,9 +1342,7 @@ describe("manual work editor (#720, sections #697)", () => {
     expect(dto.unitEntryId).not.toBe(loaded.unitEntryId);
     expect(dto.document.content[0].type).toBe("heading");
     expect(dto.document.content[0].attrs.level).toBe(1);
-    expect(new Date(dto.revision).getTime()).toBeGreaterThan(
-      new Date(loaded.revision as string).getTime()
-    );
+    expect(dto.revision).toBeGreaterThan(loaded.revision as number);
     expect(dto.sections).toHaveLength(2);
     expect(dto.sections[0].unitEntryId).toBe(loaded.unitEntryId);
     expect(dto.sections[1].unitEntryId).toBe(dto.unitEntryId);
@@ -1478,12 +1475,12 @@ describe("manual work editor (#720, sections #697)", () => {
     const unknown = await context.server.inject({
       method: "POST",
       url: "/api/manual-works/work-missing/units",
-      payload: { revision: "2026-01-01T00:00:00.000Z" }
+      payload: { revision: 0 }
     });
     const imported = await context.server.inject({
       method: "POST",
       url: `/api/manual-works/${importedEntryId}/units`,
-      payload: { revision: "2026-01-01T00:00:00.000Z" }
+      payload: { revision: 0 }
     });
 
     expect(unknown.statusCode).toBe(404);
@@ -1497,7 +1494,7 @@ describe("manual work editor (#720, sections #697)", () => {
     const result = await addManualWorkSection(
       commandDeps(),
       toEntryId(workEntryId),
-      loaded.revision as string,
+      loaded.revision as number,
       "another-user"
     );
 
