@@ -19,6 +19,7 @@ import {
   personalEntries
 } from "../../db/schema.js";
 import { deleteReviewCardsAndEvents } from "../review/reviewCardCommands.js";
+import { fingerprintNoteMaterial } from "./noteMaterialFingerprint.js";
 import {
   findBlockInWork,
   getNoteForOwner,
@@ -104,7 +105,11 @@ export async function insertNoteInTx(tx: Transaction, params: InsertNoteParams):
     bodyText: params.bodyText,
     captureSource: params.captureSource,
     entryId: params.noteEntryId,
-    kind: params.kind
+    kind: params.kind,
+    // The fingerprint mirrors the body: a body-bearing note is fingerprinted from its document, a
+    // bodyless mark carries none. Composed here at the single note writer so no surface can persist a
+    // note without its material index (#711).
+    materialFingerprint: params.bodyDoc === null ? null : fingerprintNoteMaterial(params.bodyDoc)
   });
   if (params.anchor !== null) {
     await tx.insert(noteAnchors).values({
@@ -242,7 +247,13 @@ export async function updateNoteBodyInTx(
   const bodyText = documentReadableText(params.bodyDoc);
   await tx
     .update(notes)
-    .set({ bodyDoc: params.bodyDoc, bodyText })
+    .set({
+      bodyDoc: params.bodyDoc,
+      bodyText,
+      // Re-derive the material fingerprint from the new body in the SAME write, so an edit's index can
+      // never drift from its content (#711).
+      materialFingerprint: fingerprintNoteMaterial(params.bodyDoc)
+    })
     .where(eq(notes.entryId, params.noteEntryId));
   await tx
     .update(personalEntries)

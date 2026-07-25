@@ -33,6 +33,7 @@ import { createOllamaModel, probeOllamaModel } from "./llm/llmModel.js";
 import { readDiaryTidyConfig } from "./llm/aiUtilityConfig.js";
 import { checkAiUtilityHealth } from "./llm/aiUtilityHealth.js";
 import { resolveDiaryTidy } from "./features/diary/diaryTidy.js";
+import { backfillNoteMaterialFingerprints } from "./features/notes/noteMaterialFingerprintBackfill.js";
 import {
   processNextVoiceCapture,
   requeueStalledVoiceCaptures,
@@ -70,6 +71,10 @@ const config = readServerConfig();
 const pglite = new PGlite(config.databaseDir);
 await runMigrations(pglite);
 const db = createDbClient(pglite);
+// One-time backfill of exact-material fingerprints for legacy notes (#711). Composes the
+// document-package projection after the pure-SQL migration, then VALIDATEs the shape constraint. It is
+// idempotent (only NULL note rows), so a restart re-runs it harmlessly.
+await backfillNoteMaterialFingerprints(db);
 const sourceFileStore = createSourceFileStore(config.sourceFilesDir);
 // A parked Markdown creation-review attempt (#747) holds a single owner slot with staged bytes until the
 // learner decides. After this window an untouched attempt is swept to `expired` and its stage cleaned, so a

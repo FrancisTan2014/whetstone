@@ -519,6 +519,13 @@
       "when": 1784963946711,
       "tag": "0073_work_content_revision",
       "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1784971817192,
+      "tag": "0074_note_material_fingerprint",
+      "breakpoints": true
     }
   ]
 }
