@@ -36,23 +36,25 @@ async function seedWork(
   title: string,
   body: string
 ): Promise<{ readerUrl: string; workEntryId: string }> {
-  const created = await page.request.post(`${setup.baseURL}api/works`, {
+  // #750 retired the legacy `POST /api/works` (origin=imported) + `/content` two-step; seed through the
+  // atomic Markdown front door. A unique title/author means no candidate, so review publishes ("created").
+  const created = await page.request.post(`${setup.baseURL}api/works/markdown`, {
     data: {
       author: { mode: "new", name: `${title} Author` },
+      fileName: `${title}.md`,
       language: "en",
-      origin: "imported",
+      markdown: `# ${title}\n\n${body}\n`,
       title,
       workType: "essay"
     }
   });
-  expect(created.status()).toBe(201);
-  const { work } = (await created.json()) as { work: { entryId: string } };
-
-  const ingest = await page.request.post(
-    `${setup.baseURL}api/works/${encodeURIComponent(work.entryId)}/content`,
-    { data: { kind: "manual", markdown: `# ${title}\n\n${body}\n` } }
-  );
-  expect(ingest.ok()).toBe(true);
+  expect(created.ok(), `create → ${created.status()}`).toBe(true);
+  const { result, status } = (await created.json()) as {
+    result: { work: { entryId: string } };
+    status: string;
+  };
+  expect(status).toBe("created");
+  const work = result.work;
 
   const readerUrl = `${setup.baseURL}#/reader?work=${encodeURIComponent(work.entryId)}`;
   await page.goto(readerUrl);
