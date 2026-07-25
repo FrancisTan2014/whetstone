@@ -264,6 +264,7 @@ export async function createDirectCard(
     if (matches.length > 0 || near.length > 0) {
       const exactNoteIds = matches.map((note) => note.noteEntryId);
       const nearNoteIds = near.map((note) => note.noteEntryId);
+      const nearKeys = near.map((note) => note.caseSensitiveKey);
       const candidates = await loadMaterialReviewCandidates(tx, userId, matches);
       const nearCandidates = await loadNearMaterialReviewCandidates(
         tx,
@@ -289,6 +290,7 @@ export async function createDirectCard(
           exactNoteIds,
           expiresAt: new Date(now.getTime() + dependencies.attemptTtlMs),
           id: dependencies.createId(),
+          nearKeys,
           nearNoteIds,
           now,
           submissionId: request.submissionId,
@@ -302,9 +304,10 @@ export async function createDirectCard(
 
       // A save retry with the same draft: resume the same review, refreshing its persisted candidates (and
       // bumping the fence) only when the evidence changed, so the revision the client will decide against is
-      // exactly current. The fingerprint binds BOTH groups plus the near evidence policy.
+      // exactly current. The fingerprint binds BOTH groups, the near candidates' reviewed content, and the
+      // near evidence policy.
       const changed =
-        fingerprintReviewCandidates({ exactNoteIds, nearNoteIds }) !==
+        fingerprintReviewCandidates({ exactNoteIds, nearKeys, nearNoteIds }) !==
         resumable.candidateFingerprint;
       let attempt = resumable;
       if (changed) {
@@ -312,6 +315,7 @@ export async function createDirectCard(
           exactNoteIds,
           expectedRevision: resumable.revision,
           id: resumable.id,
+          nearKeys,
           nearNoteIds,
           now,
           userId

@@ -55,22 +55,29 @@ function toRecord(row: AttemptRow): CardCreationAttemptRecord {
 
 // The two disjoint reviewed candidate groups an attempt binds (#712, #714): exact material already in Notes,
 // and high-precision "Possible duplicate" near matches. Each list is in the stable order its matcher
-// produced. Passed together so one fingerprint fences BOTH groups plus the near evidence policy.
+// produced. `nearKeys` are the near candidates' case-sensitive relaxed keys, in the SAME order as
+// `nearNoteIds` — the stable material projection the "Possible duplicate" differences/excerpt are derived
+// from. Passed together so one fingerprint fences BOTH groups, the near candidates' reviewed CONTENT, and
+// the near evidence policy.
 export type ReviewCandidateGroups = Readonly<{
   exactNoteIds: ReadonlyArray<string>;
   nearNoteIds: ReadonlyArray<string>;
+  nearKeys: ReadonlyArray<string>;
 }>;
 
-// The opaque digest of the reviewed candidate set — the ordered exact ids, the ordered near ids, and the
-// near evidence-policy version — so a new/changed/deleted candidate in EITHER group, or a policy change that
-// reweights near evidence, is detected on a decision recheck without persisting any content. Order matters
-// within each group: both matchers return a stable order, so the same candidate set always hashes the same
-// and a genuine change always differs. Folding the evidence version means a parked review refreshes when the
-// near policy that produced its differences changes underneath it.
+// The opaque digest of the reviewed candidate set — the ordered exact ids, the ordered near ids, the ordered
+// near candidate keys, and the near evidence-policy version — so a new/changed/deleted candidate in EITHER
+// group, a same-id near candidate whose reviewed wording was edited underneath the panel, or a policy change
+// that reweights near evidence, is detected on a decision recheck without persisting any content. Order
+// matters within each group: both matchers return a stable order, so the same candidate set always hashes the
+// same and a genuine change always differs. Binding the near keys means a same-id edit that changes the
+// displayed "Possible duplicate" differences/excerpt re-parks the review; folding the evidence version means a
+// parked review refreshes when the near policy that produced its differences changes underneath it.
 export function fingerprintReviewCandidates(groups: ReviewCandidateGroups): string {
   return fingerprintPayload({
     evidenceVersion: NEAR_MATCH_EVIDENCE_VERSION,
     exactNoteIds: [...groups.exactNoteIds],
+    nearKeys: [...groups.nearKeys],
     nearNoteIds: [...groups.nearNoteIds]
   });
 }
@@ -87,6 +94,7 @@ export type InsertPendingAttemptInput = Readonly<{
   expiresAt: Date;
   id: string;
   nearNoteIds: ReadonlyArray<string>;
+  nearKeys: ReadonlyArray<string>;
   now: Date;
   submissionId: string;
   userId: string;
@@ -160,6 +168,7 @@ export type RefreshReviewInput = Readonly<{
   expectedRevision: number;
   id: string;
   nearNoteIds: ReadonlyArray<string>;
+  nearKeys: ReadonlyArray<string>;
   now: Date;
   userId: string;
 }>;

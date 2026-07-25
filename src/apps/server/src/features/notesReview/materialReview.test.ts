@@ -19,7 +19,7 @@ import { createServer } from "../../http/createServer.js";
 import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
 import type { ContentDependencies } from "../content/contentCommands.js";
 import type { LibraryDependencies } from "../library/libraryCommands.js";
-import { deleteNoteInTx } from "../notes/noteCommands.js";
+import { deleteNoteInTx, updateNoteBodyInTx } from "../notes/noteCommands.js";
 import type { NotesDependencies } from "../notes/noteCommands.js";
 import { queryMaterialMatches } from "./exactMaterialQuery.js";
 import type { NotesReviewRouteDependencies } from "./notesReviewRoutes.js";
@@ -132,6 +132,10 @@ const listPrompts = () => context.db.select().from(memoryPrompts);
 const listCards = () => context.db.select().from(reviewCards);
 const deleteNote = (noteEntryId: string) =>
   context.db.transaction((tx) => deleteNoteInTx(tx, noteEntryId));
+const editNoteBody = (noteEntryId: string, text: string) =>
+  context.db.transaction((tx) =>
+    updateNoteBodyInTx(tx, { bodyDoc: answerDoc(text), noteEntryId, now })
+  );
 
 type ReviewBody = Readonly<{
   status: "needs_material_review";
@@ -582,5 +586,90 @@ describe("near-duplicate material review (#714)", () => {
     expect(response.statusCode).toBe(200);
     expect((response.json() as CreatedBody).status).toBe("created");
     expect(await listNotes()).toHaveLength(2);
+  });
+
+  // #714 fence over near candidate CONTENT: a "Possible duplicate" candidate can be edited in another tab
+  // while the panel is open so that it stays a near match under the SAME note id and order, but its reviewed
+  // wording — and thus the displayed differences/excerpt — changes. Binding only the near note ids would let a
+  // decision commit against the stale evidence the learner never saw. Both decision paths must re-run the near
+  // matcher under the lock and re-park with the updated evidence instead of committing.
+  const editedNearSeed = "in terms of the designs";
+
+  it("re-parks Use existing material when the chosen near candidate's wording was edited under the same id", async () => {
+    const seededResponse = await saveNear("seed", nearSeedAnswer);
+    const seededId = (seededResponse.json() as CreatedBody).result.noteId;
+    const review = (await saveNear("sub-near", nearDraftAnswer)).json() as ReviewBody;
+    expect(review.review.nearCandidates).toEqual([
+      {
+        answerExcerpt: nearSeedAnswer,
+        cardCount: 1,
+        differences: [{ after: "terms", before: "term" }],
+        noteId: seededId,
+        sourceContext: null
+      }
+    ]);
+
+    // The reviewed near candidate is edited to different-but-still-near prose under the same id.
+    await editNoteBody(seededId, editedNearSeed);
+
+    const response = await useExisting({
+      submissionId: "sub-near",
+      attemptId: review.review.attemptId,
+      revision: review.review.revision,
+      noteEntryId: seededId,
+      questionDoc: questionDoc(),
+      answerDoc: answerDoc(nearDraftAnswer),
+      target: { kind: "current_note" }
+    } satisfies UseExistingMaterialRequest);
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as ReviewBody;
+    expect(body.status).toBe("needs_material_review");
+    expect(body.review.revision).toBe(1);
+    // The refreshed review carries the CURRENT wording's differences, not the stale ones the learner saw.
+    expect(body.review.nearCandidates).toEqual([
+      {
+        answerExcerpt: editedNearSeed,
+        cardCount: 1,
+        differences: [{ after: "design", before: "designs" }],
+        noteId: seededId,
+        sourceContext: null
+      }
+    ]);
+    // Reuse did not commit — the edited note still owns only its original card, no second one was added.
+    expect(await listCards()).toHaveLength(1);
+  });
+
+  it("re-parks Keep separate when a near candidate's wording was edited under the same id", async () => {
+    const seededResponse = await saveNear("seed", nearSeedAnswer);
+    const seededId = (seededResponse.json() as CreatedBody).result.noteId;
+    const review = (await saveNear("sub-near", nearDraftAnswer)).json() as ReviewBody;
+
+    await editNoteBody(seededId, editedNearSeed);
+
+    const response = await keepSeparate({
+      submissionId: "sub-near",
+      attemptId: review.review.attemptId,
+      revision: review.review.revision,
+      questionDoc: questionDoc(),
+      answerDoc: answerDoc(nearDraftAnswer),
+      target: { kind: "current_note" }
+    } satisfies KeepSeparateMaterialRequest);
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as ReviewBody;
+    expect(body.status).toBe("needs_material_review");
+    expect(body.review.revision).toBe(1);
+    expect(body.review.nearCandidates).toEqual([
+      {
+        answerExcerpt: editedNearSeed,
+        cardCount: 1,
+        differences: [{ after: "design", before: "designs" }],
+        noteId: seededId,
+        sourceContext: null
+      }
+    ]);
+    // Keep separate did not mint a second note against the stale "Possible duplicate" evidence.
+    expect(await listNotes()).toHaveLength(1);
   });
 });
