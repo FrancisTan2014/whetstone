@@ -411,9 +411,9 @@ Block storage rules:
 - Administrative correction edits the canonical imported blocks through the shared rich editor.
   Retain immutable source provenance and correction evidence, but never a second current content copy;
   re-ingestion cannot overwrite corrected blocks without an explicit future reconciliation flow.
-- Existing legacy PDF blocks migrate in place without changing Work, ReadingUnit, or Block identity.
-  A failed migration remains readable through the format-agnostic legacy fallback and is quarantined
-  with an actionable remedy; no new PDF ingestion may write that fallback.
+- The deployment contains no legacy PDF Works, so there is no PDF migration or quarantine path; PDF
+  ingestion publishes canonical blocks directly. The format-agnostic legacy fallback is retained only
+  for residual imported-Markdown debt, and no new PDF ingestion may write that fallback.
 - Multi-step writes (Work + ReadingUnits + Blocks) that must stay consistent use transactions.
 - Markdown export serializes canonical documents; original-file export returns the retained upload.
 - **Fidelity fixtures mirror real publisher markup.** Verify ingestion/rendering against real-world

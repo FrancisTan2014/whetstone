@@ -35,8 +35,8 @@ async function seedDatabase(pglite: PGlite): Promise<void> {
   await pglite.exec(`
     INSERT INTO authors (id, name) VALUES ('a1', 'Author One');
     INSERT INTO entries (id, type) VALUES ('w1', 'work');
-    INSERT INTO work_meta (author_id, entry_id, language, origin, title, work_type)
-      VALUES ('a1', 'w1', 'en', 'imported', 'My Work', 'book');
+    INSERT INTO work_meta (author_id, entry_id, language, origin, title, work_type, content_revision)
+      VALUES ('a1', 'w1', 'en', 'imported', 'My Work', 'book', 3);
     INSERT INTO work_sources (id, file_name, file_path, kind, sha256, source_text, work_entry_id)
       VALUES ('src1', 'my.pdf', 'w1source.pdf', 'upload', '${sourceSha}', NULL, 'w1');
     INSERT INTO uploaded_source_claims (sha256, work_entry_id) VALUES ('${sourceSha}', 'w1');
@@ -146,9 +146,11 @@ describe("backup/restore round-trip", () => {
     const verifyPglite = new PGlite(join(targetDir, "database"));
     await verifyPglite.waitReady;
     const authors = await verifyPglite.query<{ name: string }>("select name from authors");
-    const work = await verifyPglite.query<{ title: string; origin: string }>(
-      "select title, origin from work_meta"
-    );
+    const work = await verifyPglite.query<{
+      title: string;
+      origin: string;
+      content_revision: number;
+    }>("select title, origin, content_revision from work_meta");
     const note = await verifyPglite.query<{ body_text: string }>(
       "select body_text from notes order by body_text"
     );
@@ -171,10 +173,19 @@ describe("backup/restore round-trip", () => {
     const claims = await verifyPglite.query<{ sha256: string; work_entry_id: string }>(
       "select sha256, work_entry_id from uploaded_source_claims"
     );
+    // The Work-scoped content revision (#703) round-trips with the whole-database dump, so the
+    // next optimistic-concurrency compare-and-set resumes from exactly the restored value: a claim at
+    // the restored revision 3 wins (→ 4) while a stale claim at 0 matches no row.
+    const staleClaim = await verifyPglite.query<{ content_revision: number }>(
+      "update work_meta set content_revision = content_revision + 1 where entry_id = 'w1' and content_revision = 0 returning content_revision"
+    );
+    const freshClaim = await verifyPglite.query<{ content_revision: number }>(
+      "update work_meta set content_revision = content_revision + 1 where entry_id = 'w1' and content_revision = 3 returning content_revision"
+    );
     await verifyPglite.close();
 
     expect(authors.rows).toEqual([{ name: "Author One" }]);
-    expect(work.rows).toEqual([{ title: "My Work", origin: "imported" }]);
+    expect(work.rows).toEqual([{ title: "My Work", origin: "imported", content_revision: 3 }]);
     expect(note.rows).toEqual([{ body_text: "a note body" }, { body_text: "another note body" }]);
     // All three reveal kinds — including the new expected_response Success check — survive the round-trip.
     expect(prompts.rows).toEqual([
@@ -186,6 +197,9 @@ describe("backup/restore round-trip", () => {
     // The uploaded-source claim (#706) round-trips with the whole-database dump, so re-uploading the
     // same bytes still reopens the owning Work after a restore.
     expect(claims.rows).toEqual([{ sha256: sha256Hex(sourceFileBytes), work_entry_id: "w1" }]);
+    // The stale compare-and-set claimed nothing; the fresh one resumed from the restored revision.
+    expect(staleClaim.rows).toEqual([]);
+    expect(freshClaim.rows).toEqual([{ content_revision: 4 }]);
     expect(events.rows).toEqual([{ type: "rating" }, { type: "reset" }]);
     // Both a live receipt and a tombstoned one (whose note/prompt ids no longer exist — the receipt has
     // no foreign key into the note cascade) round-trip intact, so replay-idempotency survives a restore.

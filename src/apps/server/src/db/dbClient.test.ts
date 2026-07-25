@@ -32,6 +32,8 @@ describe("createDbClient", () => {
     expect(workRows).toEqual([
       {
         authorId: "author-1",
+        // #703: `content_revision` is the Work-scoped optimistic-concurrency token, defaulting to 0.
+        contentRevision: 0,
         entryId: "work-1",
         language: "en",
         origin: "imported",

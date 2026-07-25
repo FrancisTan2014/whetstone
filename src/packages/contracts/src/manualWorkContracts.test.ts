@@ -2,6 +2,7 @@ import { createTextDocument } from "@whetstone/document";
 import { describe, expect, it } from "vitest";
 
 import {
+  MAX_WORK_CONTENT_REVISION,
   parseAddManualWorkSectionRequest,
   parseManualWorkDto,
   parseManualWorkUnitDto,
@@ -15,7 +16,7 @@ const dto = {
   document,
   entryId: "work-1",
   language: "en" as const,
-  revision: "2026-07-01T11:00:00.000Z",
+  revision: 3,
   sections: [
     { orderIndex: 0, unitEntryId: "unit-1" },
     { headingLevel: 1, orderIndex: 1, title: "Chapter One", unitEntryId: "unit-2" }
@@ -28,7 +29,12 @@ const dto = {
 
 describe("parseUpdateManualWorkContentRequest", () => {
   it("accepts a document with its revision token", () => {
-    const request = { document, revision: "2026-07-01T11:00:00.000Z" };
+    const request = { document, revision: 2 };
+    expect(parseUpdateManualWorkContentRequest(request)).toEqual(request);
+  });
+
+  it("accepts the initial revision 0", () => {
+    const request = { document, revision: 0 };
     expect(parseUpdateManualWorkContentRequest(request)).toEqual(request);
   });
 
@@ -38,13 +44,29 @@ describe("parseUpdateManualWorkContentRequest", () => {
 
   it("rejects a malformed document", () => {
     expect(() =>
-      parseUpdateManualWorkContentRequest({ document: { type: "not-a-doc" }, revision: "r" })
+      parseUpdateManualWorkContentRequest({ document: { type: "not-a-doc" }, revision: 1 })
+    ).toThrow();
+  });
+
+  it("rejects a non-integer or negative revision", () => {
+    expect(() => parseUpdateManualWorkContentRequest({ document, revision: 1.5 })).toThrow();
+    expect(() => parseUpdateManualWorkContentRequest({ document, revision: -1 })).toThrow();
+    expect(() => parseUpdateManualWorkContentRequest({ document, revision: "1" })).toThrow();
+  });
+
+  it("accepts the maximum PostgreSQL integer revision but rejects one beyond it", () => {
+    const atMax = { document, revision: MAX_WORK_CONTENT_REVISION };
+    expect(parseUpdateManualWorkContentRequest(atMax)).toEqual(atMax);
+    // A safe JS integer just past the signed 32-bit range would overflow `work_meta.content_revision`;
+    // it must be a typed boundary rejection, never reach the compare-and-set as a database error (#703).
+    expect(() =>
+      parseUpdateManualWorkContentRequest({ document, revision: MAX_WORK_CONTENT_REVISION + 1 })
     ).toThrow();
   });
 
   it("rejects an unknown extra field", () => {
     expect(() =>
-      parseUpdateManualWorkContentRequest({ document, extra: true, revision: "r" })
+      parseUpdateManualWorkContentRequest({ document, extra: true, revision: 1 })
     ).toThrow();
   });
 });
@@ -90,14 +112,28 @@ describe("parseManualWorkUnitDto", () => {
 
 describe("parseAddManualWorkSectionRequest", () => {
   it("accepts the loaded revision token", () => {
-    expect(parseAddManualWorkSectionRequest({ revision: "r" })).toEqual({ revision: "r" });
+    expect(parseAddManualWorkSectionRequest({ revision: 4 })).toEqual({ revision: 4 });
   });
 
   it("rejects a request missing its revision", () => {
     expect(() => parseAddManualWorkSectionRequest({})).toThrow();
   });
 
+  it("rejects a non-integer or negative revision", () => {
+    expect(() => parseAddManualWorkSectionRequest({ revision: 1.5 })).toThrow();
+    expect(() => parseAddManualWorkSectionRequest({ revision: -1 })).toThrow();
+  });
+
+  it("accepts the maximum PostgreSQL integer revision but rejects one beyond it", () => {
+    expect(parseAddManualWorkSectionRequest({ revision: MAX_WORK_CONTENT_REVISION })).toEqual({
+      revision: MAX_WORK_CONTENT_REVISION
+    });
+    expect(() =>
+      parseAddManualWorkSectionRequest({ revision: MAX_WORK_CONTENT_REVISION + 1 })
+    ).toThrow();
+  });
+
   it("rejects an unknown extra field", () => {
-    expect(() => parseAddManualWorkSectionRequest({ extra: true, revision: "r" })).toThrow();
+    expect(() => parseAddManualWorkSectionRequest({ extra: true, revision: 1 })).toThrow();
   });
 });

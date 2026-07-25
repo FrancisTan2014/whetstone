@@ -1082,8 +1082,9 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   block, marks, undo/redo), navigates sections with save-before-switch and stale-revision conflict
   retention (`saveManualWorkContent(workEntryId, unitEntryId, document, revision)` → `PUT
   /api/manual-works/:id/units/:unitId/content`), and **Add section** appends a heading-seeded section
-  (`addManualWorkSection` → `POST /api/manual-works/:id/units`) then focuses it. The revision is
-  work-level (`personal_entries.updatedAt`), bumped atomically by both save and add. On save the draft's
+  (`addManualWorkSection` → `POST /api/manual-works/:id/units`) then focuses it. The revision is the
+  Work-scoped `work_meta.content_revision` (a monotonic non-negative integer), claimed atomically by both
+  save and add; `personal_entries.updatedAt` is owner chronology only, never the revision truth. On save the draft's
   ordered PM blocks are substituted into the Work's block stream and the affected span is
   **repartitioned at every heading** (`content/editableWorkContent.repartitionEditableWorkContent` over
   the pure `domain/workRepartition.planSectionRepartition`): a surviving leading heading keeps its
@@ -1095,7 +1096,11 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   editor Outline. Server: `library/manualWorkContentQueries` (`loadManualWorkForEditing` +
   `loadManualWorkUnit`, deriving section outline from first blocks) + `manualWorkContentCommands`
   (`updateManualWorkContent` per unit + `addManualWorkSection` via
-  `content/editableWorkContent.appendEditableWorkSection`) own the owner/origin guard and revision check;
+  `content/editableWorkContent.appendEditableWorkSection`) own the owner/origin guard; the stale-revision
+  check is the origin-neutral `content/workContentRevision.claimWorkContentRevision` compare-and-set over
+  `work_meta.content_revision` (#703 — a monotonic non-negative integer, reusable by future imported-Work
+  correction), and a successful claim bumps the owner-only `personal_entries.updated_at` chronology in the
+  same transaction (`ManualWorkDto.revision` is that integer, `updatedAt` the chronology, display-only);
   `manualWorkContracts.ts` (in `@whetstone/contracts`) holds the `ManualWorkDto` (with `sections`), the
   per-unit update request, and the section/unit DTOs.
   `diary/` is the Diary mode (#246 origin, #571 rich-Entry rework): `DiaryPage.tsx` renders the shared

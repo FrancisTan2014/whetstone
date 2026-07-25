@@ -85,7 +85,14 @@ export const workMeta = pgTable(
     // Library; `authored` = the learner's own writing, edited from Writing. Required and orthogonal to
     // `work_type`. Mirrors `domain`'s `workOrigins`; duplicated here (like the other enums) so migration
     // generation never depends on the domain package building first.
-    origin: text("origin", { enum: ["imported", "manual", "authored"] as const }).notNull()
+    origin: text("origin", { enum: ["imported", "manual", "authored"] as const }).notNull(),
+    // #703 Work-scoped content concurrency: a monotonic revision that fences canonical block writes for
+    // every editable origin, independent of ownership or chronology. The optimistic-concurrency token an
+    // editable-Work save/add compares-and-sets (increment only when the loaded value still matches);
+    // `personal_entries.updated_at` stays owner chronology, never a second revision truth. Every Work of
+    // every origin — including imported Works with no `personal_entries` facet — carries a valid initial
+    // revision, so an imported-Work correction command (#762) can reuse the same fence.
+    contentRevision: integer("content_revision").notNull().default(0)
   },
   (table) => [
     index("work_meta_author_idx").on(table.authorId),
@@ -95,7 +102,10 @@ export const workMeta = pgTable(
     index("work_meta_title_key_idx").on(table.titleKey),
     // Enforce the closed origin set in the database, not only at the contract boundary, so no writer
     // (or restored dump) can land a Work with an unknown authority.
-    check("work_meta_origin_ck", sql`${table.origin} in ('imported', 'manual', 'authored')`)
+    check("work_meta_origin_ck", sql`${table.origin} in ('imported', 'manual', 'authored')`),
+    // The revision is a non-negative counter; guard it in the database so no writer or restored dump can
+    // land a negative token the compare-and-set fence could never match.
+    check("work_meta_content_revision_ck", sql`${table.contentRevision} >= 0`)
   ]
 );
 

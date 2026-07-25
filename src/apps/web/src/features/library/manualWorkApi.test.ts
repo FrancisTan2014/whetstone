@@ -20,7 +20,7 @@ const dto = {
   document,
   entryId: "work-1",
   language: "en" as const,
-  revision: "2026-07-01T11:00:00.000Z",
+  revision: 3,
   sections,
   title: "Reading notes",
   unitEntryId: "unit-1",
@@ -103,7 +103,7 @@ describe("saveManualWorkContent", () => {
   it("reports a stale revision as a conflict", async () => {
     stubFetch({ ok: false, status: 409 });
 
-    await expect(saveManualWorkContent("work-1", "unit-1", document, "old")).resolves.toEqual({
+    await expect(saveManualWorkContent("work-1", "unit-1", document, 1)).resolves.toEqual({
       status: "conflict"
     });
   });
@@ -111,7 +111,7 @@ describe("saveManualWorkContent", () => {
   it("reports a rejected document as invalid", async () => {
     stubFetch({ ok: false, status: 400 });
 
-    await expect(saveManualWorkContent("work-1", "unit-1", document, "r")).resolves.toEqual({
+    await expect(saveManualWorkContent("work-1", "unit-1", document, 2)).resolves.toEqual({
       status: "invalid"
     });
   });
@@ -119,7 +119,7 @@ describe("saveManualWorkContent", () => {
   it("throws on an unexpected non-2xx response", async () => {
     stubFetch({ ok: false, status: 500 });
 
-    await expect(saveManualWorkContent("work-1", "unit-1", document, "r")).rejects.toThrow(
+    await expect(saveManualWorkContent("work-1", "unit-1", document, 2)).rejects.toThrow(
       /status 500/
     );
   });
@@ -144,12 +144,12 @@ describe("addManualWorkSection", () => {
   it("reports a stale revision as a conflict", async () => {
     stubFetch({ ok: false, status: 409 });
 
-    await expect(addManualWorkSection("work-1", "old")).resolves.toEqual({ status: "conflict" });
+    await expect(addManualWorkSection("work-1", 1)).resolves.toEqual({ status: "conflict" });
   });
 
   it("throws on an unexpected non-2xx response", async () => {
     stubFetch({ ok: false, status: 500 });
 
-    await expect(addManualWorkSection("work-1", "r")).rejects.toThrow(/status 500/);
+    await expect(addManualWorkSection("work-1", 2)).rejects.toThrow(/status 500/);
   });
 });

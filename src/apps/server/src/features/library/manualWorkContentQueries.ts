@@ -11,7 +11,10 @@ import { docBlocks, personalEntries, readingUnits, workMeta } from "../../db/sch
 // Origin is the authority discriminator: an authored Work also carries `personal_entries`, so the
 // ownership join alone cannot tell owned writing from learner-curated Library content — the
 // `origin = 'manual'` predicate keeps them apart, so this editor never opens an authored or imported Work.
+// `contentRevision` is the Work-scoped optimistic-concurrency token (#703, `work_meta.content_revision`);
+// `updatedAt` is the owner's chronology (`personal_entries.updated_at`), never a second revision truth.
 type OwnedManualWorkMeta = Readonly<{
+  contentRevision: number;
   createdAt: Date;
   language: ManualWorkDto["language"];
   title: string;
@@ -30,6 +33,7 @@ export async function findOwnedManualWork(
 ): Promise<OwnedManualWorkMeta | undefined> {
   const [owned] = await db
     .select({
+      contentRevision: workMeta.contentRevision,
       createdAt: personalEntries.createdAt,
       language: workMeta.language,
       title: workMeta.title,
@@ -110,8 +114,9 @@ export async function loadManualWorkDocument(
 }
 
 // Build the editor DTO from an owned manual-Work's metadata, the opened section's id + document, and the
-// whole Work's ordered section list. The `revision` is the owner's last-write timestamp (the optimistic-
-// concurrency token the editor echoes on save/add).
+// whole Work's ordered section list. `revision` is the Work-scoped `content_revision` — the optimistic-
+// concurrency token the editor echoes on save/add; `updatedAt` is the owner's chronology, reported for
+// display only and never used to fence a write.
 export function toManualWorkDto(
   workEntryId: EntryId,
   owned: OwnedManualWorkMeta,
@@ -124,7 +129,7 @@ export function toManualWorkDto(
     document,
     entryId: toEntryId(workEntryId),
     language: owned.language,
-    revision: owned.updatedAt.toISOString(),
+    revision: owned.contentRevision,
     sections: [...sections],
     title: owned.title,
     unitEntryId,

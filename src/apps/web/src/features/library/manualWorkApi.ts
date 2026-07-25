@@ -72,7 +72,7 @@ export async function saveManualWorkContent(
   workEntryId: string,
   unitEntryId: string,
   document: DocumentNodeJSON,
-  revision: string
+  revision: number
 ): Promise<SaveManualWorkResult> {
   const body: UpdateManualWorkContentRequest = { document, revision };
   const response = await fetch(
@@ -101,7 +101,7 @@ export async function saveManualWorkContent(
 // opened at that section. A 409 is a revision conflict; any other non-2xx throws.
 export async function addManualWorkSection(
   workEntryId: string,
-  revision: string
+  revision: number
 ): Promise<AddManualWorkSectionResult> {
   const body: AddManualWorkSectionRequest = { revision };
   const response = await fetch(apiUrl(`/manual-works/${encodeURIComponent(workEntryId)}/units`), {
