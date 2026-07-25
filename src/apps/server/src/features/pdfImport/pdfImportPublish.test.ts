@@ -38,7 +38,7 @@ import {
 import type { PdfImportActiveRuns } from "./pdfImportRunner.js";
 import {
   beginPdfImport,
-  drainPendingPdfPublications,
+  loadPdfReviewSource,
   publishConvertedPdfImport,
   type PdfImportPublishDependencies
 } from "./pdfImportPublish.js";
@@ -47,12 +47,11 @@ import {
   PDF_IMPORT_ADAPTER_FINGERPRINT,
   claimNextQueued,
   commitRange,
-  findConvertedPendingPublications,
   getAttemptById,
   getPublication,
   insertPublicationIntent,
   insertQueuedAttempt,
-  markConverted,
+  markAwaitingReview,
   setProbeResult
 } from "./pdfImportStore.js";
 
@@ -119,9 +118,9 @@ function rangePayload(
   };
 }
 
-// Drive an already-queued attempt through the #721 state machine to `converted` with a single committed
-// range, so the publication layer has a real converted attempt + persisted ranges to reconstruct.
-async function driveQueuedToConverted(
+// Drive an already-queued attempt through the #721 state machine to `awaiting_review` with a single
+// committed range, so the publication layer has a real parked attempt + persisted ranges to reconstruct.
+async function driveQueuedToAwaitingReview(
   db: DbClient,
   input: Readonly<{ id: string; payload: RangeConversion; totalPages: number }>
 ): Promise<void> {
@@ -144,12 +143,12 @@ async function driveQueuedToConverted(
     payload: input.payload,
     now: NOW
   });
-  await markConverted(db, input.id, runToken, NOW);
+  await markAwaitingReview(db, input.id, runToken, NOW);
 }
 
 // Insert a queued attempt, stage its real bytes (so publication can retain them as provenance), and drive
-// it to `converted` in one step.
-async function driveToConverted(
+// it to `awaiting_review` in one step.
+async function driveToAwaitingReview(
   db: DbClient,
   input: Readonly<{
     id: string;
@@ -170,7 +169,7 @@ async function driveToConverted(
     stagePath,
     now: NOW
   });
-  await driveQueuedToConverted(db, {
+  await driveQueuedToAwaitingReview(db, {
     id: input.id,
     payload: input.payload,
     totalPages: input.totalPages
@@ -212,7 +211,7 @@ const SAMPLE_BODY: readonly StructuredDocItem[] = [
 describe("publishConvertedPdfImport", () => {
   it("publishes a mapped converted attempt into a canonical Work that surfaces in the reader", async () => {
     const pdfBytes = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37]);
-    await driveToConverted(db, {
+    await driveToAwaitingReview(db, {
       id: "att-1",
       sourceHash: "a".repeat(64),
       payload: rangePayload(SAMPLE_BODY, [true]),
@@ -267,7 +266,7 @@ describe("publishConvertedPdfImport", () => {
     // pass — the reader shows the inert `unknown` fallback so nothing is silently dropped. Before the
     // surfacing fix, `loadWorkContent` hid the unknown-only unit, so `assertContentPersisted` threw after
     // the Work/source/claim were already committed, orphaning a Work the reader could never show.
-    await driveToConverted(db, {
+    await driveToAwaitingReview(db, {
       id: "att-unknown",
       sourceHash: "e".repeat(64),
       payload: rangePayload([item({ label: "chart", text: "An unmapped chart." })], [true]),
@@ -292,7 +291,7 @@ describe("publishConvertedPdfImport", () => {
   });
 
   it("prefers entered metadata over the filename fallback", async () => {
-    await driveToConverted(db, {
+    await driveToAwaitingReview(db, {
       id: "att-2",
       sourceHash: "b".repeat(64),
       payload: rangePayload(SAMPLE_BODY, [true]),
@@ -312,7 +311,7 @@ describe("publishConvertedPdfImport", () => {
   });
 
   it("writes additive per-block evidence keyed to the persisted blocks", async () => {
-    await driveToConverted(db, {
+    await driveToAwaitingReview(db, {
       id: "att-3",
       sourceHash: "c".repeat(64),
       payload: rangePayload(SAMPLE_BODY, [true]),
@@ -339,7 +338,7 @@ describe("publishConvertedPdfImport", () => {
   });
 
   it("stamps every published block with the adopted engine and language for an OCR'd attempt", async () => {
-    await driveToConverted(db, {
+    await driveToAwaitingReview(db, {
       id: "att-ocr",
       sourceHash: "a".repeat(64),
       payload: rangePayload(SAMPLE_BODY, [true]),
@@ -374,7 +373,7 @@ describe("publishConvertedPdfImport", () => {
   });
 
   it("records a typed OCR-validation-failed outcome for an English document that is still text-less", async () => {
-    await driveToConverted(db, {
+    await driveToAwaitingReview(db, {
       id: "att-4",
       sourceHash: "d".repeat(64),
       payload: rangePayload(SAMPLE_BODY, [true, false, false]),
@@ -404,7 +403,7 @@ describe("publishConvertedPdfImport", () => {
   it("refuses a converted PDF whose native-text pages map to zero blocks as no_content, creating no Work", async () => {
     // Native text on every page, but an empty body (no items map to any canonical block): publishing must
     // refuse rather than claim/publish an empty-shell Work (#702's "no empty shell").
-    await driveToConverted(db, {
+    await driveToAwaitingReview(db, {
       id: "att-empty",
       sourceHash: "9".repeat(64),
       payload: rangePayload([], [true, true]),
@@ -441,7 +440,7 @@ describe("publishConvertedPdfImport", () => {
   it("refuses a converted PDF containing a picture as image_unsupported, creating no Work", async () => {
     // Native text on every page, but the body carries a picture whose image #701 cannot preserve:
     // publishing must refuse rather than write a content-losing null-image placeholder (#702).
-    await driveToConverted(db, {
+    await driveToAwaitingReview(db, {
       id: "att-image",
       sourceHash: "e".repeat(64),
       payload: rangePayload(
@@ -480,7 +479,7 @@ describe("publishConvertedPdfImport", () => {
   });
 
   it("falls back to cleaned PDF metadata for title and author when nothing was entered", async () => {
-    await driveToConverted(db, {
+    await driveToAwaitingReview(db, {
       id: "att-meta",
       sourceHash: "f".repeat(64),
       payload: {
@@ -505,7 +504,7 @@ describe("publishConvertedPdfImport", () => {
   });
 
   it("is idempotent: a second publish of a resolved attempt is a no-op", async () => {
-    await driveToConverted(db, {
+    await driveToAwaitingReview(db, {
       id: "att-5",
       sourceHash: "e".repeat(64),
       payload: rangePayload(SAMPLE_BODY, [true]),
@@ -530,7 +529,7 @@ describe("publishConvertedPdfImport", () => {
   });
 
   it("skips an attempt that was never started through beginPdfImport (no publication intent)", async () => {
-    await driveToConverted(db, {
+    await driveToAwaitingReview(db, {
       id: "att-6",
       sourceHash: "f".repeat(64),
       payload: rangePayload(SAMPLE_BODY, [true]),
@@ -563,7 +562,7 @@ describe("publishConvertedPdfImport", () => {
 
   it("reopens the owning Work for identical bytes instead of publishing a duplicate", async () => {
     const sourceHash = "1".repeat(64);
-    await driveToConverted(db, {
+    await driveToAwaitingReview(db, {
       id: "att-8a",
       sourceHash,
       payload: rangePayload(SAMPLE_BODY, [true]),
@@ -576,7 +575,7 @@ describe("publishConvertedPdfImport", () => {
       enteredLanguage: null,
       fileName: "dup.pdf"
     });
-    await driveToConverted(db, {
+    await driveToAwaitingReview(db, {
       id: "att-8b",
       sourceHash,
       payload: rangePayload(SAMPLE_BODY, [true]),
@@ -614,7 +613,7 @@ describe("publishConvertedPdfImport", () => {
   it("releases the staged source file and reopens the winner when an identical claim lands mid-stage", async () => {
     const sourceHash = "2".repeat(64);
     const pdfBytes = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x32]);
-    await driveToConverted(db, {
+    await driveToAwaitingReview(db, {
       id: "att-race",
       sourceHash,
       payload: rangePayload(SAMPLE_BODY, [true]),
@@ -676,7 +675,7 @@ describe("publishConvertedPdfImport", () => {
   for (const { name, id, rejection } of cleanupFailureCases) {
     it(`publishes with retained source bytes and surfaces a post-publish stage cleanup failure (${name})`, async () => {
       const pdfBytes = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31]);
-      await driveToConverted(db, {
+      await driveToAwaitingReview(db, {
         id,
         sourceHash: "7".repeat(64),
         payload: rangePayload(SAMPLE_BODY, [true]),
@@ -736,7 +735,7 @@ describe("publishConvertedPdfImport", () => {
       ],
       [true]
     );
-    await driveToConverted(db, {
+    await driveToAwaitingReview(db, {
       id: "att-sample",
       sourceHash: "9".repeat(64),
       payload,
@@ -770,7 +769,7 @@ describe("publishConvertedPdfImport", () => {
         item({ label: "text", text: `Paragraph number ${index} of the full-length import.` })
       );
     }
-    await driveToConverted(db, {
+    await driveToAwaitingReview(db, {
       id: "att-long",
       sourceHash: "8".repeat(64),
       payload: rangePayload(body, [true]),
@@ -802,7 +801,7 @@ describe("publishConvertedPdfImport", () => {
   it("falls back to a neutral title when the file name has no usable stem", async () => {
     // A dotfile-only name (".pdf") has an empty stem, so neither the entered title nor the stem resolves —
     // the neutral default keeps the Work openable rather than titling it with a raw extension.
-    await driveToConverted(db, {
+    await driveToAwaitingReview(db, {
       id: "att-untitled",
       sourceHash: "2".repeat(64),
       payload: rangePayload(SAMPLE_BODY, [true]),
@@ -823,7 +822,7 @@ describe("publishConvertedPdfImport", () => {
   it("publishes a converted attempt whose adapter fingerprint and page total were never recorded", async () => {
     // Defense-in-depth: a converted row is expected to carry both, but if either column is null the
     // publisher reconstructs with the current adapter fingerprint and a zero page count rather than failing.
-    await driveToConverted(db, {
+    await driveToAwaitingReview(db, {
       id: "att-nullcols",
       sourceHash: "3".repeat(64),
       payload: rangePayload(SAMPLE_BODY, [true]),
@@ -845,6 +844,136 @@ describe("publishConvertedPdfImport", () => {
     expect(result.work.title).toBe("Recovered");
     const content = await loadWorkContent(db, result.work.entryId);
     expect(content!.readingUnits.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe("loadPdfReviewSource", () => {
+  it("returns the resolved review source for a mapped attempt parked awaiting review", async () => {
+    await driveToAwaitingReview(db, {
+      id: "src-ready",
+      sourceHash: "a".repeat(64),
+      payload: rangePayload(SAMPLE_BODY, [true]),
+      totalPages: 1
+    });
+    await insertPublicationIntent(db, {
+      attemptId: "src-ready",
+      enteredTitle: null,
+      enteredAuthor: null,
+      enteredLanguage: null,
+      fileName: "reading.pdf"
+    });
+
+    const source = await loadPdfReviewSource({ db }, "src-ready");
+
+    expect(source).toEqual({
+      status: "ready",
+      sourceHash: "a".repeat(64),
+      fileName: "reading.pdf",
+      // Filename stem fallback (no directory, no extension), neutral author + language defaults.
+      title: "reading",
+      authorName: "Unknown",
+      language: "en"
+    });
+  });
+
+  it("carries the reviewer-entered metadata through to the review source", async () => {
+    await driveToAwaitingReview(db, {
+      id: "src-entered",
+      sourceHash: "b".repeat(64),
+      payload: rangePayload(SAMPLE_BODY, [true]),
+      totalPages: 1
+    });
+    await insertPublicationIntent(db, {
+      attemptId: "src-entered",
+      enteredTitle: "On War",
+      enteredAuthor: "Carl von Clausewitz",
+      enteredLanguage: "zh-CN",
+      fileName: "vom-kriege.pdf"
+    });
+
+    const source = await loadPdfReviewSource({ db }, "src-entered");
+
+    expect(source).toEqual({
+      status: "ready",
+      sourceHash: "b".repeat(64),
+      fileName: "vom-kriege.pdf",
+      title: "On War",
+      authorName: "Carl von Clausewitz",
+      language: "zh-CN"
+    });
+  });
+
+  it("reconstructs the review source with the current adapter fingerprint when the columns are null", async () => {
+    // Defense-in-depth mirroring publication: an awaiting-review row is expected to carry both the adapter
+    // fingerprint and the page total, but if either column is null the source is still resolved (current
+    // fingerprint, zero page count) rather than failing the review boundary.
+    await driveToAwaitingReview(db, {
+      id: "src-nullcols",
+      sourceHash: "d".repeat(64),
+      payload: rangePayload(SAMPLE_BODY, [true]),
+      totalPages: 1
+    });
+    await insertPublicationIntent(db, {
+      attemptId: "src-nullcols",
+      enteredTitle: null,
+      enteredAuthor: null,
+      enteredLanguage: null,
+      fileName: "recovered.pdf"
+    });
+    await db
+      .update(pdfImportAttempts)
+      .set({ adapterFingerprint: null, totalPages: null })
+      .where(eq(pdfImportAttempts.id, "src-nullcols"));
+
+    expect(await loadPdfReviewSource({ db }, "src-nullcols")).toEqual({
+      status: "ready",
+      sourceHash: "d".repeat(64),
+      fileName: "recovered.pdf",
+      title: "recovered",
+      authorName: "Unknown",
+      language: "en"
+    });
+  });
+
+  it("refuses an awaiting-review attempt whose reconstructed document maps to a typed refusal", async () => {
+    // Native text absent on later pages: the reconstructed document maps to an OCR-required refusal, never a
+    // reviewable proposal — review must skip it and let publication record the typed refusal.
+    await driveToAwaitingReview(db, {
+      id: "src-refused",
+      sourceHash: "c".repeat(64),
+      payload: rangePayload(SAMPLE_BODY, [true, false]),
+      totalPages: 2
+    });
+    await insertPublicationIntent(db, {
+      attemptId: "src-refused",
+      enteredTitle: null,
+      enteredAuthor: null,
+      enteredLanguage: null,
+      fileName: "scanned.pdf"
+    });
+
+    expect(await loadPdfReviewSource({ db }, "src-refused")).toEqual({ status: "refused" });
+  });
+
+  it("reports not_awaiting for an attempt that is not parked awaiting review", async () => {
+    // A queued-but-unconverted attempt is not a review source: it has no parked bytes to review yet.
+    const { stagePath } = await stageStore.createStage(
+      "src-queued",
+      new Uint8Array([0x25, 0x50, 0x44, 0x46])
+    );
+    await insertQueuedAttempt(db, {
+      id: "src-queued",
+      userId: DEFAULT_USER_ID,
+      sourceHash: "f".repeat(64),
+      stagePath,
+      now: NOW
+    });
+
+    expect(await loadPdfReviewSource({ db }, "src-queued")).toEqual({ status: "not_awaiting" });
+  });
+
+  it("reports not_awaiting for an unknown attempt id", async () => {
+    expect(await loadPdfReviewSource({ db }, "does-not-exist")).toEqual({ status: "not_awaiting" });
   });
 });
 
@@ -982,7 +1111,7 @@ describe("beginPdfImport", () => {
     if (first.outcome !== "queued") {
       throw new Error("expected first upload to queue");
     }
-    await driveQueuedToConverted(db, {
+    await driveQueuedToAwaitingReview(db, {
       id: first.started.attemptId,
       payload: rangePayload(SAMPLE_BODY, [true]),
       totalPages: 1
@@ -1004,129 +1133,5 @@ describe("beginPdfImport", () => {
       throw new Error(`expected reopened, got ${second.outcome}`);
     }
     expect(second.work.entryId).toBe(work.work.entryId);
-  });
-});
-
-describe("drainPendingPdfPublications (durable publication recovery)", () => {
-  // Stage a queued attempt with real bytes, drive it to `converted`, and record its capture-time intent —
-  // but do NOT publish. This models an attempt stranded after `markConverted` committed but before
-  // publication ran (a crash between the two, or a publication throw on a prior tick): a converted attempt
-  // with a still-pending publication that the queue runner and interrupt-recovery both ignore.
-  async function stageConvertedPending(
-    id: string,
-    input: Readonly<{ sourceHash: string; fileName: string; stageBytes?: Uint8Array }>
-  ): Promise<void> {
-    await driveToConverted(db, {
-      id,
-      sourceHash: input.sourceHash,
-      payload: rangePayload(SAMPLE_BODY, [true]),
-      totalPages: 1,
-      stageBytes: input.stageBytes
-    });
-    await insertPublicationIntent(db, {
-      attemptId: id,
-      enteredTitle: null,
-      enteredAuthor: null,
-      enteredLanguage: null,
-      fileName: input.fileName
-    });
-  }
-
-  it("republishes a converted attempt whose publication was left pending, creating its Work", async () => {
-    // Fail-before/pass-after regression: before this recovery path existed, a converted attempt whose
-    // publication never ran (crash/throw after `markConverted`) stayed `converted` with a pending
-    // publication forever — no Work, no retry. The recovery sweep must publish it idempotently.
-    await stageConvertedPending("att-strand", {
-      sourceHash: "a".repeat(64),
-      fileName: "stranded.pdf"
-    });
-
-    const results = await drainPendingPdfPublications(publishDeps(db));
-
-    expect(results).toHaveLength(1);
-    expect(results[0]).toMatchObject({ attemptId: "att-strand", status: "published" });
-    const publication = await getPublication(db, "att-strand");
-    expect(publication?.workEntryId).not.toBeNull();
-    const content = await loadWorkContent(db, publication!.workEntryId!);
-    expect(content).not.toBeNull();
-    // The now-durable stage was freed after recovery published the Work.
-    expect((await getAttemptById(db, "att-strand"))?.stagePath).toBeNull();
-  });
-
-  it("does not republish an attempt a prior tick already resolved (idempotent, no duplicate Work)", async () => {
-    await stageConvertedPending("att-once", {
-      sourceHash: "b".repeat(64),
-      fileName: "once.pdf"
-    });
-    const first = await drainPendingPdfPublications(publishDeps(db));
-    expect(first[0]).toMatchObject({ status: "published" });
-
-    // A second sweep finds nothing pending, so it publishes nothing and creates no duplicate Work.
-    expect(await findConvertedPendingPublications(db)).toEqual([]);
-    const second = await drainPendingPdfPublications(publishDeps(db));
-    expect(second).toEqual([]);
-    expect(await db.select().from(workMeta)).toHaveLength(1);
-  });
-
-  it("isolates a throwing attempt so the others still publish", async () => {
-    // Two stranded attempts. The first loses its staged bytes, so publication throws when it tries to read
-    // them back for provenance; the second is intact. The sweep must capture the throw as an `error` and
-    // still publish the healthy attempt — one poisoned attempt cannot starve the rest (or the queue drain).
-    await stageConvertedPending("att-broken", {
-      sourceHash: "c".repeat(64),
-      fileName: "broken.pdf"
-    });
-    await stageConvertedPending("att-ok", {
-      sourceHash: "d".repeat(64),
-      fileName: "ok.pdf"
-    });
-    const brokenStage = (await getAttemptById(db, "att-broken"))!.stagePath!;
-    await stageStore.removeStage(brokenStage);
-
-    const results = await drainPendingPdfPublications(publishDeps(db));
-
-    const broken = results.find((result) => result.attemptId === "att-broken");
-    const ok = results.find((result) => result.attemptId === "att-ok");
-    expect(broken?.status).toBe("error");
-    expect(ok?.status).toBe("published");
-    // The healthy attempt produced its Work; the broken one is still pending and will retry next tick.
-    expect(await getPublication(db, "att-ok").then((row) => row?.workEntryId)).not.toBeNull();
-    expect(await getPublication(db, "att-broken").then((row) => row?.workEntryId)).toBeNull();
-  });
-
-  it("only reports converted attempts with a pending publication", async () => {
-    // A queued (not converted) attempt with an intent is not recoverable yet.
-    const { stagePath } = await stageStore.createStage(
-      "att-queued",
-      new Uint8Array([0x25, 0x50, 0x44, 0x46])
-    );
-    await insertQueuedAttempt(db, {
-      id: "att-queued",
-      userId: DEFAULT_USER_ID,
-      sourceHash: "e".repeat(64),
-      stagePath,
-      now: NOW
-    });
-    await insertPublicationIntent(db, {
-      attemptId: "att-queued",
-      enteredTitle: null,
-      enteredAuthor: null,
-      enteredLanguage: null,
-      fileName: "queued.pdf"
-    });
-    // A converted attempt with NO publication intent (never started through beginPdfImport) is not ours.
-    await driveToConverted(db, {
-      id: "att-no-intent",
-      sourceHash: "f".repeat(64),
-      payload: rangePayload(SAMPLE_BODY, [true]),
-      totalPages: 1
-    });
-    // A genuinely pending converted attempt IS returned.
-    await stageConvertedPending("att-pending", {
-      sourceHash: "1".repeat(64),
-      fileName: "pending.pdf"
-    });
-
-    expect(await findConvertedPendingPublications(db)).toEqual(["att-pending"]);
   });
 });

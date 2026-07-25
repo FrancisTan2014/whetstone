@@ -29,6 +29,7 @@ import { createSourceFileStore } from "../../files/sourceFileStore.js";
 import { createServer } from "../../http/createServer.js";
 import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
 import type { ContentDependencies } from "../content/contentCommands.js";
+import { createWork } from "../library/libraryCommands.js";
 import type { LibraryDependencies } from "../library/libraryCommands.js";
 import type { RecitationRouteDependencies } from "../recitation/recitationRoutes.js";
 import { reviewStateColumns } from "../review/reviewCardQueries.js";
@@ -38,6 +39,7 @@ const START = "2026-07-01T12:00:00.000Z";
 
 type TestContext = Readonly<{
   db: DbClient;
+  library: LibraryDependencies;
   server: ReturnType<typeof createServer>;
   setNow: (iso: string) => void;
   sourcesDir: string;
@@ -77,6 +79,7 @@ async function buildContext(): Promise<TestContext> {
 
   return {
     db,
+    library,
     server: createServer({
       content,
       currentUser: { getCurrentUserId: () => DEFAULT_USER_ID },
@@ -246,18 +249,21 @@ async function setTimeZone(timeZone: string): Promise<void> {
 async function seedReadingPosition(): Promise<
   Readonly<{ unitEntryId: string; workEntryId: string }>
 > {
-  const workResponse = await context.server.inject({
-    method: "POST",
-    payload: {
+  const created = await createWork(
+    context.library,
+    {
       author: { mode: "new", name: "Aesop" },
       language: "en",
       origin: "imported",
       title: "Fables",
       workType: "classical_text"
     },
-    url: "/api/works"
-  });
-  const workEntryId = workResponse.json().work.entryId as string;
+    DEFAULT_USER_ID
+  );
+  if (created.status !== "created") {
+    throw new Error("expected the imported seed Work to be created");
+  }
+  const workEntryId = created.work.work.entryId;
   await context.server.inject({
     method: "POST",
     payload: { kind: "manual", markdown: "The quick brown fox." },

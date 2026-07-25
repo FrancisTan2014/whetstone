@@ -63,14 +63,25 @@ async function createHeadingWork(
   title: string,
   markdown: string
 ): Promise<{ entryId: string; title: string }> {
-  const created = await request.post(`${baseURL}api/works`, {
-    data: { author: { mode: "new", name: `${title} Author` }, language: "en", origin: "imported", title, workType: "essay" }
+  // #750 retired the legacy `POST /api/works` (origin=imported) create route; seed through the atomic
+  // Markdown front door (create + ingest in one call). A unique title/author means review publishes it.
+  const created = await request.post(`${baseURL}api/works/markdown`, {
+    data: {
+      author: { mode: "new", name: `${title} Author` },
+      fileName: `${title}.md`,
+      language: "en",
+      markdown,
+      title,
+      workType: "essay"
+    }
   });
-  expect(created.status(), `create → ${await created.text()}`).toBe(201);
-  const { work } = (await created.json()) as { work: { entryId: string; title: string } };
-
-  await ingest(request, baseURL, work.entryId, markdown);
-  return work;
+  expect(created.ok(), `create → ${created.status()}: ${await created.text()}`).toBe(true);
+  const { result, status } = (await created.json()) as {
+    result: { work: { entryId: string; title: string } };
+    status: string;
+  };
+  expect(status, `create status → ${status}`).toBe("created");
+  return result.work;
 }
 
 async function ingest(

@@ -6,7 +6,6 @@ import {
   beginMarkdownCreation,
   cancelWorkCreation,
   createAuthor,
-  createWork,
   deleteWork,
   fetchWorkCreationReview,
   fetchWorks,
@@ -97,41 +96,6 @@ describe("libraryApi", () => {
     });
     expect(fetchMock).toHaveBeenCalledWith("/api/authors", {
       body: JSON.stringify({ name: "Ada Lovelace" }),
-      headers: { "content-type": "application/json" },
-      method: "POST"
-    });
-  });
-
-  it("posts a new work and returns the created work item", async () => {
-    const work = {
-      author: { id: "author-1", name: "Ada Lovelace" },
-      work: {
-        authorId: "author-1",
-        entryId: "work-1",
-        language: "en",
-        title: "Notes",
-        workType: "essay"
-      }
-    };
-    const fetchMock = stubFetch({ ok: true, body: work });
-
-    await expect(
-      createWork({
-        author: { mode: "new", name: "Ada Lovelace" },
-        language: "en",
-        origin: "manual",
-        title: "Notes",
-        workType: "essay"
-      })
-    ).resolves.toEqual(work);
-    expect(fetchMock).toHaveBeenCalledWith("/api/works", {
-      body: JSON.stringify({
-        author: { mode: "new", name: "Ada Lovelace" },
-        language: "en",
-        origin: "manual",
-        title: "Notes",
-        workType: "essay"
-      }),
       headers: { "content-type": "application/json" },
       method: "POST"
     });

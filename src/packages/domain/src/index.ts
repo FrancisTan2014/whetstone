@@ -138,6 +138,7 @@ export {
 } from "./workOrigin.js";
 export type { LibraryCreateOrigin, WorkOrigin } from "./workOrigin.js";
 export {
+  isAwaitingReviewAttemptState,
   isNonTerminalAttemptState,
   isRetryableAttemptState,
   isTerminalAttemptState,

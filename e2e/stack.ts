@@ -159,30 +159,29 @@ async function seedEpub(serverPort: number): Promise<WorkRef> {
 }
 
 async function seedMarkdown(serverPort: number): Promise<WorkRef> {
-  const createResponse = await api(serverPort, "/api/works", {
+  // #750 retired the legacy two-step `POST /api/works` (origin=imported) + `/content` create path, so seed
+  // through the same atomic Markdown front door the app and specs use (`/api/works/markdown`). On this fresh
+  // in-memory DB there is no candidate, so review publishes the Work immediately with status "created".
+  const response = await api(serverPort, "/api/works/markdown", {
     body: JSON.stringify({
       author: { mode: "new", name: "Smoke Author" },
+      fileName: "smoke-markdown.md",
       language: "en",
-      origin: "imported",
+      markdown: markdownSource,
       title: "Smoke Markdown",
       workType: "essay"
     }),
     headers: { "content-type": "application/json" },
     method: "POST"
   });
-  if (createResponse.status !== 201) {
-    throw new Error(`Creating Markdown work returned HTTP ${createResponse.status}.`);
+  if (response.status !== 201 && response.status !== 200) {
+    throw new Error(`Seeding Markdown returned HTTP ${response.status}: ${await response.text()}`);
   }
-  const created = (await createResponse.json()) as { work: WorkRef };
-  const ingestResponse = await api(serverPort, `/api/works/${created.work.entryId}/content`, {
-    body: JSON.stringify({ kind: "manual", markdown: markdownSource }),
-    headers: { "content-type": "application/json" },
-    method: "POST"
-  });
-  if (ingestResponse.status !== 201 && ingestResponse.status !== 200) {
-    throw new Error(`Ingesting Markdown returned HTTP ${ingestResponse.status}.`);
+  const body = (await response.json()) as { result?: { work?: WorkRef }; status?: string };
+  if (body.status !== "created" || body.result?.work?.entryId === undefined) {
+    throw new Error(`Seeding Markdown returned unexpected outcome "${body.status ?? "?"}".`);
   }
-  return created.work;
+  return body.result.work;
 }
 
 export async function bootStack(): Promise<Stack> {

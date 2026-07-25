@@ -20,7 +20,8 @@ import {
   heartbeat,
   insertQueuedAttempt,
   markCancelled,
-  markConverted,
+  markAwaitingReview,
+  markReviewPublished,
   markFailed,
   recoverInterruptedAttempts,
   retryInterrupted,
@@ -281,20 +282,40 @@ describe("pdfImportStore", () => {
   });
 
   describe("terminal transitions", () => {
-    it("marks converted (retaining the stage until cleanup) only under the live token", async () => {
+    it("parks a validated attempt as awaiting_review only under the live token", async () => {
       await seedQueued(db, "a1");
       const { runToken } = await claim(db);
-      expect(await markConverted(db, "a1", "stale", new Date())).toBe(false);
-      expect(await markConverted(db, "a1", runToken, new Date())).toBe(true);
-      const done = await getAttempt(db, DEFAULT_USER_ID, "a1");
-      // The stage binding is kept on the terminal row so a cleanup failure stays visible/retryable; it
-      // is cleared only after the bytes are actually removed (via clearStagePath).
-      expect(done).toMatchObject({
-        state: "converted",
+      expect(await markAwaitingReview(db, "a1", "stale", new Date())).toBe(false);
+      expect(await markAwaitingReview(db, "a1", runToken, new Date())).toBe(true);
+      const parked = await getAttempt(db, DEFAULT_USER_ID, "a1");
+      // The attempt is parked for the shared Work-creation review (#750): the run token is released and
+      // the phase advances to publication, but the stage and validated ranges are retained so a review
+      // decision can publish (or the owner can discard) without re-running conversion.
+      expect(parked).toMatchObject({
+        state: "awaiting_review",
         runToken: null,
+        phase: "publication",
         stagePath: "stage-a1",
         heartbeatAt: null
       });
+    });
+
+    it("publishes an awaiting_review attempt to converted, idempotently", async () => {
+      await seedQueued(db, "a1");
+      const { runToken } = await claim(db);
+      await markAwaitingReview(db, "a1", runToken, new Date());
+      // The review decision publishes (or refuses) the source, moving it to the terminal converted state.
+      expect(await markReviewPublished(db, "a1", new Date())).toBe(true);
+      expect((await getAttempt(db, DEFAULT_USER_ID, "a1"))?.state).toBe("converted");
+      // A second publish of an already-resolved attempt is a fenced no-op (it is no longer awaiting_review).
+      expect(await markReviewPublished(db, "a1", new Date())).toBe(false);
+    });
+
+    it("refuses to publish an attempt that is not awaiting_review", async () => {
+      await seedQueued(db, "a1");
+      await claim(db);
+      // A still-running (never parked) attempt cannot be published — only awaiting_review may.
+      expect(await markReviewPublished(db, "a1", new Date())).toBe(false);
     });
 
     it("marks failed with a typed failure only under the live token", async () => {
@@ -311,8 +332,9 @@ describe("pdfImportStore", () => {
     it("clears the stage binding only after cleanup, keeping it retryable on failure", async () => {
       await seedQueued(db, "a1");
       const { runToken } = await claim(db);
-      await markConverted(db, "a1", runToken, new Date());
-      // Until cleanup runs, the terminal row still owns its stage (status stays bound, retryable).
+      await markAwaitingReview(db, "a1", runToken, new Date());
+      await markReviewPublished(db, "a1", new Date());
+      // Until cleanup runs, the resolved row still owns its stage (status stays bound, retryable).
       expect((await getAttemptById(db, "a1"))?.stagePath).toBe("stage-a1");
       await clearStagePath(db, "a1", new Date());
       expect((await getAttemptById(db, "a1"))?.stagePath).toBeNull();
@@ -346,10 +368,21 @@ describe("pdfImportStore", () => {
       expect(result).toMatchObject({ cancelled: true, wasRunning: false });
     });
 
+    it("cancels an awaiting_review attempt (the owner discards a parked review)", async () => {
+      await seedQueued(db, "a1");
+      const { runToken } = await claim(db);
+      await markAwaitingReview(db, "a1", runToken, new Date());
+      // awaiting_review is non-terminal, so an owner discard (Open existing / cancel) can still fence it.
+      const result = await markCancelled(db, DEFAULT_USER_ID, "a1", new Date());
+      expect(result).toMatchObject({ cancelled: true, stagePath: "stage-a1" });
+      expect((await getAttempt(db, DEFAULT_USER_ID, "a1"))?.state).toBe("cancelled");
+    });
+
     it("refuses to cancel a terminal attempt or another user's attempt", async () => {
       await seedQueued(db, "a1");
       const { runToken } = await claim(db);
-      await markConverted(db, "a1", runToken, new Date());
+      await markAwaitingReview(db, "a1", runToken, new Date());
+      await markReviewPublished(db, "a1", new Date());
       expect((await markCancelled(db, DEFAULT_USER_ID, "a1", new Date())).cancelled).toBe(false);
 
       await seedQueued(db, "a2");

@@ -5,17 +5,26 @@
 // resume decision is decided by a total function the store and runner can trust.
 //
 // States:
-//   - `queued`      — created and staged, waiting for the single conversion slot.
-//   - `running`     — a claim holds the conversion slot under a run token; a child may be converting.
-//   - `converted`   — every structured range passed #701 validation. Terminal. Creates no content.
-//   - `failed`      — a typed conversion failure. Terminal, but retryable back to `queued`.
-//   - `cancelled`   — the owner cancelled; the child was fenced and stages removed. Terminal, retryable.
-//   - `interrupted` — a claim was abandoned (the process died mid-run) and recovered at startup.
-//                     Non-terminal and explicitly retryable; never silently resumed as `running`.
+//   - `queued`         — created and staged, waiting for the single conversion slot.
+//   - `running`        — a claim holds the conversion slot under a run token; a child may be converting.
+//   - `awaiting_review`— every structured range passed #701 validation, but the converted source has NOT
+//                        been published: it is parked for the shared Work-creation duplicate review (#750),
+//                        retaining its stage and validated ranges. The recovery/publication drain must
+//                        never auto-publish this state; a refresh/restart retains it without rerunning
+//                        conversion/OCR. A review decision (Keep separate) is the sole path to `converted`.
+//                        Non-terminal, not retryable.
+//   - `converted`      — the review published (or refused) the source: a canonical Work exists, or a typed
+//                        publication refusal was recorded. Terminal. The attempt creates no further content.
+//   - `failed`         — a typed conversion failure. Terminal, but retryable back to `queued`.
+//   - `cancelled`      — the owner cancelled (or a duplicate reopen discarded the source); the child was
+//                        fenced and stages removed. Terminal, retryable.
+//   - `interrupted`    — a claim was abandoned (the process died mid-run) and recovered at startup.
+//                        Non-terminal and explicitly retryable; never silently resumed as `running`.
 
 export const pdfImportAttemptStates = [
   "queued",
   "running",
+  "awaiting_review",
   "converted",
   "failed",
   "cancelled",
@@ -62,6 +71,15 @@ export function isTerminalAttemptState(state: PdfImportAttemptState): boolean {
 // rejected, not a silent no-op.
 export function isRetryableAttemptState(state: PdfImportAttemptState): boolean {
   return state === "interrupted";
+}
+
+// The attempt has finished validated conversion and is parked for the shared Work-creation duplicate
+// review (#750): its stage and committed ranges are retained, and it may be published (Keep separate),
+// discarded (Open existing / owner cancel), or left as-is across a refresh/restart WITHOUT rerunning
+// conversion/OCR. This is the ONLY state `publishConvertedPdfImport` may publish from — the drain and the
+// runner never publish, so publication happens only under a serialized review decision.
+export function isAwaitingReviewAttemptState(state: PdfImportAttemptState): boolean {
+  return state === "awaiting_review";
 }
 
 // A late range output or checkpoint may be applied only while the SAME claim still holds the slot: the

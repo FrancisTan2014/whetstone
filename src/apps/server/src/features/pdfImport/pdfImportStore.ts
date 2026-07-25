@@ -538,7 +538,11 @@ export async function markPublicationImagesUnsupported(
     .where(pendingPublicationGuard(attemptId));
 }
 
-export async function markConverted(
+// The runner's post-conversion transition (#750): every structured range passed validation, so the
+// attempt is parked as `awaiting_review` (NOT `converted`/published). The stage and committed ranges are
+// retained; publication happens only later, under a serialized Work-creation review decision. Fenced by
+// the run token so a superseded (cancelled/interrupted) claim cannot flip a stale attempt to review.
+export async function markAwaitingReview(
   db: DbClient,
   id: string,
   runToken: string,
@@ -547,13 +551,27 @@ export async function markConverted(
   const applied = await db
     .update(pdfImportAttempts)
     .set({
-      state: "converted",
+      state: "awaiting_review",
       runToken: null,
       phase: "publication",
       heartbeatAt: null,
       updatedAt: now
     })
     .where(fencedWhere(id, runToken))
+    .returning({ id: pdfImportAttempts.id });
+  return applied.length > 0;
+}
+
+// The publication transition (#750): an `awaiting_review` attempt whose review decision published (or
+// refused) its source moves to the terminal `converted` state, so no further review attempt is ever
+// minted for it and the source is done. Fenced on the `awaiting_review` state (the run token is already
+// null by this point), so it is idempotent — a re-run after the outcome already committed is a no-op.
+// Returns whether the transition applied.
+export async function markReviewPublished(db: DbClient, id: string, now: Date): Promise<boolean> {
+  const applied = await db
+    .update(pdfImportAttempts)
+    .set({ state: "converted", updatedAt: now })
+    .where(and(eq(pdfImportAttempts.id, id), eq(pdfImportAttempts.state, "awaiting_review")))
     .returning({ id: pdfImportAttempts.id });
   return applied.length > 0;
 }
@@ -642,23 +660,6 @@ export async function recoverInterruptedAttempts(db: DbClient, now: Date): Promi
     .where(eq(pdfImportAttempts.state, "running"))
     .returning({ id: pdfImportAttempts.id });
   return recovered.length;
-}
-
-// Durable publication recovery (#702): the attempt ids of every `converted` attempt whose publication
-// intent is still pending (no terminal outcome recorded yet), oldest first. These are stranded work the
-// queue runner can never pick up (it only claims `queued` attempts) and startup recovery never touches
-// (it only moves abandoned `running` attempts): an attempt whose process died after `markConverted`
-// committed but before publication finished, or whose publication threw once on a prior drain tick. The
-// drain loop republishes each idempotently, so a converted attempt is never left reporting
-// "Finishing up..." forever with no Work created and no retry path.
-export async function findConvertedPendingPublications(db: DbClient): Promise<readonly string[]> {
-  const rows = await db
-    .select({ attemptId: pdfImportAttempts.id })
-    .from(pdfImportAttempts)
-    .innerJoin(pdfImportPublications, eq(pdfImportPublications.attemptId, pdfImportAttempts.id))
-    .where(and(eq(pdfImportAttempts.state, "converted"), pendingPublicationCondition()))
-    .orderBy(asc(pdfImportAttempts.createdAt));
-  return rows.map((row) => row.attemptId);
 }
 
 // Retry: promote an attempt back to `queued` so the runner resumes it after the last committed range.

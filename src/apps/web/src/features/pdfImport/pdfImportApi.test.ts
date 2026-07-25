@@ -54,7 +54,7 @@ function statusDto(): PdfImportViewDto["status"] {
 }
 
 function view(): PdfImportViewDto {
-  return { publication: { status: "pending" }, status: statusDto() };
+  return { publication: { status: "pending" }, review: null, status: statusDto() };
 }
 
 afterEach(() => {

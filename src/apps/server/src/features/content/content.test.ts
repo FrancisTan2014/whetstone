@@ -38,9 +38,11 @@ import { createImageResourceStore } from "../../files/imageResourceStore.js";
 import { createSourceFileStore, hashBytes, hashMarkdown } from "../../files/sourceFileStore.js";
 import type { ParsedEpub, ParsedEpubImage } from "../../files/epubSource.js";
 import { createServer } from "../../http/createServer.js";
+import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
 import { createImportedMarkdownWork, type ContentDependencies } from "./contentCommands.js";
 import { ingestEpub as ingestEpubCommand } from "./epubCommands.js";
 import type { IngestionEvidence } from "./htmlToDocument.js";
+import { createWork as createWorkCommand } from "../library/libraryCommands.js";
 import type { LibraryDependencies } from "../library/libraryCommands.js";
 import type { WorkCreationDependencies } from "../workCreation/workCreationCommands.js";
 
@@ -48,6 +50,7 @@ type TestContext = Readonly<{
   content: ContentDependencies;
   db: DbClient;
   imagesDir: string;
+  library: LibraryDependencies;
   pglite: PGlite;
   server: ReturnType<typeof createServer>;
   sourcesDir: string;
@@ -118,13 +121,19 @@ async function buildContext(): Promise<TestContext> {
     createAttemptId: () => `attempt-${(attemptSequence += 1)}`,
     createStageId: () => `stage-${(stageSequence += 1)}`,
     log: { info: () => undefined },
-    now: () => new Date()
+    now: () => new Date(),
+    pdf: {
+      loadForReview: async () => ({ status: "not_awaiting" }),
+      publish: async () => ({ status: "skipped" }),
+      discard: async () => {}
+    }
   };
 
   return {
     content,
     db,
     imagesDir,
+    library,
     pglite,
     server: createServer({ content, library, logger: false, workCreation }),
     sourcesDir
@@ -132,19 +141,22 @@ async function buildContext(): Promise<TestContext> {
 }
 
 async function createWork(): Promise<string> {
-  const response = await context.server.inject({
-    method: "POST",
-    payload: {
+  const created = await createWorkCommand(
+    context.library,
+    {
       author: { mode: "new", name: "George Orwell" },
       language: "en",
       origin: "imported",
       title: "Politics and the English Language",
       workType: "essay"
     },
-    url: "/api/works"
-  });
+    DEFAULT_USER_ID
+  );
+  if (created.status !== "created") {
+    throw new Error("expected the imported seed Work to be created");
+  }
 
-  return response.json().work.entryId as string;
+  return created.work.work.entryId;
 }
 
 function ingest(workEntryId: string, payload: unknown): ReturnType<typeof context.server.inject> {

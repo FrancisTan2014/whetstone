@@ -1,7 +1,8 @@
 import {
   pdfImportStartMetadataSchema,
   type PdfImportBeginResultDto,
-  type PdfImportViewDto
+  type PdfImportViewDto,
+  type WorkCreationReviewDto
 } from "@whetstone/contracts";
 import type { FastifyInstance } from "fastify";
 
@@ -24,9 +25,20 @@ const attemptNotFoundBody = { error: "attempt_not_found" } as const;
 // header cannot carry.
 const metadataHeader = "x-pdf-import-metadata";
 
+// The result of parking a converted attempt at the shared Work-creation review boundary (#750), typed
+// structurally through the shared contract DTO so this route never imports workCreation internals. Only
+// `needs_review` carries a panel the client renders; every other status is resolved through the view's
+// publication field, so the route just attaches a null review.
+export type PdfImportBeginReviewResult =
+  | Readonly<{ status: "needs_review"; review: WorkCreationReviewDto }>
+  | Readonly<{ status: "created" | "exact_existing" | "refused" | "not_awaiting" | "uncertain" }>;
+
 export type PdfImportRouteDependencies = Readonly<{
   commands: PdfImportCommandDependencies;
   uploadLimitBytes: number;
+  // Park a converted attempt at the shared duplicate-review boundary on the first status read after
+  // conversion; idempotent and a no-op unless the attempt is awaiting review.
+  beginReview: (userId: string, attemptId: string) => Promise<PdfImportBeginReviewResult>;
 }>;
 
 type AttemptParams = Readonly<{ attemptId: string }>;
@@ -56,10 +68,12 @@ async function drainBody(body: unknown): Promise<void> {
 
 // The born-digital PDF import routes (#702): start an import (streaming the upload into #721's staged
 // attempt, or reopening the Work identical bytes already own via #706), poll its combined execution +
-// publication view, and cancel or retry it. Publication of a converted attempt is driven by the server's
-// drain loop, not these routes — the client observes it through the view's publication outcome. The
-// upload's content-type parser is a streaming passthrough registered once by `createServer`, so the raw
-// request stream flows straight into the staging/hash boundary and is never buffered whole in memory.
+// publication + review view, and cancel or retry it. Publication of a converted attempt is driven ONLY by
+// a serialized Work-creation review decision (#750): the first poll after conversion parks the attempt at
+// the shared duplicate-review boundary, and the client observes the outcome through the view's publication
+// field or renders the returned review panel. The upload's content-type parser is a streaming passthrough
+// registered once by `createServer`, so the raw request stream flows straight into the staging/hash
+// boundary and is never buffered whole in memory.
 export function registerPdfImportRoutes(
   server: FastifyInstance,
   dependencies: PdfImportRouteDependencies
@@ -132,13 +146,25 @@ export function registerPdfImportRoutes(
   });
 
   server.get<{ Params: AttemptParams }>("/api/pdf-imports/:attemptId", async (request, reply) => {
-    const view = await viewFor(
-      dependencies,
-      request.server.currentUser.getCurrentUserId(),
-      request.params.attemptId
-    );
+    const userId = request.server.currentUser.getCurrentUserId();
+    const attemptId = request.params.attemptId;
+    const view = await viewFor(dependencies, userId, attemptId);
     if (view === null) {
       return reply.code(404).send(attemptNotFoundBody);
+    }
+    // A converted attempt is parked at the shared duplicate-review boundary on the first read after
+    // conversion (#750); parking is idempotent. Re-read the view afterwards so an immediate create/reopen
+    // or refusal is reflected in its publication field, and surface the panel only when a duplicate parked
+    // one review attempt.
+    if (view.status.state === "awaiting_review") {
+      const result = await dependencies.beginReview(userId, attemptId);
+      const parked = await viewFor(dependencies, userId, attemptId);
+      if (parked === null) {
+        return reply.code(404).send(attemptNotFoundBody);
+      }
+      return reply
+        .code(200)
+        .send(result.status === "needs_review" ? { ...parked, review: result.review } : parked);
     }
     return reply.code(200).send(view);
   });

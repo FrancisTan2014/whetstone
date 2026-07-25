@@ -1,4 +1,4 @@
-import type { PdfImportViewDto } from "@whetstone/contracts";
+import type { PdfImportViewDto, WorkCreationReviewDto } from "@whetstone/contracts";
 
 // The learner-facing phrase for a PDF that still had text-less pages after the OCR pass (#745/#746): a
 // preflight/full-conversion disagreement or incomplete recognition, so the import refuses rather than
@@ -36,6 +36,7 @@ function ocrValidationFailedPagesMessage(pagesNeedingOcr: number): string {
 export type PdfImportProgress =
   | Readonly<{ kind: "in_progress"; label: string; needsResume: boolean; terminal: false }>
   | Readonly<{ kind: "published"; workEntryId: string; terminal: true }>
+  | Readonly<{ kind: "needs_review"; review: WorkCreationReviewDto; terminal: true }>
   | Readonly<{ kind: "ocr_validation_failed"; message: string; terminal: true }>
   | Readonly<{ kind: "no_content"; message: string; terminal: true }>
   | Readonly<{ kind: "image_unsupported"; message: string; terminal: true }>
@@ -84,6 +85,14 @@ export function describePdfImport(view: PdfImportViewDto): PdfImportProgress {
     };
   }
 
+  // A converted attempt parked at the shared duplicate-review boundary (#750): once the first poll after
+  // conversion has minted the review, hand it to the shared review panel and stop polling. Until the review
+  // exists (the parking poll, or a transient re-check), keep polling with a neutral "checking" label — an
+  // immediate create/reopen/refusal resolves through the publication field above instead.
+  if (view.status.state === "awaiting_review" && view.review !== null) {
+    return { kind: "needs_review", review: view.review, terminal: true };
+  }
+
   return {
     kind: "in_progress",
     label: inProgressLabel(view),
@@ -101,6 +110,12 @@ function inProgressLabel(view: PdfImportViewDto): string {
 
   if (state === "converted") {
     return "Finishing up…";
+  }
+
+  // The converted attempt is at the duplicate-review boundary but its review has not been minted yet (the
+  // parking poll, or a transient re-check): show a neutral checking label rather than a stale phase.
+  if (state === "awaiting_review") {
+    return "Checking your library for duplicates…";
   }
 
   if (state === "queued") {

@@ -29,27 +29,25 @@ test("mobile: the annotations chooser Close button is a >=44px hit target (#413)
   await page.setViewportSize({ height: MOBILE.height, width: MOBILE.width });
 
   // Seed a dedicated work so nothing another spec did can interfere with opening the panel.
-  const created = await page.request.post(`${setup.baseURL}api/works`, {
+  // #750 retired the legacy `POST /api/works` (origin=imported) + `/content` two-step; seed through the
+  // atomic Markdown front door. A unique title/author means no candidate, so review publishes ("created").
+  const created = await page.request.post(`${setup.baseURL}api/works/markdown`, {
     data: {
       author: { mode: "new", name: "Touch Target Author" },
+      fileName: "Touch Target Work.md",
       language: "en",
-      origin: "imported",
+      markdown: "# Touch target\n\nA clean paragraph for the close test.\n",
       title: "Touch Target Work",
       workType: "essay"
     }
   });
-  expect(created.status()).toBe(201);
-  const { work } = (await created.json()) as { work: { entryId: string } };
-  const ingest = await page.request.post(
-    `${setup.baseURL}api/works/${encodeURIComponent(work.entryId)}/content`,
-    {
-      data: {
-        kind: "manual",
-        markdown: "# Touch target\n\nA clean paragraph for the close test.\n"
-      }
-    }
-  );
-  expect(ingest.ok()).toBe(true);
+  expect(created.ok(), `create → ${created.status()}`).toBe(true);
+  const { result: createResult, status } = (await created.json()) as {
+    result: { work: { entryId: string } };
+    status: string;
+  };
+  expect(status).toBe("created");
+  const work = createResult.work;
 
   const readerUrl = `${setup.baseURL}#/reader?work=${encodeURIComponent(work.entryId)}`;
   await page.goto(readerUrl);

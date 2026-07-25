@@ -35,10 +35,12 @@ import { listNotesForUser, listNotesForWork } from "./noteQueries.js";
 import { newReviewState, RECALL_REQUEST_RETENTION, toEntryId } from "@whetstone/domain";
 import { reviewStateColumns } from "../review/reviewCardQueries.js";
 import type { ContentDependencies } from "../content/contentCommands.js";
+import { createWork as createWorkCommand } from "../library/libraryCommands.js";
 import type { LibraryDependencies } from "../library/libraryCommands.js";
 
 type TestContext = Readonly<{
   db: DbClient;
+  library: LibraryDependencies;
   server: ReturnType<typeof createServer>;
   setNow: (iso: string) => void;
   sourcesDir: string;
@@ -80,6 +82,7 @@ async function buildContext(): Promise<TestContext> {
 
   return {
     db,
+    library,
     server: createServer({ content, library, logger: false, notes: notesDeps }),
     setNow: (iso: string) => {
       currentNow = new Date(iso);
@@ -88,23 +91,36 @@ async function buildContext(): Promise<TestContext> {
   };
 }
 
+// Seeds an imported Work shell through the `createWork` command — the legacy `POST /api/works` route is
+// retired (#750), so notes fixtures mint their backing Work the same way an ingest path commits one.
+async function seedImportedWork(
+  title: string,
+  authorName: string,
+  workType: "book" | "classical_text"
+): Promise<string> {
+  const created = await createWorkCommand(
+    context.library,
+    {
+      author: { mode: "new", name: authorName },
+      language: "en",
+      origin: "imported",
+      title,
+      workType
+    },
+    DEFAULT_USER_ID
+  );
+  if (created.status !== "created") {
+    throw new Error("expected the imported seed Work to be created");
+  }
+  return created.work.work.entryId;
+}
+
 async function createWorkWithBlock(): Promise<{
   blockEntryId: string;
   plaintext: string;
   workEntryId: string;
 }> {
-  const workResponse = await context.server.inject({
-    method: "POST",
-    payload: {
-      author: { mode: "new", name: "Aesop" },
-      language: "en",
-      origin: "imported",
-      title: "Fables",
-      workType: "classical_text"
-    },
-    url: "/api/works"
-  });
-  const workEntryId = workResponse.json().work.entryId as string;
+  const workEntryId = await seedImportedWork("Fables", "Aesop", "classical_text");
 
   await context.server.inject({
     method: "POST",
@@ -128,18 +144,7 @@ async function createWorkTitled(
   title: string,
   author: string
 ): Promise<{ blockEntryId: string; plaintext: string; workEntryId: string }> {
-  const workResponse = await context.server.inject({
-    method: "POST",
-    payload: {
-      author: { mode: "new", name: author },
-      language: "en",
-      origin: "imported",
-      title,
-      workType: "book"
-    },
-    url: "/api/works"
-  });
-  const workEntryId = workResponse.json().work.entryId as string;
+  const workEntryId = await seedImportedWork(title, author, "book");
 
   await context.server.inject({
     method: "POST",
@@ -165,18 +170,7 @@ async function createWorkWithTwoBlocks(): Promise<{
   startPlaintext: string;
   workEntryId: string;
 }> {
-  const workResponse = await context.server.inject({
-    method: "POST",
-    payload: {
-      author: { mode: "new", name: "Aesop" },
-      language: "en",
-      origin: "imported",
-      title: "Two Paragraphs",
-      workType: "classical_text"
-    },
-    url: "/api/works"
-  });
-  const workEntryId = workResponse.json().work.entryId as string;
+  const workEntryId = await seedImportedWork("Two Paragraphs", "Aesop", "classical_text");
 
   await context.server.inject({
     method: "POST",
@@ -204,18 +198,7 @@ async function createWorkWithTwoUnits(): Promise<{
   secondUnitBlockEntryId: string;
   workEntryId: string;
 }> {
-  const workResponse = await context.server.inject({
-    method: "POST",
-    payload: {
-      author: { mode: "new", name: "Aesop" },
-      language: "en",
-      origin: "imported",
-      title: "Two Units",
-      workType: "classical_text"
-    },
-    url: "/api/works"
-  });
-  const workEntryId = workResponse.json().work.entryId as string;
+  const workEntryId = await seedImportedWork("Two Units", "Aesop", "classical_text");
 
   await context.server.inject({
     method: "POST",

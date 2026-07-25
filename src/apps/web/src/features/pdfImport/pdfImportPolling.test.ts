@@ -10,6 +10,7 @@ const sha = "b".repeat(64);
 function runningView(): PdfImportViewDto {
   return {
     publication: { status: "pending" },
+    review: null,
     status: {
       adapterFingerprint: null,
       attemptId: "attempt-1",

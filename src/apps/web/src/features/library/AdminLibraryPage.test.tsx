@@ -16,7 +16,6 @@ vi.mock("./libraryApi", () => ({
   beginManualCreation: vi.fn(),
   beginMarkdownCreation: vi.fn(),
   cancelWorkCreation: vi.fn(),
-  createWork: vi.fn(),
   deleteWork: vi.fn(),
   fetchWorks: vi.fn(),
   fetchWorksWithReadingPosition: vi.fn(),
@@ -92,7 +91,6 @@ import {
   beginManualCreation,
   beginMarkdownCreation,
   cancelWorkCreation,
-  createWork,
   deleteWork,
   fetchWorks,
   fetchWorksWithReadingPosition,
@@ -148,7 +146,6 @@ function render(ui: React.ReactElement): ReturnType<typeof rtlRender> {
 const mockedSearchAuthors = vi.mocked(searchAuthors);
 const mockedFetchWorks = vi.mocked(fetchWorks);
 const mockedFetchWorksWithReadingPosition = vi.mocked(fetchWorksWithReadingPosition);
-const mockedCreateWork = vi.mocked(createWork);
 const mockedDeleteWork = vi.mocked(deleteWork);
 const mockedBeginEpubCreation = vi.mocked(beginEpubCreation);
 const mockedBeginManualCreation = vi.mocked(beginManualCreation);
@@ -856,7 +853,6 @@ describe("AdminLibraryPage", () => {
     expect(
       await screen.findByText("“史记选读” is already in your library — opened it.")
     ).toBeDefined();
-    expect(mockedCreateWork).not.toHaveBeenCalled();
   });
 
   it("shows an error when the EPUB ingestion fails", async () => {
@@ -888,7 +884,6 @@ describe("AdminLibraryPage", () => {
     const list = screen.getByRole("list", { name: "Possible duplicates" });
     expect(within(list).getByText("史记选读")).toBeDefined();
     expect(screen.getByText("史记选读.epub")).toBeDefined();
-    expect(mockedCreateWork).not.toHaveBeenCalled();
   });
 
   it("commits the EPUB as a separate Work from the review panel (#748)", async () => {
@@ -940,7 +935,6 @@ describe("AdminLibraryPage", () => {
         "That file couldn’t be read as an EPUB. Please choose a valid .epub file."
       )
     ).toBeDefined();
-    expect(mockedCreateWork).not.toHaveBeenCalled();
   });
 
   it("reports an untrusted duplicate check for an EPUB and creates nothing (#748)", async () => {
@@ -957,7 +951,6 @@ describe("AdminLibraryPage", () => {
         "Couldn’t check your library for duplicates just now. Please try again."
       )
     ).toBeDefined();
-    expect(mockedCreateWork).not.toHaveBeenCalled();
   });
 
   it("ignores an upload with no file selected", async () => {
@@ -1016,7 +1009,6 @@ describe("AdminLibraryPage", () => {
 
     expect(await screen.findByText("Imported “史记选读”.")).toBeDefined();
     expect(screen.queryByLabelText("Title")).toBeNull();
-    expect(mockedCreateWork).not.toHaveBeenCalled();
   });
 
   it("routes by MIME type first: a PDF mislabelled .epub takes the PDF confirm path", async () => {
@@ -1069,7 +1061,6 @@ describe("AdminLibraryPage", () => {
         workType: "book"
       });
     });
-    expect(mockedCreateWork).not.toHaveBeenCalled();
     await waitFor(() => {
       expect(onManageContent).toHaveBeenCalledWith("work-1");
     });
@@ -1105,7 +1096,6 @@ describe("AdminLibraryPage", () => {
         "“Politics and the English Language” is already in your library — opened it."
       )
     ).toBeDefined();
-    expect(mockedCreateWork).not.toHaveBeenCalled();
   });
 
   // A #721 execution status; overrides tailor the specific branch. `sourceHash` must be 64 hex chars.
@@ -1133,7 +1123,7 @@ describe("AdminLibraryPage", () => {
     publication: PdfImportViewDto["publication"],
     statusOverrides: Partial<PdfImportStatusDto> = {}
   ): PdfImportViewDto {
-    return { publication, status: pdfStatus(statusOverrides) };
+    return { publication, review: null, status: pdfStatus(statusOverrides) };
   }
 
   it("imports a born-digital PDF: forwards the entered metadata, then opens the published Work in the Reader (#702)", async () => {
@@ -1171,7 +1161,6 @@ describe("AdminLibraryPage", () => {
       });
     });
     // No legacy shell-Work create for a born-digital PDF.
-    expect(mockedCreateWork).not.toHaveBeenCalled();
     // The in-flight attempt is remembered so it survives navigation, then cleared on completion.
     expect(mockedRememberActivePdfImport).toHaveBeenCalledWith("attempt-1");
     await waitFor(() => {
@@ -1306,6 +1295,178 @@ describe("AdminLibraryPage", () => {
 
     expect(await screen.findByText("The converter could not read this PDF.")).toBeDefined();
     expect(navigateSpy).not.toHaveBeenCalledWith(expect.stringContaining("/reader"));
+  });
+
+  it("routes a converted PDF that hits a credible duplicate into the shared review panel (#750)", async () => {
+    mockedBeginPdfImport.mockResolvedValue({
+      attemptId: "attempt-1",
+      outcome: "queued",
+      status: pdfStatus()
+    });
+    // The first poll after conversion parked the shared review: the view carries the minted review DTO with
+    // the attempt still `awaiting_review` (it keeps its bytes while the learner decides — nothing published).
+    mockedFetchPdfImportView.mockResolvedValue({
+      publication: { status: "pending" },
+      review: duplicateReview(),
+      status: pdfStatus({ state: "awaiting_review" })
+    });
+    const user = await renderReady();
+
+    const file = new File([new Uint8Array([1])], "meditations.pdf", { type: "application/pdf" });
+    await user.upload(screen.getByLabelText("Upload"), file);
+    await user.type(screen.getByLabelText("New author or source name"), "Nobody");
+    await user.click(screen.getByRole("button", { name: "Create work" }));
+
+    // The SAME shared duplicate-review panel the Markdown/EPUB/manual front doors show — no PDF-specific
+    // duplicate UI — framed by the review's own evidence.
+    const list = await screen.findByRole("list", { name: "Possible duplicates" });
+    expect(within(list).getByText("Politics and the English Language")).toBeDefined();
+    // Nothing is published while the review is open, so the Reader is never opened.
+    expect(navigateSpy).not.toHaveBeenCalledWith(expect.stringContaining("/reader"));
+    // The converted attempt is parked, not discarded: it stays remembered so Back/expiry (and a reload) can
+    // resume its `awaiting_review` poll for a fresh review instead of orphaning the expensive conversion.
+    expect(mockedRememberActivePdfImport).toHaveBeenCalledWith("attempt-1");
+    expect(mockedForgetActivePdfImport).not.toHaveBeenCalled();
+  });
+
+  it("re-reviews the converted PDF when the learner goes Back — the attempt is never orphaned (#750)", async () => {
+    // The PDF import attempt and the work-creation review attempt are DISTINCT ids: Back cancels the review
+    // attempt, but the converted PDF import must stay alive and re-reviewable.
+    mockedBeginPdfImport.mockResolvedValue({
+      attemptId: "pdf-attempt-1",
+      outcome: "queued",
+      status: pdfStatus({ attemptId: "pdf-attempt-1" })
+    });
+    const pdfReview: WorkCreationReviewDto = { ...duplicateReview(), attemptId: "wc-attempt-1" };
+    // Every poll of the converted attempt reports it parked at `awaiting_review` with a minted review, so a
+    // resumed poll after Back re-surfaces the shared panel.
+    mockedFetchPdfImportView.mockResolvedValue({
+      publication: { status: "pending" },
+      review: pdfReview,
+      status: pdfStatus({ attemptId: "pdf-attempt-1", state: "awaiting_review" })
+    });
+    mockedCancelWorkCreation.mockResolvedValue({ cancelled: true });
+    const user = await renderReady();
+
+    const file = new File([new Uint8Array([1])], "meditations.pdf", { type: "application/pdf" });
+    await user.upload(screen.getByLabelText("Upload"), file);
+    await user.type(screen.getByLabelText("New author or source name"), "Nobody");
+    await user.click(screen.getByRole("button", { name: "Create work" }));
+
+    await screen.findByRole("list", { name: "Possible duplicates" });
+
+    await user.click(screen.getByRole("button", { name: "Back" }));
+
+    // Back cancels the spent work-creation review attempt (not the PDF import) so the server hands the PDF
+    // back as a fresh review…
+    await waitFor(() => expect(mockedCancelWorkCreation).toHaveBeenCalledWith("wc-attempt-1"));
+    // …then resumes the poll on the still-remembered PDF import attempt, which re-parks the shared panel.
+    await waitFor(() => expect(mockedFetchPdfImportView).toHaveBeenCalledWith("pdf-attempt-1"));
+    expect(await screen.findByRole("list", { name: "Possible duplicates" })).toBeDefined();
+    // The converted attempt is never forgotten while it is still re-reviewable.
+    expect(mockedForgetActivePdfImport).not.toHaveBeenCalled();
+  });
+
+  it("re-reviews the converted PDF when the review lapses instead of dropping to the form (#750)", async () => {
+    mockedBeginPdfImport.mockResolvedValue({
+      attemptId: "pdf-attempt-1",
+      outcome: "queued",
+      status: pdfStatus({ attemptId: "pdf-attempt-1" })
+    });
+    const pdfReview: WorkCreationReviewDto = { ...duplicateReview(), attemptId: "wc-attempt-1" };
+    mockedFetchPdfImportView.mockResolvedValue({
+      publication: { status: "pending" },
+      review: pdfReview,
+      status: pdfStatus({ attemptId: "pdf-attempt-1", state: "awaiting_review" })
+    });
+    // The decision fences on an expired attempt: a held-file review would fall back to the Add-work form, but
+    // a PDF must resume its parked poll and re-mint a fresh review.
+    mockedKeepSeparateWork.mockResolvedValue({ status: "expired" });
+    const user = await renderReady();
+
+    const file = new File([new Uint8Array([1])], "meditations.pdf", { type: "application/pdf" });
+    await user.upload(screen.getByLabelText("Upload"), file);
+    await user.type(screen.getByLabelText("New author or source name"), "Nobody");
+    await user.click(screen.getByRole("button", { name: "Create work" }));
+
+    await screen.findByRole("list", { name: "Possible duplicates" });
+    await user.click(screen.getByRole("button", { name: "Keep separate" }));
+
+    expect(
+      await screen.findByText("This review is no longer valid. Please try again.")
+    ).toBeDefined();
+    // No Add-work form appears; the converted attempt resumes its poll and the panel re-mints instead.
+    expect(screen.queryByLabelText("Title")).toBeNull();
+    expect(await screen.findByRole("list", { name: "Possible duplicates" })).toBeDefined();
+  });
+
+  it("forgets the converted PDF once a review decision resolves it (#750)", async () => {
+    const onManageContent = vi.fn();
+    mockedBeginPdfImport.mockResolvedValue({
+      attemptId: "pdf-attempt-1",
+      outcome: "queued",
+      status: pdfStatus({ attemptId: "pdf-attempt-1" })
+    });
+    const pdfReview: WorkCreationReviewDto = { ...duplicateReview(), attemptId: "wc-attempt-1" };
+    mockedFetchPdfImportView.mockResolvedValue({
+      publication: { status: "pending" },
+      review: pdfReview,
+      status: pdfStatus({ attemptId: "pdf-attempt-1", state: "awaiting_review" })
+    });
+    mockedOpenExistingWork.mockResolvedValue({ result: reopenResult, status: "opened" });
+    mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
+    const user = await renderReady(onManageContent);
+
+    const file = new File([new Uint8Array([1])], "meditations.pdf", { type: "application/pdf" });
+    await user.upload(screen.getByLabelText("Upload"), file);
+    await user.type(screen.getByLabelText("New author or source name"), "Nobody");
+    await user.click(screen.getByRole("button", { name: "Create work" }));
+
+    await screen.findByRole("list", { name: "Possible duplicates" });
+    await user.click(
+      screen.getByRole("button", { name: "Open existing “Politics and the English Language”" })
+    );
+
+    await waitFor(() =>
+      expect(mockedOpenExistingWork).toHaveBeenCalledWith("wc-attempt-1", {
+        entryId: "work-1",
+        revision: 0
+      })
+    );
+    await waitFor(() => expect(onManageContent).toHaveBeenCalledWith("work-1"));
+    // The resolved decision consumed both attempts, so the remembered PDF import is dropped — a later reload
+    // must not resume a spent import.
+    expect(mockedForgetActivePdfImport).toHaveBeenCalled();
+  });
+
+  it("still re-reviews the converted PDF when Back's best-effort cleanup fails (#750)", async () => {
+    mockedBeginPdfImport.mockResolvedValue({
+      attemptId: "pdf-attempt-1",
+      outcome: "queued",
+      status: pdfStatus({ attemptId: "pdf-attempt-1" })
+    });
+    const pdfReview: WorkCreationReviewDto = { ...duplicateReview(), attemptId: "wc-attempt-1" };
+    mockedFetchPdfImportView.mockResolvedValue({
+      publication: { status: "pending" },
+      review: pdfReview,
+      status: pdfStatus({ attemptId: "pdf-attempt-1", state: "awaiting_review" })
+    });
+    // Cancelling the spent review attempt fails, but a converted PDF must never be stranded by a failed
+    // cleanup: the poll still resumes on the remembered attempt and re-mints the review.
+    mockedCancelWorkCreation.mockRejectedValue(new Error("cleanup failed"));
+    const user = await renderReady();
+
+    const file = new File([new Uint8Array([1])], "meditations.pdf", { type: "application/pdf" });
+    await user.upload(screen.getByLabelText("Upload"), file);
+    await user.type(screen.getByLabelText("New author or source name"), "Nobody");
+    await user.click(screen.getByRole("button", { name: "Create work" }));
+
+    await screen.findByRole("list", { name: "Possible duplicates" });
+    await user.click(screen.getByRole("button", { name: "Back" }));
+
+    await waitFor(() => expect(mockedCancelWorkCreation).toHaveBeenCalledWith("wc-attempt-1"));
+    expect(await screen.findByRole("list", { name: "Possible duplicates" })).toBeDefined();
+    expect(mockedForgetActivePdfImport).not.toHaveBeenCalled();
   });
 
   it("surfaces a start failure when the import cannot be queued (#702)", async () => {
@@ -1584,7 +1745,6 @@ describe("AdminLibraryPage", () => {
     fireEvent.change(screen.getByLabelText("Upload"), { target: { files: [file] } });
 
     expect(await screen.findByText("Choose an .epub, .pdf, or .md file.")).toBeDefined();
-    expect(mockedCreateWork).not.toHaveBeenCalled();
     expect(mockedBeginEpubCreation).not.toHaveBeenCalled();
   });
 

@@ -34,7 +34,7 @@ import {
   clearStagePath,
   commitRange,
   getCommittedRangeIndices,
-  markConverted,
+  markAwaitingReview,
   markFailed,
   setPhase,
   setProbeResult,
@@ -93,7 +93,7 @@ export type PdfImportRunnerDependencies = Readonly<{
 
 export type PdfImportRunResult =
   | Readonly<{ status: "idle" }>
-  | Readonly<{ status: "converted"; attemptId: string }>
+  | Readonly<{ status: "awaiting_review"; attemptId: string }>
   | Readonly<{ status: "failed"; attemptId: string; failure: PdfImportFailureDto }>
   // `fenced` = the claim was superseded mid-run (cancel/interrupt): the run stops without failing the
   // attempt, since its terminal state is owned elsewhere.
@@ -244,18 +244,18 @@ async function convertClaimed(
     }
   }
 
-  const converted = await markConverted(deps.db, claimed.id, runToken, deps.now());
+  const converted = await markAwaitingReview(deps.db, claimed.id, runToken, deps.now());
   /* v8 ignore next 3 -- a supersede (cancel/interrupt) landing between the final committed range and the
      terminal write requires true concurrency; every per-range commit and the probe are already fenced
      (and covered), so this terminal guard is defensive and cannot be driven single-threaded. */
   if (!converted) {
     return { status: "fenced", attemptId: claimed.id };
   }
-  // The staged bytes are RETAINED on the converted path (never removed here): they are the original
-  // uploaded PDF, and publication (#702) persists them through the immutable source-file boundary as the
-  // Work's provenance before its own cleanup removes this now-redundant stage. A failed conversion still
-  // frees its stage (see `fail`), because it never publishes.
-  return { status: "converted", attemptId: claimed.id };
+  // The staged bytes are RETAINED on the awaiting-review path (never removed here): they are the original
+  // uploaded PDF, and publication (#702, driven by the #750 review decision) persists them through the
+  // immutable source-file boundary as the Work's provenance before its own cleanup removes this
+  // now-redundant stage. A failed conversion still frees its stage (see `fail`), because it never publishes.
+  return { status: "awaiting_review", attemptId: claimed.id };
 }
 
 type ProbePlan = Readonly<{ status: "ok"; pageCount: number; pages: readonly ProbePage[] | null }>;

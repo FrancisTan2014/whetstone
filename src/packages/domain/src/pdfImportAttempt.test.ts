@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  isAwaitingReviewAttemptState,
   isNonTerminalAttemptState,
   isRetryableAttemptState,
   isTerminalAttemptState,
@@ -18,10 +19,11 @@ describe("pdfImportPhases", () => {
 });
 
 describe("pdfImportAttemptStates", () => {
-  it("lists the six lifecycle states", () => {
+  it("lists the seven lifecycle states", () => {
     expect(pdfImportAttemptStates).toEqual([
       "queued",
       "running",
+      "awaiting_review",
       "converted",
       "failed",
       "cancelled",
@@ -31,8 +33,8 @@ describe("pdfImportAttemptStates", () => {
 });
 
 describe("isNonTerminalAttemptState", () => {
-  it("is true for queued, running, and interrupted (the cancellable set)", () => {
-    for (const state of ["queued", "running", "interrupted"] as const) {
+  it("is true for queued, running, awaiting_review, and interrupted (the non-terminal set)", () => {
+    for (const state of ["queued", "running", "awaiting_review", "interrupted"] as const) {
       expect(isNonTerminalAttemptState(state)).toBe(true);
     }
   });
@@ -44,6 +46,25 @@ describe("isNonTerminalAttemptState", () => {
   });
 });
 
+describe("isAwaitingReviewAttemptState", () => {
+  it("is true only for awaiting_review (the parked-for-review state)", () => {
+    expect(isAwaitingReviewAttemptState("awaiting_review")).toBe(true);
+  });
+
+  it("is false for every other state", () => {
+    for (const state of [
+      "queued",
+      "running",
+      "converted",
+      "failed",
+      "cancelled",
+      "interrupted"
+    ] as const) {
+      expect(isAwaitingReviewAttemptState(state)).toBe(false);
+    }
+  });
+});
+
 describe("isTerminalAttemptState", () => {
   it("is true for converted, failed, and cancelled (the cleanup-eligible set)", () => {
     for (const state of ["converted", "failed", "cancelled"] as const) {
@@ -51,8 +72,8 @@ describe("isTerminalAttemptState", () => {
     }
   });
 
-  it("is false for queued, running, and interrupted (stage still needed)", () => {
-    for (const state of ["queued", "running", "interrupted"] as const) {
+  it("is false for queued, running, awaiting_review, and interrupted (stage still needed)", () => {
+    for (const state of ["queued", "running", "awaiting_review", "interrupted"] as const) {
       expect(isTerminalAttemptState(state)).toBe(false);
     }
   });
@@ -64,7 +85,14 @@ describe("isRetryableAttemptState", () => {
   });
 
   it("is false for every other state", () => {
-    for (const state of ["queued", "running", "converted", "failed", "cancelled"] as const) {
+    for (const state of [
+      "queued",
+      "running",
+      "awaiting_review",
+      "converted",
+      "failed",
+      "cancelled"
+    ] as const) {
       expect(isRetryableAttemptState(state)).toBe(false);
     }
   });
@@ -88,6 +116,7 @@ describe("mayApplyRunOutput", () => {
   it("fences a non-running attempt even with a matching token", () => {
     for (const state of [
       "queued",
+      "awaiting_review",
       "converted",
       "failed",
       "cancelled",

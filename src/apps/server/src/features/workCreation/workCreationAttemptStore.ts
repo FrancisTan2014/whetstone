@@ -42,6 +42,10 @@ export type WorkCreationAttemptRecord = Readonly<{
   sourceKind: WorkCreationSourceKind;
   sourceHash: string | null;
   sourceFileName: string | null;
+  // The converted PDF import attempt this review is bridging to publication (#750), or null for every
+  // other source kind. It is a REFERENCE only — the PDF attempt stays the sole owner of the staged bytes
+  // and committed ranges; this row never takes its stage path.
+  pdfImportAttemptId: string | null;
   candidateSnapshot: ReviewedCandidateSnapshot | null;
   candidateFingerprint: string | null;
   state: WorkCreationAttemptState;
@@ -66,6 +70,7 @@ function toRecord(row: AttemptRow): WorkCreationAttemptRecord {
     sourceKind: row.sourceKind,
     sourceHash: row.sourceHash,
     sourceFileName: row.sourceFileName,
+    pdfImportAttemptId: row.pdfImportAttemptId,
     candidateSnapshot: row.candidateSnapshot ?? null,
     candidateFingerprint: row.candidateFingerprint,
     state: row.state,
@@ -117,6 +122,8 @@ export type InsertPendingAttemptInput = Readonly<{
   sourceKind: WorkCreationSourceKind;
   sourceHash: string | null;
   sourceFileName: string | null;
+  // The converted PDF attempt a pdf-sourced review references (#750); null for every other source kind.
+  pdfImportAttemptId?: string | null;
   candidates: ReviewedCandidateSnapshot | null;
   stagePath: string | null;
   expiresAt: Date;
@@ -158,6 +165,7 @@ export async function insertPendingAttempt(
       sourceKind: input.sourceKind,
       sourceHash: input.sourceHash,
       sourceFileName: input.sourceFileName,
+      pdfImportAttemptId: input.pdfImportAttemptId ?? null,
       candidateSnapshot: input.candidates,
       candidateFingerprint:
         input.candidates === null ? null : fingerprintReviewedCandidates(input.candidates),
@@ -214,6 +222,28 @@ export async function getActiveAttemptForUser(
     .select()
     .from(workCreationAttempts)
     .where(and(eq(workCreationAttempts.userId, userId), activeStateCondition()));
+  return row === undefined ? null : toRecord(row);
+}
+
+// The single active (`pending`/`finalizing`) review attempt bridging a given converted PDF attempt (#750),
+// if any — the row the per-PDF partial-unique index guarantees is unique. The status bridge loads this to
+// idempotently RESUME an already-opened review instead of minting a second one when the client polls again
+// (or two polls race the first insert). Scoped by owner too, so a cross-user id can never resolve a review.
+export async function getActiveCreationAttemptForPdf(
+  db: DbClient,
+  userId: string,
+  pdfImportAttemptId: string
+): Promise<WorkCreationAttemptRecord | null> {
+  const [row] = await db
+    .select()
+    .from(workCreationAttempts)
+    .where(
+      and(
+        eq(workCreationAttempts.userId, userId),
+        eq(workCreationAttempts.pdfImportAttemptId, pdfImportAttemptId),
+        activeStateCondition()
+      )
+    );
   return row === undefined ? null : toRecord(row);
 }
 

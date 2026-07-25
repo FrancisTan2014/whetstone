@@ -1,4 +1,5 @@
 import { PGlite } from "@electric-sql/pglite";
+import { sql } from "drizzle-orm";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,7 +21,7 @@ import { runMigrations } from "../../db/migrate.js";
 import { createServer } from "../../http/createServer.js";
 import { createSourceFileStore, type SourceFileStore } from "../../files/sourceFileStore.js";
 import Fastify from "fastify";
-import { registerPdfImportRoutes } from "./pdfImportRoutes.js";
+import { registerPdfImportRoutes, type PdfImportBeginReviewResult } from "./pdfImportRoutes.js";
 import {
   publishConvertedPdfImport,
   type PdfImportPublishDependencies
@@ -32,7 +33,7 @@ import {
   PDF_IMPORT_ADAPTER_FINGERPRINT,
   claimNextQueued,
   commitRange,
-  markConverted,
+  markAwaitingReview,
   setProbeResult
 } from "./pdfImportStore.js";
 
@@ -46,6 +47,12 @@ type TestContext = Readonly<{
   server: ReturnType<typeof createServer>;
   stageStore: PdfImportStageStore;
   sourceFileStore: SourceFileStore;
+  // The shared-review bridge the GET handler parks a converted attempt through (#750). Reassigned per test
+  // so a poll of an `awaiting_review` attempt drives each route branch without wiring the real workCreation
+  // command.
+  beginReview: ReturnType<
+    typeof vi.fn<(userId: string, attemptId: string) => Promise<PdfImportBeginReviewResult>>
+  >;
 }>;
 
 let context: TestContext;
@@ -124,9 +131,9 @@ function beginUpload(
   });
 }
 
-// Drive the attempt the server just queued through #721 to `converted` with one committed range, so the
-// publication layer has a real converted attempt to reconstruct and open as a Work.
-async function driveToConverted(
+// Drive the attempt the server just queued through #721 to `awaiting_review` with one committed range, so
+// the publication layer has a real parked attempt to reconstruct and open as a Work.
+async function driveToAwaitingReview(
   db: DbClient,
   attemptId: string,
   nativeTextPages: readonly boolean[]
@@ -145,7 +152,7 @@ async function driveToConverted(
     payload: rangePayload(nativeTextPages),
     now: NOW
   });
-  await markConverted(db, attemptId, runToken, NOW);
+  await markAwaitingReview(db, attemptId, runToken, NOW);
 }
 
 describe("pdf import routes", () => {
@@ -157,13 +164,22 @@ describe("pdf import routes", () => {
     const sourceFilesDir = await mkdtemp(join(tmpdir(), "pdf-import-routes-src-"));
     const stageStore = createPdfImportStageStore(rootDir);
     const sourceFileStore = createSourceFileStore(sourceFilesDir);
+    // Defaults to a no-op park (`not_awaiting`); a test that polls a converted attempt reassigns it.
+    const beginReview = vi.fn<
+      (userId: string, attemptId: string) => Promise<PdfImportBeginReviewResult>
+    >(async () => ({ status: "not_awaiting" }));
     context = {
       db,
       rootDir,
       sourceFilesDir,
+      beginReview,
       server: createServer({
         logger: false,
-        pdfImport: { commands: commandDeps(db, stageStore), uploadLimitBytes: 10_000_000 }
+        pdfImport: {
+          commands: commandDeps(db, stageStore),
+          uploadLimitBytes: 10_000_000,
+          beginReview: (userId, attemptId) => beginReview(userId, attemptId)
+        }
       }),
       stageStore,
       sourceFileStore
@@ -199,7 +215,7 @@ describe("pdf import routes", () => {
     if (first.outcome !== "queued") {
       throw new Error("expected first upload to queue");
     }
-    await driveToConverted(context.db, first.attemptId, [true]);
+    await driveToAwaitingReview(context.db, first.attemptId, [true]);
     await publishConvertedPdfImport(publishDeps(context.db), first.attemptId);
 
     const response = await beginUpload(bytes, metadataHeader({ fileName: "same-again.pdf" }));
@@ -415,7 +431,7 @@ describe("pdf import routes", () => {
     expect(missing.statusCode).toBe(404);
   });
 
-  it("reports the published outcome in the view after the drain loop publishes", async () => {
+  it("reports the published outcome in the view after a review decision publishes", async () => {
     const queued = parsePdfImportBeginResultDto(
       (
         await beginUpload(Buffer.from("%PDF publish"), metadataHeader({ fileName: "done.pdf" }))
@@ -424,7 +440,7 @@ describe("pdf import routes", () => {
     if (queued.outcome !== "queued") {
       throw new Error("expected queued");
     }
-    await driveToConverted(context.db, queued.attemptId, [true]);
+    await driveToAwaitingReview(context.db, queued.attemptId, [true]);
     await publishConvertedPdfImport(publishDeps(context.db), queued.attemptId);
 
     const view = parsePdfImportViewDto(
@@ -436,6 +452,93 @@ describe("pdf import routes", () => {
       throw new Error(`expected published, got ${view.publication.status}`);
     }
     expect(view.publication.workEntryId).toMatch(/^entry-/);
+  });
+
+  it("parks a converted attempt at the shared review boundary on the first poll and attaches the panel", async () => {
+    const queued = parsePdfImportBeginResultDto(
+      (
+        await beginUpload(Buffer.from("%PDF review"), metadataHeader({ fileName: "review.pdf" }))
+      ).json()
+    );
+    if (queued.outcome !== "queued") {
+      throw new Error("expected queued");
+    }
+    await driveToAwaitingReview(context.db, queued.attemptId, [true]);
+
+    // A credible duplicate parked one review attempt: the poll must surface the panel the client renders.
+    const reviewStub = {
+      attemptId: queued.attemptId,
+      revision: 0,
+      proposed: { title: "The Work", authorName: "Unknown", language: "en", workType: "book" },
+      candidates: [],
+      expiresAt: NOW.toISOString()
+    };
+    context.beginReview.mockResolvedValue({
+      status: "needs_review",
+      review: reviewStub
+    } as PdfImportBeginReviewResult);
+
+    const response = await context.server.inject({
+      method: "GET",
+      url: `/api/pdf-imports/${queued.attemptId}`
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(context.beginReview).toHaveBeenCalledExactlyOnceWith(
+      expect.any(String),
+      queued.attemptId
+    );
+    const body = response.json() as { review?: unknown; status: { attemptId: string } };
+    expect(body.review).toEqual(reviewStub);
+    expect(body.status.attemptId).toBe(queued.attemptId);
+  });
+
+  it("parks silently and attaches no panel when the review resolves without a duplicate", async () => {
+    const queued = parsePdfImportBeginResultDto(
+      (
+        await beginUpload(Buffer.from("%PDF created"), metadataHeader({ fileName: "created.pdf" }))
+      ).json()
+    );
+    if (queued.outcome !== "queued") {
+      throw new Error("expected queued");
+    }
+    await driveToAwaitingReview(context.db, queued.attemptId, [true]);
+    // No credible duplicate: the review published immediately, so the poll returns the view with no panel.
+    context.beginReview.mockResolvedValue({ status: "created" });
+
+    const response = await context.server.inject({
+      method: "GET",
+      url: `/api/pdf-imports/${queued.attemptId}`
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(context.beginReview).toHaveBeenCalledOnce();
+    const body = response.json() as { review?: unknown };
+    expect(body.review).toBeNull();
+    // The re-read view still parses as a plain view DTO (review is null, no panel appended).
+    expect(() => parsePdfImportViewDto(body)).not.toThrow();
+  });
+
+  it("404s when the attempt disappears between parking and the re-read", async () => {
+    const queued = parsePdfImportBeginResultDto(
+      (await beginUpload(Buffer.from("%PDF gone"), metadataHeader({ fileName: "gone.pdf" }))).json()
+    );
+    if (queued.outcome !== "queued") {
+      throw new Error("expected queued");
+    }
+    await driveToAwaitingReview(context.db, queued.attemptId, [true]);
+    // Model the row vanishing under the re-read (a torn-down attempt): the handler must answer 404, not 500.
+    context.beginReview.mockImplementation(async (_userId, attemptId) => {
+      await context.db.execute(sql`DELETE FROM pdf_import_attempts WHERE id = ${attemptId}`);
+      return { status: "not_awaiting" };
+    });
+
+    const response = await context.server.inject({
+      method: "GET",
+      url: `/api/pdf-imports/${queued.attemptId}`
+    });
+
+    expect(response.statusCode).toBe(404);
   });
 
   it("cancels an in-flight attempt and returns its updated view", async () => {
