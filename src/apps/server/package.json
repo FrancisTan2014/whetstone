@@ -23,6 +23,7 @@
     "fflate": "^0.8.3",
     "jsdom": "^26.0.0",
     "prosemirror-model": "^1.25.9",
+    "wink-lemmatizer": "3.0.4",
     "wordpos": "^2.1.0"
   },
   "devDependencies": {
