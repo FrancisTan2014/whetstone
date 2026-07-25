@@ -49,4 +49,16 @@ describe("describeNearMatchDifferences", () => {
   it("returns no differences for two identical keys", () => {
     expect(describeNearMatchDifferences("same wording here", "same wording here")).toEqual([]);
   });
+
+  it("treats an empty candidate key as pure additions with no phantom empty token", () => {
+    expect(describeNearMatchDifferences("", "brand new note")).toEqual([
+      { after: "brand new note", before: "" }
+    ]);
+  });
+
+  it("treats an empty draft key as pure removals with no phantom empty token", () => {
+    expect(describeNearMatchDifferences("dropped every word", "")).toEqual([
+      { after: "", before: "dropped every word" }
+    ]);
+  });
 });
