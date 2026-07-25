@@ -6,6 +6,8 @@ import { PGlite } from "@electric-sql/pglite";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { runMigrations } from "../db/migrate.js";
+import { fingerprintNoteMaterial } from "../features/notes/noteMaterialFingerprint.js";
+import { createTextDocument } from "@whetstone/document";
 import { sha256Hex } from "./archive.js";
 import { backupData } from "./backup.js";
 import { resolveDataRoots } from "./dataRoots.js";
@@ -32,6 +34,8 @@ const imageFileBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 9, 8, 7, 6, 5]);
 async function seedDatabase(pglite: PGlite): Promise<void> {
   await runMigrations(pglite);
   const sourceSha = sha256Hex(sourceFileBytes);
+  const noteFingerprint = fingerprintNoteMaterial(createTextDocument("a note body"));
+  const otherNoteFingerprint = fingerprintNoteMaterial(createTextDocument("another note body"));
   await pglite.exec(`
     INSERT INTO authors (id, name) VALUES ('a1', 'Author One');
     INSERT INTO entries (id, type) VALUES ('w1', 'work');
@@ -41,11 +45,11 @@ async function seedDatabase(pglite: PGlite): Promise<void> {
       VALUES ('src1', 'my.pdf', 'w1source.pdf', 'upload', '${sourceSha}', NULL, 'w1');
     INSERT INTO uploaded_source_claims (sha256, work_entry_id) VALUES ('${sourceSha}', 'w1');
     INSERT INTO entries (id, type) VALUES ('n1', 'note');
-    INSERT INTO notes (body_doc, body_text, capture_source, entry_id, kind)
-      VALUES ('{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"a note body"}]}]}', 'a note body', 'reader', 'n1', 'note');
+    INSERT INTO notes (body_doc, body_text, capture_source, entry_id, kind, material_fingerprint)
+      VALUES ('{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"a note body"}]}]}', 'a note body', 'reader', 'n1', 'note', '${noteFingerprint}');
     INSERT INTO entries (id, type) VALUES ('n2', 'note');
-    INSERT INTO notes (body_doc, body_text, capture_source, entry_id, kind)
-      VALUES ('{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"another note body"}]}]}', 'another note body', 'reader', 'n2', 'note');
+    INSERT INTO notes (body_doc, body_text, capture_source, entry_id, kind, material_fingerprint)
+      VALUES ('{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"another note body"}]}]}', 'another note body', 'reader', 'n2', 'note', '${otherNoteFingerprint}');
     INSERT INTO entries (id, type) VALUES ('p-cn', 'memory_prompt'), ('p-er', 'memory_prompt'), ('p-lc', 'memory_prompt');
     INSERT INTO memory_prompts (entry_id, note_entry_id, cue_doc, cue_text, answer_doc, answer_text, lifecycle, reveal_kind)
       VALUES

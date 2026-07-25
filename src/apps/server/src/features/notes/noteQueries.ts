@@ -1,10 +1,12 @@
 import type { NoteDto, NoteOverviewDto, NoteReviewSummaryDto } from "@whetstone/contracts";
 import type { DocumentNodeJSON } from "@whetstone/document";
+import { projectNoteMaterial } from "@whetstone/document";
 import { toEntryId, type CaptureSource, type EntryId, type NoteAnchor } from "@whetstone/domain";
 import { and, asc, desc, eq, ilike, inArray, isNull, or } from "drizzle-orm";
 
 import { addressableBlocks } from "../../db/addressableBlocks.js";
 import type { DbClient } from "../../db/dbClient.js";
+import { fingerprintFromProjection } from "./noteMaterialFingerprint.js";
 import {
   authors,
   memoryPrompts,
@@ -412,4 +414,64 @@ export async function getNoteForWork(
   const row = rows[0];
 
   return row === undefined ? undefined : toNoteDto(row);
+}
+
+// The minimum an exact-material match needs (#711): which owned note it is, its body and readable
+// text, and the creation/occurrence chronology the future reviewed-card flow (#712) orders and presents
+// by. Deliberately not the full `NoteDto` — this read exists only to identify existing material, not to
+// render or edit it.
+export type ExactMaterialNote = Readonly<{
+  bodyDoc: DocumentNodeJSON;
+  bodyText: string;
+  createdAt: Date;
+  noteEntryId: EntryId;
+  occurredAt: Date;
+}>;
+
+// Every body-bearing note the current owner already holds whose exact semantic material equals the given
+// document (#711). Read-only: it writes nothing. The `material_fingerprint` index only NARROWS the
+// candidate set; equality is always decided by full projected-value comparison, so a SHA-256 collision
+// retrieves both rows and the unequal projection is rejected. Marks (bodyless) are excluded by `kind`,
+// deleted notes are hard-deleted so simply absent, and ownership is scoped through the shared
+// `personal_entries` facet. Results are returned in creation then id order for a stable presentation.
+//
+// The target document is projected once (validating it and throwing before any query on an invalid or
+// blank body); each candidate is re-projected to confirm equality. A candidate can never fail to project
+// or be blank: the single write boundary computes its fingerprint via the same projection, so a row that
+// carries a fingerprint necessarily projected successfully when it was written.
+export async function findExactMaterialNotes(
+  db: DbClient,
+  params: Readonly<{ bodyDoc: unknown; userId: string }>
+): Promise<ExactMaterialNote[]> {
+  const projection = projectNoteMaterial(params.bodyDoc);
+  const fingerprint = fingerprintFromProjection(projection);
+
+  const rows = await db
+    .select({
+      bodyDoc: notes.bodyDoc,
+      bodyText: notes.bodyText,
+      createdAt: personalEntries.createdAt,
+      entryId: notes.entryId,
+      occurredAt: personalEntries.occurredAt
+    })
+    .from(notes)
+    .innerJoin(personalEntries, eq(personalEntries.entryId, notes.entryId))
+    .where(
+      and(
+        eq(notes.kind, "note"),
+        eq(personalEntries.userId, params.userId),
+        eq(notes.materialFingerprint, fingerprint)
+      )
+    )
+    .orderBy(asc(personalEntries.createdAt), asc(notes.entryId));
+
+  return rows
+    .filter((row) => projectNoteMaterial(row.bodyDoc) === projection)
+    .map((row) => ({
+      bodyDoc: row.bodyDoc as DocumentNodeJSON,
+      bodyText: row.bodyText as string,
+      createdAt: row.createdAt,
+      noteEntryId: toEntryId(row.entryId),
+      occurredAt: row.occurredAt
+    }));
 }

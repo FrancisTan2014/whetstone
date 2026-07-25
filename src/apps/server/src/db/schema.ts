@@ -314,7 +314,13 @@ export const notes = pgTable(
     entryId: text("entry_id")
       .primaryKey()
       .references(() => entries.id),
-    kind: text("kind", { enum: ["note", "mark"] as const }).notNull()
+    kind: text("kind", { enum: ["note", "mark"] as const }).notNull(),
+    // The SHA-256 (hex) of the note body's canonical semantic projection (#711): a deterministic
+    // lookup accelerator for "is this the same material?", derived server-side and kept in sync only
+    // in the single note insert/update boundary. Deliberately NON-UNIQUE — it is only an accelerator,
+    // never product identity, so a collision retrieves both rows and full projected-value equality
+    // decides. A `note` always carries one; a `mark` (bodyless) carries none.
+    materialFingerprint: text("material_fingerprint")
   },
   (table) => [
     // The discriminated shape is enforced in the database, not only at the contract boundary: a note
@@ -322,7 +328,16 @@ export const notes = pgTable(
     check(
       "notes_kind_body_ck",
       sql`(${table.kind} = 'note' and ${table.bodyDoc} is not null and ${table.bodyText} is not null) or (${table.kind} = 'mark' and ${table.bodyDoc} is null and ${table.bodyText} is null)`
-    )
+    ),
+    // The fingerprint mirrors the note/mark shape: a body-bearing note has one, a bodyless mark has
+    // none. Added NOT VALID in migration 0074 so it enforces every future write immediately while the
+    // one-time JS backfill fills legacy rows before the constraint is VALIDATEd.
+    check(
+      "notes_material_fingerprint_kind_ck",
+      sql`(${table.kind} = 'note' and ${table.materialFingerprint} is not null) or (${table.kind} = 'mark' and ${table.materialFingerprint} is null)`
+    ),
+    // Non-unique index accelerating the owner-scoped exact-material lookup (#711).
+    index("notes_material_fingerprint_idx").on(table.materialFingerprint)
   ]
 );
 
