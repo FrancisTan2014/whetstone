@@ -24,7 +24,13 @@ carries a validated authored `href` or a same-work cross-reference's
 so a resolved EPUB image can be referenced by the reader; `documentExtensions` couples the node + mark
 specs with the UniqueID id attribute), `schema.ts` (`documentSchema` via `getSchema`; `generateNodeId`), `document.ts`
 (`parseDocument`/`serializeDocument`/`isValidDocument`/`assignNodeIds` JSON round-trip + validation,
-`DocumentValidationError`). Stable node ids use Tiptap UniqueID's server-side generator. Tests
+`DocumentValidationError`). Stable node ids use Tiptap UniqueID's server-side generator. `noteMaterial.ts`
+(`projectNoteMaterial(json) -> canonical string`, `BlankNoteMaterialError`) is the pure, browser-safe
+**exact-material projection** (#711): validates, then drops node ids + key order, NFC-normalizes text and
+string attrs, collapses prose whitespace (code/opaque runs kept verbatim), ignores bold/italic while
+keeping code + link marks/destinations, and preserves node type/order/structure and semantic attrs — so
+two notes share a projection iff their material is semantically identical; no hashing here (that stays
+server-side). Tests
 colocated. Invariant: depends on nothing outward; no UI, ingestion, or editing here.
 
 ### `src/packages/domain/` — pure logic
@@ -197,9 +203,17 @@ can navigate them from another package.
   answers), `GET|PATCH|DELETE /api/notes/:noteEntryId`, and `POST /api/notes` (creates a standalone
   `kind='note'`, `capture_source='manual'` note with no anchor). Queries live in `noteQueries.ts`
   (`listNotesForUser` recency/work/search + `summarizeNoteReview` per-note projection, `getNoteForOwner`,
-  `searchNoteIds`, `listNoteReviewCards`); owner-scoped writes in `noteCommands.ts` (`createStandaloneNote`/
+  `searchNoteIds`, `listNoteReviewCards`, `findExactMaterialNotes` — owner-scoped exact-material match
+  #711: projects the query doc, looks up `notes.material_fingerprint` (SHA-256 of the projection, indexed
+  accelerator) then re-checks full-projection equality, `kind='note'` only, stable creation/id order, zero
+  writes); owner-scoped writes in `noteCommands.ts` (`createStandaloneNote`/
   `updateNoteForOwner`/`deleteNoteForOwner`, each composing the single `insertNoteInTx`/`updateNoteBodyInTx`/
-  `deleteNoteInTx` primitives — guarded by `noteFacetOwnership.test.ts`). A saved note takes review cards
+  `deleteNoteInTx` primitives — guarded by `noteFacetOwnership.test.ts`). Every note write stamps
+  `notes.material_fingerprint` via `noteMaterialFingerprint.ts` (`fingerprintNoteMaterial(bodyDoc)` =
+  SHA-256 of `projectNoteMaterial`; marks get `null`) — enforced by migration `0074`'s biconditional
+  `notes_material_fingerprint_kind_ck` (added `NOT VALID`) + non-unique index; legacy note rows are filled
+  once at startup by `noteMaterialFingerprintBackfill.ts` (`backfillNoteMaterialFingerprints`, one tx, then
+  `VALIDATE CONSTRAINT`, no partial writes on abort). A saved note takes review cards
   through card authoring (`POST /api/notes/review/author-cards`, above) — one or MANY, each independently
   scheduled (#688) — not a separate enrollment step. Web: `NotesPage.tsx`
   is the single Notes home (one continuous list via `NotesHomeList.tsx`, per-row Review projection via
