@@ -274,6 +274,8 @@ describe("parsePdfImportViewDto", () => {
   });
 
   it("rejects a view missing its review field", () => {
-    expect(() => parsePdfImportViewDto({ publication: { status: "pending" }, status: baseStatus })).toThrow();
+    expect(() =>
+      parsePdfImportViewDto({ publication: { status: "pending" }, status: baseStatus })
+    ).toThrow();
   });
 });

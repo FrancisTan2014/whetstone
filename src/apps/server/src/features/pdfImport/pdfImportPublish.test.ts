@@ -38,6 +38,7 @@ import {
 import type { PdfImportActiveRuns } from "./pdfImportRunner.js";
 import {
   beginPdfImport,
+  loadPdfReviewSource,
   publishConvertedPdfImport,
   type PdfImportPublishDependencies
 } from "./pdfImportPublish.js";
@@ -846,6 +847,136 @@ describe("publishConvertedPdfImport", () => {
   });
 });
 
+describe("loadPdfReviewSource", () => {
+  it("returns the resolved review source for a mapped attempt parked awaiting review", async () => {
+    await driveToAwaitingReview(db, {
+      id: "src-ready",
+      sourceHash: "a".repeat(64),
+      payload: rangePayload(SAMPLE_BODY, [true]),
+      totalPages: 1
+    });
+    await insertPublicationIntent(db, {
+      attemptId: "src-ready",
+      enteredTitle: null,
+      enteredAuthor: null,
+      enteredLanguage: null,
+      fileName: "reading.pdf"
+    });
+
+    const source = await loadPdfReviewSource({ db }, "src-ready");
+
+    expect(source).toEqual({
+      status: "ready",
+      sourceHash: "a".repeat(64),
+      fileName: "reading.pdf",
+      // Filename stem fallback (no directory, no extension), neutral author + language defaults.
+      title: "reading",
+      authorName: "Unknown",
+      language: "en"
+    });
+  });
+
+  it("carries the reviewer-entered metadata through to the review source", async () => {
+    await driveToAwaitingReview(db, {
+      id: "src-entered",
+      sourceHash: "b".repeat(64),
+      payload: rangePayload(SAMPLE_BODY, [true]),
+      totalPages: 1
+    });
+    await insertPublicationIntent(db, {
+      attemptId: "src-entered",
+      enteredTitle: "On War",
+      enteredAuthor: "Carl von Clausewitz",
+      enteredLanguage: "zh-CN",
+      fileName: "vom-kriege.pdf"
+    });
+
+    const source = await loadPdfReviewSource({ db }, "src-entered");
+
+    expect(source).toEqual({
+      status: "ready",
+      sourceHash: "b".repeat(64),
+      fileName: "vom-kriege.pdf",
+      title: "On War",
+      authorName: "Carl von Clausewitz",
+      language: "zh-CN"
+    });
+  });
+
+  it("reconstructs the review source with the current adapter fingerprint when the columns are null", async () => {
+    // Defense-in-depth mirroring publication: an awaiting-review row is expected to carry both the adapter
+    // fingerprint and the page total, but if either column is null the source is still resolved (current
+    // fingerprint, zero page count) rather than failing the review boundary.
+    await driveToAwaitingReview(db, {
+      id: "src-nullcols",
+      sourceHash: "d".repeat(64),
+      payload: rangePayload(SAMPLE_BODY, [true]),
+      totalPages: 1
+    });
+    await insertPublicationIntent(db, {
+      attemptId: "src-nullcols",
+      enteredTitle: null,
+      enteredAuthor: null,
+      enteredLanguage: null,
+      fileName: "recovered.pdf"
+    });
+    await db
+      .update(pdfImportAttempts)
+      .set({ adapterFingerprint: null, totalPages: null })
+      .where(eq(pdfImportAttempts.id, "src-nullcols"));
+
+    expect(await loadPdfReviewSource({ db }, "src-nullcols")).toEqual({
+      status: "ready",
+      sourceHash: "d".repeat(64),
+      fileName: "recovered.pdf",
+      title: "recovered",
+      authorName: "Unknown",
+      language: "en"
+    });
+  });
+
+  it("refuses an awaiting-review attempt whose reconstructed document maps to a typed refusal", async () => {
+    // Native text absent on later pages: the reconstructed document maps to an OCR-required refusal, never a
+    // reviewable proposal — review must skip it and let publication record the typed refusal.
+    await driveToAwaitingReview(db, {
+      id: "src-refused",
+      sourceHash: "c".repeat(64),
+      payload: rangePayload(SAMPLE_BODY, [true, false]),
+      totalPages: 2
+    });
+    await insertPublicationIntent(db, {
+      attemptId: "src-refused",
+      enteredTitle: null,
+      enteredAuthor: null,
+      enteredLanguage: null,
+      fileName: "scanned.pdf"
+    });
+
+    expect(await loadPdfReviewSource({ db }, "src-refused")).toEqual({ status: "refused" });
+  });
+
+  it("reports not_awaiting for an attempt that is not parked awaiting review", async () => {
+    // A queued-but-unconverted attempt is not a review source: it has no parked bytes to review yet.
+    const { stagePath } = await stageStore.createStage(
+      "src-queued",
+      new Uint8Array([0x25, 0x50, 0x44, 0x46])
+    );
+    await insertQueuedAttempt(db, {
+      id: "src-queued",
+      userId: DEFAULT_USER_ID,
+      sourceHash: "f".repeat(64),
+      stagePath,
+      now: NOW
+    });
+
+    expect(await loadPdfReviewSource({ db }, "src-queued")).toEqual({ status: "not_awaiting" });
+  });
+
+  it("reports not_awaiting for an unknown attempt id", async () => {
+    expect(await loadPdfReviewSource({ db }, "does-not-exist")).toEqual({ status: "not_awaiting" });
+  });
+});
+
 describe("beginPdfImport", () => {
   async function* streamOf(...chunks: Uint8Array[]): AsyncIterable<Uint8Array> {
     for (const chunk of chunks) {
@@ -1004,4 +1135,3 @@ describe("beginPdfImport", () => {
     expect(second.work.entryId).toBe(work.work.entryId);
   });
 });
-

@@ -1048,7 +1048,9 @@ export const workCreationAttempts = pgTable(
     // over one converted source — the reference is fenced by the database, not only by the caller.
     uniqueIndex("work_creation_attempts_single_active_pdf")
       .on(table.pdfImportAttemptId)
-      .where(sql`${table.pdfImportAttemptId} is not null and ${table.state} in ('pending', 'finalizing')`),
+      .where(
+        sql`${table.pdfImportAttemptId} is not null and ${table.state} in ('pending', 'finalizing')`
+      ),
     // Enforce the closed state set in the database so no writer (or restored dump) can land an unknown
     // attempt state.
     check(

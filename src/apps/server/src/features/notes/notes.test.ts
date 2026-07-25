@@ -100,7 +100,13 @@ async function seedImportedWork(
 ): Promise<string> {
   const created = await createWorkCommand(
     context.library,
-    { author: { mode: "new", name: authorName }, language: "en", origin: "imported", title, workType },
+    {
+      author: { mode: "new", name: authorName },
+      language: "en",
+      origin: "imported",
+      title,
+      workType
+    },
     DEFAULT_USER_ID
   );
   if (created.status !== "created") {

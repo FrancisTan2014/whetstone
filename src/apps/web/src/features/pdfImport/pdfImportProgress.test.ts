@@ -1,7 +1,8 @@
 import type {
   PdfImportPublicationOutcomeDto,
   PdfImportStatusDto,
-  PdfImportViewDto
+  PdfImportViewDto,
+  WorkCreationReviewDto
 } from "@whetstone/contracts";
 import { describe, expect, it } from "vitest";
 
@@ -172,6 +173,42 @@ describe("describePdfImport", () => {
     expect(progress).toEqual({
       kind: "in_progress",
       label: "Finishing up…",
+      needsResume: false,
+      terminal: false
+    });
+  });
+
+  it("hands a minted review to the shared panel and stops polling once the attempt is parked", () => {
+    const reviewDto: WorkCreationReviewDto = {
+      attemptId: "attempt-1",
+      candidateFingerprint: "fp-1",
+      candidates: [],
+      proposed: {
+        authorName: "Marcus Aurelius",
+        language: "en",
+        title: "Meditations",
+        workType: "book"
+      },
+      revision: 0,
+      sourceFileName: "meditations.pdf"
+    };
+    const parked: PdfImportViewDto = {
+      publication: { status: "pending" },
+      review: reviewDto,
+      status: status({ state: "awaiting_review" })
+    };
+
+    const progress = describePdfImport(parked);
+
+    expect(progress).toEqual({ kind: "needs_review", review: reviewDto, terminal: true });
+  });
+
+  it("keeps polling with a neutral duplicate-check label while the review has not been minted yet", () => {
+    const progress = describePdfImport(view({ status: "pending" }, { state: "awaiting_review" }));
+
+    expect(progress).toEqual({
+      kind: "in_progress",
+      label: "Checking your library for duplicates…",
       needsResume: false,
       terminal: false
     });

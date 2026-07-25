@@ -1297,6 +1297,36 @@ describe("AdminLibraryPage", () => {
     expect(navigateSpy).not.toHaveBeenCalledWith(expect.stringContaining("/reader"));
   });
 
+  it("routes a converted PDF that hits a credible duplicate into the shared review panel (#750)", async () => {
+    mockedBeginPdfImport.mockResolvedValue({
+      attemptId: "attempt-1",
+      outcome: "queued",
+      status: pdfStatus()
+    });
+    // The first poll after conversion parked the shared review: the view carries the minted review DTO with
+    // the attempt still `awaiting_review` (it keeps its bytes while the learner decides — nothing published).
+    mockedFetchPdfImportView.mockResolvedValue({
+      publication: { status: "pending" },
+      review: duplicateReview(),
+      status: pdfStatus({ state: "awaiting_review" })
+    });
+    const user = await renderReady();
+
+    const file = new File([new Uint8Array([1])], "meditations.pdf", { type: "application/pdf" });
+    await user.upload(screen.getByLabelText("Upload"), file);
+    await user.type(screen.getByLabelText("New author or source name"), "Nobody");
+    await user.click(screen.getByRole("button", { name: "Create work" }));
+
+    // The SAME shared duplicate-review panel the Markdown/EPUB/manual front doors show — no PDF-specific
+    // duplicate UI — framed by the review's own evidence.
+    const list = await screen.findByRole("list", { name: "Possible duplicates" });
+    expect(within(list).getByText("Politics and the English Language")).toBeDefined();
+    // Nothing is published while the review is open, so the Reader is never opened.
+    expect(navigateSpy).not.toHaveBeenCalledWith(expect.stringContaining("/reader"));
+    // needs_review is terminal for the poller: the in-flight attempt is cleared.
+    expect(mockedForgetActivePdfImport).toHaveBeenCalled();
+  });
+
   it("surfaces a start failure when the import cannot be queued (#702)", async () => {
     mockedBeginPdfImport.mockRejectedValue(new Error("network down"));
     const user = await renderReady();

@@ -162,7 +162,10 @@ describe("processNextPdfImport", () => {
       pageRangeSize: 2
     });
 
-    expect(await processNextPdfImport(deps)).toEqual({ status: "awaiting_review", attemptId: "a1" });
+    expect(await processNextPdfImport(deps)).toEqual({
+      status: "awaiting_review",
+      attemptId: "a1"
+    });
 
     const attempt = await getAttempt(db, DEFAULT_USER_ID, "a1");
     // The stage stays BOUND after conversion — publication persists the original bytes as provenance
@@ -713,4 +716,3 @@ describe("createPdfImportActiveRuns", () => {
     expect(() => runs.abort("a1")).not.toThrow();
   });
 });
-

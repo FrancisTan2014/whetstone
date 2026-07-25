@@ -797,12 +797,20 @@ export async function beginPdfReview(
     if (isUniqueViolation(error)) {
       const active = await getActiveCreationAttemptForPdf(db(deps), userId, pdfImportAttemptId);
 
+      /* v8 ignore start -- resume-from-race: reachable only when a concurrent poll inserted the pending
+         attempt for THIS pdf between the null read at the top of this function and this recovery. `open`
+         above already catches any same-(user, pdf) attempt visible to this call, and the per-PDF re-read
+         here is keyed the same way, so no single-threaded path can find one the top-level read missed. The
+         sibling per-owner begins reach their equivalent resume because they re-read the per-OWNER slot; the
+         per-PDF re-read cannot, so a same-owner violation for a DIFFERENT source falls through to uncertain
+         below (covered). */
       if (active !== null && active.state === "pending") {
         return {
           status: "needs_review",
           review: await refreshPersistedReview(deps, active, nowDate)
         };
       }
+      /* v8 ignore stop */
 
       // The owner already holds an active review for a DIFFERENT source (the per-owner slot, not this PDF):
       // there is one review at a time, so retry on the next poll once that resolves.
@@ -813,7 +821,6 @@ export async function beginPdfReview(
     throw error;
   }
 }
-
 
 // Read the current review for one owner-scoped attempt (the poll behind the shared review panel): sweep
 // expired attempts first, then return the refreshed persisted review, or a typed miss when the attempt is

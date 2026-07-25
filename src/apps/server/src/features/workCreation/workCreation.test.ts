@@ -3,7 +3,7 @@ import { access, mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq, sql } from "drizzle-orm";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { IngestEpubResultDto } from "@whetstone/contracts";
 import { epubContentType, parseWorkCreationReviewDto } from "@whetstone/contracts";
@@ -14,6 +14,7 @@ import {
   authors,
   blocks,
   entries,
+  pdfImportAttempts,
   personalEntries,
   tocEntries,
   uploadedSourceClaims,
@@ -30,8 +31,13 @@ import type { ContentDependencies } from "../content/contentCommands.js";
 import { commitImportedMarkdownWork } from "../content/contentCommands.js";
 import { ingestEpub as ingestEpubCommand } from "../content/epubCommands.js";
 import {
+  beginPdfReview,
   cancelWorkCreation,
   getWorkCreationReview,
+  keepSeparateWork,
+  openExistingWork,
+  type PdfReviewPublishOutcome,
+  type PdfReviewSource,
   type WorkCreationDependencies
 } from "./workCreationCommands.js";
 import { beginFinalizeAttempt, detachStagePath } from "./workCreationAttemptStore.js";
@@ -61,6 +67,13 @@ type Harness = Readonly<{
   // The injected EPUB parser's next response, reassigned per test so a begin/keep-separate drives a
   // specific book (or a parser failure) without a real archive.
   epub: { respond: (bytes: Uint8Array) => Promise<ParsedEpub> };
+  // The injected PDF-review bridge port (#750): its responses are reassigned per test so beginPdfReview
+  // exercises each branch (ready/refused/not_awaiting, publish) without a real converted attempt.
+  pdf: {
+    loadForReview: ReturnType<typeof vi.fn<(attemptId: string) => Promise<PdfReviewSource>>>;
+    publish: ReturnType<typeof vi.fn<(attemptId: string) => Promise<PdfReviewPublishOutcome>>>;
+    discard: ReturnType<typeof vi.fn<(attemptId: string, userId: string) => Promise<void>>>;
+  };
 }>;
 
 let h: Harness;
@@ -79,6 +92,19 @@ async function buildHarness(): Promise<Harness> {
   let stageSeq = 0;
 
   const epub: Harness["epub"] = { respond: (bytes) => bookEpub(bytes) };
+
+  const pdf: Harness["pdf"] = {
+    loadForReview: vi.fn(async () => ({ status: "not_awaiting" }) as PdfReviewSource),
+    publish: vi.fn(
+      async () =>
+        ({
+          status: "published",
+          workEntryId: "pdf-work",
+          reopened: false
+        }) as PdfReviewPublishOutcome
+    ),
+    discard: vi.fn(async () => undefined)
+  };
 
   const content: ContentDependencies = {
     createAuthorId: () => `author-${(authorSeq += 1)}`,
@@ -100,7 +126,12 @@ async function buildHarness(): Promise<Harness> {
     createAttemptId: () => `attempt-${(attemptSeq += 1)}`,
     createStageId: () => `stage-${(stageSeq += 1)}`,
     log: { info: () => undefined },
-    now: () => clock.now
+    now: () => clock.now,
+    pdf: {
+      loadForReview: (attemptId) => pdf.loadForReview(attemptId),
+      publish: (attemptId) => pdf.publish(attemptId),
+      discard: (attemptId, userId) => pdf.discard(attemptId, userId)
+    }
   };
 
   return {
@@ -112,6 +143,7 @@ async function buildHarness(): Promise<Harness> {
     db,
     deps,
     epub,
+    pdf,
     pglite,
     server: createServer({ content, logger: false, workCreation: deps }),
     sourcesDir
@@ -1422,5 +1454,345 @@ describe("Manual creation-review cancel / Back (#749)", () => {
     )[0];
     expect(attempt?.state).toBe("cancelled");
     expect(await countWorks()).toBe(1);
+  });
+});
+
+describe("beginPdfReview — routing a converted PDF through duplicate review (#750)", () => {
+  const PDF_TITLE = "Meditations";
+  const PDF_AUTHOR = "Marcus Aurelius";
+  const PDF_HASH = "c".repeat(64);
+
+  // Seed the minimal converted PDF attempt row the review attempt's FK references. The bridge port is
+  // faked, so only the row's existence (not its stage/ranges) matters to beginPdfReview.
+  async function seedPdfAttempt(id = "pdf-att-1"): Promise<string> {
+    await h.db
+      .insert(pdfImportAttempts)
+      .values({ id, userId: DEFAULT_USER_ID, sourceHash: PDF_HASH, state: "awaiting_review" });
+    return id;
+  }
+
+  function readySource(
+    overrides: Partial<Extract<PdfReviewSource, { status: "ready" }>> = {}
+  ): void {
+    h.pdf.loadForReview.mockResolvedValue({
+      status: "ready",
+      sourceHash: PDF_HASH,
+      fileName: "book.pdf",
+      title: PDF_TITLE,
+      authorName: PDF_AUTHOR,
+      language: "en",
+      ...overrides
+    });
+  }
+
+  // A Work sharing the proposed PDF title makes a credible #724 candidate, so the review parks instead of
+  // publishing.
+  async function seedPdfCandidate(entryId = "pdf-candidate-1"): Promise<string> {
+    return seedCandidateWork({
+      authorId: await seedAuthor("aurelius-existing", PDF_AUTHOR),
+      entryId,
+      title: PDF_TITLE
+    });
+  }
+
+  it("publishes immediately when the converted PDF has no credible duplicate", async () => {
+    const attemptId = await seedPdfAttempt();
+    readySource();
+
+    const result = await beginPdfReview(h.deps, DEFAULT_USER_ID, attemptId);
+
+    expect(result).toEqual({ status: "created" });
+    expect(h.pdf.publish).toHaveBeenCalledExactlyOnceWith(attemptId);
+    // Immediate publication parks no review attempt.
+    expect(await h.db.select().from(workCreationAttempts)).toHaveLength(0);
+  });
+
+  it("parks ONE review attempt referencing the PDF attempt when a duplicate is credible", async () => {
+    const attemptId = await seedPdfAttempt();
+    const candidateId = await seedPdfCandidate();
+    readySource();
+
+    const result = await beginPdfReview(h.deps, DEFAULT_USER_ID, attemptId);
+
+    expect(result.status).toBe("needs_review");
+    const review = result.status === "needs_review" ? result.review : undefined;
+    expect(review?.proposed).toEqual({
+      authorName: PDF_AUTHOR,
+      language: "en",
+      title: PDF_TITLE,
+      workType: "book"
+    });
+    expect(review?.candidates.map((candidate) => candidate.entryId)).toEqual([candidateId]);
+
+    // Exactly one pending attempt, bound to the PDF attempt, owning no stage of its own.
+    const attempts = await h.db.select().from(workCreationAttempts);
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]?.pdfImportAttemptId).toBe(attemptId);
+    expect(attempts[0]?.sourceKind).toBe("pdf");
+    expect(attempts[0]?.stagePath).toBeNull();
+    // Nothing published: the review holds the decision.
+    expect(h.pdf.publish).not.toHaveBeenCalled();
+  });
+
+  it("resumes the same review on a repeated poll without parking a second attempt", async () => {
+    const attemptId = await seedPdfAttempt();
+    await seedPdfCandidate();
+    readySource();
+
+    const first = await beginPdfReview(h.deps, DEFAULT_USER_ID, attemptId);
+    const second = await beginPdfReview(h.deps, DEFAULT_USER_ID, attemptId);
+
+    expect(first.status).toBe("needs_review");
+    expect(second.status).toBe("needs_review");
+    const firstId = first.status === "needs_review" ? first.review.attemptId : "a";
+    const secondId = second.status === "needs_review" ? second.review.attemptId : "b";
+    expect(secondId).toBe(firstId);
+    expect(await h.db.select().from(workCreationAttempts)).toHaveLength(1);
+    // loadForReview is only consulted on the first poll; the resume short-circuits before the port.
+    expect(h.pdf.loadForReview).toHaveBeenCalledOnce();
+  });
+
+  it("reports uncertain when a repeated poll cannot refresh the parked review's evidence", async () => {
+    const attemptId = await seedPdfAttempt();
+    await seedPdfCandidate();
+    readySource();
+    await beginPdfReview(h.deps, DEFAULT_USER_ID, attemptId);
+
+    // The candidate query the resume refreshes against is now untrusted.
+    await h.db.execute(sql`DROP FUNCTION IF EXISTS work_title_key(text) CASCADE`);
+
+    expect(await beginPdfReview(h.deps, DEFAULT_USER_ID, attemptId)).toEqual({
+      status: "uncertain"
+    });
+  });
+
+  it("reports not_awaiting while a decision is mid-finalize for this PDF attempt", async () => {
+    const attemptId = await seedPdfAttempt();
+    await seedPdfCandidate();
+    readySource();
+    const parked = await beginPdfReview(h.deps, DEFAULT_USER_ID, attemptId);
+    const parkedId = parked.status === "needs_review" ? parked.review.attemptId : "";
+
+    // A serialized decision claimed the slot: pending -> finalizing. A concurrent poll must leave it alone.
+    await h.db
+      .update(workCreationAttempts)
+      .set({ state: "finalizing" })
+      .where(eq(workCreationAttempts.id, parkedId));
+
+    expect(await beginPdfReview(h.deps, DEFAULT_USER_ID, attemptId)).toEqual({
+      status: "not_awaiting"
+    });
+    expect(h.pdf.publish).not.toHaveBeenCalled();
+  });
+
+  it("publishes the exact-source reopen when identical bytes already own a Work", async () => {
+    const attemptId = await seedPdfAttempt();
+    const existingId = await seedCandidateWork({
+      authorId: await seedAuthor("owner-author", "Some Author"),
+      entryId: "already-owned",
+      title: "Some Other Title"
+    });
+    // The identical bytes already claim that Work, so review must reopen (publish) rather than re-review.
+    await h.db.insert(uploadedSourceClaims).values({ sha256: PDF_HASH, workEntryId: existingId });
+    readySource();
+
+    expect(await beginPdfReview(h.deps, DEFAULT_USER_ID, attemptId)).toEqual({
+      status: "exact_existing"
+    });
+    expect(h.pdf.publish).toHaveBeenCalledExactlyOnceWith(attemptId);
+    expect(await h.db.select().from(workCreationAttempts)).toHaveLength(0);
+  });
+
+  it("publishes a typed refusal without parking a review when the document maps to one", async () => {
+    const attemptId = await seedPdfAttempt();
+    h.pdf.loadForReview.mockResolvedValue({ status: "refused" });
+
+    expect(await beginPdfReview(h.deps, DEFAULT_USER_ID, attemptId)).toEqual({ status: "refused" });
+    expect(h.pdf.publish).toHaveBeenCalledExactlyOnceWith(attemptId);
+    expect(await h.db.select().from(workCreationAttempts)).toHaveLength(0);
+  });
+
+  it("reports not_awaiting and publishes nothing when the attempt is not parked awaiting review", async () => {
+    const attemptId = await seedPdfAttempt();
+    h.pdf.loadForReview.mockResolvedValue({ status: "not_awaiting" });
+
+    expect(await beginPdfReview(h.deps, DEFAULT_USER_ID, attemptId)).toEqual({
+      status: "not_awaiting"
+    });
+    expect(h.pdf.publish).not.toHaveBeenCalled();
+  });
+
+  it("reports uncertain when the candidate query cannot be trusted, parking nothing", async () => {
+    const attemptId = await seedPdfAttempt();
+    readySource();
+    await h.db.execute(sql`DROP FUNCTION IF EXISTS work_title_key(text) CASCADE`);
+
+    expect(await beginPdfReview(h.deps, DEFAULT_USER_ID, attemptId)).toEqual({
+      status: "uncertain"
+    });
+    expect(h.pdf.publish).not.toHaveBeenCalled();
+    expect(await h.db.select().from(workCreationAttempts)).toHaveLength(0);
+  });
+
+  it("reports uncertain when the owner already holds an active review for a different source", async () => {
+    // The owner is mid-review on a manual duplicate: the single-active-per-owner slot is taken. A converted
+    // PDF whose own review would park must yield uncertain (retry next poll), never double-own the slot.
+    await beginManualNeedsReview();
+    const attemptId = await seedPdfAttempt();
+    await seedPdfCandidate();
+    readySource();
+
+    expect(await beginPdfReview(h.deps, DEFAULT_USER_ID, attemptId)).toEqual({
+      status: "uncertain"
+    });
+    // Only the manual attempt exists; the PDF review did not steal the slot.
+    const attempts = await h.db.select().from(workCreationAttempts);
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]?.pdfImportAttemptId).toBeNull();
+  });
+
+  // Park a PDF review, then return the review attempt id the serialized decision fences on.
+  async function parkPdfReview(): Promise<{ pdfAttemptId: string; reviewAttemptId: string }> {
+    const pdfAttemptId = await seedPdfAttempt();
+    await seedPdfCandidate();
+    readySource();
+    const parked = await beginPdfReview(h.deps, DEFAULT_USER_ID, pdfAttemptId);
+    /* v8 ignore next 3 -- the fixture always parks a credible duplicate, so this narrows the union. */
+    if (parked.status !== "needs_review") {
+      throw new Error(`expected needs_review, got ${parked.status}`);
+    }
+    return { pdfAttemptId, reviewAttemptId: parked.review.attemptId };
+  }
+
+  it("Keep separate publishes the converted PDF through the port and consumes the review attempt", async () => {
+    const { pdfAttemptId, reviewAttemptId } = await parkPdfReview();
+    // The port publishes a distinct Work atomically; the fake returns the entry the commit would resolve.
+    const publishedId = await seedCandidateWork({
+      authorId: await seedAuthor("pdf-owner", "Some Publisher"),
+      entryId: "pdf-published",
+      title: "A Distinct Meditations"
+    });
+    h.pdf.publish.mockResolvedValue({
+      status: "published",
+      workEntryId: publishedId,
+      reopened: false
+    });
+
+    const result = await keepSeparateWork(h.deps, DEFAULT_USER_ID, reviewAttemptId, 0);
+
+    expect(result.status).toBe("created");
+    expect(result.status === "created" ? result.result.work.entryId : "").toBe(publishedId);
+    // The converted PDF attempt (not the review attempt) is what the port publishes.
+    expect(h.pdf.publish).toHaveBeenCalledExactlyOnceWith(pdfAttemptId);
+    // The review attempt is consumed; it owns no stage of its own to discard.
+    const completed = (
+      await h.db
+        .select()
+        .from(workCreationAttempts)
+        .where(eq(workCreationAttempts.id, reviewAttemptId))
+    )[0];
+    expect(completed?.state).toBe("completed");
+  });
+
+  it("Keep separate reports exact_existing when identical bytes reopened the owner meanwhile", async () => {
+    const { pdfAttemptId, reviewAttemptId } = await parkPdfReview();
+    const ownerId = await seedCandidateWork({
+      authorId: await seedAuthor("pdf-owner", "Some Publisher"),
+      entryId: "pdf-owner-work",
+      title: "Owned Meditations"
+    });
+    // A concurrent claim of the identical bytes made publish reopen the owner rather than create anew.
+    h.pdf.publish.mockResolvedValue({ status: "published", workEntryId: ownerId, reopened: true });
+
+    const result = await keepSeparateWork(h.deps, DEFAULT_USER_ID, reviewAttemptId, 0);
+
+    expect(result.status).toBe("exact_existing");
+    expect(h.pdf.publish).toHaveBeenCalledExactlyOnceWith(pdfAttemptId);
+  });
+
+  it("Open existing reopens the chosen Work and discards the redundant converted PDF attempt", async () => {
+    const pdfAttemptId = await seedPdfAttempt();
+    const candidateId = await seedPdfCandidate();
+    readySource();
+    const parked = await beginPdfReview(h.deps, DEFAULT_USER_ID, pdfAttemptId);
+    const reviewAttemptId = parked.status === "needs_review" ? parked.review.attemptId : "";
+
+    const result = await openExistingWork(h.deps, DEFAULT_USER_ID, reviewAttemptId, 0, candidateId);
+
+    expect(result.status).toBe("opened");
+    expect(result.status === "opened" ? result.result.work.entryId : "").toBe(candidateId);
+    // Reopening an existing Work makes the converted PDF attempt redundant: its retained bytes are freed
+    // through the injected port, scoped to the owner. Nothing is published.
+    expect(h.pdf.discard).toHaveBeenCalledExactlyOnceWith(pdfAttemptId, DEFAULT_USER_ID);
+    expect(h.pdf.publish).not.toHaveBeenCalled();
+    const completed = (
+      await h.db
+        .select()
+        .from(workCreationAttempts)
+        .where(eq(workCreationAttempts.id, reviewAttemptId))
+    )[0];
+    expect(completed?.state).toBe("completed");
+  });
+});
+
+describe("All-format creation-review boundary (#750)", () => {
+  // The final no-client-bypass invariant: every Library creation format — Markdown, EPUB, manual, and PDF —
+  // reaches the SAME duplicate-review boundary and inserts no Work while a credible candidate is unresolved.
+  // Each format is driven independently (the single-active-per-owner slot is freed by Back/cancel between
+  // formats), and the retired direct-write route is proven gone.
+  it("routes Markdown, EPUB, manual, and PDF creation through review before any Work is inserted, with no legacy direct-write route", async () => {
+    // No legacy direct-write create route survives: the retired POST /api/works has no handler.
+    const legacy = await h.server.inject({ method: "POST", payload: {}, url: "/api/works" });
+    expect(legacy.statusCode).toBe(404);
+
+    // Markdown: a title-matching Work is a credible duplicate, so begin parks a review and creates nothing.
+    await seedCandidateWork({
+      authorId: await seedAuthor("md-author", "Someone Else"),
+      entryId: "boundary-md-candidate"
+    });
+    const markdown = (await begin()).json();
+    expect(markdown.status).toBe("needs_review");
+    expect(await countWorks()).toBe(1);
+    expect((await cancel(markdown.review.attemptId)).json()).toEqual({ cancelled: true });
+
+    // EPUB: the embedded metadata matches a seeded Work, so begin parks a review and creates nothing.
+    await seedEpubCandidate("boundary-epub-candidate");
+    const epub = (await beginEpub()).json();
+    expect(epub.status).toBe("needs_review");
+    expect(await countWorks()).toBe(2);
+    expect((await cancel(epub.review.attemptId)).json()).toEqual({ cancelled: true });
+
+    // Manual: the typed title matches the still-present Markdown candidate, so begin parks a review.
+    const manual = (await beginManual()).json();
+    expect(manual.status).toBe("needs_review");
+    expect(await countWorks()).toBe(2);
+    expect((await cancel(manual.review.attemptId)).json()).toEqual({ cancelled: true });
+
+    // PDF: a converted attempt whose proposed title matches a seeded Work parks the SAME review — publication
+    // is deferred to the serialized decision, never the conversion drain.
+    await h.db.insert(pdfImportAttempts).values({
+      id: "boundary-pdf",
+      userId: DEFAULT_USER_ID,
+      sourceHash: "e".repeat(64),
+      state: "awaiting_review"
+    });
+    await seedCandidateWork({
+      authorId: await seedAuthor("pdf-author", "Marcus Aurelius"),
+      entryId: "boundary-pdf-candidate",
+      title: "Meditations"
+    });
+    h.pdf.loadForReview.mockResolvedValue({
+      status: "ready",
+      sourceHash: "e".repeat(64),
+      fileName: "book.pdf",
+      title: "Meditations",
+      authorName: "Marcus Aurelius",
+      language: "en"
+    });
+    const pdf = await beginPdfReview(h.deps, DEFAULT_USER_ID, "boundary-pdf");
+    expect(pdf.status).toBe("needs_review");
+    // Three seeded candidates remain; not one of the four begins inserted a Work of its own.
+    expect(await countWorks()).toBe(3);
+    expect(h.pdf.publish).not.toHaveBeenCalled();
   });
 });
