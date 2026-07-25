@@ -171,3 +171,67 @@ export const pdfScannedChineseSimplifiedFixture = scannedFixture("Scanned Simpli
 export const pdfScannedChineseTraditionalFixture = scannedFixture(
   "Scanned Traditional Chinese Page"
 );
+
+// Review-boundary fixtures (#750). The PDF review E2E needs, per conversion lane, TWO uploads that share
+// the confirm-form title (so the second trips the same-title candidate) but carry DIFFERENT bytes (so the
+// second is a fuzzy edition, not an exact re-upload). Both filenames in a lane are identical, so the confirm
+// form pre-fills the SAME title from the stem; the embedded document differs only in body/marker text, which
+// changes the source hash without changing the resolved title (the entered title wins). Distinct probe names
+// keep these Works isolated from the #702/#745 specs on the shared smoke DB — no title or exact-source
+// collision. The original publishes as a new Work; re-uploading its exact bytes reopens it; the edition's
+// different bytes route through the shared duplicate-review panel.
+function bornDigitalReviewFixture(fileName: string, title: string, paragraph: string) {
+  const conversion = {
+    body: [item({ label: "title", text: title }), item({ label: "text", text: paragraph })],
+    doclingSchema: { name: "DoclingDocument", version: "1.10.0" },
+    furniture: [],
+    pages: [{ hasNativeText: true, pageNumber: 1 }],
+    schemaVersion: RANGE_CONVERSION_SCHEMA_VERSION
+  };
+  return {
+    buffer: Buffer.from(`%PDF-1.7\n${FIXTURE_MARKER}\n${JSON.stringify(conversion)}`, "utf8"),
+    mimeType: "application/pdf",
+    name: fileName
+  } as const;
+}
+
+const BORN_DIGITAL_REVIEW_FILE = "PDF Review Born Digital 750.pdf";
+export const pdfReviewBornDigitalOriginalFixture = bornDigitalReviewFixture(
+  BORN_DIGITAL_REVIEW_FILE,
+  "Born-Digital Review Original",
+  "The original born-digital edition body proving the #750 review boundary."
+);
+export const pdfReviewBornDigitalEditionFixture = bornDigitalReviewFixture(
+  BORN_DIGITAL_REVIEW_FILE,
+  "Born-Digital Review Edition",
+  "A distinct born-digital edition body whose different bytes trip a fuzzy #750 candidate."
+);
+
+// Scanned-English review fixtures: like #745's scanned lane, each page carries NO native text, so the
+// env-gated fixture OCR lane recovers the same English text for both. The embedded metadata marker only
+// varies the bytes (the entered title wins), so the two share a title yet hash differently.
+function scannedReviewFixture(fileName: string, marker: string) {
+  const conversion = {
+    body: [] as readonly DocItem[],
+    doclingSchema: { name: "DoclingDocument", version: "1.10.0" },
+    furniture: [],
+    metadata: { author: null, title: marker },
+    pages: [{ hasNativeText: false, pageNumber: 1 }],
+    schemaVersion: RANGE_CONVERSION_SCHEMA_VERSION
+  };
+  return {
+    buffer: Buffer.from(`%PDF-1.7\n${FIXTURE_MARKER}\n${JSON.stringify(conversion)}`, "utf8"),
+    mimeType: "application/pdf",
+    name: fileName
+  } as const;
+}
+
+const SCANNED_REVIEW_FILE = "PDF Review Scanned 750.pdf";
+export const pdfReviewScannedOriginalFixture = scannedReviewFixture(
+  SCANNED_REVIEW_FILE,
+  "review-scanned-original"
+);
+export const pdfReviewScannedEditionFixture = scannedReviewFixture(
+  SCANNED_REVIEW_FILE,
+  "review-scanned-edition"
+);
