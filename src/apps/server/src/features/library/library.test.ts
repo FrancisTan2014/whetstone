@@ -2,6 +2,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { createTextDocument, documentText, type DocumentNodeJSON } from "@whetstone/document";
+import { MAX_WORK_CONTENT_REVISION } from "@whetstone/contracts";
 import {
   RECALL_REQUEST_RETENTION,
   toEntryId,
@@ -1260,6 +1261,26 @@ describe("manual work editor (#720, sections #697)", () => {
     expect(response.json()).toEqual({ error: "revision_conflict" });
   });
 
+  it("treats an above-integer-range save revision as a conflict, never a database error", async () => {
+    const workEntryId = await createManualWork();
+    const loaded = await load(workEntryId);
+
+    // A safe JS integer past the signed 32-bit `content_revision` range would overflow the compare-and-set
+    // and raise a database error; the command must resolve to a clean conflict that writes nothing (#703).
+    const result = await updateManualWorkContent(
+      commandDeps(),
+      toEntryId(workEntryId),
+      toEntryId(loaded.unitEntryId as string),
+      { content: [paragraph("Overflow")], type: "doc" },
+      MAX_WORK_CONTENT_REVISION + 1,
+      DEFAULT_USER_ID
+    );
+
+    expect(result.status).toBe("conflict");
+    const reopened = await load(workEntryId);
+    expect(reopened.revision).toBe(loaded.revision);
+  });
+
   it("returns 404 when saving an unknown or imported Work", async () => {
     const importedEntryId = await createImportedWork();
     const document = { content: [paragraph("x")], type: "doc" };
@@ -1499,6 +1520,24 @@ describe("manual work editor (#720, sections #697)", () => {
     );
 
     expect(result.status).toBe("not_found");
+  });
+
+  it("treats an above-integer-range add-section revision as a conflict, never a database error", async () => {
+    const workEntryId = await createManualWork();
+    const loaded = await load(workEntryId);
+
+    const result = await addManualWorkSection(
+      commandDeps(),
+      toEntryId(workEntryId),
+      MAX_WORK_CONTENT_REVISION + 1,
+      DEFAULT_USER_ID
+    );
+
+    expect(result.status).toBe("conflict");
+    const reopened = await load(workEntryId);
+    // No section was appended and the revision is untouched.
+    expect(reopened.sections).toHaveLength((loaded.sections as unknown[]).length);
+    expect(reopened.revision).toBe(loaded.revision);
   });
 
   it("rejects a malformed add-section body with 400", async () => {

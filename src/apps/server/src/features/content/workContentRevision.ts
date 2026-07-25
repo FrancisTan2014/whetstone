@@ -1,4 +1,5 @@
 import type { EntryId } from "@whetstone/domain";
+import { MAX_WORK_CONTENT_REVISION } from "@whetstone/contracts";
 import { and, eq, sql } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
@@ -28,10 +29,17 @@ export async function claimWorkContentRevision(
   workEntryId: EntryId,
   expectedRevision: number
 ): Promise<number | undefined> {
-  // A non-integer or negative token can never equal a stored non-negative counter, so it is definitionally
-  // stale: refuse it without touching the row rather than letting a malformed SQL comparison surprise a
-  // caller. (The manual API also rejects it at the Zod boundary; this keeps the fence safe for any caller.)
-  if (!Number.isInteger(expectedRevision) || expectedRevision < 0) {
+  // A non-integer, negative, or above-`integer`-range token can never equal a stored `content_revision`
+  // (a non-negative signed 32-bit counter), so it is definitionally stale: refuse it without touching the
+  // row rather than letting a malformed or out-of-range SQL comparison surprise a caller — an out-of-range
+  // value would otherwise overflow the `integer` column and raise a database error instead of a clean
+  // conflict. (The manual API also rejects it at the Zod boundary; this keeps the fence safe for any
+  // caller, including the imported-Work correction command #762 that does not pass through that schema.)
+  if (
+    !Number.isInteger(expectedRevision) ||
+    expectedRevision < 0 ||
+    expectedRevision > MAX_WORK_CONTENT_REVISION
+  ) {
     return undefined;
   }
 

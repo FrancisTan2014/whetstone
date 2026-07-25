@@ -2,6 +2,7 @@ import { createTextDocument } from "@whetstone/document";
 import { describe, expect, it } from "vitest";
 
 import {
+  MAX_WORK_CONTENT_REVISION,
   parseAddManualWorkSectionRequest,
   parseManualWorkDto,
   parseManualWorkUnitDto,
@@ -51,6 +52,16 @@ describe("parseUpdateManualWorkContentRequest", () => {
     expect(() => parseUpdateManualWorkContentRequest({ document, revision: 1.5 })).toThrow();
     expect(() => parseUpdateManualWorkContentRequest({ document, revision: -1 })).toThrow();
     expect(() => parseUpdateManualWorkContentRequest({ document, revision: "1" })).toThrow();
+  });
+
+  it("accepts the maximum PostgreSQL integer revision but rejects one beyond it", () => {
+    const atMax = { document, revision: MAX_WORK_CONTENT_REVISION };
+    expect(parseUpdateManualWorkContentRequest(atMax)).toEqual(atMax);
+    // A safe JS integer just past the signed 32-bit range would overflow `work_meta.content_revision`;
+    // it must be a typed boundary rejection, never reach the compare-and-set as a database error (#703).
+    expect(() =>
+      parseUpdateManualWorkContentRequest({ document, revision: MAX_WORK_CONTENT_REVISION + 1 })
+    ).toThrow();
   });
 
   it("rejects an unknown extra field", () => {
@@ -111,6 +122,15 @@ describe("parseAddManualWorkSectionRequest", () => {
   it("rejects a non-integer or negative revision", () => {
     expect(() => parseAddManualWorkSectionRequest({ revision: 1.5 })).toThrow();
     expect(() => parseAddManualWorkSectionRequest({ revision: -1 })).toThrow();
+  });
+
+  it("accepts the maximum PostgreSQL integer revision but rejects one beyond it", () => {
+    expect(parseAddManualWorkSectionRequest({ revision: MAX_WORK_CONTENT_REVISION })).toEqual({
+      revision: MAX_WORK_CONTENT_REVISION
+    });
+    expect(() =>
+      parseAddManualWorkSectionRequest({ revision: MAX_WORK_CONTENT_REVISION + 1 })
+    ).toThrow();
   });
 
   it("rejects an unknown extra field", () => {

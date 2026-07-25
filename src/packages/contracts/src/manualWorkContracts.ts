@@ -3,6 +3,15 @@ import { z } from "zod";
 import { documentJsonSchema } from "./diaryContracts.js";
 import { workLanguageDtoSchema, workTypeDtoSchema } from "./entryContracts.js";
 
+// `work_meta.content_revision` is stored as a PostgreSQL `integer`, so a revision token can never exceed
+// its signed 32-bit maximum (2^31 - 1). A larger safe JS integer (e.g. 2147483648) would slip past a bare
+// `nonnegative` check, then overflow the column at the `content_revision = expected` comparison and surface
+// as a database error instead of the intended typed 400/409. Bounding every revision token to this range
+// keeps an out-of-range value a typed boundary rejection (#703).
+export const MAX_WORK_CONTENT_REVISION = 2_147_483_647;
+
+const workContentRevisionSchema = z.number().int().nonnegative().max(MAX_WORK_CONTENT_REVISION);
+
 // Shared, Zod-validated shapes for editing a learner-curated MANUAL Work in the Library (#720). A manual
 // Work's content is one canonical ProseMirror/Tiptap document persisted as the same block rows as authored
 // and imported content, but its authorization, lifecycle, and navigation are the Library's — kept separate
@@ -19,7 +28,7 @@ import { workLanguageDtoSchema, workTypeDtoSchema } from "./entryContracts.js";
 export const updateManualWorkContentRequestSchema = z
   .object({
     document: documentJsonSchema,
-    revision: z.number().int().nonnegative()
+    revision: workContentRevisionSchema
   })
   .strict();
 
@@ -30,7 +39,7 @@ export type UpdateManualWorkContentRequest = z.infer<typeof updateManualWorkCont
 // protection as a save, so a section is never appended on top of another session's concurrent write.
 export const addManualWorkSectionRequestSchema = z
   .object({
-    revision: z.number().int().nonnegative()
+    revision: workContentRevisionSchema
   })
   .strict();
 
@@ -66,7 +75,7 @@ export const manualWorkDtoSchema = z
     document: documentJsonSchema,
     entryId: z.string(),
     language: workLanguageDtoSchema,
-    revision: z.number().int().nonnegative(),
+    revision: workContentRevisionSchema,
     sections: z.array(manualWorkSectionDtoSchema),
     title: z.string(),
     unitEntryId: z.string(),

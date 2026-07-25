@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { toEntryId, type EntryId } from "@whetstone/domain";
+import { MAX_WORK_CONTENT_REVISION } from "@whetstone/contracts";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
@@ -118,6 +119,18 @@ describe("claimWorkContentRevision", () => {
     expect(await claimWorkContentRevision(db, workEntryId, Number.NaN)).toBeUndefined();
     // None of the refusals advanced the revision.
     expect(await storedRevision("work-bad")).toBe(0);
+  });
+
+  it("refuses an above-integer-range revision as a conflict, never a database error", async () => {
+    const workEntryId = await seedImportedWork("work-huge");
+
+    // A safe JS integer just past the signed 32-bit `integer` maximum would overflow the
+    // `content_revision = expected` comparison and raise a database error; the fence must instead treat it
+    // as a clean stale conflict (undefined) without touching the row (#703).
+    const claimed = await claimWorkContentRevision(db, workEntryId, MAX_WORK_CONTENT_REVISION + 1);
+
+    expect(claimed).toBeUndefined();
+    expect(await storedRevision("work-huge")).toBe(0);
   });
 
   it("returns undefined for a missing Work", async () => {

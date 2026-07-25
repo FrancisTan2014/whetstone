@@ -31,6 +31,7 @@ export {
   manualWorkDtoSchema,
   manualWorkSectionDtoSchema,
   manualWorkUnitDtoSchema,
+  MAX_WORK_CONTENT_REVISION,
   parseAddManualWorkSectionRequest,
   parseManualWorkDto,
   parseManualWorkUnitDto,
