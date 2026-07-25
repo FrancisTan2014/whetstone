@@ -4,14 +4,12 @@ import type {
   AuthorSearchDto,
   BeginManualWorkRequest,
   CreateAuthorRequest,
-  CreateWorkRequest,
   ImportMarkdownWorkRequest,
   IngestEpubResultDto,
   KeepSeparateDecisionRequest,
   OpenExistingDecisionRequest,
   WorkCreationReviewDto,
-  WorkListDto,
-  WorkListItemDto
+  WorkListDto
 } from "@whetstone/contracts";
 import {
   parseWorkCreationReviewDto,
@@ -65,14 +63,6 @@ export async function fetchWorksWithReadingPosition(): Promise<ReadonlySet<strin
 
 export async function createAuthor(request: CreateAuthorRequest): Promise<AuthorDto> {
   return requestJson<AuthorDto>(apiUrl("/authors"), {
-    body: JSON.stringify(request),
-    headers: jsonHeaders,
-    method: "POST"
-  });
-}
-
-export async function createWork(request: CreateWorkRequest): Promise<WorkListItemDto> {
-  return requestJson<WorkListItemDto>(apiUrl("/works"), {
     body: JSON.stringify(request),
     headers: jsonHeaders,
     method: "POST"

@@ -16,7 +16,6 @@ vi.mock("./libraryApi", () => ({
   beginManualCreation: vi.fn(),
   beginMarkdownCreation: vi.fn(),
   cancelWorkCreation: vi.fn(),
-  createWork: vi.fn(),
   deleteWork: vi.fn(),
   fetchWorks: vi.fn(),
   fetchWorksWithReadingPosition: vi.fn(),
@@ -92,7 +91,6 @@ import {
   beginManualCreation,
   beginMarkdownCreation,
   cancelWorkCreation,
-  createWork,
   deleteWork,
   fetchWorks,
   fetchWorksWithReadingPosition,
@@ -148,7 +146,6 @@ function render(ui: React.ReactElement): ReturnType<typeof rtlRender> {
 const mockedSearchAuthors = vi.mocked(searchAuthors);
 const mockedFetchWorks = vi.mocked(fetchWorks);
 const mockedFetchWorksWithReadingPosition = vi.mocked(fetchWorksWithReadingPosition);
-const mockedCreateWork = vi.mocked(createWork);
 const mockedDeleteWork = vi.mocked(deleteWork);
 const mockedBeginEpubCreation = vi.mocked(beginEpubCreation);
 const mockedBeginManualCreation = vi.mocked(beginManualCreation);
@@ -856,7 +853,6 @@ describe("AdminLibraryPage", () => {
     expect(
       await screen.findByText("“史记选读” is already in your library — opened it.")
     ).toBeDefined();
-    expect(mockedCreateWork).not.toHaveBeenCalled();
   });
 
   it("shows an error when the EPUB ingestion fails", async () => {
@@ -888,7 +884,6 @@ describe("AdminLibraryPage", () => {
     const list = screen.getByRole("list", { name: "Possible duplicates" });
     expect(within(list).getByText("史记选读")).toBeDefined();
     expect(screen.getByText("史记选读.epub")).toBeDefined();
-    expect(mockedCreateWork).not.toHaveBeenCalled();
   });
 
   it("commits the EPUB as a separate Work from the review panel (#748)", async () => {
@@ -940,7 +935,6 @@ describe("AdminLibraryPage", () => {
         "That file couldn’t be read as an EPUB. Please choose a valid .epub file."
       )
     ).toBeDefined();
-    expect(mockedCreateWork).not.toHaveBeenCalled();
   });
 
   it("reports an untrusted duplicate check for an EPUB and creates nothing (#748)", async () => {
@@ -957,7 +951,6 @@ describe("AdminLibraryPage", () => {
         "Couldn’t check your library for duplicates just now. Please try again."
       )
     ).toBeDefined();
-    expect(mockedCreateWork).not.toHaveBeenCalled();
   });
 
   it("ignores an upload with no file selected", async () => {
@@ -1016,7 +1009,6 @@ describe("AdminLibraryPage", () => {
 
     expect(await screen.findByText("Imported “史记选读”.")).toBeDefined();
     expect(screen.queryByLabelText("Title")).toBeNull();
-    expect(mockedCreateWork).not.toHaveBeenCalled();
   });
 
   it("routes by MIME type first: a PDF mislabelled .epub takes the PDF confirm path", async () => {
@@ -1069,7 +1061,6 @@ describe("AdminLibraryPage", () => {
         workType: "book"
       });
     });
-    expect(mockedCreateWork).not.toHaveBeenCalled();
     await waitFor(() => {
       expect(onManageContent).toHaveBeenCalledWith("work-1");
     });
@@ -1105,7 +1096,6 @@ describe("AdminLibraryPage", () => {
         "“Politics and the English Language” is already in your library — opened it."
       )
     ).toBeDefined();
-    expect(mockedCreateWork).not.toHaveBeenCalled();
   });
 
   // A #721 execution status; overrides tailor the specific branch. `sourceHash` must be 64 hex chars.
@@ -1171,7 +1161,6 @@ describe("AdminLibraryPage", () => {
       });
     });
     // No legacy shell-Work create for a born-digital PDF.
-    expect(mockedCreateWork).not.toHaveBeenCalled();
     // The in-flight attempt is remembered so it survives navigation, then cleared on completion.
     expect(mockedRememberActivePdfImport).toHaveBeenCalledWith("attempt-1");
     await waitFor(() => {
@@ -1584,7 +1573,6 @@ describe("AdminLibraryPage", () => {
     fireEvent.change(screen.getByLabelText("Upload"), { target: { files: [file] } });
 
     expect(await screen.findByText("Choose an .epub, .pdf, or .md file.")).toBeDefined();
-    expect(mockedCreateWork).not.toHaveBeenCalled();
     expect(mockedBeginEpubCreation).not.toHaveBeenCalled();
   });
 

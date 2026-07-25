@@ -412,9 +412,17 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
       return;
     }
 
-    /* v8 ignore next 4 -- a terminal poll result is published, ocr_validation_failed, no_content,
-       image_unsupported, or failed; `in_progress` (the only remaining kind) is never terminal, so this
-       early return is unreachable. */
+    if (progress.kind === "needs_review") {
+      // A credible duplicate parked the shared review panel (#750): the converted attempt keeps its bytes
+      // and ranges while the learner decides. The review DTO carries the creation-review attempt id, so the
+      // SAME Open existing / Keep separate / Back handlers drive it — no PDF-specific duplicate UI.
+      setReviewState(progress.review);
+      return;
+    }
+
+    /* v8 ignore next 4 -- a terminal poll result is published, needs_review, ocr_validation_failed,
+       no_content, image_unsupported, or failed; `in_progress` (the only remaining kind) is never terminal,
+       so this early return is unreachable. */
     if (
       progress.kind !== "ocr_validation_failed" &&
       progress.kind !== "no_content" &&

@@ -57,9 +57,9 @@ type TestContext = Readonly<{
   deletedPaths: string[];
   // When set, the injected unlink throws this error for every path (to exercise the best-effort path).
   failUnlinkWith: { error: Error | undefined };
-  // The wired library command dependencies, exposed so a test can seed a manual Work through the
-  // `createWork` command directly — the `POST /api/works` route only mints imported shells now (#749),
-  // so manual seeds call the command with the same id/clock deps the route would.
+  // The wired library command dependencies, exposed so a test can seed a manual or imported Work through
+  // the `createWork` command directly — the legacy `POST /api/works` route is retired (#750), so seeds
+  // call the command with the same id/clock deps an ingest/review path would.
   library: LibraryRouteDependencies;
   // Structured unlink failures the command logged (best-effort path).
   unlinkFailures: Array<{ error: unknown; filePath: string }>;
@@ -205,33 +205,37 @@ describe("library routes", () => {
   });
 
   it("creates a Work whose new author name matches an existing one without duplicating the author", async () => {
-    const first = await context.server.inject({
-      method: "POST",
-      url: "/api/works",
-      payload: {
+    // The `createWork` command (invoked by the ingest/review paths, #750) resolves a new author name
+    // against the canonical identity: a case/width variant of an existing name reuses its row (#694).
+    const first = await createWork(
+      context.library,
+      {
         author: { mode: "new", name: "George Orwell" },
         language: "en",
         origin: "imported",
         title: "Animal Farm",
         workType: "book"
-      }
-    });
-    // The #694 bug: a second Work whose author differs only by case/width must reuse the author row.
-    const second = await context.server.inject({
-      method: "POST",
-      url: "/api/works",
-      payload: {
+      },
+      DEFAULT_USER_ID
+    );
+    const second = await createWork(
+      context.library,
+      {
         author: { mode: "new", name: "george\u3000orwell" },
         language: "en",
         origin: "imported",
         title: "1984",
         workType: "book"
-      }
-    });
+      },
+      DEFAULT_USER_ID
+    );
 
-    expect(first.statusCode).toBe(201);
-    expect(second.statusCode).toBe(201);
-    expect(second.json().work.authorId).toBe("author-1");
+    expect(first.status).toBe("created");
+    expect(second.status).toBe("created");
+    if (second.status !== "created") {
+      throw new Error("expected the second Work to be created");
+    }
+    expect(second.work.work.authorId).toBe("author-1");
 
     const authors = await context.server.inject({ method: "GET", url: "/api/authors" });
     expect(authors.json()).toEqual({
@@ -268,24 +272,27 @@ describe("library routes", () => {
   });
 
   it("creates a work with a new inline author and persists both", async () => {
-    const created = await context.server.inject({
-      method: "POST",
-      url: "/api/works",
-      payload: {
+    const created = await createWork(
+      context.library,
+      {
         author: { mode: "new", name: "George Orwell" },
         language: "en",
         origin: "imported",
         title: "Politics and the English Language",
         workType: "essay"
-      }
-    });
+      },
+      DEFAULT_USER_ID
+    );
 
-    expect(created.statusCode).toBe(201);
-    expect(created.json()).toEqual({
+    expect(created.status).toBe("created");
+    if (created.status !== "created") {
+      throw new Error("expected the Work to be created");
+    }
+    expect(created.work).toEqual({
       author: { id: "author-1", name: "George Orwell" },
       work: {
         authorId: "author-1",
-        entryId: "work-1",
+        entryId: created.work.work.entryId,
         language: "en",
         origin: "imported",
         title: "Politics and the English Language",
@@ -308,7 +315,7 @@ describe("library routes", () => {
           author: { id: "author-1", name: "George Orwell" },
           work: {
             authorId: "author-1",
-            entryId: "work-1",
+            entryId: created.work.work.entryId,
             language: "en",
             origin: "imported",
             title: "Politics and the English Language",
@@ -327,24 +334,27 @@ describe("library routes", () => {
     });
     const authorId = author.json().id as string;
 
-    const created = await context.server.inject({
-      method: "POST",
-      url: "/api/works",
-      payload: {
+    const created = await createWork(
+      context.library,
+      {
         author: { authorId, mode: "existing" },
         language: "en",
         origin: "imported",
         title: "A Tale of Two Cities",
         workType: "book"
-      }
-    });
+      },
+      DEFAULT_USER_ID
+    );
 
-    expect(created.statusCode).toBe(201);
-    expect(created.json()).toEqual({
+    expect(created.status).toBe("created");
+    if (created.status !== "created") {
+      throw new Error("expected the Work to be created");
+    }
+    expect(created.work).toEqual({
       author: { id: "author-1", name: "Charles Dickens" },
       work: {
         authorId: "author-1",
-        entryId: "work-1",
+        entryId: created.work.work.entryId,
         language: "en",
         origin: "imported",
         title: "A Tale of Two Cities",
@@ -354,26 +364,25 @@ describe("library routes", () => {
   });
 
   it("rejects a work that references a missing author", async () => {
-    const response = await context.server.inject({
-      method: "POST",
-      url: "/api/works",
-      payload: {
+    const result = await createWork(
+      context.library,
+      {
         author: { authorId: "missing-author", mode: "existing" },
         language: "en",
         origin: "imported",
         title: "Orphan Work",
         workType: "book"
-      }
-    });
+      },
+      DEFAULT_USER_ID
+    );
 
-    expect(response.statusCode).toBe(400);
-    expect(response.json()).toEqual({ error: "author_not_found", authorId: "missing-author" });
+    expect(result).toEqual({ status: "author_not_found", authorId: "missing-author" });
 
     const works = await context.server.inject({ method: "GET", url: "/api/works" });
     expect(works.json()).toEqual({ works: [] });
   });
 
-  it("rejects invalid author and work payloads at the boundary", async () => {
+  it("rejects an invalid author payload at the boundary", async () => {
     const invalidAuthor = await context.server.inject({
       method: "POST",
       url: "/api/authors",
@@ -382,21 +391,6 @@ describe("library routes", () => {
 
     expect(invalidAuthor.statusCode).toBe(400);
     expect(invalidAuthor.json()).toEqual({ error: "invalid_request" });
-
-    const invalidWork = await context.server.inject({
-      method: "POST",
-      url: "/api/works",
-      payload: {
-        author: { mode: "new", name: "x" },
-        language: "en",
-        origin: "imported",
-        title: "t",
-        workType: "magazine"
-      }
-    });
-
-    expect(invalidWork.statusCode).toBe(400);
-    expect(invalidWork.json()).toEqual({ error: "invalid_request" });
   });
 
   it("returns empty lists before any data exists", async () => {
@@ -407,60 +401,25 @@ describe("library routes", () => {
     expect(works.json()).toEqual({ works: [] });
   });
 
-  it("rejects a Work create whose origin is authored (only the Writing path mints owned Works)", async () => {
-    const response = await context.server.inject({
-      method: "POST",
-      url: "/api/works",
-      payload: {
-        author: { mode: "new", name: "Sneaky Author" },
-        language: "en",
-        origin: "authored",
-        title: "Not via the Library",
-        workType: "book"
-      }
-    });
-
-    expect(response.statusCode).toBe(400);
-    expect(response.json()).toEqual({ error: "invalid_request" });
-
-    const works = await context.server.inject({ method: "GET", url: "/api/works" });
-    expect(works.json()).toEqual({ works: [] });
-  });
-
-  it("rejects a Work create that omits origin", async () => {
-    const response = await context.server.inject({
-      method: "POST",
-      url: "/api/works",
-      payload: {
-        author: { mode: "new", name: "Nameless Origin" },
-        language: "en",
-        title: "No origin",
-        workType: "book"
-      }
-    });
-
-    expect(response.statusCode).toBe(400);
-    expect(response.json()).toEqual({ error: "invalid_request" });
-  });
-
-  it("refuses to create a manual Work through the legacy route (manual goes through review, #749)", async () => {
+  it("no longer exposes the legacy direct-write POST /api/works route (#750)", async () => {
+    // The last direct Work-writing route is retired: every Library creation path (Markdown, EPUB, PDF,
+    // manual) now commits only through the duplicate-review boundary, so no client can create a Work
+    // around it. The route is gone, so Fastify answers 404.
     const response = await context.server.inject({
       method: "POST",
       url: "/api/works",
       payload: {
         author: { mode: "new", name: "Bypass Author" },
         language: "en",
-        origin: "manual",
-        title: "Unreviewed Manual Work",
+        origin: "imported",
+        title: "Unreviewed Work",
         workType: "book"
       }
     });
 
-    expect(response.statusCode).toBe(400);
-    expect(response.json()).toEqual({ error: "manual_requires_review" });
+    expect(response.statusCode).toBe(404);
 
-    // The refusal fires before any write, so a manual Work can never be committed — nor its author
-    // created/resolved as a side effect — around the `POST /api/works/manual` duplicate-review boundary.
+    // No Work or author was created as a side effect of the rejected request.
     const works = await context.server.inject({ method: "GET", url: "/api/works" });
     expect(works.json()).toEqual({ works: [] });
     const authors = await context.server.inject({ method: "GET", url: "/api/authors" });
@@ -500,21 +459,24 @@ describe("library routes", () => {
   });
 
   it("leaves an imported Work shell unowned (no ownership facet is seeded)", async () => {
-    const created = await context.server.inject({
-      method: "POST",
-      url: "/api/works",
-      payload: {
+    const created = await createWork(
+      context.library,
+      {
         author: { mode: "new", name: "George Orwell" },
         language: "en",
         origin: "imported",
         title: "Animal Farm",
         workType: "book"
-      }
-    });
+      },
+      DEFAULT_USER_ID
+    );
 
-    expect(created.statusCode).toBe(201);
-    expect(created.json().work.origin).toBe("imported");
-    const entryId = created.json().work.entryId as string;
+    expect(created.status).toBe("created");
+    if (created.status !== "created") {
+      throw new Error("expected the imported Work to be created");
+    }
+    expect(created.work.work.origin).toBe("imported");
+    const entryId = created.work.work.entryId;
 
     const owners = await context.db
       .select()
@@ -1040,19 +1002,23 @@ describe("manual work editor (#720, sections #697)", () => {
   }
 
   async function createImportedWork(): Promise<string> {
-    const created = await context.server.inject({
-      method: "POST",
-      url: "/api/works",
-      payload: {
+    // The legacy `POST /api/works` route is retired (#750); an imported upload shell is minted by the
+    // `createWork` command directly, the same way an ingest path commits one.
+    const created = await createWork(
+      context.library,
+      {
         author: { mode: "new", name: "Imported Author" },
         language: "en",
         origin: "imported",
         title: "An upload shell",
         workType: "book"
-      }
-    });
-    expect(created.statusCode).toBe(201);
-    return created.json().work.entryId as string;
+      },
+      DEFAULT_USER_ID
+    );
+    if (created.status !== "created") {
+      throw new Error("expected the imported shell to be created");
+    }
+    return created.work.work.entryId;
   }
 
   function paragraph(text: string): DocumentNodeJSON {

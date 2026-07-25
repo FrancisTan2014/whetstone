@@ -1,7 +1,6 @@
 import {
   addManualWorkSectionRequestSchema,
   createAuthorRequestSchema,
-  createWorkRequestSchema,
   updateManualWorkContentRequestSchema
 } from "@whetstone/contracts";
 import { toEntryId } from "@whetstone/domain";
@@ -9,7 +8,6 @@ import type { FastifyInstance } from "fastify";
 
 import {
   createAuthor,
-  createWork,
   deleteWork,
   type DeleteWorkDependencies,
   type LibraryDependencies
@@ -20,9 +18,6 @@ import { listWorks, searchAuthors } from "./libraryQueries.js";
 
 const invalidRequestBody = { error: "invalid_request" } as const;
 const notFound = { error: "not_found" } as const;
-// A manual Work create was attempted through the legacy metadata route, which no longer commits one:
-// manual creation is owned by the `POST /api/works/manual` duplicate-review front door (#749).
-const manualRequiresReview = { error: "manual_requires_review" } as const;
 
 // The library routes need the create dependencies plus the delete-work capability (DB cascade + a
 // best-effort source-file unlink), composed at wiring time.
@@ -58,44 +53,6 @@ export function registerLibraryRoutes(
   server.get<{ Querystring: AuthorSearchQuery }>("/api/authors", async (request) =>
     searchAuthors(dependencies.db, request.query.query)
   );
-
-  server.post("/api/works", async (request, reply) => {
-    const parsed = createWorkRequestSchema.safeParse(request.body);
-
-    if (!parsed.success) {
-      return reply.code(400).send(invalidRequestBody);
-    }
-
-    // Manual Works must be created through the duplicate-review front door (`POST /api/works/manual`,
-    // #749), which reviews #724 candidates before any commit. This legacy metadata route only mints
-    // imported upload shells; accepting `origin: "manual"` here would let a client commit an unreviewed
-    // manual Work — and create/resolve its author as a side effect — around that boundary, so it is
-    // refused before any write.
-    if (parsed.data.origin === "manual") {
-      return reply.code(400).send(manualRequiresReview);
-    }
-
-    const result = await createWork(
-      dependencies,
-      parsed.data,
-      request.server.currentUser.getCurrentUserId()
-    );
-
-    if (result.status === "author_not_found") {
-      return reply.code(400).send({ error: "author_not_found", authorId: result.authorId });
-    }
-
-    request.log.info(
-      {
-        entryId: result.work.work.entryId,
-        route: "POST /api/works",
-        workType: result.work.work.workType
-      },
-      "work_created"
-    );
-
-    return reply.code(201).send(result.work);
-  });
 
   server.get("/api/works", async () => listWorks(dependencies.db));
 
