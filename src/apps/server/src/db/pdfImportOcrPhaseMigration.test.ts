@@ -3,12 +3,14 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { runMigrations } from "./migrate.js";
 
-// #745 durable English OCR phase. Migrations 0069/0070 extend the #721/#702 PDF import tables:
+// PDF import OCR phase migrations. 0069/0070 (#745) extend the #721/#702 PDF import tables:
 // `pdf_import_attempts` gains `phase` and `ocr_fingerprint`; `pdf_import_publications` swaps the old
-// `ocr_required_pages` dead-end column for the two typed text-less outcomes
-// (`ocr_language_not_enabled_pages`, `ocr_validation_failed_pages`) and widens `result_ck` to five
-// mutually-exclusive outcomes; `pdf_block_evidence` gains additive `ocr_engine`/`ocr_language`
-// provenance. These tests apply the full migration chain and prove those invariants directly.
+// `ocr_required_pages` dead-end column for two typed text-less outcome columns and widens `result_ck`;
+// `pdf_block_evidence` gains additive `ocr_engine`/`ocr_language` provenance. 0071 (#746) then enables
+// Chinese OCR: it persists the resolved `ocr_language` on each attempt (CHECK in en/zh-CN/zh-TW) and
+// retires the now-unreachable `ocr_language_not_enabled_pages` refusal column, narrowing `result_ck`
+// to four mutually-exclusive outcomes. These tests apply the full migration chain and prove those
+// invariants directly.
 
 async function insertAttempt(pglite: PGlite, id: string, phase = "NULL"): Promise<void> {
   const phaseValue = phase === "NULL" ? "NULL" : `'${phase}'`;
@@ -22,7 +24,6 @@ async function insertAttempt(pglite: PGlite, id: string, phase = "NULL"): Promis
 
 type PublicationFields = Readonly<{
   workEntryId?: string;
-  ocrLanguageNotEnabledPages?: number;
   ocrValidationFailedPages?: number;
   noContent?: boolean;
   unpreservableImages?: number;
@@ -34,10 +35,6 @@ async function insertPublication(
   fields: PublicationFields = {}
 ): Promise<void> {
   const workEntryId = fields.workEntryId === undefined ? "NULL" : `'${fields.workEntryId}'`;
-  const langPages =
-    fields.ocrLanguageNotEnabledPages === undefined
-      ? "NULL"
-      : `${fields.ocrLanguageNotEnabledPages}`;
   const validationPages =
     fields.ocrValidationFailedPages === undefined ? "NULL" : `${fields.ocrValidationFailedPages}`;
   const noContent = fields.noContent === undefined ? "NULL" : `${fields.noContent}`;
@@ -45,9 +42,9 @@ async function insertPublication(
     fields.unpreservableImages === undefined ? "NULL" : `${fields.unpreservableImages}`;
   await pglite.exec(
     `INSERT INTO pdf_import_publications
-       (attempt_id, file_name, work_entry_id, ocr_language_not_enabled_pages,
+       (attempt_id, file_name, work_entry_id,
         ocr_validation_failed_pages, no_content, unpreservable_images)
-     VALUES ('${attemptId}', 'book.pdf', ${workEntryId}, ${langPages}, ${validationPages}, ${noContent}, ${images});`
+     VALUES ('${attemptId}', 'book.pdf', ${workEntryId}, ${validationPages}, ${noContent}, ${images});`
   );
 }
 
@@ -59,7 +56,7 @@ async function columnExists(pglite: PGlite, table: string, column: string): Prom
   return (rows.rows[0]?.count ?? 0) > 0;
 }
 
-describe("0069/0070 English OCR phase migration", () => {
+describe("PDF import OCR phase migrations", () => {
   let pglite: PGlite;
 
   beforeEach(async () => {
@@ -81,11 +78,30 @@ describe("0069/0070 English OCR phase migration", () => {
     expect(rows.rows[0]?.ocr_fingerprint).toBe("ocrmypdf-16:eng");
   });
 
-  it("replaces the ocr_required_pages dead end with the two typed text-less columns", async () => {
+  it("persists the resolved OCR language on attempts, defaulting to English and bounded to the three Work languages", async () => {
+    expect(await columnExists(pglite, "pdf_import_attempts", "ocr_language")).toBe(true);
+    await insertAttempt(pglite, "lang-default");
+    const defaulted = await pglite.query<{ ocr_language: string }>(
+      "SELECT ocr_language FROM pdf_import_attempts WHERE id = 'lang-default';"
+    );
+    expect(defaulted.rows[0]?.ocr_language).toBe("en");
+    await pglite.exec(
+      "UPDATE pdf_import_attempts SET ocr_language = 'zh-CN' WHERE id = 'lang-default';"
+    );
+    const updated = await pglite.query<{ ocr_language: string }>(
+      "SELECT ocr_language FROM pdf_import_attempts WHERE id = 'lang-default';"
+    );
+    expect(updated.rows[0]?.ocr_language).toBe("zh-CN");
+    await expect(
+      pglite.exec("UPDATE pdf_import_attempts SET ocr_language = 'fr' WHERE id = 'lang-default';")
+    ).rejects.toThrow();
+  });
+
+  it("replaces the ocr_required_pages dead end and retires the not-enabled refusal column", async () => {
     expect(await columnExists(pglite, "pdf_import_publications", "ocr_required_pages")).toBe(false);
     expect(
       await columnExists(pglite, "pdf_import_publications", "ocr_language_not_enabled_pages")
-    ).toBe(true);
+    ).toBe(false);
     expect(
       await columnExists(pglite, "pdf_import_publications", "ocr_validation_failed_pages")
     ).toBe(true);
@@ -95,8 +111,8 @@ describe("0069/0070 English OCR phase migration", () => {
     await insertAttempt(pglite, "two");
     await expect(
       insertPublication(pglite, "two", {
-        ocrLanguageNotEnabledPages: 2,
-        ocrValidationFailedPages: 3
+        ocrValidationFailedPages: 3,
+        noContent: true
       })
     ).rejects.toThrow();
     // A single typed outcome, or none (pending), is allowed.
@@ -106,11 +122,7 @@ describe("0069/0070 English OCR phase migration", () => {
     await insertPublication(pglite, "four");
   });
 
-  it("requires each text-less page count to be positive", async () => {
-    await insertAttempt(pglite, "lang-zero");
-    await expect(
-      insertPublication(pglite, "lang-zero", { ocrLanguageNotEnabledPages: 0 })
-    ).rejects.toThrow();
+  it("requires the text-less validation page count to be positive", async () => {
     await insertAttempt(pglite, "validation-zero");
     await expect(
       insertPublication(pglite, "validation-zero", { ocrValidationFailedPages: 0 })

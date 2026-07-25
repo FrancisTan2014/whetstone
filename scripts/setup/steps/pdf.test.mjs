@@ -20,6 +20,8 @@ function pdfContext({
   ocrmypdf = false,
   tesseract = false,
   eng,
+  chiSim,
+  chiTra,
   brew = false,
   pipFails = false,
   modelDownloadFails = false,
@@ -35,9 +37,11 @@ function pdfContext({
     models: models === undefined ? docling : models,
     ocrmypdf,
     tesseract,
-    // A present Tesseract ships with the English pack by default, so existing "both tools present"
-    // cases stay ready; a test overrides `eng` to exercise the missing-pack path.
-    eng: eng === undefined ? tesseract : eng
+    // A present Tesseract ships with every required pack by default, so existing "both tools present"
+    // cases stay ready; a test overrides an individual pack to exercise the missing-pack path.
+    eng: eng === undefined ? tesseract : eng,
+    chiSim: chiSim === undefined ? tesseract : chiSim,
+    chiTra: chiTra === undefined ? tesseract : chiTra
   };
   const pipCalls = [];
   const execHandler = (command, args) => {
@@ -74,19 +78,24 @@ function pdfContext({
     if (key === "tesseract --list-langs") {
       if (!state.tesseract) return FAIL;
       // A present Tesseract whose `--list-langs` still exits non-zero (a broken tessdata prefix, a
-      // corrupt install) can enumerate no packs, so the English pack is reported missing distinctly.
+      // corrupt install) can enumerate no packs, so the required packs are reported missing distinctly.
       if (listLangsFails) return { code: 1, stdout: "", stderr: "read_params_file: cannot open" };
       // A zero-exit `--list-langs` that emits no stream at all (no stdout, no stderr): the language
-      // scan falls back to an empty list, so `eng` cannot be confirmed present.
+      // scan falls back to an empty list, so no pack can be confirmed present.
       if (listLangsBlankOutput) return { code: 0 };
-      const langs = state.eng ? "eng\nosd" : "osd";
-      return { code: 0, stdout: `List of available languages:\n${langs}\n`, stderr: "" };
+      const langs = ["osd"];
+      if (state.eng) langs.push("eng");
+      if (state.chiSim) langs.push("chi_sim");
+      if (state.chiTra) langs.push("chi_tra");
+      return { code: 0, stdout: `List of available languages:\n${langs.join("\n")}\n`, stderr: "" };
     }
     if (key === "brew --version") return brew ? OK : FAIL;
     if (key === "brew install ocrmypdf") {
       state.ocrmypdf = true;
       state.tesseract = true; // brew's ocrmypdf pulls Tesseract with it.
-      state.eng = true; // and the bundled Tesseract carries the English pack.
+      state.eng = true; // and the bundled Tesseract carries every required pack.
+      state.chiSim = true;
+      state.chiTra = true;
       return OK;
     }
     return OK;
@@ -163,6 +172,24 @@ describe("probeOcrReadiness", () => {
     expect(result?.status).toBe("missing");
     expect(result?.what).toContain("English");
     expect(result?.what).toContain("eng");
+  });
+
+  it("reports the Simplified Chinese trained-data pack missing distinctly when Tesseract lacks it (#746)", () => {
+    const { ctx } = pdfContext({ docling: true, ocrmypdf: true, tesseract: true, chiSim: false });
+    const result = probeOcrReadiness(ctx);
+    expect(result?.status).toBe("missing");
+    expect(result?.what).toContain("Simplified Chinese");
+    expect(result?.what).toContain("chi_sim");
+    expect(result?.remedy).toContain("tesseract-ocr-chi-sim");
+  });
+
+  it("reports the Traditional Chinese trained-data pack missing distinctly when Tesseract lacks it (#746)", () => {
+    const { ctx } = pdfContext({ docling: true, ocrmypdf: true, tesseract: true, chiTra: false });
+    const result = probeOcrReadiness(ctx);
+    expect(result?.status).toBe("missing");
+    expect(result?.what).toContain("Traditional Chinese");
+    expect(result?.what).toContain("chi_tra");
+    expect(result?.remedy).toContain("tesseract-ocr-chi-tra");
   });
 
   it("reports the English pack missing when `tesseract --list-langs` exits non-zero", () => {

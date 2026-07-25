@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { pdfImportAttemptStates, pdfImportPhases } from "@whetstone/domain";
+import { pdfImportAttemptStates, pdfImportPhases, workLanguages } from "@whetstone/domain";
 
 // The narrow, owner-scoped contract for the recoverable staged PDF import (#721). An attempt owns import
 // EXECUTION state only — staged bytes, a bounded conversion run, and its per-range checkpoints — and
@@ -105,6 +105,12 @@ export function toSafeFileName(value: string): string {
 // author/language from neutral defaults. `fileName` is required (its stem is the title fallback and it is
 // recorded as provenance) and never a filesystem path: it is sanitized to a safe basename at this
 // boundary and rejected when nothing usable remains (empty, `.`, or `..`).
+//
+// `ocrLanguageOverride` (#746) is an OPTIONAL pre-import choice of the OCR language for a scanned/mixed
+// PDF, limited to the same three-value Work-language set (never free text). Null (the default) means "use
+// the Work's own language"; a non-null value wins over it. It only affects the OCR pre-pass — a
+// born-digital PDF ignores it — and is resolved and persisted once when the attempt is queued, so it is
+// immutable for the life of that attempt.
 export const pdfImportStartMetadataSchema = z
   .object({
     enteredAuthor: z.string().nullable().default(null),
@@ -116,7 +122,8 @@ export const pdfImportStartMetadataSchema = z
       .transform(toSafeFileName)
       .refine((name) => name.length > 0 && name !== "." && name !== "..", {
         message: "fileName must reduce to a usable file name, not a path."
-      })
+      }),
+    ocrLanguageOverride: z.enum(workLanguages).nullable().default(null)
   })
   .strict();
 
@@ -141,11 +148,9 @@ export type PdfImportBeginResultDto = z.infer<typeof pdfImportBeginResultDtoSche
 // The publication outcome of an attempt (#702), served alongside its #721 execution status. `none` = the
 // attempt carries no publication intent (a bare #721 attempt); `pending` = converted but not yet
 // published (or not yet converted); `published` = a canonical Work is ready to open;
-// `ocr_language_not_enabled` = a typed refusal (the document is text-less in a language whose OCR pack is
-// not yet enabled — Chinese until #746) that publishes no Work and reports the affected page count;
-// `ocr_validation_failed` = a typed refusal (an English document still had text-less pages after the OCR
-// pass — a preflight/full-conversion disagreement or incomplete OCR) that publishes no Work and reports
-// the affected page count; `no_content` = a typed refusal (the pages had native text but mapped to zero
+// `ocr_validation_failed` = a typed refusal (a document still had text-less pages after the OCR pass — a
+// preflight/full-conversion disagreement or incomplete OCR) that publishes no Work and reports the
+// affected page count; `no_content` = a typed refusal (the pages had native text but mapped to zero
 // canonical blocks) that publishes no Work; `image_unsupported` = a typed refusal (the document contains
 // picture/figure constructs whose images cannot yet be preserved) that publishes no Work rather than a
 // content-losing placeholder, reporting how many images were affected.
@@ -153,12 +158,6 @@ export const pdfImportPublicationOutcomeDtoSchema = z.discriminatedUnion("status
   z.object({ status: z.literal("none") }).strict(),
   z.object({ status: z.literal("pending") }).strict(),
   z.object({ status: z.literal("published"), workEntryId: z.string().min(1) }).strict(),
-  z
-    .object({
-      pagesNeedingOcr: z.number().int().positive(),
-      status: z.literal("ocr_language_not_enabled")
-    })
-    .strict(),
   z
     .object({
       pagesNeedingOcr: z.number().int().positive(),

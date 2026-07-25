@@ -100,6 +100,7 @@ export function registerPdfImportRoutes(
           enteredLanguage: metadata.data.enteredLanguage,
           enteredTitle: metadata.data.enteredTitle,
           fileName: metadata.data.fileName,
+          ocrLanguageOverride: metadata.data.ocrLanguageOverride,
           userId: request.server.currentUser.getCurrentUserId()
         }
       );

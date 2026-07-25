@@ -107,6 +107,11 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
   const [addOpen, setAddOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [language, setLanguage] = useState<WorkLanguage>("en");
+  // An optional pre-import OCR-language override for a held scanned/mixed PDF (#746). Null = "recognize
+  // text in the Work's own language" (the default); a non-null value forces that OCR language instead.
+  // Only meaningful for a held PDF, so the control is shown only then; it is passed through to the import
+  // and frozen on the attempt server-side.
+  const [ocrLanguageOverride, setOcrLanguageOverride] = useState<WorkLanguage | null>(null);
   const [workType, setWorkType] = useState<WorkType>("book");
   const [authorSelection, setAuthorSelection] = useState<CreateWorkRequest["author"] | undefined>(
     undefined
@@ -212,6 +217,7 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
   function resetWorkForm(): void {
     setTitle("");
     setLanguage("en");
+    setOcrLanguageOverride(null);
     setWorkType("book");
     setAuthorSelection(undefined);
     setAuthorName(undefined);
@@ -304,7 +310,7 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
       resetWorkForm();
       setPendingUpload(undefined);
       setAddOpen(false);
-      await beginHeldPdfImport(heldUpload, trimmedTitle, authorName, language);
+      await beginHeldPdfImport(heldUpload, trimmedTitle, authorName, language, ocrLanguageOverride);
     } catch {
       toast.error("Could not save the work. Please try again.");
     } finally {
@@ -319,7 +325,8 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
     file: File,
     workTitle: string,
     enteredAuthor: string | undefined,
-    workLanguage: WorkLanguage
+    workLanguage: WorkLanguage,
+    ocrLanguage: WorkLanguage | null
   ): Promise<void> {
     setUploadBusy(true);
     setUploadKind("pdf");
@@ -333,7 +340,8 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
         enteredAuthor: enteredAuthor ?? null,
         enteredLanguage: workLanguage,
         enteredTitle: workTitle,
-        fileName: file.name
+        fileName: file.name,
+        ocrLanguageOverride: ocrLanguage
       });
 
       if (result.outcome === "reopened") {
@@ -384,9 +392,9 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
   }
 
   // Apply a terminal poll outcome (#702/#745): open the Reader on a published Work, or surface the
-  // OCR-refusal (language-not-enabled / validation-failed), empty-document (no_content),
-  // unsupported-image, or named-failure copy. `gone` means the remembered attempt no longer exists
-  // for this user (a stale reopened id), so we simply drop it.
+  // OCR-refusal (validation-failed), empty-document (no_content), unsupported-image, or named-failure
+  // copy. `gone` means the remembered attempt no longer exists for this user (a stale reopened id), so we
+  // simply drop it.
   async function applyPdfImportTerminal(result: PdfImportPollResult): Promise<void> {
     if (result.kind !== "terminal") {
       // `gone` (a stale reopened id) or a late `aborted`: no Work to open, just drop the session.
@@ -404,11 +412,10 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
       return;
     }
 
-    /* v8 ignore next 5 -- a terminal poll result is published, ocr_language_not_enabled,
-       ocr_validation_failed, no_content, image_unsupported, or failed; `in_progress` (the only remaining
-       kind) is never terminal, so this early return is unreachable. */
+    /* v8 ignore next 4 -- a terminal poll result is published, ocr_validation_failed, no_content,
+       image_unsupported, or failed; `in_progress` (the only remaining kind) is never terminal, so this
+       early return is unreachable. */
     if (
-      progress.kind !== "ocr_language_not_enabled" &&
       progress.kind !== "ocr_validation_failed" &&
       progress.kind !== "no_content" &&
       progress.kind !== "image_unsupported" &&
@@ -912,6 +919,31 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
                   ))}
                 </select>
               </label>
+
+              {pendingUpload !== undefined && detectUploadKind(pendingUpload) === "pdf" ? (
+                <div className="flex flex-col gap-1">
+                  <label className="flex flex-col gap-1" htmlFor="pdf-ocr-language">
+                    Scanned-text language
+                    <select
+                      className="min-h-11 rounded border border-border bg-surface px-3 py-2"
+                      id="pdf-ocr-language"
+                      onChange={(event) =>
+                        setOcrLanguageOverride(event.currentTarget.value as WorkLanguage)
+                      }
+                      value={ocrLanguageOverride ?? language}
+                    >
+                      {workLanguages.map((code) => (
+                        <option key={code} value={code}>
+                          {workLanguageLabels[code]}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <span className="text-sm text-muted">
+                    Used to recognize text in a scanned PDF. Defaults to the work language.
+                  </span>
+                </div>
+              ) : null}
 
               <AuthorSelectField onSelectionChange={handleAuthorSelectionChange} />
 

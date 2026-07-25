@@ -23,7 +23,7 @@ import {
   type ProbeOutcome
 } from "./pdfStructuredAdapter.js";
 
-// Resolve the OCR backend the born-digital import worker (#745) drives for a scanned/mixed English PDF,
+// Resolve the OCR backend the born-digital import worker (#745/#746) drives for a scanned/mixed PDF,
 // honestly and absent-config-safe — the OCR twin of `resolveStructuredPdfRunner`. The composition root
 // NEVER wires a canned in-memory OCR result: a scanned upload must either be OCR'd from its own bytes or
 // fail visibly, never published as fabricated text.
@@ -31,8 +31,8 @@ import {
 // Three outcomes, in priority order:
 //   1. Fixture OCR — only when `PDF_IMPORT_FIXTURE_OCR` is set (dev/E2E). It reads the ACTUAL staged
 //      bytes' embedded conversion fixture and transforms the text-less pages into native pages carrying
-//      recovered text, so the scanned/mixed English journey runs deterministically without an OCR tool
-//      install. Off in production.
+//      recovered text in the requested OCR language (English or Chinese), so the scanned/mixed journey
+//      runs deterministically without an OCR tool install. Off in production.
 //   2. Real bounded adapter — on a platform where the structured worker's memory ceiling can be enforced
 //      (the same platform fence, since the adapter re-probes via that worker). When the pinned OCR
 //      toolchain is not provisioned it fails per attempt with a named tool/language error (fail
@@ -72,10 +72,26 @@ function encodeFixtureConversion(conversion: RangeConversion): Uint8Array {
   );
 }
 
+// The recovered-text string the fixture OCR injects for a flipped page, in the SAME script the OCR pass
+// was asked to recognize (#746): English, Simplified Chinese, or Traditional Chinese. This is what makes
+// the Chinese E2E lane meaningful — the recovered text is distinguishable per language, so a test can
+// assert the right script was produced. Keyed off the resolved Tesseract `-l` value (which already
+// encodes the chosen language). Pure and total.
+function recoveredTextFor(pageNumber: number, tesseractLanguage: string): string {
+  if (tesseractLanguage === "chi_sim+eng") {
+    return `第 ${pageNumber} 页通过 OCR 识别出的简体中文文本。`;
+  }
+  if (tesseractLanguage === "chi_tra+eng") {
+    return `第 ${pageNumber} 頁透過 OCR 辨識出的繁體中文文字。`;
+  }
+  return `Recovered English text from page ${pageNumber} via OCR.`;
+}
+
 // The recovered-text body item the fixture OCR injects for a page it flips to native, so the transformed
-// page maps to a canonical block (an honest stand-in for text an OCR pass would add). Pure and total.
-function recoveredTextItem(pageNumber: number): StructuredDocItem {
-  const text = `Recovered English text from page ${pageNumber} via OCR.`;
+// page maps to a canonical block (an honest stand-in for text an OCR pass would add), in the language the
+// pass was asked to recognize. Pure and total.
+function recoveredTextItem(pageNumber: number, tesseractLanguage: string): StructuredDocItem {
+  const text = recoveredTextFor(pageNumber, tesseractLanguage);
   return Object.freeze({
     label: "text",
     pageNumber,
@@ -88,13 +104,14 @@ function recoveredTextItem(pageNumber: number): StructuredDocItem {
 }
 
 // Transform an embedded conversion fixture as a deterministic OCR pass would: flip exactly the pages the
-// routing classified as text-less to native, and inject one recovered-text item per flipped page so the
-// page carries publishable content. Pages already native are untouched (a mixed document keeps its
-// born-digital pages). Pure and total, so the E2E's "text appears after OCR" contract is asserted
-// directly.
+// routing classified as text-less to native, and inject one recovered-text item per flipped page (in the
+// requested OCR language) so the page carries publishable content. Pages already native are untouched (a
+// mixed document keeps its born-digital pages). Pure and total, so the E2E's "text appears after OCR"
+// contract is asserted directly.
 export function ocrTransformFixture(
   fixture: RangeConversion,
-  pageNumbersNeedingOcr: readonly number[]
+  pageNumbersNeedingOcr: readonly number[],
+  tesseractLanguage: string
 ): RangeConversion {
   const flipped = new Set(pageNumbersNeedingOcr);
   const pages: readonly StructuredPage[] = fixture.pages.map((page) =>
@@ -102,7 +119,7 @@ export function ocrTransformFixture(
   );
   const injected = fixture.pages
     .filter((page) => flipped.has(page.pageNumber))
-    .map((page) => recoveredTextItem(page.pageNumber));
+    .map((page) => recoveredTextItem(page.pageNumber, tesseractLanguage));
   return Object.freeze({
     ...fixture,
     pages,
@@ -144,7 +161,11 @@ export function createFixtureOcrTransformAdapter(
       // No embedded fixture: behave like a missing tool rather than fabricate output.
       return { status: "tool_missing" };
     }
-    const transformed = ocrTransformFixture(fixture, params.pageNumbersNeedingOcr);
+    const transformed = ocrTransformFixture(
+      fixture,
+      params.pageNumbersNeedingOcr,
+      params.tesseractLanguage
+    );
     await writeFile(params.outputPath, encodeFixtureConversion(transformed));
     return { status: "ok" };
   };

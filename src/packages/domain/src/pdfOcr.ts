@@ -30,24 +30,12 @@ const traineddataByWorkLanguage: Readonly<Record<WorkLanguage, readonly string[]
   "zh-TW": Object.freeze(["chi_tra", "eng"])
 };
 
-// The Work languages whose OCR trained-data packs ship enabled in v0 (#745): English only. Chinese
-// packs (`chi_sim`/`chi_tra`) arrive with #746, so a text-less Chinese document returns the typed
-// `ocr_language_not_enabled` outcome until then rather than running an OCR pass with a pack that is not
-// installed. Kept as the single source of truth so the runner (whether to OCR) and publication (which
-// typed text-less outcome) agree.
-const ocrEnabledLanguages: ReadonlySet<WorkLanguage> = new Set<WorkLanguage>(["en"]);
-
-// Is a language's OCR pack enabled in this build? English is; Chinese is not until #746.
-export function isOcrLanguageEnabled(language: WorkLanguage): boolean {
-  return ocrEnabledLanguages.has(language);
-}
-
 // Should the runner execute an OCR pre-pass for this document? Only when the source has text-less pages
-// (a `scanned` or `mixed` routing) AND its language's pack is enabled. A `native` (born-digital) document
-// is never rewritten, and a text-less document in a not-yet-enabled language skips the pass (publication
-// reports `ocr_language_not_enabled`) rather than OCR'ing with a missing pack.
-export function ocrPassRequired(kind: OcrRoutingKind, language: WorkLanguage): boolean {
-  return kind !== "native" && isOcrLanguageEnabled(language);
+// (a `scanned` or `mixed` routing). A `native` (born-digital) document is never rewritten. Every v0
+// Work language now ships an OCR pack (#746), so the pass is gated only by the routing kind; a language
+// whose pack is not installed still fails visibly and per-import at the adapter's runtime pack check.
+export function ocrPassRequired(kind: OcrRoutingKind): boolean {
+  return kind !== "native";
 }
 
 // The Tesseract `-l` value to OCR a Work in.

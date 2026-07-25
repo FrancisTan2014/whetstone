@@ -1,6 +1,12 @@
 import { concatenateRanges, type WorkContentDto, type WorkDto } from "@whetstone/contracts";
 import type { PdfImportStartedDto } from "@whetstone/contracts";
-import { ocrTesseractLanguage, resolveWorkLanguage, toEntryId } from "@whetstone/domain";
+import {
+  ocrTesseractLanguage,
+  resolveOcrLanguage,
+  resolveWorkLanguage,
+  toEntryId,
+  type WorkLanguage
+} from "@whetstone/domain";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { entries, pdfBlockEvidence, workMeta, workSources } from "../../db/schema.js";
@@ -28,7 +34,6 @@ import {
   linkPublishedWork,
   markPublicationImagesUnsupported,
   markPublicationNoContent,
-  markPublicationOcrLanguageNotEnabled,
   markPublicationOcrValidationFailed,
   PDF_IMPORT_ADAPTER_FINGERPRINT
 } from "./pdfImportStore.js";
@@ -63,6 +68,10 @@ export type BeginPdfImportInput = Readonly<{
   enteredTitle?: string | null;
   enteredAuthor?: string | null;
   enteredLanguage?: string | null;
+  // The optional pre-import OCR-language override (#746), limited to the three Work languages. Null (the
+  // default) means "OCR in the Work's own language"; a non-null value wins. Resolved against the Work
+  // language and frozen on the attempt row here at queue time.
+  ocrLanguageOverride?: WorkLanguage | null;
 }>;
 
 // Trim entered metadata and treat an empty/whitespace value as absent, so the resolution ladder falls
@@ -107,6 +116,14 @@ export async function beginPdfImport(
     return { outcome: "reopened", work: claimed.work, content: claimed.content };
   }
 
+  // Freeze the OCR language once, here at queue time (#746): the pre-import override wins over the Work's
+  // own resolved language. The runner and publication both read this single stored choice, so it cannot
+  // drift mid-run; a re-import is a fresh attempt that resolves its own value.
+  const ocrLanguage = resolveOcrLanguage(
+    resolveWorkLanguage(normalizeEntered(input.enteredLanguage)),
+    input.ocrLanguageOverride ?? null
+  );
+
   // Bind the queued attempt and record the learner's capture-time intent atomically: the queued row and
   // its #702 publication intent commit in one transaction, so a conversion can never race ahead of an
   // attempt that has no intent (which would later publish as `skipped`). If the intent insert fails, the
@@ -116,6 +133,7 @@ export async function beginPdfImport(
     stagePath: staged.stagePath,
     sha256: staged.sha256,
     userId: input.userId,
+    ocrLanguage,
     commitWithin: (tx) =>
       insertPublicationIntent(tx, {
         attemptId: staged.attemptId,
@@ -146,18 +164,16 @@ export type PdfImportPublishDependencies = Readonly<{
 
 // The result of attempting to publish a converted attempt. `skipped` = the attempt was not started
 // through `beginPdfImport` (no publication intent); `already_published` = its outcome was resolved by a
-// prior tick (idempotent); `not_ready` = the attempt is not `converted`; `ocr_language_not_enabled` = a
-// typed refusal with no Work (the document is text-less in a language whose OCR pack is not yet enabled —
-// Chinese until #746); `ocr_validation_failed` = a typed refusal with no Work (an English document still
-// had text-less pages after the OCR pass); `no_content` = a typed refusal with no Work (the pages had
-// native text but mapped to zero canonical blocks); `image_unsupported` = a typed refusal with no Work
-// (the document contains picture/figure constructs whose images cannot be preserved); `published` = a
-// canonical Work (freshly created, or reopened for identical bytes).
+// prior tick (idempotent); `not_ready` = the attempt is not `converted`; `ocr_validation_failed` = a
+// typed refusal with no Work (a document still had text-less pages after the OCR pass); `no_content` = a
+// typed refusal with no Work (the pages had native text but mapped to zero canonical blocks);
+// `image_unsupported` = a typed refusal with no Work (the document contains picture/figure constructs
+// whose images cannot be preserved); `published` = a canonical Work (freshly created, or reopened for
+// identical bytes).
 export type PublishConvertedResult =
   | Readonly<{ status: "skipped" }>
   | Readonly<{ status: "already_published" }>
   | Readonly<{ status: "not_ready" }>
-  | Readonly<{ status: "ocr_language_not_enabled"; pagesNeedingOcr: number }>
   | Readonly<{ status: "ocr_validation_failed"; pagesNeedingOcr: number }>
   | Readonly<{ status: "no_content" }>
   | Readonly<{ status: "image_unsupported"; unpreservableImages: number }>
@@ -262,7 +278,6 @@ export async function publishConvertedPdfImport(
   }
   if (
     publication.workEntryId !== null ||
-    publication.ocrLanguageNotEnabledPages !== null ||
     publication.ocrValidationFailedPages !== null ||
     publication.noContent !== null ||
     publication.unpreservableImages !== null
@@ -296,22 +311,10 @@ export async function publishConvertedPdfImport(
   );
 
   const language = resolveWorkLanguage(publication.enteredLanguage);
-  const mapping = mapStructuredDocument(document, language);
-  if (mapping.status === "ocr_language_not_enabled") {
-    await markPublicationOcrLanguageNotEnabled(
-      deps.db,
-      attemptId,
-      mapping.pagesNeedingOcr,
-      deps.now()
-    );
-    // No Work is published (OCR for this language is not enabled yet), so the retained bytes are no longer
-    // needed: free the stage.
-    await removeRetainedStage(deps, attemptId, stagePath);
-    return { status: "ocr_language_not_enabled", pagesNeedingOcr: mapping.pagesNeedingOcr };
-  }
+  const mapping = mapStructuredDocument(document);
   if (mapping.status === "ocr_validation_failed") {
-    // An English document still had text-less pages after the OCR pass (a preflight/full-conversion
-    // disagreement or incomplete OCR): refuse rather than publish a partial Work, and free the bytes.
+    // A document still had text-less pages after the OCR pass (a preflight/full-conversion disagreement
+    // or incomplete OCR): refuse rather than publish a partial Work, and free the bytes.
     await markPublicationOcrValidationFailed(
       deps.db,
       attemptId,
@@ -349,13 +352,14 @@ export async function publishConvertedPdfImport(
     publication.fileName
   );
   const authorName = resolveAuthorName(publication.enteredAuthor, document.metadata?.author);
-  // Per-block OCR provenance (#745): when the attempt adopted a validated OCR stage its fingerprint is
-  // recorded; every published block was produced from that OCR'd source, in the Work's language. A
-  // born-digital attempt never adopted OCR, so its blocks carry no OCR provenance.
+  // Per-block OCR provenance (#745/#746): when the attempt adopted a validated OCR stage its fingerprint
+  // is recorded; every published block was produced from that OCR'd source, in the attempt's resolved OCR
+  // language (the pre-import override if one was chosen, otherwise the Work language). A born-digital
+  // attempt never adopted OCR, so its blocks carry no OCR provenance.
   const ocrProvenance =
     attempt.ocrFingerprint === null
       ? null
-      : { engine: attempt.ocrFingerprint, language: ocrTesseractLanguage(language) };
+      : { engine: attempt.ocrFingerprint, language: ocrTesseractLanguage(attempt.ocrLanguage) };
   const sourceId = deps.createSourceId();
   const expectedBlockCount = mapping.units.reduce(
     (total, unit) => total + unit.docBlocks.length,

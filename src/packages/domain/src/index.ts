@@ -151,7 +151,6 @@ export { buildSearchSnippet, SEARCH_SNIPPET_MAX_CODE_POINTS } from "./searchSnip
 export type { BuildSearchSnippetInput, SearchSnippet } from "./searchSnippet.js";
 export {
   classifyOcrRouting,
-  isOcrLanguageEnabled,
   OCR_GEOMETRY_TOLERANCE_PT,
   ocrPassRequired,
   ocrTesseractLanguage,

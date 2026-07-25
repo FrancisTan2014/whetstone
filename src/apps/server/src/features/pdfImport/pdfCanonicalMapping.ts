@@ -1,5 +1,4 @@
 import type { BoundingBox, StructuredDocItem, StructuredDocument } from "@whetstone/contracts";
-import { isOcrLanguageEnabled, type WorkLanguage } from "@whetstone/domain";
 import {
   assignNodeIds,
   parseDocument,
@@ -34,19 +33,16 @@ export type PdfBlockEvidence = Readonly<{
 }>;
 
 // A structured PDF with any text-less page (a page #701 found no native text on) cannot be canonicalized
-// as-is (#745). The outcome depends on the Work's language: for a language whose OCR pack is enabled
-// (English in v0) a text-less page here means the OCR pass and the full conversion DISAGREED, or OCR was
-// incomplete, so the whole publication is refused with a typed `ocr_validation_failed` outcome and NO
-// partial Work is created; for a language whose pack is not yet enabled (Chinese until #746) it is
-// refused with a typed `ocr_language_not_enabled` outcome. A PDF whose pages carry native text but map to
-// ZERO canonical blocks (an empty body) is refused with a typed `no_content` outcome, so publication
-// never creates an empty-shell Work (#702's "no empty shell"). A PDF that contains picture/figure
-// constructs is refused with a typed `image_unsupported` outcome: #701 emits no extractable image bytes,
-// so the image cannot be preserved through the image-resource boundary, and publishing a null-image
-// placeholder would silently lose content — the whole document fails visibly instead (#702's "fail
-// visibly when a construct cannot map"). The affected page/image count is reported.
+// as-is (#745). Every Work language now ships an OCR pack (#746), so a text-less page reaching this
+// mapping means the OCR pass and the full conversion DISAGREED, or OCR was incomplete: the whole
+// publication is refused with a typed `ocr_validation_failed` outcome and NO partial Work is created. A
+// PDF whose pages carry native text but map to ZERO canonical blocks (an empty body) is refused with a
+// typed `no_content` outcome, so publication never creates an empty-shell Work (#702's "no empty shell").
+// A PDF that contains picture/figure constructs is refused with a typed `image_unsupported` outcome: #701
+// emits no extractable image bytes, so the image cannot be preserved through the image-resource boundary,
+// and publishing a null-image placeholder would silently lose content — the whole document fails visibly
+// instead (#702's "fail visibly when a construct cannot map"). The affected page/image count is reported.
 export type PdfCanonicalMappingResult =
-  | Readonly<{ status: "ocr_language_not_enabled"; pagesNeedingOcr: number }>
   | Readonly<{ status: "ocr_validation_failed"; pagesNeedingOcr: number }>
   | Readonly<{ status: "no_content" }>
   | Readonly<{ status: "image_unsupported"; unpreservableImages: number }>
@@ -272,19 +268,14 @@ function buildUnit(unit: DraftUnit): {
 }
 
 // Map a reconstructed structured PDF document to canonical reading units + block evidence, or refuse the
-// whole document when any page is still text-less. The refusal is language-aware (#745): an enabled
-// language (English) yields `ocr_validation_failed` (the OCR pass and full conversion disagreed, or OCR
-// was incomplete); a not-yet-enabled language (Chinese until #746) yields `ocr_language_not_enabled`.
-// Pure: the caller (publication command) resolves metadata and persists the result atomically.
-export function mapStructuredDocument(
-  document: StructuredDocument,
-  language: WorkLanguage
-): PdfCanonicalMappingResult {
+// whole document when any page is still text-less. Every Work language now ships an OCR pack (#746), so a
+// text-less page reaching here means the OCR pass and the full conversion disagreed (or OCR was
+// incomplete): the document is refused with `ocr_validation_failed`. Pure: the caller (publication
+// command) resolves metadata and persists the result atomically.
+export function mapStructuredDocument(document: StructuredDocument): PdfCanonicalMappingResult {
   const pagesNeedingOcr = document.pages.filter((page) => !page.hasNativeText).length;
   if (pagesNeedingOcr > 0) {
-    return isOcrLanguageEnabled(language)
-      ? { pagesNeedingOcr, status: "ocr_validation_failed" }
-      : { pagesNeedingOcr, status: "ocr_language_not_enabled" };
+    return { pagesNeedingOcr, status: "ocr_validation_failed" };
   }
 
   // A picture/figure carries an image #701 does not extract, so it cannot be preserved through the
