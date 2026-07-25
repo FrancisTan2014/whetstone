@@ -32,7 +32,7 @@ import {
   PDF_IMPORT_ADAPTER_FINGERPRINT,
   claimNextQueued,
   commitRange,
-  markConverted,
+  markAwaitingReview,
   setProbeResult
 } from "./pdfImportStore.js";
 
@@ -124,9 +124,9 @@ function beginUpload(
   });
 }
 
-// Drive the attempt the server just queued through #721 to `converted` with one committed range, so the
-// publication layer has a real converted attempt to reconstruct and open as a Work.
-async function driveToConverted(
+// Drive the attempt the server just queued through #721 to `awaiting_review` with one committed range, so
+// the publication layer has a real parked attempt to reconstruct and open as a Work.
+async function driveToAwaitingReview(
   db: DbClient,
   attemptId: string,
   nativeTextPages: readonly boolean[]
@@ -145,7 +145,7 @@ async function driveToConverted(
     payload: rangePayload(nativeTextPages),
     now: NOW
   });
-  await markConverted(db, attemptId, runToken, NOW);
+  await markAwaitingReview(db, attemptId, runToken, NOW);
 }
 
 describe("pdf import routes", () => {
@@ -199,7 +199,7 @@ describe("pdf import routes", () => {
     if (first.outcome !== "queued") {
       throw new Error("expected first upload to queue");
     }
-    await driveToConverted(context.db, first.attemptId, [true]);
+    await driveToAwaitingReview(context.db, first.attemptId, [true]);
     await publishConvertedPdfImport(publishDeps(context.db), first.attemptId);
 
     const response = await beginUpload(bytes, metadataHeader({ fileName: "same-again.pdf" }));
@@ -415,7 +415,7 @@ describe("pdf import routes", () => {
     expect(missing.statusCode).toBe(404);
   });
 
-  it("reports the published outcome in the view after the drain loop publishes", async () => {
+  it("reports the published outcome in the view after a review decision publishes", async () => {
     const queued = parsePdfImportBeginResultDto(
       (
         await beginUpload(Buffer.from("%PDF publish"), metadataHeader({ fileName: "done.pdf" }))
@@ -424,7 +424,7 @@ describe("pdf import routes", () => {
     if (queued.outcome !== "queued") {
       throw new Error("expected queued");
     }
-    await driveToConverted(context.db, queued.attemptId, [true]);
+    await driveToAwaitingReview(context.db, queued.attemptId, [true]);
     await publishConvertedPdfImport(publishDeps(context.db), queued.attemptId);
 
     const view = parsePdfImportViewDto(
@@ -496,3 +496,4 @@ describe("pdf import routes", () => {
     expect(response.statusCode).toBe(404);
   });
 });
+

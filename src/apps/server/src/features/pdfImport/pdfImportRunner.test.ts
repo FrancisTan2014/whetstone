@@ -162,12 +162,12 @@ describe("processNextPdfImport", () => {
       pageRangeSize: 2
     });
 
-    expect(await processNextPdfImport(deps)).toEqual({ status: "converted", attemptId: "a1" });
+    expect(await processNextPdfImport(deps)).toEqual({ status: "awaiting_review", attemptId: "a1" });
 
     const attempt = await getAttempt(db, DEFAULT_USER_ID, "a1");
     // The stage stays BOUND after conversion — publication persists the original bytes as provenance
     // through the source-file boundary and only then frees the stage.
-    expect(attempt).toMatchObject({ state: "converted", completedPages: 5, stagePath: "a1" });
+    expect(attempt).toMatchObject({ state: "awaiting_review", completedPages: 5, stagePath: "a1" });
     expect(await getCommittedRangeIndices(db, "a1", PDF_IMPORT_ADAPTER_FINGERPRINT)).toEqual([
       0, 1, 2
     ]);
@@ -210,7 +210,7 @@ describe("processNextPdfImport", () => {
     const result = await processNextPdfImport(
       buildDeps({ runner: resumeRunner, pageRangeSize: 2 })
     );
-    expect(result.status).toBe("converted");
+    expect(result.status).toBe("awaiting_review");
     expect(await getCommittedRangeIndices(db, "a1", PDF_IMPORT_ADAPTER_FINGERPRINT)).toEqual([
       0, 1, 2
     ]);
@@ -267,11 +267,11 @@ describe("processNextPdfImport", () => {
           runner: createFakeDoclingRunner({ probe: scannedProbe(1), rangePayloads: [rawValid] })
         })
       );
-      expect(result).toEqual({ status: "converted", attemptId: "a1" });
+      expect(result).toEqual({ status: "awaiting_review", attemptId: "a1" });
       const attempt = await getAttempt(db, DEFAULT_USER_ID, "a1");
       // The adopted fingerprint (non-null) is the recovery boundary; it records the pinned engine/language.
       expect(attempt?.ocrFingerprint).toBe("ocrmypdf@16.10.4/tesseract@5.5.1/eng");
-      expect(attempt).toMatchObject({ state: "converted" });
+      expect(attempt).toMatchObject({ state: "awaiting_review" });
     });
 
     // Once an OCR stage is adopted (`ocr_fingerprint` set), a resumed run converts the derived `ocr.pdf`
@@ -296,7 +296,7 @@ describe("processNextPdfImport", () => {
           ocrAdapter: throwingOcr
         })
       );
-      expect(result).toEqual({ status: "converted", attemptId: "a1" });
+      expect(result).toEqual({ status: "awaiting_review", attemptId: "a1" });
     });
 
     // A cancelled OCR pass is a supersede, not a product failure: the run stops (fenced) without failing
@@ -355,7 +355,7 @@ describe("processNextPdfImport", () => {
           pageRangeSize: 2
         })
       );
-      expect(result).toEqual({ status: "converted", attemptId: "a1" });
+      expect(result).toEqual({ status: "awaiting_review", attemptId: "a1" });
       expect((await getAttempt(db, DEFAULT_USER_ID, "a1"))?.ocrFingerprint).toBeNull();
     });
 
@@ -391,7 +391,7 @@ describe("processNextPdfImport", () => {
           runner: createFakeDoclingRunner({ probe: scannedProbe(1), rangePayloads: [rawValid] })
         })
       );
-      expect(result).toEqual({ status: "converted", attemptId: "a1" });
+      expect(result).toEqual({ status: "awaiting_review", attemptId: "a1" });
       expect((await getAttempt(db, DEFAULT_USER_ID, "a1"))?.ocrFingerprint).toBe(
         "ocrmypdf@16.10.4/tesseract@5.5.1/eng"
       );
@@ -713,3 +713,4 @@ describe("createPdfImportActiveRuns", () => {
     expect(() => runs.abort("a1")).not.toThrow();
   });
 });
+
