@@ -1,3 +1,4 @@
+import { NEAR_MATCH_EVIDENCE_VERSION } from "@whetstone/document";
 import { and, eq, lte } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
@@ -52,27 +53,48 @@ function toRecord(row: AttemptRow): CardCreationAttemptRecord {
   };
 }
 
-// The opaque digest of the reviewed candidate set — the ordered note ids — so a new/changed/deleted
-// candidate since review is detected on a decision recheck without persisting any content. Order matters:
-// `findExactMaterialNotes` returns a stable creation/id order, so the same candidate set always hashes the
-// same and a genuine change always differs.
-export function fingerprintCandidateNotes(noteIds: ReadonlyArray<string>): string {
-  return fingerprintPayload({ candidateNoteIds: [...noteIds] });
+// The two disjoint reviewed candidate groups an attempt binds (#712, #714): exact material already in Notes,
+// and high-precision "Possible duplicate" near matches. Each list is in the stable order its matcher
+// produced. Passed together so one fingerprint fences BOTH groups plus the near evidence policy.
+export type ReviewCandidateGroups = Readonly<{
+  exactNoteIds: ReadonlyArray<string>;
+  nearNoteIds: ReadonlyArray<string>;
+}>;
+
+// The opaque digest of the reviewed candidate set — the ordered exact ids, the ordered near ids, and the
+// near evidence-policy version — so a new/changed/deleted candidate in EITHER group, or a policy change that
+// reweights near evidence, is detected on a decision recheck without persisting any content. Order matters
+// within each group: both matchers return a stable order, so the same candidate set always hashes the same
+// and a genuine change always differs. Folding the evidence version means a parked review refreshes when the
+// near policy that produced its differences changes underneath it.
+export function fingerprintReviewCandidates(groups: ReviewCandidateGroups): string {
+  return fingerprintPayload({
+    evidenceVersion: NEAR_MATCH_EVIDENCE_VERSION,
+    exactNoteIds: [...groups.exactNoteIds],
+    nearNoteIds: [...groups.nearNoteIds]
+  });
+}
+
+// The combined candidate ids persisted on the row for provenance and the reuse-membership check: exact first,
+// then near, in each matcher's stable order.
+function combinedCandidateNoteIds(groups: ReviewCandidateGroups): string[] {
+  return [...groups.exactNoteIds, ...groups.nearNoteIds];
 }
 
 export type InsertPendingAttemptInput = Readonly<{
-  candidateNoteIds: ReadonlyArray<string>;
   draftFingerprint: string;
+  exactNoteIds: ReadonlyArray<string>;
   expiresAt: Date;
   id: string;
+  nearNoteIds: ReadonlyArray<string>;
   now: Date;
   submissionId: string;
   userId: string;
 }>;
 
 // Create the single pending review attempt for one (owner, submission). The candidate fingerprint is
-// computed here from the ids (never trusted from a caller). A second concurrent pending attempt for the same
-// (owner, submission) violates the partial-unique index and throws, so the "one pending review per save"
+// computed here from both groups (never trusted from a caller). A second concurrent pending attempt for the
+// same (owner, submission) violates the partial-unique index and throws, so the "one pending review per save"
 // invariant is the database's, not only the caller's.
 export async function insertPendingCardCreationAttempt(
   tx: Transaction,
@@ -81,8 +103,8 @@ export async function insertPendingCardCreationAttempt(
   const [row] = await tx
     .insert(cardCreationAttempts)
     .values({
-      candidateFingerprint: fingerprintCandidateNotes(input.candidateNoteIds),
-      candidateNoteIds: input.candidateNoteIds,
+      candidateFingerprint: fingerprintReviewCandidates(input),
+      candidateNoteIds: combinedCandidateNoteIds(input),
       createdAt: input.now,
       decision: null,
       draftFingerprint: input.draftFingerprint,
@@ -134,16 +156,18 @@ export async function getCardCreationAttempt(
 }
 
 export type RefreshReviewInput = Readonly<{
-  candidateNoteIds: ReadonlyArray<string>;
+  exactNoteIds: ReadonlyArray<string>;
   expectedRevision: number;
   id: string;
+  nearNoteIds: ReadonlyArray<string>;
   now: Date;
   userId: string;
 }>;
 
 // Update a still-`pending` attempt's reviewed candidate set, bumping the revision so any client holding the
-// old revision is fenced out. Recomputes the candidate fingerprint here. Returns the updated record, or null
-// when the compare-and-set missed — a stale revision, or an attempt that already left `pending`.
+// old revision is fenced out. Recomputes the candidate fingerprint here from both groups. Returns the updated
+// record, or null when the compare-and-set missed — a stale revision, or an attempt that already left
+// `pending`.
 export async function refreshAttemptReview(
   tx: Transaction,
   input: RefreshReviewInput
@@ -151,8 +175,8 @@ export async function refreshAttemptReview(
   const [row] = await tx
     .update(cardCreationAttempts)
     .set({
-      candidateFingerprint: fingerprintCandidateNotes(input.candidateNoteIds),
-      candidateNoteIds: input.candidateNoteIds,
+      candidateFingerprint: fingerprintReviewCandidates(input),
+      candidateNoteIds: combinedCandidateNoteIds(input),
       revision: input.expectedRevision + 1,
       updatedAt: input.now
     })

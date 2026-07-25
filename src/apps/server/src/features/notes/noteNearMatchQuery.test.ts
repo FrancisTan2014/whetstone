@@ -153,6 +153,8 @@ describe("findNearMatchNotes", () => {
     expect(matches.map((match) => match.noteEntryId)).toEqual([toEntryId("note-typo")]);
     expect(matches[0]!.score).toBeGreaterThan(0.84);
     expect(matches[0]!.bodyText).toBe("in term of the design");
+    // The case-sensitive relaxed key is carried through for the review's factual word differences (#714).
+    expect(matches[0]!.caseSensitiveKey).toBe("in term of the design");
   });
 
   it("excludes the target note itself and isolates by owner", async () => {

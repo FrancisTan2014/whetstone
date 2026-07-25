@@ -8,10 +8,15 @@ import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
 import { entries } from "../../db/schema.js";
 import { insertNoteInTx, insertNotePromptInTx } from "../notes/noteCommands.js";
+import type { NearMatchNote } from "../notes/noteNearMatchQuery.js";
 import type { ExactMaterialNote } from "../notes/noteQueries.js";
 import { seedReviewCard } from "../review/reviewCardCommands.js";
 import { RECALL_REQUEST_RETENTION } from "@whetstone/domain";
-import { buildAnswerExcerpt, loadMaterialReviewCandidates } from "./materialReviewCandidates.js";
+import {
+  buildAnswerExcerpt,
+  loadMaterialReviewCandidates,
+  loadNearMaterialReviewCandidates
+} from "./materialReviewCandidates.js";
 
 const userId = "user-1";
 const now = new Date("2026-03-01T08:00:00.000Z");
@@ -137,6 +142,42 @@ describe("loadMaterialReviewCandidates", () => {
         cardCount: 1,
         noteId: "note-plain",
         sourceContext: null
+      }
+    ]);
+  });
+});
+
+// Build the NearMatchNote the near loader consumes from a seeded note's id, its case-sensitive key, and body.
+function nearNote(id: string, caseSensitiveKey: string, bodyText: string): NearMatchNote {
+  return { bodyText, caseSensitiveKey, noteEntryId: toEntryId(id), score: 0.9 };
+}
+
+describe("loadNearMaterialReviewCandidates", () => {
+  it("returns an empty list without a query when there are no near candidates", async () => {
+    expect(
+      await loadNearMaterialReviewCandidates(db, userId, createTextDocument("anything here"), [])
+    ).toEqual([]);
+  });
+
+  it("enriches each near candidate with evidence and the word differences vs the drafted Answer", async () => {
+    await seedNote("note-near", {
+      anchorText: "from the design doc",
+      body: "in term of the design",
+      cards: 3
+    });
+    const draft = createTextDocument("in terms of the design");
+
+    const candidates = await loadNearMaterialReviewCandidates(db, userId, draft, [
+      nearNote("note-near", "in term of the design", "in term of the design")
+    ]);
+
+    expect(candidates).toEqual([
+      {
+        answerExcerpt: "in term of the design",
+        cardCount: 3,
+        differences: [{ after: "terms", before: "term" }],
+        noteId: "note-near",
+        sourceContext: "from the design doc"
       }
     ]);
   });

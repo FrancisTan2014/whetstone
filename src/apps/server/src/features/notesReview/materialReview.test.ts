@@ -21,7 +21,7 @@ import type { ContentDependencies } from "../content/contentCommands.js";
 import type { LibraryDependencies } from "../library/libraryCommands.js";
 import { deleteNoteInTx } from "../notes/noteCommands.js";
 import type { NotesDependencies } from "../notes/noteCommands.js";
-import { queryExactMaterial } from "./exactMaterialQuery.js";
+import { queryMaterialMatches } from "./exactMaterialQuery.js";
 import type { NotesReviewRouteDependencies } from "./notesReviewRoutes.js";
 
 const now = new Date("2026-03-01T08:00:00.000Z");
@@ -139,6 +139,12 @@ type ReviewBody = Readonly<{
     attemptId: string;
     candidateFingerprint: string;
     candidates: ReadonlyArray<{ answerExcerpt: string; cardCount: number; noteId: string }>;
+    nearCandidates: ReadonlyArray<{
+      answerExcerpt: string;
+      cardCount: number;
+      differences: ReadonlyArray<{ after: string; before: string }>;
+      noteId: string;
+    }>;
     revision: number;
   };
 }>;
@@ -265,20 +271,21 @@ describe("POST /api/notes/review/material-matches", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({
-      candidates: [{ answerExcerpt: answerText, cardCount: 1, noteId, sourceContext: null }]
+      candidates: [{ answerExcerpt: answerText, cardCount: 1, noteId, sourceContext: null }],
+      nearCandidates: []
     });
   });
 
-  it("returns an empty candidate list for an answer with no existing material", async () => {
+  it("returns empty groups for an answer with no existing material", async () => {
     const response = await materialMatches({ answerDoc: answerDoc("A brand new fact.") });
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ candidates: [] });
+    expect(response.json()).toEqual({ candidates: [], nearCandidates: [] });
   });
 
-  it("resolves a blank answer to an empty list rather than an error", async () => {
+  it("resolves a blank answer to empty groups rather than an error", async () => {
     const response = await materialMatches({ answerDoc: blankDoc() });
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ candidates: [] });
+    expect(response.json()).toEqual({ candidates: [], nearCandidates: [] });
   });
 
   it("rejects a structurally malformed request with 400", async () => {
@@ -450,7 +457,13 @@ describe("POST /api/notes/review/material-review/keep-separate", () => {
     await seedMaterial("seed");
     await parkReview("sub-review");
     const response = await decide(
-      { attemptId: "missing", candidateFingerprint: "x", candidates: [], revision: 0 },
+      {
+        attemptId: "missing",
+        candidateFingerprint: "x",
+        candidates: [],
+        nearCandidates: [],
+        revision: 0
+      },
       {}
     );
     expect(response.statusCode).toBe(404);
@@ -468,8 +481,82 @@ describe("POST /api/notes/review/material-review/keep-separate", () => {
   });
 });
 
-describe("queryExactMaterial", () => {
+describe("queryMaterialMatches", () => {
   it("re-throws a non-blank projection error rather than swallowing it", async () => {
-    await expect(queryExactMaterial(context.db, DEFAULT_USER_ID, 42)).rejects.toThrow();
+    await expect(queryMaterialMatches(context.db, DEFAULT_USER_ID, 42)).rejects.toThrow();
+  });
+});
+
+// A high-precision near pair from #713: same length band, a single spelling variant (`term`↔`terms`), no
+// protected-evidence (number/negation) change — so it clears the near matcher but is NOT exact.
+const nearSeedAnswer = "in term of the design";
+const nearDraftAnswer = "in terms of the design";
+
+describe("near-duplicate material review (#714)", () => {
+  const saveNear = (submissionId: string, text: string) =>
+    saveDirect(currentNoteRequest({ answerDoc: answerDoc(text), submissionId }));
+
+  it("parks a Possible-duplicate review with factual differences and no exact candidate", async () => {
+    const seededResponse = await saveNear("seed", nearSeedAnswer);
+    const seededId = (seededResponse.json() as CreatedBody).result.noteId;
+
+    const response = await saveNear("sub-near", nearDraftAnswer);
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as ReviewBody;
+    expect(body.status).toBe("needs_material_review");
+    // Disjoint groups: this is a near match, never an exact one.
+    expect(body.review.candidates).toEqual([]);
+    expect(body.review.nearCandidates).toEqual([
+      {
+        answerExcerpt: nearSeedAnswer,
+        cardCount: 1,
+        differences: [{ after: "terms", before: "term" }],
+        noteId: seededId,
+        sourceContext: null
+      }
+    ]);
+    // No card was created — the near match parked a review, exactly like an exact match.
+    expect(await listNotes()).toHaveLength(1);
+  });
+
+  it("adds the card to a chosen near candidate via Use existing material", async () => {
+    const seededResponse = await saveNear("seed", nearSeedAnswer);
+    const seededId = (seededResponse.json() as CreatedBody).result.noteId;
+    const review = (await saveNear("sub-near", nearDraftAnswer)).json() as ReviewBody;
+
+    const response = await useExisting({
+      submissionId: "sub-near",
+      attemptId: review.review.attemptId,
+      revision: review.review.revision,
+      noteEntryId: seededId,
+      questionDoc: questionDoc(),
+      answerDoc: answerDoc(nearDraftAnswer),
+      target: { kind: "current_note" }
+    } satisfies UseExistingMaterialRequest);
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as CreatedBody;
+    expect(body.status).toBe("reused");
+    expect(body.result.noteId).toBe(seededId);
+    expect(await listNotes()).toHaveLength(1);
+    expect(await listCards()).toHaveLength(2);
+  });
+
+  it("mints a distinct note over a near match via Keep separate", async () => {
+    await saveNear("seed", nearSeedAnswer);
+    const review = (await saveNear("sub-near", nearDraftAnswer)).json() as ReviewBody;
+
+    const response = await keepSeparate({
+      submissionId: "sub-near",
+      attemptId: review.review.attemptId,
+      revision: review.review.revision,
+      questionDoc: questionDoc(),
+      answerDoc: answerDoc(nearDraftAnswer),
+      target: { kind: "current_note" }
+    } satisfies KeepSeparateMaterialRequest);
+
+    expect(response.statusCode).toBe(200);
+    expect((response.json() as CreatedBody).status).toBe("created");
+    expect(await listNotes()).toHaveLength(2);
   });
 });

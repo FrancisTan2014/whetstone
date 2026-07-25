@@ -11,11 +11,13 @@ import type { DbClient } from "../../db/dbClient.js";
 import { notes, personalEntries } from "../../db/schema.js";
 
 // One near-match candidate for the target note: the owner's other note whose material is very similar prose,
-// with its similarity score. The score is retained only for stable ordering and evidence — it is NEVER a
-// confidence measure shown to a learner.
+// with its similarity score and its normalized case-sensitive relaxed key. The score is retained only for
+// stable ordering and evidence — it is NEVER a confidence measure shown to a learner. The `caseSensitiveKey`
+// is the comparable projection from which the review's factual word differences are derived (#714).
 export type NearMatchNote = Readonly<{
   noteEntryId: EntryId;
   bodyText: string;
+  caseSensitiveKey: string;
   score: number;
 }>;
 
@@ -67,11 +69,21 @@ export async function findNearMatchNotes(
     if (projection === null) {
       return [];
     }
-    return [{ note: { bodyText: row.bodyText as string, entryId: row.entryId }, projection }];
+    return [
+      {
+        note: {
+          bodyText: row.bodyText as string,
+          caseSensitiveKey: projection.caseSensitiveKey,
+          entryId: row.entryId
+        },
+        projection
+      }
+    ];
   });
 
   return selectNearMatches(target, pool, (note) => note.entryId).map((candidate) => ({
     bodyText: candidate.note.bodyText,
+    caseSensitiveKey: candidate.note.caseSensitiveKey,
     noteEntryId: toEntryId(candidate.note.entryId),
     score: candidate.score
   }));

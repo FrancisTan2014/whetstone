@@ -7,12 +7,13 @@ import type {
 import { toEntryId, type EntryId } from "@whetstone/domain";
 
 import type { DbClient } from "../../db/dbClient.js";
+import { findNearMatchNotes, type NearMatchNote } from "../notes/noteNearMatchQuery.js";
 import { findExactMaterialNotes, type ExactMaterialNote } from "../notes/noteQueries.js";
 import { writeAuthorNoteCardInTx } from "./authorNoteCard.js";
 import {
   consumeAttempt,
   expireCardCreationAttempts,
-  fingerprintCandidateNotes,
+  fingerprintReviewCandidates,
   getCardCreationAttempt,
   refreshAttemptReview,
   type CardCreationAttemptRecord
@@ -24,7 +25,10 @@ import {
   writeDirectCardInTx,
   type PreparedDirectCardDraft
 } from "./createDirectCard.js";
-import { loadMaterialReviewCandidates } from "./materialReviewCandidates.js";
+import {
+  loadMaterialReviewCandidates,
+  loadNearMaterialReviewCandidates
+} from "./materialReviewCandidates.js";
 
 // The two authoritative material-review decisions (#712): once a New-card save returns
 // `needs_material_review`, the learner resolves it by adding the drafted retrieval contract to an existing
@@ -83,11 +87,15 @@ class MaterialDecisionRollback extends Error {
   }
 }
 
-// The guarded, still-pending attempt plus the draft and the fresh recheck evidence a decision acts on.
+// The guarded, still-pending attempt plus the draft and the fresh recheck evidence a decision acts on. Both
+// candidate groups are rechecked: `matches`/`noteIds` are the exact material, `near`/`nearNoteIds` the
+// high-precision near matches — so reuse membership and the keep-separate fence span BOTH groups.
 type DecisionContext = Readonly<{
   attempt: CardCreationAttemptRecord;
   draft: PreparedDirectCardDraft;
   matches: ReadonlyArray<ExactMaterialNote>;
+  near: ReadonlyArray<NearMatchNote>;
+  nearNoteIds: ReadonlyArray<EntryId>;
   noteIds: ReadonlyArray<EntryId>;
 }>;
 
@@ -125,9 +133,17 @@ async function guardDecision(
   }
 
   const matches = await findExactMaterialNotes(tx, { bodyDoc: draft.answerDoc, userId });
+  const near = await findNearMatchNotes(tx, { bodyDoc: draft.answerDoc, userId });
   return {
     ok: true,
-    context: { attempt, draft, matches, noteIds: matches.map((note) => note.noteEntryId) }
+    context: {
+      attempt,
+      draft,
+      matches,
+      near,
+      nearNoteIds: near.map((note) => note.noteEntryId),
+      noteIds: matches.map((note) => note.noteEntryId)
+    }
   };
 }
 
@@ -140,17 +156,27 @@ async function refreshDecisionReview(
   now: Date
 ): Promise<Readonly<{ status: "needs_material_review"; review: MaterialReviewDto }>> {
   const candidates = await loadMaterialReviewCandidates(tx, userId, context.matches);
+  const nearCandidates = await loadNearMaterialReviewCandidates(
+    tx,
+    userId,
+    context.draft.answerDoc,
+    context.near
+  );
   const refreshed = await refreshAttemptReview(tx, {
-    candidateNoteIds: context.noteIds,
+    exactNoteIds: context.noteIds,
     expectedRevision: context.attempt.revision,
     id: context.attempt.id,
+    nearNoteIds: context.nearNoteIds,
     now,
     userId
   });
   /* v8 ignore next -- refreshAttemptReview only misses under a concurrent decision the advisory lock
      serializes out; the `?? attempt` fallback keeps the type total. */
   const current = refreshed ?? context.attempt;
-  return { status: "needs_material_review", review: toMaterialReviewDto(current, candidates) };
+  return {
+    status: "needs_material_review",
+    review: toMaterialReviewDto(current, candidates, nearCandidates)
+  };
 }
 
 function mapDecisionRollback<T extends DecisionFailure>(error: unknown): T | never {
@@ -186,10 +212,13 @@ export async function useExistingMaterial(
       if (!guard.ok) {
         return guard.outcome;
       }
-      const { attempt, draft, noteIds } = guard.context;
+      const { attempt, draft, nearNoteIds, noteIds } = guard.context;
 
+      // The learner may choose EITHER an exact candidate or a near "Possible duplicate" to receive the
+      // drafted contract, so membership spans both rechecked groups. A note deleted or no longer matching in
+      // either group re-parks the review so the learner re-chooses.
       const chosen = toEntryId(request.noteEntryId);
-      if (!noteIds.includes(chosen)) {
+      if (!noteIds.includes(chosen) && !nearNoteIds.includes(chosen)) {
         return refreshDecisionReview(tx, userId, guard.context, now);
       }
 
@@ -254,11 +283,15 @@ export async function keepSeparateMaterial(
       if (!guard.ok) {
         return guard.outcome;
       }
-      const { attempt, draft, noteIds } = guard.context;
+      const { attempt, draft, nearNoteIds, noteIds } = guard.context;
 
+      // Re-park if the reviewed evidence in EITHER group changed since the learner decided (a new/changed
+      // match appeared, or the near evidence policy shifted underneath). A recheck that now finds NO material
+      // at all in either group simply creates — there is nothing left to be separate from.
       if (
-        noteIds.length > 0 &&
-        fingerprintCandidateNotes(noteIds) !== attempt.candidateFingerprint
+        (noteIds.length > 0 || nearNoteIds.length > 0) &&
+        fingerprintReviewCandidates({ exactNoteIds: noteIds, nearNoteIds }) !==
+          attempt.candidateFingerprint
       ) {
         return refreshDecisionReview(tx, userId, guard.context, now);
       }
