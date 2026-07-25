@@ -55,6 +55,27 @@ export {
   HEADING_OUTLINE_UNTITLED_LABEL
 } from "./headingOutline.js";
 export type { HeadingOutlineEntry, HeadingOutlineUnit } from "./headingOutline.js";
+export {
+  classifyLexicalRelation,
+  classifyWordNetPointer,
+  LEXICAL_RELATION_PRIORITY,
+  lexicalPosCode,
+  lexicalPosFromCode,
+  lexicalRelationFacet,
+  MAX_NOTES_PER_RELATION,
+  normalizeLemmaKey,
+  normalizeLexicalSurface,
+  parsePointerWordIndices
+} from "./lexicalRelations.js";
+export type {
+  LexicalPartOfSpeech,
+  LexicalRelationDirection,
+  LexicalRelationFacet,
+  LexicalRelationSource,
+  LexicalRelationType,
+  PointerWordIndices,
+  WordNetPointerRelation
+} from "./lexicalRelations.js";
 export { createEntryLink, isLinkType, linkTypes } from "./links.js";
 export type { EntryLink, LinkType } from "./links.js";
 export {

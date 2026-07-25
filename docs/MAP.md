@@ -708,6 +708,25 @@ can navigate them from another package.
   sample text, plus one offline integration test against the real WordNet database).
   The route lives in `src/features/lookup/lookupRoutes.ts` (`GET /api/lookup?term=&language=`,
   language is `en`/`zh-CN`/`zh-TW`, thin: validates the query contract, delegates to the service).
+- Offline English lexical relationships (#715, read-only, capability only — not yet wired to any route;
+  the next issue owns the UI): `src/apps/server/src/features/lexical/` resolves, for ONE eligible English
+  word plus a caller-selected WordNet sense, the owner's single-word Notes connected by typed one-hop
+  relations (inflection, synonym, antonym, derivation, direct hypernym, direct hyponym). The pure typing
+  rules (surface eligibility, pointer-symbol classification, `sourceTarget` word indices, lemma-key
+  normalization, relation priority/cap, direction/source facets) live in `@whetstone/domain`
+  `lexicalRelations.ts`. `wordnetLexicalProvider.ts` is the read-only WordNet traversal over an injected
+  seam (`createWordNetLexical` narrows the untrusted `wordpos` records and adds `seek(offset, pos)`):
+  `collectLexicalSenses` lists every sense (never picking one), `resolveSenseRelations` walks exactly one
+  hop from the selected sense (lexical antonym/derivation only from the selected word; semantic
+  hyper/hyponym over the direct target synset — no grandparents/meronyms/multi-hop), and
+  `classifyContextRelation` types one existing surface. `lexicalLemmatizer.ts` is the pinned
+  `wink-lemmatizer` adapter (noun/verb/adjective; adverbs pass through). `lexicalNoteQuery.ts`
+  (`findRelatedLexicalNotes`) is the owner-scoped query (kind=`note`, `personal_entries.user_id`,
+  body-length narrowing, then reprojected + typed in JS), grouped in priority order and capped at 5 per
+  relation; `lexicalRelationService.ts` orchestrates the `found | not_found | unsupported | unavailable`
+  outcome union so a corrupt/missing WordNet DB never masquerades as "no relation". Writes nothing (no
+  edge/sense/note/card/link/event). Calibrated + gated by `fixtures/card-matching/lexical-v1.jsonl`
+  (323 rows) via `lexicalCorpus.test.ts` against the REAL bundled WordNet database; unit tests colocated.
 - Backup/restore (#600): `src/data/` owns verified whole-instance backup and restore. Pure, covered
   modules — `archive.ts` (versioned single-ZIP format: `manifest.json` + gzip database dump + per-root
   files, with SHA-256 checksums and `verifyArchive`), `dataRoots.ts` (durable file-root inventory from
