@@ -2,6 +2,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { createTextDocument, documentText, type DocumentNodeJSON } from "@whetstone/document";
+import { fingerprintNoteMaterial } from "../notes/noteMaterialFingerprint.js";
 import { MAX_WORK_CONTENT_REVISION } from "@whetstone/contracts";
 import {
   RECALL_REQUEST_RETENTION,
@@ -566,7 +567,8 @@ async function seedWorkWithContent(db: DbClient): Promise<void> {
     bodyText: "note",
     captureSource: "reader",
     entryId: "note-1",
-    kind: "note"
+    kind: "note",
+    materialFingerprint: fingerprintNoteMaterial(createTextDocument("note"))
   });
   await db.insert(personalEntries).values({
     createdAt: new Date("2026-01-01T00:00:00.000Z"),

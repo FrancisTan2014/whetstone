@@ -15,6 +15,7 @@ import type {
   WorkStructureDto
 } from "@whetstone/contracts";
 import { createTextDocument } from "@whetstone/document";
+import { fingerprintNoteMaterial } from "./noteMaterialFingerprint.js";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
@@ -1003,7 +1004,8 @@ describe("cross-work notes overview", () => {
       bodyText: "a loose thought",
       captureSource: "manual",
       entryId: "loose-note",
-      kind: "note"
+      kind: "note",
+      materialFingerprint: fingerprintNoteMaterial(createTextDocument("a loose thought"))
     });
 
     const response = await context.server.inject({ method: "GET", url: "/api/notes" });

@@ -9,6 +9,7 @@ import type {
   ReviewHistoryPageDto
 } from "@whetstone/contracts";
 import { createTextDocument } from "@whetstone/document";
+import { fingerprintNoteMaterial } from "../notes/noteMaterialFingerprint.js";
 import { newReviewState, RECALL_REQUEST_RETENTION } from "@whetstone/domain";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
@@ -409,7 +410,9 @@ async function seedNote(
     kind,
     bodyDoc: kind === "note" ? createTextDocument(bodyText) : null,
     bodyText: kind === "note" ? bodyText : null,
-    captureSource: "manual"
+    captureSource: "manual",
+    materialFingerprint:
+      kind === "note" ? fingerprintNoteMaterial(createTextDocument(bodyText)) : null
   });
   await context.db
     .insert(personalEntries)

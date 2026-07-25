@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { newReviewState, RECALL_REQUEST_RETENTION } from "@whetstone/domain";
 import { createTextDocument } from "@whetstone/document";
+import { fingerprintNoteMaterial } from "../notes/noteMaterialFingerprint.js";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
@@ -44,7 +45,8 @@ async function seedPrompt(
       bodyText: params.cueText,
       captureSource: "manual",
       entryId: noteId,
-      kind: "note"
+      kind: "note",
+      materialFingerprint: fingerprintNoteMaterial(createTextDocument(params.cueText))
     });
     await tx.insert(entries).values({ id: promptId, type: "memory_prompt" });
     await tx.insert(memoryPrompts).values({

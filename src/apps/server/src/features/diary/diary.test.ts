@@ -24,6 +24,7 @@ import {
 } from "../../db/schema.js";
 import { createServer } from "../../http/createServer.js";
 import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
+import { fingerprintNoteMaterial } from "../notes/noteMaterialFingerprint.js";
 import type { DiaryRouteDependencies } from "./diaryRoutes.js";
 import { listDiaryEntriesForUser } from "./diaryQueries.js";
 
@@ -89,7 +90,8 @@ async function seedNote(
       bodyText: row.markdown,
       captureSource: "reader",
       entryId: row.id,
-      kind: "note"
+      kind: "note",
+      materialFingerprint: fingerprintNoteMaterial(createTextDocument(row.markdown))
     });
   });
 }
@@ -123,7 +125,8 @@ async function seedMemoryNote(
       bodyText: row.bodyText,
       captureSource: row.captureSource,
       entryId: row.id,
-      kind: "note"
+      kind: "note",
+      materialFingerprint: fingerprintNoteMaterial(createTextDocument(row.bodyText))
     });
     if (row.withPrompt === true) {
       await tx.insert(entries).values({ id: `${row.id}-prompt`, type: "memory_prompt" });

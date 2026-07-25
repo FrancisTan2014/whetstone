@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { localDayKey, newReviewState, RECALL_REQUEST_RETENTION } from "@whetstone/domain";
 import { createTextDocument } from "@whetstone/document";
+import { fingerprintNoteMaterial } from "../notes/noteMaterialFingerprint.js";
 
 import type { TodayBoardDto, TodayBoardResponse } from "@whetstone/contracts";
 
@@ -202,7 +203,8 @@ async function seedMemoryPrompt(now: Date): Promise<string> {
       bodyText: "cue",
       captureSource: "manual",
       entryId: noteId,
-      kind: "note"
+      kind: "note",
+      materialFingerprint: fingerprintNoteMaterial(createTextDocument("cue"))
     });
     await tx.insert(entries).values({ id: promptId, type: "memory_prompt" });
     await tx.insert(memoryPrompts).values({

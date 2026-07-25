@@ -8,6 +8,7 @@ import type {
   TimelineDto
 } from "@whetstone/contracts";
 import { createTextDocument, type DocumentNodeJSON } from "@whetstone/document";
+import { fingerprintNoteMaterial } from "../notes/noteMaterialFingerprint.js";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
@@ -142,7 +143,8 @@ async function seedNoteOnBlock(blockEntryId: string, noteId: string): Promise<vo
       bodyText: "a note",
       captureSource: "reader",
       entryId: noteId,
-      kind: "note"
+      kind: "note",
+      materialFingerprint: fingerprintNoteMaterial(createTextDocument("a note"))
     });
     await tx.insert(noteAnchors).values({
       blockEntryId,
