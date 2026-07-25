@@ -9,7 +9,7 @@ import {
   consumeAttempt,
   discardPendingAttempt,
   expireCardCreationAttempts,
-  fingerprintCandidateNotes,
+  fingerprintReviewCandidates,
   getCardCreationAttempt,
   getPendingAttemptForSubmission,
   insertPendingCardCreationAttempt,
@@ -32,7 +32,9 @@ async function buildDb(): Promise<DbClient> {
 
 async function seedPending(
   over: Partial<{
-    candidateNoteIds: ReadonlyArray<string>;
+    exactNoteIds: ReadonlyArray<string>;
+    nearNoteIds: ReadonlyArray<string>;
+    nearKeys: ReadonlyArray<string>;
     expiresAt: Date;
     id: string;
     submissionId: string;
@@ -41,10 +43,12 @@ async function seedPending(
 ): Promise<CardCreationAttemptRecord> {
   return db.transaction((tx) =>
     insertPendingCardCreationAttempt(tx, {
-      candidateNoteIds: over.candidateNoteIds ?? ["note-a", "note-b"],
       draftFingerprint: "draft-fp",
+      exactNoteIds: over.exactNoteIds ?? ["note-a", "note-b"],
       expiresAt: over.expiresAt ?? new Date(now.getTime() + ttlMs),
       id: over.id ?? "attempt-1",
+      nearKeys: over.nearKeys ?? [],
+      nearNoteIds: over.nearNoteIds ?? [],
       now,
       submissionId: over.submissionId ?? "sub-1",
       userId: over.userId ?? userId
@@ -56,13 +60,62 @@ beforeEach(async () => {
   db = await buildDb();
 });
 
-describe("fingerprintCandidateNotes", () => {
-  it("is order-sensitive so a changed candidate set hashes differently", () => {
-    const base = fingerprintCandidateNotes(["a", "b"]);
+describe("fingerprintReviewCandidates", () => {
+  it("is order-sensitive within each group so a changed candidate set hashes differently", () => {
+    const base = fingerprintReviewCandidates({
+      exactNoteIds: ["a", "b"],
+      nearKeys: [],
+      nearNoteIds: []
+    });
     expect(base).toMatch(/^[0-9a-f]{64}$/);
-    expect(fingerprintCandidateNotes(["a", "b"])).toBe(base);
-    expect(fingerprintCandidateNotes(["b", "a"])).not.toBe(base);
-    expect(fingerprintCandidateNotes(["a"])).not.toBe(base);
+    expect(
+      fingerprintReviewCandidates({ exactNoteIds: ["a", "b"], nearKeys: [], nearNoteIds: [] })
+    ).toBe(base);
+    expect(
+      fingerprintReviewCandidates({ exactNoteIds: ["b", "a"], nearKeys: [], nearNoteIds: [] })
+    ).not.toBe(base);
+    expect(
+      fingerprintReviewCandidates({ exactNoteIds: ["a"], nearKeys: [], nearNoteIds: [] })
+    ).not.toBe(base);
+  });
+
+  it("distinguishes the exact group from the near group and folds in near candidates", () => {
+    // The same id in the exact vs the near group is a DIFFERENT reviewed set, so the fingerprints differ.
+    const exactOnly = fingerprintReviewCandidates({
+      exactNoteIds: ["a"],
+      nearKeys: [],
+      nearNoteIds: []
+    });
+    const nearOnly = fingerprintReviewCandidates({
+      exactNoteIds: [],
+      nearKeys: ["k"],
+      nearNoteIds: ["a"]
+    });
+    const both = fingerprintReviewCandidates({
+      exactNoteIds: ["a"],
+      nearKeys: ["k"],
+      nearNoteIds: ["b"]
+    });
+    expect(nearOnly).not.toBe(exactOnly);
+    expect(both).not.toBe(exactOnly);
+    expect(both).not.toBe(nearOnly);
+  });
+
+  it("binds near candidate content so a same-id edit of the reviewed wording hashes differently", () => {
+    // #714 fence: two near candidates with the SAME id and order but different reviewed keys must hash
+    // differently, so a same-id edit of a "Possible duplicate" candidate's wording re-parks the review even
+    // though its note id never changed.
+    const before = fingerprintReviewCandidates({
+      exactNoteIds: [],
+      nearKeys: ["in term of the design"],
+      nearNoteIds: ["note-n"]
+    });
+    const after = fingerprintReviewCandidates({
+      exactNoteIds: [],
+      nearKeys: ["in terms of the designs"],
+      nearNoteIds: ["note-n"]
+    });
+    expect(after).not.toBe(before);
   });
 });
 
@@ -70,7 +123,11 @@ describe("insertPendingCardCreationAttempt", () => {
   it("persists a pending attempt with revision 0 and a derived candidate fingerprint", async () => {
     const record = await seedPending();
     expect(record).toMatchObject({
-      candidateFingerprint: fingerprintCandidateNotes(["note-a", "note-b"]),
+      candidateFingerprint: fingerprintReviewCandidates({
+        exactNoteIds: ["note-a", "note-b"],
+        nearKeys: [],
+        nearNoteIds: []
+      }),
       candidateNoteIds: ["note-a", "note-b"],
       decision: null,
       draftFingerprint: "draft-fp",
@@ -80,6 +137,30 @@ describe("insertPendingCardCreationAttempt", () => {
       submissionId: "sub-1",
       userId
     });
+  });
+
+  it("stores the combined exact-then-near ids and binds both groups in the fingerprint", async () => {
+    const record = await seedPending({
+      exactNoteIds: ["note-a"],
+      nearKeys: ["key-n"],
+      nearNoteIds: ["note-n"]
+    });
+    expect(record.candidateNoteIds).toEqual(["note-a", "note-n"]);
+    expect(record.candidateFingerprint).toBe(
+      fingerprintReviewCandidates({
+        exactNoteIds: ["note-a"],
+        nearKeys: ["key-n"],
+        nearNoteIds: ["note-n"]
+      })
+    );
+    // A near-only match still binds an attempt whose fingerprint differs from the exact-only shape.
+    expect(record.candidateFingerprint).not.toBe(
+      fingerprintReviewCandidates({
+        exactNoteIds: ["note-a", "note-n"],
+        nearKeys: [],
+        nearNoteIds: []
+      })
+    );
   });
 
   it("rejects a second pending attempt for the same owner and submission", async () => {
@@ -133,15 +214,21 @@ describe("refreshAttemptReview", () => {
     const record = await seedPending();
     const refreshed = await db.transaction((tx) =>
       refreshAttemptReview(tx, {
-        candidateNoteIds: ["note-c"],
+        exactNoteIds: ["note-c"],
         expectedRevision: record.revision,
         id: record.id,
+        nearKeys: [],
+        nearNoteIds: [],
         now,
         userId
       })
     );
     expect(refreshed).toMatchObject({
-      candidateFingerprint: fingerprintCandidateNotes(["note-c"]),
+      candidateFingerprint: fingerprintReviewCandidates({
+        exactNoteIds: ["note-c"],
+        nearKeys: [],
+        nearNoteIds: []
+      }),
       candidateNoteIds: ["note-c"],
       revision: 1,
       state: "pending"
@@ -152,9 +239,11 @@ describe("refreshAttemptReview", () => {
     const record = await seedPending();
     const missed = await db.transaction((tx) =>
       refreshAttemptReview(tx, {
-        candidateNoteIds: ["note-c"],
+        exactNoteIds: ["note-c"],
         expectedRevision: record.revision + 5,
         id: record.id,
+        nearKeys: [],
+        nearNoteIds: [],
         now,
         userId
       })

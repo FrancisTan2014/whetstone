@@ -13,6 +13,14 @@ import { codePointLength, damerauLevenshteinCodePoints, nearMatchScore } from ".
 // relaxed keys score below it is not a candidate.
 export const NEAR_MATCH_THRESHOLD = 0.84;
 
+// The version tag of the near-match EVIDENCE policy — the eligibility gate, exclusions, threshold, ranking,
+// and difference derivation that decide what counts as a near candidate. It is bound into a parked material
+// review's candidate fingerprint (#714) so that if the policy is ever revised the fingerprint changes and a
+// still-open review is refreshed rather than committed against evidence produced by the old policy. Bump it
+// deliberately, alongside the fixtures/metrics, whenever the near policy changes; it is never a per-user or
+// per-call knob and is never surfaced to a learner.
+export const NEAR_MATCH_EVIDENCE_VERSION = "near-v1";
+
 // A candidate note paired with its similarity score. The score is retained for stable ordering and evidence,
 // never presented to a learner as a confidence measure.
 export type NearMatchCandidate<Note> = Readonly<{ note: Note; score: number }>;

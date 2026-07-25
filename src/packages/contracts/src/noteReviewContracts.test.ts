@@ -626,6 +626,13 @@ describe("material review contracts (#712)", () => {
     noteId: "note-1",
     sourceContext: "chapter 3" as string | null
   };
+  const nearCandidate = {
+    answerExcerpt: "Merge sort is a stable sort.",
+    cardCount: 1,
+    differences: [{ before: "is", after: "is a" }],
+    noteId: "note-2",
+    sourceContext: null as string | null
+  };
   const draft = {
     submissionId: "sub-1",
     attemptId: "attempt-1",
@@ -642,6 +649,7 @@ describe("material review contracts (#712)", () => {
         attemptId: "attempt-1",
         candidateFingerprint: "fp",
         candidates: [candidate],
+        nearCandidates: [nearCandidate],
         revision: 3
       }
     });
@@ -649,6 +657,10 @@ describe("material review contracts (#712)", () => {
       throw new Error("expected needs_material_review");
     }
     expect(parsed.review.candidates[0]!.cardCount).toBe(2);
+    expect(parsed.review.nearCandidates[0]!.differences[0]).toEqual({
+      before: "is",
+      after: "is a"
+    });
     expect(() => parseDirectCardSaveResultDto({ status: "duplicate", review: {} })).toThrow();
   });
 
@@ -673,6 +685,7 @@ describe("material review contracts (#712)", () => {
           attemptId: "attempt-1",
           candidateFingerprint: "fp",
           candidates: [{ ...candidate, verdict: "duplicate" }],
+          nearCandidates: [],
           revision: 0
         }
       })
@@ -684,6 +697,7 @@ describe("material review contracts (#712)", () => {
           attemptId: "attempt-1",
           candidateFingerprint: "fp",
           candidates: [],
+          nearCandidates: [],
           revision: 0,
           extra: true
         }
@@ -698,6 +712,7 @@ describe("material review contracts (#712)", () => {
         attemptId: "attempt-1",
         candidateFingerprint: "fp",
         candidates: [{ answerExcerpt: "x", cardCount: 0, noteId: "n", sourceContext: null }],
+        nearCandidates: [],
         revision: 0
       }
     });
@@ -712,18 +727,51 @@ describe("material review contracts (#712)", () => {
           attemptId: "attempt-1",
           candidateFingerprint: "fp",
           candidates: [{ answerExcerpt: "x", cardCount: -1, noteId: "n", sourceContext: null }],
+          nearCandidates: [],
           revision: 0
         }
       })
     ).toThrow();
   });
 
-  it("round-trips the advisory exact-material query request and response", () => {
+  it("round-trips the advisory material query request and both response groups", () => {
     expect(parseExactMaterialQueryRequest({ answerDoc }).answerDoc).toEqual(answerDoc);
-    const response = parseExactMaterialQueryResponse({ candidates: [candidate] });
+    const response = parseExactMaterialQueryResponse({
+      candidates: [candidate],
+      nearCandidates: [nearCandidate]
+    });
     expect(response.candidates).toHaveLength(1);
+    expect(response.nearCandidates).toHaveLength(1);
+    expect(response.nearCandidates[0]!.differences).toHaveLength(1);
     expect(() => parseExactMaterialQueryRequest({ answerDoc, extra: 1 })).toThrow();
-    expect(() => parseExactMaterialQueryResponse({ candidates: "nope" })).toThrow();
+    expect(() => parseExactMaterialQueryResponse({ candidates: [candidate] })).toThrow();
+    expect(() =>
+      parseExactMaterialQueryResponse({ candidates: [], nearCandidates: "nope" })
+    ).toThrow();
+  });
+
+  it("rejects a near candidate missing its differences or carrying an extra key", () => {
+    const base = {
+      attemptId: "attempt-1",
+      candidateFingerprint: "fp",
+      candidates: [],
+      revision: 0
+    };
+    expect(() =>
+      parseDirectCardSaveResultDto({
+        status: "needs_material_review",
+        review: {
+          ...base,
+          nearCandidates: [{ answerExcerpt: "x", cardCount: 0, noteId: "n", sourceContext: null }]
+        }
+      })
+    ).toThrow();
+    expect(() =>
+      parseDirectCardSaveResultDto({
+        status: "needs_material_review",
+        review: { ...base, nearCandidates: [{ ...nearCandidate, verdict: "duplicate" }] }
+      })
+    ).toThrow();
   });
 
   it("parses a use-existing decision and rejects a blank chosen note", () => {

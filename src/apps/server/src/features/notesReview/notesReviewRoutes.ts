@@ -14,7 +14,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { DbClient } from "../../db/dbClient.js";
 import { authorNoteCard } from "./authorNoteCard.js";
 import { createDirectCard, type DirectCardSaveOutcome } from "./createDirectCard.js";
-import { queryExactMaterial } from "./exactMaterialQuery.js";
+import { queryMaterialMatches } from "./exactMaterialQuery.js";
 import { rateNotePrompt } from "./notesReviewCommands.js";
 import { loadNextDueNotePrompt, loadNotePromptReveal } from "./notesReviewQueries.js";
 import {
@@ -399,21 +399,22 @@ export function registerNotesReviewRoutes(
     return sendMaterialDecision(reply, result);
   });
 
-  // The advisory exact-material query (#712): the New-card composer debounces this over the drafted Answer to
-  // warn "This material is already in Notes" before save. Strictly READ-ONLY and never authoritative — the
-  // save always rechecks under the lock — so a stale or missed hint changes nothing. 400 on a malformed body;
-  // a blank/whitespace Answer resolves to an empty candidate list (the hint stays silent). Owner-scoped.
+  // The advisory material query (#712, #714): the New-card composer debounces this over the drafted Answer to
+  // warn "This material is already in Notes" or surface a "Possible duplicate" before save. Strictly
+  // READ-ONLY and never authoritative — the save always rechecks under the lock — so a stale or missed hint
+  // changes nothing. 400 on a malformed body; a blank/whitespace or unsupported Answer resolves to empty
+  // groups (the hint stays silent). Owner-scoped.
   server.post("/api/notes/review/material-matches", async (request, reply) => {
     const parsed = exactMaterialQueryRequestSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send(invalidRequest);
     }
-    const candidates = await queryExactMaterial(
+    const matches = await queryMaterialMatches(
       dependencies.db,
       request.server.currentUser.getCurrentUserId(),
       parsed.data.answerDoc
     );
-    return reply.code(200).send({ candidates });
+    return reply.code(200).send(matches);
   });
 
   // Use existing material (#712): resolve a parked review by adding the drafted retrieval contract to one

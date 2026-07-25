@@ -15,6 +15,7 @@ import {
   type EditNotePromptQuestionRequest,
   type KeepSeparateMaterialRequest,
   type MaterialReviewCandidateDto,
+  type NearMaterialReviewCandidateDto,
   type NotePromptSettingsDto,
   type NotePromptSettingsListDto,
   type NoteReviewPromptDto,
@@ -289,13 +290,27 @@ export async function createDirectCard(
   return parseDirectCardSaveResultDto(await response.json());
 }
 
-// The advisory exact-material hint (#712): the composer debounces this over a valid, non-blank Answer draft
-// to warn "This material is already in Notes" BEFORE save. It is read-only and never authoritative — the save
-// always reprojects and rechecks — so a stale or failed hint is harmless. Any non-2xx or transport error
-// resolves to an empty list rather than throwing: a broken hint must never block or alarm the composer.
+// The advisory material-matches result the composer renders before save (#712, #714). `ok` carries BOTH
+// candidate groups — exact material already in Notes and high-precision near "Possible duplicate" matches —
+// each possibly empty. `error` means the hint could not be computed (a non-2xx or transport failure): the
+// composer offers Retry rather than silently claiming nothing matched, so a broken hint never masquerades as
+// a clean draft. The hint is never authoritative — the save always reprojects and rechecks.
+export type MaterialMatchesResult =
+  | Readonly<{
+      status: "ok";
+      exact: ReadonlyArray<MaterialReviewCandidateDto>;
+      near: ReadonlyArray<NearMaterialReviewCandidateDto>;
+    }>
+  | Readonly<{ status: "error" }>;
+
+// The advisory material hint (#712, #714): the composer debounces this over a valid, non-blank Answer draft
+// to warn "This material is already in Notes" or "Possible duplicate" BEFORE save. It is read-only and never
+// authoritative — the save always reprojects and rechecks — so a stale hint is harmless. Unlike the save, a
+// non-2xx or transport error resolves to `{ status: "error" }` (never a thrown exception and never a false
+// "nothing matched"), so the composer can offer Retry.
 export async function fetchMaterialMatches(
   answerDoc: CreateDirectCardRequest["answerDoc"]
-): Promise<ReadonlyArray<MaterialReviewCandidateDto>> {
+): Promise<MaterialMatchesResult> {
   let response: Response;
   try {
     response = await fetch(apiUrl("/notes/review/material-matches"), {
@@ -304,12 +319,13 @@ export async function fetchMaterialMatches(
       method: "POST"
     });
   } catch {
-    return [];
+    return { status: "error" };
   }
   if (!response.ok) {
-    return [];
+    return { status: "error" };
   }
-  return parseExactMaterialQueryResponse(await response.json()).candidates;
+  const parsed = parseExactMaterialQueryResponse(await response.json());
+  return { status: "ok", exact: parsed.candidates, near: parsed.nearCandidates };
 }
 
 // Why a material-review DECISION failed (#712), kept as a closed set so the composer can restore the draft

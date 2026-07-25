@@ -3,6 +3,7 @@ import type {
   DirectCardResultDto,
   MaterialReviewCandidateDto,
   MaterialReviewDto,
+  NearMaterialReviewCandidateDto,
   NoteGradingTarget
 } from "@whetstone/contracts";
 import { RECALL_REQUEST_RETENTION, toEntryId, type EntryId } from "@whetstone/domain";
@@ -10,11 +11,12 @@ import { type DocumentNodeJSON, documentReadableText } from "@whetstone/document
 
 import type { DbClient } from "../../db/dbClient.js";
 import { insertNoteInTx, insertNotePromptInTx } from "../notes/noteCommands.js";
+import { findNearMatchNotes } from "../notes/noteNearMatchQuery.js";
 import { findExactMaterialNotes } from "../notes/noteQueries.js";
 import { seedReviewCard } from "../review/reviewCardCommands.js";
 import {
   discardPendingAttempt,
-  fingerprintCandidateNotes,
+  fingerprintReviewCandidates,
   getPendingAttemptForSubmission,
   insertPendingCardCreationAttempt,
   refreshAttemptReview,
@@ -27,7 +29,10 @@ import {
   fingerprintPayload,
   resolveReceiptReplay
 } from "./cardCreationReceipt.js";
-import { loadMaterialReviewCandidates } from "./materialReviewCandidates.js";
+import {
+  loadMaterialReviewCandidates,
+  loadNearMaterialReviewCandidates
+} from "./materialReviewCandidates.js";
 import { resolveGradingColumns, type ResolvedGradingColumns } from "./noteGradingColumns.js";
 
 // The transaction handle drizzle passes into `db.transaction`, so the save's advisory lock, review recheck,
@@ -194,12 +199,14 @@ export type DirectCardSaveOutcome =
 // built one way.
 export function toMaterialReviewDto(
   attempt: CardCreationAttemptRecord,
-  candidates: ReadonlyArray<MaterialReviewCandidateDto>
+  candidates: ReadonlyArray<MaterialReviewCandidateDto>,
+  nearCandidates: ReadonlyArray<NearMaterialReviewCandidateDto>
 ): MaterialReviewDto {
   return {
     attemptId: attempt.id,
     candidateFingerprint: attempt.candidateFingerprint,
     candidates: [...candidates],
+    nearCandidates: [...nearCandidates],
     revision: attempt.revision
   };
 }
@@ -252,10 +259,19 @@ export async function createDirectCard(
 
     const pending = await getPendingAttemptForSubmission(tx, userId, request.submissionId);
     const matches = await findExactMaterialNotes(tx, { bodyDoc: draft.answerDoc, userId });
+    const near = await findNearMatchNotes(tx, { bodyDoc: draft.answerDoc, userId });
 
-    if (matches.length > 0) {
-      const noteIds = matches.map((note) => note.noteEntryId);
+    if (matches.length > 0 || near.length > 0) {
+      const exactNoteIds = matches.map((note) => note.noteEntryId);
+      const nearNoteIds = near.map((note) => note.noteEntryId);
+      const nearKeys = near.map((note) => note.caseSensitiveKey);
       const candidates = await loadMaterialReviewCandidates(tx, userId, matches);
+      const nearCandidates = await loadNearMaterialReviewCandidates(
+        tx,
+        userId,
+        draft.answerDoc,
+        near
+      );
 
       // A pending attempt is only resumable when it is bound to the SAME draft. The composer keeps the
       // submissionId across a Back-then-edit, so a pending attempt whose draftFingerprint no longer matches
@@ -270,30 +286,37 @@ export async function createDirectCard(
 
       if (resumable === null) {
         const attempt = await insertPendingCardCreationAttempt(tx, {
-          candidateNoteIds: noteIds,
           draftFingerprint: draft.fingerprint,
+          exactNoteIds,
           expiresAt: new Date(now.getTime() + dependencies.attemptTtlMs),
           id: dependencies.createId(),
+          nearKeys,
+          nearNoteIds,
           now,
           submissionId: request.submissionId,
           userId
         });
         return {
           status: "needs_material_review",
-          review: toMaterialReviewDto(attempt, candidates)
+          review: toMaterialReviewDto(attempt, candidates, nearCandidates)
         };
       }
 
       // A save retry with the same draft: resume the same review, refreshing its persisted candidates (and
       // bumping the fence) only when the evidence changed, so the revision the client will decide against is
-      // exactly current.
-      const changed = fingerprintCandidateNotes(noteIds) !== resumable.candidateFingerprint;
+      // exactly current. The fingerprint binds BOTH groups, the near candidates' reviewed content, and the
+      // near evidence policy.
+      const changed =
+        fingerprintReviewCandidates({ exactNoteIds, nearKeys, nearNoteIds }) !==
+        resumable.candidateFingerprint;
       let attempt = resumable;
       if (changed) {
         const refreshed = await refreshAttemptReview(tx, {
-          candidateNoteIds: noteIds,
+          exactNoteIds,
           expectedRevision: resumable.revision,
           id: resumable.id,
+          nearKeys,
+          nearNoteIds,
           now,
           userId
         });
@@ -301,12 +324,15 @@ export async function createDirectCard(
            serializes out; the `?? resumable` fallback keeps the type total. */
         attempt = refreshed ?? resumable;
       }
-      return { status: "needs_material_review", review: toMaterialReviewDto(attempt, candidates) };
+      return {
+        status: "needs_material_review",
+        review: toMaterialReviewDto(attempt, candidates, nearCandidates)
+      };
     }
 
-    // No material matches. A stale pending review parked by an earlier save of this submission (whose
-    // matches have since been deleted) is now moot — discard it so a later decision cannot act on vanished
-    // evidence — then create the card directly through the canonical writer.
+    // No exact or near material matches. A stale pending review parked by an earlier save of this submission
+    // (whose matches have since been deleted) is now moot — discard it so a later decision cannot act on
+    // vanished evidence — then create the card directly through the canonical writer.
     if (pending !== null) {
       await discardPendingAttempt(tx, userId, pending.id);
     }
