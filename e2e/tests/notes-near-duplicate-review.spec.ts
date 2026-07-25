@@ -106,5 +106,30 @@ test.describe("notes near-duplicate material review", () => {
     await composer.getByRole("textbox", { name: "Question" }).fill("How long do mango trees live?");
     await composer.getByRole("button", { name: "Create card" }).click();
     await expect(page.getByText("Card created. Due now.")).toBeVisible();
+
+    // Return the shared Notes review queue to "Due complete" for the rest of the serial suite (workers: 1,
+    // one shared DEFAULT_USER_ID). This spec deliberately leaves many due cards — the near-match seed and its
+    // reuse plus every never-warn and unrelated create — and every other spec relies on a clean shared queue
+    // and a Today board with no phantom "Notes review" row. Rate each earliest-due prompt once until nothing
+    // is due, exactly as the sibling notes specs drain their single card.
+    for (let drained = 0; drained < 50; drained += 1) {
+      const nextResponse = await page.request.get(`${setup.baseURL}api/notes/review/next`);
+      expect(nextResponse.ok()).toBe(true);
+      const { prompt } = (await nextResponse.json()) as { prompt: { promptId: string } | null };
+      if (prompt === null) {
+        break;
+      }
+      const rated = await page.request.post(
+        `${setup.baseURL}api/notes/review/prompts/${encodeURIComponent(prompt.promptId)}/rating`,
+        { data: { rating: "good" } }
+      );
+      expect(rated.ok()).toBe(true);
+    }
+
+    // The shared due queue is truly drained: the next read is the calm "nothing due" state the rest of the
+    // suite depends on.
+    const settled = await page.request.get(`${setup.baseURL}api/notes/review/next`);
+    expect(settled.ok()).toBe(true);
+    expect(((await settled.json()) as { prompt: unknown }).prompt).toBeNull();
   });
 });
