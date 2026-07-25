@@ -2,17 +2,27 @@ import {
   authorNoteCardRequestSchema,
   editNotePromptQuestionRequestSchema,
   createDirectCardRequestSchema,
+  exactMaterialQueryRequestSchema,
+  keepSeparateMaterialRequestSchema,
   noteReviewRatingRequestSchema,
-  setNoteGradingTargetRequestSchema
+  setNoteGradingTargetRequestSchema,
+  useExistingMaterialRequestSchema
 } from "@whetstone/contracts";
 import { toEntryId } from "@whetstone/domain";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { authorNoteCard } from "./authorNoteCard.js";
-import { createDirectCard } from "./createDirectCard.js";
+import { createDirectCard, type DirectCardSaveOutcome } from "./createDirectCard.js";
+import { queryExactMaterial } from "./exactMaterialQuery.js";
 import { rateNotePrompt } from "./notesReviewCommands.js";
 import { loadNextDueNotePrompt, loadNotePromptReveal } from "./notesReviewQueries.js";
+import {
+  keepSeparateMaterial,
+  useExistingMaterial,
+  type KeepSeparateMaterialOutcome,
+  type UseExistingMaterialOutcome
+} from "./reviewMaterialCommands.js";
 import {
   addNotePromptCard,
   editNotePromptQuestion,
@@ -36,12 +46,17 @@ const invalidQuestion = { error: "invalid_question" } as const;
 const invalidAnswer = { error: "invalid_answer" } as const;
 const submissionConflict = { error: "submission_conflict" } as const;
 const submissionGone = { error: "submission_gone" } as const;
+const attemptNotFound = { error: "attempt_not_found" } as const;
+const attemptExpired = { error: "attempt_expired" } as const;
+const attemptSuperseded = { error: "attempt_superseded" } as const;
+const changedPayload = { error: "changed_payload" } as const;
 
 type OwnerNoteReviewParams = Readonly<{ noteEntryId: string }>;
 
-// The Notes-owned Review session needs the database, an id stamp for review events, and a clock. The clock
-// is held here (the route layer) and passed into the commands/queries, keeping scheduling deterministic.
+// The Notes-owned Review session needs the database, an id stamp for review events, a clock, and the
+// material-review attempt TTL (#712) so an unresolved New-card material review expires deterministically.
 export type NotesReviewRouteDependencies = Readonly<{
+  attemptTtlMs: number;
   createId: () => string;
   db: DbClient;
   now: () => Date;
@@ -69,6 +84,40 @@ function sendSettingsMutation(
     case "ok":
       request.log.info({ promptId: request.params.id, route }, "note_review_settings_changed");
       return reply.code(200).send(result.value);
+  }
+}
+
+// Map a New-card save or a material-review decision outcome (#712) to its HTTP reply once, so all three
+// routes answer identically. `created`/`reused`/`needs_material_review` are all 200 with the discriminated
+// save DTO — the client branches on `status` to either announce the created/reused card or render the
+// material review. Every other status is a boundary, receipt-replay, or attempt-fence rejection.
+function sendMaterialDecision(
+  reply: FastifyReply,
+  outcome: DirectCardSaveOutcome | UseExistingMaterialOutcome | KeepSeparateMaterialOutcome
+): FastifyReply {
+  switch (outcome.status) {
+    case "created":
+    case "reused":
+    case "needs_material_review":
+      return reply.code(200).send(outcome);
+    case "invalid_question":
+      return reply.code(400).send(invalidQuestion);
+    case "invalid_answer":
+      return reply.code(400).send(invalidAnswer);
+    case "invalid_success_check":
+      return reply.code(400).send(invalidSuccessCheck);
+    case "not_found":
+      return reply.code(404).send(attemptNotFound);
+    case "expired":
+      return reply.code(410).send(attemptExpired);
+    case "superseded":
+      return reply.code(409).send(attemptSuperseded);
+    case "changed_payload":
+      return reply.code(409).send(changedPayload);
+    case "conflict":
+      return reply.code(409).send(submissionConflict);
+    case "gone":
+      return reply.code(410).send(submissionGone);
   }
 }
 
@@ -323,14 +372,14 @@ export function registerNotesReviewRoutes(
     }
   );
 
-  // Create one review card directly from an authored question/answer pair (#689), retry-safe via the
-  // client's stable `submissionId`. One success atomically writes a manual standalone note (from
-  // `answerDoc`), one prompt with the chosen reveal kind (its cue is the rich `questionDoc`), one active
-  // shared card at the recall retention due now, and one owner-scoped creation receipt — no review event.
-  // 400 on a malformed body or a blank Question/Answer/Success-check document; 409 when the same
-  // `submissionId` is replayed with a CHANGED payload; 410 when the original note has since been deleted
-  // (the receipt is a non-resurrecting tombstone). A same-payload replay returns 200 with the ORIGINAL
-  // result. Owner-scoped through the current user, so different owners' submissions are isolated.
+  // Save a New card (#712, extending #689): review exact existing material INSIDE the write transaction under
+  // a per-(owner, material) advisory lock. With no matching material the card is created directly — 200 with
+  // `{ status: "created", result }` (the note+prompt+card ids and seeded FSRS state), a same-payload replay
+  // returning the ORIGINAL result. With a match, nothing is created — 200 with
+  // `{ status: "needs_material_review", review }` so the learner chooses Use existing material or Keep
+  // separate; a save retry resumes the SAME review. 400 on a malformed body or a blank Question/Answer/
+  // Success-check document; 409 when the same `submissionId` is replayed with a CHANGED payload; 410 when the
+  // original note has since been deleted. Owner-scoped through the current user.
   server.post("/api/notes/review/direct-cards", async (request, reply) => {
     const parsed = createDirectCardRequestSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -341,24 +390,78 @@ export function registerNotesReviewRoutes(
       request.server.currentUser.getCurrentUserId(),
       parsed.data
     );
-    switch (result.status) {
-      case "invalid_question":
-        return reply.code(400).send(invalidQuestion);
-      case "invalid_answer":
-        return reply.code(400).send(invalidAnswer);
-      case "invalid_success_check":
-        return reply.code(400).send(invalidSuccessCheck);
-      case "conflict":
-        return reply.code(409).send(submissionConflict);
-      case "gone":
-        return reply.code(410).send(submissionGone);
-      case "ok":
-        request.log.info(
-          { noteId: result.value.noteId, route: "POST /api/notes/review/direct-cards" },
-          "note_review_direct_card_created"
-        );
-        return reply.code(200).send(result.value);
+    if (result.status === "created") {
+      request.log.info(
+        { noteId: result.result.noteId, route: "POST /api/notes/review/direct-cards" },
+        "note_review_direct_card_created"
+      );
     }
+    return sendMaterialDecision(reply, result);
+  });
+
+  // The advisory exact-material query (#712): the New-card composer debounces this over the drafted Answer to
+  // warn "This material is already in Notes" before save. Strictly READ-ONLY and never authoritative — the
+  // save always rechecks under the lock — so a stale or missed hint changes nothing. 400 on a malformed body;
+  // a blank/whitespace Answer resolves to an empty candidate list (the hint stays silent). Owner-scoped.
+  server.post("/api/notes/review/material-matches", async (request, reply) => {
+    const parsed = exactMaterialQueryRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send(invalidRequest);
+    }
+    const candidates = await queryExactMaterial(
+      dependencies.db,
+      request.server.currentUser.getCurrentUserId(),
+      parsed.data.answerDoc
+    );
+    return reply.code(200).send({ candidates });
+  });
+
+  // Use existing material (#712): resolve a parked review by adding the drafted retrieval contract to one
+  // reviewed candidate note. Reruns the authoritative recheck under the advisory lock. 200 with
+  // `{ status: "reused", result }` on success, or `{ status: "needs_material_review", review }` when the
+  // evidence changed since the learner decided. 400 on a malformed/blank draft; 404 when the attempt is
+  // unknown; 409 when the attempt is superseded or the resubmitted Answer changed; 410 when the attempt
+  // expired or the created note has since been deleted. Owner-scoped.
+  server.post("/api/notes/review/material-review/use-existing", async (request, reply) => {
+    const parsed = useExistingMaterialRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send(invalidRequest);
+    }
+    const result = await useExistingMaterial(
+      dependencies,
+      request.server.currentUser.getCurrentUserId(),
+      parsed.data
+    );
+    if (result.status === "reused") {
+      request.log.info(
+        { noteId: result.result.noteId, route: "POST /api/notes/review/material-review/use-existing" },
+        "note_review_material_reused"
+      );
+    }
+    return sendMaterialDecision(reply, result);
+  });
+
+  // Keep separate (#712): resolve a parked review by minting a distinct note despite the match. Reruns the
+  // authoritative recheck under the advisory lock. 200 with `{ status: "created", result }` on success, or
+  // `{ status: "needs_material_review", review }` when the candidate set changed since the learner decided.
+  // Same 400/404/409/410 fences as Use existing material. Owner-scoped.
+  server.post("/api/notes/review/material-review/keep-separate", async (request, reply) => {
+    const parsed = keepSeparateMaterialRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send(invalidRequest);
+    }
+    const result = await keepSeparateMaterial(
+      dependencies,
+      request.server.currentUser.getCurrentUserId(),
+      parsed.data
+    );
+    if (result.status === "created") {
+      request.log.info(
+        { noteId: result.result.noteId, route: "POST /api/notes/review/material-review/keep-separate" },
+        "note_review_material_kept_separate"
+      );
+    }
+    return sendMaterialDecision(reply, result);
   });
 
   // Author the FIRST review card over an EXISTING saved note (#687), retry-safe via the client's stable

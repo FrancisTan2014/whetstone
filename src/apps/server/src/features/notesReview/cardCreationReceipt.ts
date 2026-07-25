@@ -91,10 +91,15 @@ export type ReceiptReplay =
   | Readonly<{ kind: "gone" }>
   | Readonly<{ kind: "ok"; value: DirectCardResultDto }>;
 
-export async function resolveReceiptReplay(
+// Resolve a replay ONLY when a receipt for this (owner, submission) already exists, else `null`. The New-card
+// save (#712) consults this at the TOP of its transaction — before the material-review gate — so a retry of
+// an already-created card replays its original result instead of re-matching the just-created note as
+// "existing material" and looping back into review. Returns the classified replay (`ok`/`conflict`/`gone`)
+// exactly as `resolveReceiptReplay`, or `null` when there is no receipt to replay.
+export async function findReceiptReplay(
   tx: Transaction,
   params: Readonly<{ userId: string; submissionId: string; fingerprint: string }>
-): Promise<ReceiptReplay> {
+): Promise<ReceiptReplay | null> {
   const existingRows = await tx
     .select({
       noteEntryId: cardCreationReceipts.noteEntryId,
@@ -109,7 +114,10 @@ export async function resolveReceiptReplay(
       )
     )
     .limit(1);
-  const existing = existingRows[0]!;
+  const existing = existingRows[0];
+  if (existing === undefined) {
+    return null;
+  }
   if (existing.payloadFingerprint !== params.fingerprint) {
     return { kind: "conflict" };
   }
@@ -139,4 +147,19 @@ export async function resolveReceiptReplay(
       review: reviewStateFromCard(card)
     }
   };
+}
+
+// The resolution of a replay whose receipt was already claimed by an earlier submission: the same payload
+// returns the ORIGINAL result (`ok`); a changed payload is a `conflict`; a replay whose note has since been
+// deleted — or whose seeded card was removed on its own (e.g. an unenroll) — is `gone`, because the result
+// cannot be reconstructed and the tombstone never resurrects it. Called only AFTER a failed claim, so a
+// receipt row always exists.
+export async function resolveReceiptReplay(
+  tx: Transaction,
+  params: Readonly<{ userId: string; submissionId: string; fingerprint: string }>
+): Promise<ReceiptReplay> {
+  const replay = await findReceiptReplay(tx, params);
+  /* v8 ignore next -- resolveReceiptReplay runs only after `claimReceipt` returned false, so the receipt row
+     necessarily exists; the null case is unreachable here and belongs to `findReceiptReplay`'s own callers. */
+  return replay ?? { kind: "conflict" };
 }

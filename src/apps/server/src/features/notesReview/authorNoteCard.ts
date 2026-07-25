@@ -1,4 +1,8 @@
-import type { AuthorNoteCardRequest, DirectCardResultDto } from "@whetstone/contracts";
+import type {
+  AuthorNoteCardRequest,
+  DirectCardResultDto,
+  NoteGradingTarget
+} from "@whetstone/contracts";
 import { RECALL_REQUEST_RETENTION, toEntryId } from "@whetstone/domain";
 import { type DocumentNodeJSON, documentReadableText } from "@whetstone/document";
 import { and, eq } from "drizzle-orm";
@@ -9,7 +13,7 @@ import { insertNotePromptInTx } from "../notes/noteCommands.js";
 import { getNoteForOwner } from "../notes/noteQueries.js";
 import { seedReviewCard } from "../review/reviewCardCommands.js";
 import { claimReceipt, fingerprintPayload, resolveReceiptReplay } from "./cardCreationReceipt.js";
-import { resolveGradingColumns } from "./noteGradingColumns.js";
+import { resolveGradingColumns, type ResolvedGradingColumns } from "./noteGradingColumns.js";
 
 // The transaction handle drizzle passes into `db.transaction`, so the whole claim-or-replay decision runs
 // in ONE atomic write.
@@ -38,12 +42,83 @@ export type AuthorNoteCardOutcome =
   | Readonly<{ status: "conflict" }>
   | Readonly<{ status: "gone" }>;
 
-// A thrown sentinel that rolls the creating transaction back while preserving the outcome to return. Unlike
-// the direct-card command — whose genuine-create path always succeeds once the receipt is claimed — this
-// command can legitimately fail AFTER claiming the receipt (the note was deleted between authorize and
-// lock). Returning from the transaction callback would COMMIT the freshly claimed receipt, stranding a
-// tombstone that points at a prompt that was never created; throwing rolls the receipt back so a later retry
-// re-decides cleanly.
+// The write half of authoring a card over an existing note, without the boundary validation or the up-front
+// authorize: claim the receipt, replay on a retry, else lock the note row and re-confirm it exists, insert
+// ONE prompt (with the rich Question as its cue and the resolved reveal columns) and seed ONE active review
+// card. Reused by BOTH the standalone `authorNoteCard` command and the #712 Use-existing decision, so the
+// reuse path adds a card through the identical writer. `not_found` means the note vanished under the lock
+// AFTER the receipt was claimed — the caller MUST roll its transaction back so the freshly-claimed receipt
+// is not committed as a tombstone pointing at a prompt that was never created.
+export type AuthorNoteCardWriteOutcome =
+  | Readonly<{ status: "ok"; value: DirectCardResultDto }>
+  | Readonly<{ status: "conflict" }>
+  | Readonly<{ status: "gone" }>
+  | Readonly<{ status: "not_found" }>;
+
+export async function writeAuthorNoteCardInTx(
+  tx: Transaction,
+  params: Readonly<{
+    cueText: string;
+    noteEntryId: string;
+    now: Date;
+    promptId: string;
+    questionDoc: DocumentNodeJSON;
+    reveal: Extract<ResolvedGradingColumns, { status: "ok" }>;
+    submissionId: string;
+    target: NoteGradingTarget;
+    userId: string;
+  }>
+): Promise<AuthorNoteCardWriteOutcome> {
+  const { cueText, noteEntryId, now, promptId, questionDoc, reveal, submissionId, target, userId } =
+    params;
+  const fingerprint = fingerprintPayload({ note: noteEntryId, question: questionDoc, target });
+
+  const claimed = await claimReceipt(tx, {
+    createdAt: now,
+    noteEntryId,
+    payloadFingerprint: fingerprint,
+    promptEntryId: promptId,
+    submissionId,
+    userId
+  });
+
+  if (!claimed) {
+    const replay = await resolveReceiptReplay(tx, { fingerprint, submissionId, userId });
+    if (replay.kind === "ok") {
+      return { status: "ok", value: replay.value };
+    }
+    return { status: replay.kind };
+  }
+
+  if (!(await lockOwnedNote(tx, noteEntryId, userId))) {
+    return { status: "not_found" };
+  }
+
+  await insertNotePromptInTx(tx, {
+    answerDoc: reveal.answerDoc,
+    answerText: reveal.answerText,
+    cueDoc: questionDoc,
+    cueText,
+    noteEntryId: toEntryId(noteEntryId),
+    now,
+    promptId,
+    revealKind: reveal.revealKind
+  });
+  const state = await seedReviewCard(tx, {
+    now,
+    requestedRetention: RECALL_REQUEST_RETENTION,
+    targetEntryId: promptId,
+    userId
+  });
+
+  return { status: "ok", value: { noteId: noteEntryId, promptId, review: state } };
+}
+
+// A thrown sentinel that rolls the creating transaction back while preserving the outcome to return. The
+// genuine-create path can legitimately fail AFTER claiming the receipt (the note was deleted between
+// authorize and lock). Returning from the transaction callback would COMMIT the freshly claimed receipt,
+// stranding a tombstone that points at a prompt that was never created; throwing rolls the receipt back so a
+// later retry re-decides cleanly.
 class AuthorNoteCardRollback extends Error {
   constructor(readonly outcome: AuthorNoteCardOutcome) {
     super("author_note_card_rollback");
@@ -81,65 +156,33 @@ export async function authorNoteCard(
   }
 
   // Authorize the note before the write: a forged, cross-user, or since-deleted id, or a bodyless Mark, is
-  // rejected up front. The genuine-create branch re-checks existence under a row lock, so a note deleted
-  // between here and the lock still resolves to `not_found` rather than a dangling prompt.
-  const noteEntryId = toEntryId(request.noteEntryId);
-  const note = await getNoteForOwner(dependencies.db, noteEntryId, userId);
+  // rejected up front without claiming a receipt. The genuine-create branch re-checks existence under a row
+  // lock, so a note deleted between here and the lock still resolves to `not_found`.
+  const note = await getNoteForOwner(dependencies.db, toEntryId(request.noteEntryId), userId);
   if (note === undefined || note.kind !== "note") {
     return { status: "not_found" };
   }
 
-  const fingerprint = fingerprintPayload({
-    note: request.noteEntryId,
-    question: request.questionDoc,
-    target: request.target
-  });
   const now = dependencies.now();
   const promptId = dependencies.createId();
 
   try {
     return await dependencies.db.transaction(async (tx) => {
-      const claimed = await claimReceipt(tx, {
-        createdAt: now,
-        noteEntryId: request.noteEntryId,
-        payloadFingerprint: fingerprint,
-        promptEntryId: promptId,
-        submissionId: request.submissionId,
-        userId
-      });
-
-      if (!claimed) {
-        const replay = await resolveReceiptReplay(tx, {
-          fingerprint,
-          submissionId: request.submissionId,
-          userId
-        });
-        if (replay.kind === "ok") {
-          return { status: "ok", value: replay.value };
-        }
-        return { status: replay.kind };
-      }
-
-      await lockOwnedNote(tx, request.noteEntryId, userId);
-
-      await insertNotePromptInTx(tx, {
-        answerDoc: reveal.answerDoc,
-        answerText: reveal.answerText,
-        cueDoc: questionDoc,
+      const outcome = await writeAuthorNoteCardInTx(tx, {
         cueText,
-        noteEntryId,
+        noteEntryId: request.noteEntryId,
         now,
         promptId,
-        revealKind: reveal.revealKind
-      });
-      const state = await seedReviewCard(tx, {
-        now,
-        requestedRetention: RECALL_REQUEST_RETENTION,
-        targetEntryId: promptId,
+        questionDoc,
+        reveal,
+        submissionId: request.submissionId,
+        target: request.target,
         userId
       });
-
-      return { status: "ok", value: { noteId: request.noteEntryId, promptId, review: state } };
+      if (outcome.status === "not_found") {
+        throw new AuthorNoteCardRollback({ status: "not_found" });
+      }
+      return outcome;
     });
   } catch (error) {
     if (error instanceof AuthorNoteCardRollback) {
@@ -150,17 +193,18 @@ export async function authorNoteCard(
 }
 
 // Take the note's row lock and confirm it still exists for this owner, so the prompt insert runs under a
-// serialized view of the note. A note deleted between the up-front authorize and this lock yields no row:
-// the create cannot proceed against a missing note, so it rolls back to `not_found` (the freshly claimed
-// receipt is discarded with it).
-async function lockOwnedNote(tx: Transaction, noteEntryId: string, userId: string): Promise<void> {
+// serialized view of the note. Returns whether the note is still present: a note deleted between the up-front
+// authorize and this lock yields no row, so the caller reports `not_found` and rolls back.
+async function lockOwnedNote(
+  tx: Transaction,
+  noteEntryId: string,
+  userId: string
+): Promise<boolean> {
   const rows = await tx
     .select({ entryId: personalEntries.entryId })
     .from(personalEntries)
     .where(and(eq(personalEntries.entryId, noteEntryId), eq(personalEntries.userId, userId)))
     .for("update")
     .limit(1);
-  if (rows.length === 0) {
-    throw new AuthorNoteCardRollback({ status: "not_found" });
-  }
+  return rows.length > 0;
 }

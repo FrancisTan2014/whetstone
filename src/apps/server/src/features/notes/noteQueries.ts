@@ -428,6 +428,12 @@ export type ExactMaterialNote = Readonly<{
   occurredAt: Date;
 }>;
 
+// The reader `findExactMaterialNotes` needs: only the `select` query builder, which both the top-level
+// `DbClient` and an open transaction satisfy. #712 reprojects and rechecks this exact query INSIDE the save
+// and decision transactions (under the advisory lock), so the candidate query must compose in a transaction
+// as well as standalone.
+export type MaterialNoteReader = Pick<DbClient, "select">;
+
 // Every body-bearing note the current owner already holds whose exact semantic material equals the given
 // document (#711). Read-only: it writes nothing. The `material_fingerprint` index only NARROWS the
 // candidate set; equality is always decided by full projected-value comparison, so a SHA-256 collision
@@ -440,7 +446,7 @@ export type ExactMaterialNote = Readonly<{
 // or be blank: the single write boundary computes its fingerprint via the same projection, so a row that
 // carries a fingerprint necessarily projected successfully when it was written.
 export async function findExactMaterialNotes(
-  db: DbClient,
+  db: MaterialNoteReader,
   params: Readonly<{ bodyDoc: unknown; userId: string }>
 ): Promise<ExactMaterialNote[]> {
   const projection = projectNoteMaterial(params.bodyDoc);
