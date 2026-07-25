@@ -1,0 +1,2 @@
+ALTER TABLE "work_meta" ADD COLUMN "content_revision" integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE "work_meta" ADD CONSTRAINT "work_meta_content_revision_ck" CHECK ("work_meta"."content_revision" >= 0);

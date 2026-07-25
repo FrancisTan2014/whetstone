@@ -8,6 +8,7 @@ import {
   appendEditableWorkSection,
   repartitionEditableWorkContent
 } from "../content/editableWorkContent.js";
+import { claimWorkContentRevision } from "../content/workContentRevision.js";
 import { normalizeManualWorkDocument } from "./manualWorkDocument.js";
 import {
   loadManualWorkDocument,
@@ -85,42 +86,32 @@ async function findOwnedMeta(
   return owned;
 }
 
-// Claim the write atomically: the revision bump IS the stale-revision check. Folding both into one
-// conditional `UPDATE ... WHERE updated_at = revision` closes the lost-update window a separate
-// read-then-check leaves open. Under PostgreSQL read-committed, two saves that loaded the same revision
-// would both pass a plain read, but only one wins this UPDATE — the loser's `updated_at = revision`
-// predicate is re-evaluated (EvalPlanQual) against the winner's committed row and matches zero rows. A
-// non-timestamp revision can never match a stored one, so it is definitionally stale. The new revision is
-// written strictly greater than the loaded one, so a save whose clock did not advance cannot reuse the
-// same token and let a stale replay overwrite it, making every successful revision monotonic. Returns the
-// bumped revision instant, or `undefined` for a conflict (nothing written).
-async function claimRevision(
+// Claim the Work's content revision atomically through the origin-neutral fence, then — only on a
+// successful claim — bump the OWNER'S chronology (`personal_entries.updated_at`) in the SAME transaction.
+// The compare-and-set IS the stale-revision check: the fence increments `work_meta.content_revision` only
+// when the loaded token still matches, so two saves that loaded the same revision cannot both win. Content
+// concurrency lives on the Work (origin-neutral, reusable by imported-Work correction), while chronology
+// stays owner-only and is never a second revision truth. Returns the new revision and the bumped
+// chronology instant, or `undefined` for a conflict (the fence claimed nothing, so neither the content
+// revision nor the chronology is touched — a stale conflict or rollback changes neither).
+async function claimContentRevision(
   tx: Transaction,
   workEntryId: EntryId,
   userId: string,
-  revision: string,
+  revision: number,
   now: Date
-): Promise<Date | undefined> {
-  const revisionInstant = new Date(revision);
-  if (Number.isNaN(revisionInstant.getTime())) {
+): Promise<{ revision: number; updatedAt: Date } | undefined> {
+  const claimed = await claimWorkContentRevision(tx, workEntryId, revision);
+  if (claimed === undefined) {
     return undefined;
   }
 
-  const nextRevisionInstant = new Date(Math.max(now.getTime(), revisionInstant.getTime() + 1));
-
-  const claimed = await tx
+  await tx
     .update(personalEntries)
-    .set({ updatedAt: nextRevisionInstant })
-    .where(
-      and(
-        eq(personalEntries.entryId, workEntryId),
-        eq(personalEntries.userId, userId),
-        eq(personalEntries.updatedAt, revisionInstant)
-      )
-    )
-    .returning({ entryId: personalEntries.entryId });
+    .set({ updatedAt: now })
+    .where(and(eq(personalEntries.entryId, workEntryId), eq(personalEntries.userId, userId)));
 
-  return claimed.length === 0 ? undefined : nextRevisionInstant;
+  return { revision: claimed, updatedAt: now };
 }
 
 // The document a new manual section starts from (#697): one empty Heading 1 block (so the section is a
@@ -138,15 +129,15 @@ function newSectionDocument(): DocumentNodeJSON {
 // scheduling/history or learner-owned material is reset. Scoped to the owner via `personal_entries` AND
 // `origin = 'manual'`, and the target section must belong to that Work: a forged id, another user's Work,
 // an imported/authored Work, or a cross-work section is rejected (404) before any write. The loaded
-// `revision` (the owner's last-write timestamp) must still be the stored one, or the save is a conflict
-// and nothing is written. The whole claim-reconcile runs in one transaction, so a save never lands
+// `revision` (the Work's `content_revision`) must still be the stored one, or the save is a conflict and
+// nothing is written. The whole claim-reconcile runs in one transaction, so a save never lands
 // half-applied; the recomputed section list is read back after commit so the editor's Outline refreshes.
 export async function updateManualWorkContent(
   dependencies: ManualWorkContentDependencies,
   workEntryId: EntryId,
   unitEntryId: EntryId,
   document: DocumentNodeJSON,
-  revision: string,
+  revision: number,
   userId: string
 ): Promise<UpdateManualWorkContentResult> {
   const now = dependencies.now();
@@ -166,8 +157,8 @@ export async function updateManualWorkContent(
       return { status: "not_found" as const };
     }
 
-    const nextRevisionInstant = await claimRevision(tx, workEntryId, userId, revision, now);
-    if (nextRevisionInstant === undefined) {
+    const claimed = await claimContentRevision(tx, workEntryId, userId, revision, now);
+    if (claimed === undefined) {
       return { status: "conflict" as const };
     }
 
@@ -184,7 +175,7 @@ export async function updateManualWorkContent(
       workEntryId
     });
 
-    return { activeUnitEntryId, owned, revision: nextRevisionInstant, status: "updated" as const };
+    return { activeUnitEntryId, claimed, owned, status: "updated" as const };
   });
 
   if (outcome.status !== "updated") {
@@ -198,7 +189,7 @@ export async function updateManualWorkContent(
       workEntryId,
       toEntryId(outcome.activeUnitEntryId),
       outcome.owned,
-      outcome.revision
+      outcome.claimed
     )
   };
 }
@@ -210,7 +201,7 @@ export async function updateManualWorkContent(
 export async function addManualWorkSection(
   dependencies: ManualWorkContentDependencies,
   workEntryId: EntryId,
-  revision: string,
+  revision: number,
   userId: string
 ): Promise<AddManualWorkSectionResult> {
   const now = dependencies.now();
@@ -221,8 +212,8 @@ export async function addManualWorkSection(
       return { status: "not_found" as const };
     }
 
-    const nextRevisionInstant = await claimRevision(tx, workEntryId, userId, revision, now);
-    if (nextRevisionInstant === undefined) {
+    const claimed = await claimContentRevision(tx, workEntryId, userId, revision, now);
+    if (claimed === undefined) {
       return { status: "conflict" as const };
     }
 
@@ -247,8 +238,8 @@ export async function addManualWorkSection(
     });
 
     return {
+      claimed,
       owned,
-      revision: nextRevisionInstant,
       status: "added" as const,
       unitEntryId: appended.unitEntryId
     };
@@ -265,27 +256,27 @@ export async function addManualWorkSection(
       workEntryId,
       toEntryId(outcome.unitEntryId),
       outcome.owned,
-      outcome.revision
+      outcome.claimed
     )
   };
 }
 
 // Reassemble the editor DTO after a committed write: the recomputed section list plus the opened
-// section's stored document, at the bumped revision. Read with the DB client (not the transaction) so it
-// reflects exactly what was committed.
+// section's stored document, at the newly-claimed content revision and bumped owner chronology. Read with
+// the DB client (not the transaction) so it reflects exactly what was committed.
 async function buildDto(
   db: DbClient,
   workEntryId: EntryId,
   unitEntryId: EntryId,
   owned: OwnedMeta,
-  revision: Date
+  claimed: { revision: number; updatedAt: Date }
 ): Promise<ManualWorkDto> {
   const sections = await loadManualWorkSections(db, workEntryId);
   const document = await loadManualWorkDocument(db, unitEntryId);
 
   return toManualWorkDto(
     workEntryId,
-    { ...owned, updatedAt: revision },
+    { ...owned, contentRevision: claimed.revision, updatedAt: claimed.updatedAt },
     unitEntryId,
     document,
     sections

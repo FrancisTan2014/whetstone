@@ -11,25 +11,26 @@ import { workLanguageDtoSchema, workTypeDtoSchema } from "./entryContracts.js";
 
 // Saving a manual Work replaces one SECTION's canonical document, but — unlike the latest-write-safe
 // authored save — it carries the `revision` the editor loaded so the server can reject a stale save
-// (another session wrote in between) instead of silently overwriting it. The target section (reading
-// unit) is named in the request path, not the body. The document is validated against the shared
-// document schema, so a malformed or unsafe body never reaches storage; unchanged nodes keep their
-// stable ids.
+// (another session wrote in between) instead of silently overwriting it. `revision` is the Work-scoped
+// content revision (`work_meta.content_revision`, #703): a monotonic non-negative integer, not a
+// timestamp. The target section (reading unit) is named in the request path, not the body. The document
+// is validated against the shared document schema, so a malformed or unsafe body never reaches storage;
+// unchanged nodes keep their stable ids.
 export const updateManualWorkContentRequestSchema = z
   .object({
     document: documentJsonSchema,
-    revision: z.string()
+    revision: z.number().int().nonnegative()
   })
   .strict();
 
 export type UpdateManualWorkContentRequest = z.infer<typeof updateManualWorkContentRequestSchema>;
 
 // Adding a section appends a new reading unit (with a real heading block) to a manual Work (#697). It
-// carries the loaded `revision` for the same optimistic-concurrency protection as a save, so a section
-// is never appended on top of another session's concurrent write.
+// carries the loaded `revision` (the Work-scoped content revision) for the same optimistic-concurrency
+// protection as a save, so a section is never appended on top of another session's concurrent write.
 export const addManualWorkSectionRequestSchema = z
   .object({
-    revision: z.string()
+    revision: z.number().int().nonnegative()
   })
   .strict();
 
@@ -55,16 +56,17 @@ export type ManualWorkSectionDto = z.infer<typeof manualWorkSectionDtoSchema>;
 // A persisted manual Work with the currently-opened section's canonical document and the whole Work's
 // ordered section list (#697/#720). `document` is the reassembled ProseMirror/Tiptap document of the
 // section named by `unitEntryId` (the reader renders it without conversion). `sections` is the source
-// the editor and Reader both derive the live Outline from. `revision` is the work-level
-// optimistic-concurrency token (the owner's last-write timestamp): the editor echoes it on save/add and
-// the server bumps it on every successful write.
+// the editor and Reader both derive the live Outline from. `revision` is the Work-scoped
+// optimistic-concurrency token (`work_meta.content_revision`, #703 — a monotonic non-negative integer):
+// the editor echoes it on save/add and the server increments it on every successful write. `updatedAt` is
+// the owner's chronology, reported for display only and never used to fence a write.
 export const manualWorkDtoSchema = z
   .object({
     createdAt: z.string(),
     document: documentJsonSchema,
     entryId: z.string(),
     language: workLanguageDtoSchema,
-    revision: z.string(),
+    revision: z.number().int().nonnegative(),
     sections: z.array(manualWorkSectionDtoSchema),
     title: z.string(),
     unitEntryId: z.string(),

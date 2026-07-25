@@ -1095,7 +1095,11 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   editor Outline. Server: `library/manualWorkContentQueries` (`loadManualWorkForEditing` +
   `loadManualWorkUnit`, deriving section outline from first blocks) + `manualWorkContentCommands`
   (`updateManualWorkContent` per unit + `addManualWorkSection` via
-  `content/editableWorkContent.appendEditableWorkSection`) own the owner/origin guard and revision check;
+  `content/editableWorkContent.appendEditableWorkSection`) own the owner/origin guard; the stale-revision
+  check is the origin-neutral `content/workContentRevision.claimWorkContentRevision` compare-and-set over
+  `work_meta.content_revision` (#703 — a monotonic non-negative integer, reusable by future imported-Work
+  correction), and a successful claim bumps the owner-only `personal_entries.updated_at` chronology in the
+  same transaction (`ManualWorkDto.revision` is that integer, `updatedAt` the chronology, display-only);
   `manualWorkContracts.ts` (in `@whetstone/contracts`) holds the `ManualWorkDto` (with `sections`), the
   per-unit update request, and the section/unit DTOs.
   `diary/` is the Diary mode (#246 origin, #571 rich-Entry rework): `DiaryPage.tsx` renders the shared

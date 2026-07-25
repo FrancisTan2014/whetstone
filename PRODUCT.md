@@ -560,6 +560,10 @@ entries, Recitation plans, and review targets.
   rich-block storage boundary that initializes and reconciles their blocks (stable-id retention that
   never resets a schedule or drops learner-owned material), while each origin keeps its own commands,
   authorization, routes, and navigation — the shared substrate never collapses them into one concept.
+- Content concurrency belongs to the Work, not to ownership or chronology. Every Work carries a
+  Work-scoped `content_revision` that an editable-origin save compares-and-sets, so one origin-neutral
+  fence protects manual writes today and imported-Work correction (a future step) with no owner facet.
+  `personal_entries.updated_at` stays owner chronology only, never a second revision truth.
 - A Recitation plan is one owner-scoped enrollment referencing a canonical Work. Its Work-level review
   target owns no source copy. Legacy passage Entries may remain for audit but are not active targets.
 - Review targets are Entries owned transitively through their material/plan and do not duplicate it on
@@ -598,11 +602,11 @@ Every ingestion adapter terminates at the same canonical ProseMirror hierarchy c
 Reader, search, notes, and editing surfaces. Format-native structure and PDF geometry may survive as
 provenance/evidence, but no retained upload or converter artifact is a second readable content model.
 
-The current Reader/Search still contain a legacy mdast fallback for imported Markdown/PDF units not
-yet represented by `doc_blocks`. That fallback is **ingestion migration debt** — not editable-Work
-history: authored and manual Works are canonical `doc_blocks` from creation. Existing PDF Works
-migrate in place without changing content identity; a failed migration remains readable and
-quarantined for repair. Preserve the format-agnostic fallback for residual legacy data, but no new
+The current Reader/Search still contain a legacy mdast fallback for imported Markdown units not yet
+represented by `doc_blocks`. That fallback is **ingestion migration debt** — not editable-Work history:
+authored and manual Works are canonical `doc_blocks` from creation. The deployment contains no legacy
+PDF Works, so there is no PDF migration or quarantine path; PDF ingestion publishes canonical `doc_blocks`
+directly. Preserve the format-agnostic fallback for the residual imported-Markdown debt, but no new
 ingestion or feature behavior may target it.
 
 Personal overlays—notes, comments, and review provenance—stay outside shared content and render as
