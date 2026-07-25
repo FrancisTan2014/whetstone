@@ -1,5 +1,9 @@
 import { toEntryId, type CaptureSource, type EntryId, type NoteAnchor } from "@whetstone/domain";
-import { documentReadableText, type DocumentNodeJSON } from "@whetstone/document";
+import {
+  documentReadableText,
+  projectNearMatchKey,
+  type DocumentNodeJSON
+} from "@whetstone/document";
 import type {
   CreateMarkRequest,
   CreateNoteRequest,
@@ -85,6 +89,20 @@ export type InsertNoteParams = Readonly<{
   userId: string;
 }>;
 
+// The paired near-match columns (#713) for a note body: the persisted relaxed key + its code-point length,
+// or both null when the body is absent (a mark) or UNSUPPORTED for fuzzy matching. Composed here so the
+// single note writer keeps the near-match index in lock-step with the material fingerprint — no surface can
+// persist a body without recomputing both. Full guarded matching still recomputes from the body at query
+// time; this is only the length-banded lookup accelerator.
+function nearMatchColumns(
+  bodyDoc: DocumentNodeJSON | null
+): Readonly<{ relaxedKey: string | null; relaxedKeyLength: number | null }> {
+  const key = bodyDoc === null ? null : projectNearMatchKey(bodyDoc);
+  return key === null
+    ? { relaxedKey: null, relaxedKeyLength: null }
+    : { relaxedKey: key.relaxedKey, relaxedKeyLength: key.codePointLength };
+}
+
 // Insert one unified note inside the caller's transaction: its Entry (`type: "note"`), the shared
 // `personal_entries` ownership + chronology facet (occurredAt = createdAt at capture), and its `notes` row
 // with the CALLER'S capture source. An anchored note additionally gets its `note_anchors` row and an
@@ -109,7 +127,10 @@ export async function insertNoteInTx(tx: Transaction, params: InsertNoteParams):
     // The fingerprint mirrors the body: a body-bearing note is fingerprinted from its document, a
     // bodyless mark carries none. Composed here at the single note writer so no surface can persist a
     // note without its material index (#711).
-    materialFingerprint: params.bodyDoc === null ? null : fingerprintNoteMaterial(params.bodyDoc)
+    materialFingerprint: params.bodyDoc === null ? null : fingerprintNoteMaterial(params.bodyDoc),
+    // The near-match key + length mirror the body the same way — both null for a mark or an unsupported
+    // note, both present for eligible prose (#713).
+    ...nearMatchColumns(params.bodyDoc)
   });
   if (params.anchor !== null) {
     await tx.insert(noteAnchors).values({
@@ -252,7 +273,10 @@ export async function updateNoteBodyInTx(
       bodyText,
       // Re-derive the material fingerprint from the new body in the SAME write, so an edit's index can
       // never drift from its content (#711).
-      materialFingerprint: fingerprintNoteMaterial(params.bodyDoc)
+      materialFingerprint: fingerprintNoteMaterial(params.bodyDoc),
+      // Re-derive the near-match key + length from the new body in the SAME write so the near index can
+      // never drift either — an edit that makes prose (un)supported flips the columns accordingly (#713).
+      ...nearMatchColumns(params.bodyDoc)
     })
     .where(eq(notes.entryId, params.noteEntryId));
   await tx
