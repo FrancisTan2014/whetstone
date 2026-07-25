@@ -216,9 +216,19 @@ export async function useExistingMaterial(
 
       // The learner may choose EITHER an exact candidate or a near "Possible duplicate" to receive the
       // drafted contract, so membership spans both rechecked groups. A note deleted or no longer matching in
-      // either group re-parks the review so the learner re-chooses.
+      // either group re-parks the review so the learner re-chooses. AND — exactly like Keep separate — re-park
+      // when the reviewed candidate set changed in EITHER group since the learner decided (a candidate added,
+      // removed, reordered, or the near evidence policy version shifted) even while the chosen note is still
+      // present, so reuse never commits against stale evidence (#714: the final decision re-runs both matchers
+      // under the lock and refreshes review on new/changed candidates).
       const chosen = toEntryId(request.noteEntryId);
-      if (!noteIds.includes(chosen) && !nearNoteIds.includes(chosen)) {
+      const candidateFingerprintChanged =
+        fingerprintReviewCandidates({ exactNoteIds: noteIds, nearNoteIds }) !==
+        attempt.candidateFingerprint;
+      if (
+        (!noteIds.includes(chosen) && !nearNoteIds.includes(chosen)) ||
+        candidateFingerprintChanged
+      ) {
         return refreshDecisionReview(tx, userId, guard.context, now);
       }
 

@@ -345,6 +345,30 @@ describe("POST /api/notes/review/material-review/use-existing", () => {
     expect(await listCards()).toHaveLength(1);
   });
 
+  it("re-parks the review when a candidate was removed even though the chosen note is still a candidate", async () => {
+    // #714 fence: the reuse decision must re-run both matchers under the lock and refresh review on any
+    // new/changed candidate — not only when the picked note vanished. Here a SECOND candidate disappears
+    // while the panel is open but the note the learner picked is still valid. Membership alone would let the
+    // reuse commit against the stale two-candidate evidence; the candidate-fingerprint fence must re-park so
+    // the learner re-confirms against the current set.
+    const chosen = await seedMaterial("seed");
+    const second = await keepSeparateNewNote("sub-second");
+    const review = await parkReview("sub-review");
+    expect(review.candidates).toHaveLength(2);
+
+    await deleteNote(second);
+    const response = await decide(review, { noteEntryId: chosen });
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as ReviewBody;
+    expect(body.status).toBe("needs_material_review");
+    expect(body.review.revision).toBe(1);
+    expect(body.review.candidates).toHaveLength(1);
+    // The chosen note received no second card — reuse did not commit against the stale evidence. Only the
+    // seed note's card survives (deleting the removed candidate cascaded its card away); without the fence
+    // reuse would have committed and left two cards.
+    expect(await listCards()).toHaveLength(1);
+  });
+
   it("rejects a blank answer with 400 invalid_answer before touching the attempt", async () => {
     await seedMaterial("seed");
     const review = await parkReview("sub-review");
