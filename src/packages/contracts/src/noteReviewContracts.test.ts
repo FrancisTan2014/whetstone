@@ -11,6 +11,11 @@ import {
   parseEditNotePromptQuestionRequest,
   parseCreateDirectCardRequest,
   parseDirectCardResultDto,
+  parseDirectCardSaveResultDto,
+  parseExactMaterialQueryRequest,
+  parseExactMaterialQueryResponse,
+  parseKeepSeparateMaterialRequest,
+  parseUseExistingMaterialRequest,
   parseNotePromptSettingsDto,
   parseNotePromptSettingsListDto,
   parseNoteReviewNextDto,
@@ -609,5 +614,112 @@ describe("direct card contracts (#689)", () => {
   it("parses a direct card result dto", () => {
     const parsed = parseDirectCardResultDto({ noteId: "n1", promptId: "p1", review });
     expect(parsed).toEqual({ noteId: "n1", promptId: "p1", review });
+  });
+});
+
+describe("material review contracts (#712)", () => {
+  const questionDoc = createTextDocument("Which sorting algorithm is stable?");
+  const answerDoc = createTextDocument("Merge sort is stable.");
+  const candidate = {
+    answerExcerpt: "Merge sort is stable.",
+    cardCount: 2,
+    noteId: "note-1",
+    sourceContext: "chapter 3" as string | null
+  };
+  const draft = {
+    submissionId: "sub-1",
+    attemptId: "attempt-1",
+    revision: 0,
+    questionDoc,
+    answerDoc,
+    target: { kind: "current_note" as const }
+  };
+
+  it("parses a needs_material_review save result and rejects an unknown status", () => {
+    const parsed = parseDirectCardSaveResultDto({
+      status: "needs_material_review",
+      review: { attemptId: "attempt-1", candidateFingerprint: "fp", candidates: [candidate], revision: 3 }
+    });
+    if (parsed.status !== "needs_material_review") {
+      throw new Error("expected needs_material_review");
+    }
+    expect(parsed.review.candidates[0]!.cardCount).toBe(2);
+    expect(() => parseDirectCardSaveResultDto({ status: "duplicate", review: {} })).toThrow();
+  });
+
+  it("parses created and reused save results carrying the shared direct-card payload", () => {
+    const created = parseDirectCardSaveResultDto({ status: "created", result: { noteId: "n1", promptId: "p1", review } });
+    const reused = parseDirectCardSaveResultDto({ status: "reused", result: { noteId: "n1", promptId: "p2", review } });
+    expect(created.status).toBe("created");
+    expect(reused.status).toBe("reused");
+  });
+
+  it("rejects extra keys on a candidate and on the review dto", () => {
+    expect(() =>
+      parseDirectCardSaveResultDto({
+        status: "needs_material_review",
+        review: {
+          attemptId: "attempt-1",
+          candidateFingerprint: "fp",
+          candidates: [{ ...candidate, verdict: "duplicate" }],
+          revision: 0
+        }
+      })
+    ).toThrow();
+    expect(() =>
+      parseDirectCardSaveResultDto({
+        status: "needs_material_review",
+        review: { attemptId: "attempt-1", candidateFingerprint: "fp", candidates: [], revision: 0, extra: true }
+      })
+    ).toThrow();
+  });
+
+  it("parses a null source context and rejects a negative card count", () => {
+    const parsed = parseDirectCardSaveResultDto({
+      status: "needs_material_review",
+      review: {
+        attemptId: "attempt-1",
+        candidateFingerprint: "fp",
+        candidates: [{ answerExcerpt: "x", cardCount: 0, noteId: "n", sourceContext: null }],
+        revision: 0
+      }
+    });
+    if (parsed.status !== "needs_material_review") {
+      throw new Error("expected needs_material_review");
+    }
+    expect(parsed.review.candidates[0]!.sourceContext).toBeNull();
+    expect(() =>
+      parseDirectCardSaveResultDto({
+        status: "needs_material_review",
+        review: {
+          attemptId: "attempt-1",
+          candidateFingerprint: "fp",
+          candidates: [{ answerExcerpt: "x", cardCount: -1, noteId: "n", sourceContext: null }],
+          revision: 0
+        }
+      })
+    ).toThrow();
+  });
+
+  it("round-trips the advisory exact-material query request and response", () => {
+    expect(parseExactMaterialQueryRequest({ answerDoc }).answerDoc).toEqual(answerDoc);
+    const response = parseExactMaterialQueryResponse({ candidates: [candidate] });
+    expect(response.candidates).toHaveLength(1);
+    expect(() => parseExactMaterialQueryRequest({ answerDoc, extra: 1 })).toThrow();
+    expect(() => parseExactMaterialQueryResponse({ candidates: "nope" })).toThrow();
+  });
+
+  it("parses a use-existing decision and rejects a blank chosen note", () => {
+    const parsed = parseUseExistingMaterialRequest({ ...draft, noteEntryId: "note-1" });
+    expect(parsed.noteEntryId).toBe("note-1");
+    expect(() => parseUseExistingMaterialRequest({ ...draft, noteEntryId: "  " })).toThrow();
+    expect(() => parseUseExistingMaterialRequest(draft)).toThrow();
+  });
+
+  it("parses a keep-separate decision and rejects a negative revision or extra key", () => {
+    const parsed = parseKeepSeparateMaterialRequest(draft);
+    expect(parsed.attemptId).toBe("attempt-1");
+    expect(() => parseKeepSeparateMaterialRequest({ ...draft, revision: -1 })).toThrow();
+    expect(() => parseKeepSeparateMaterialRequest({ ...draft, noteEntryId: "note-1" })).toThrow();
   });
 });
