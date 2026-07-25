@@ -320,7 +320,17 @@ export const notes = pgTable(
     // in the single note insert/update boundary. Deliberately NON-UNIQUE — it is only an accelerator,
     // never product identity, so a collision retrieves both rows and full projected-value equality
     // decides. A `note` always carries one; a `mark` (bodyless) carries none.
-    materialFingerprint: text("material_fingerprint")
+    materialFingerprint: text("material_fingerprint"),
+    // The relaxed near-match key of the note body (#713): the note material NFKC-normalized, with
+    // renderer-equivalent quotes/apostrophes/dashes collapsed, whitespace collapsed, and ASCII case
+    // folded — the length-banded lookup accelerator for "is this very similar prose?". Like the exact
+    // fingerprint it is derived server-side in the single note write boundary and is NEVER product
+    // identity: the full guarded projection recomputed from the body decides a candidate. It is NULL
+    // for a bodyless `mark` AND for a `note` whose material is UNSUPPORTED for fuzzy matching (a single
+    // word, non-ASCII/mixed scripts, links/code/structure, or out-of-band length) — near matching stays
+    // silent on those. `relaxed_key_length` is the key's code-point length, banded by the query.
+    relaxedKey: text("relaxed_key"),
+    relaxedKeyLength: integer("relaxed_key_length")
   },
   (table) => [
     // The discriminated shape is enforced in the database, not only at the contract boundary: a note
@@ -337,7 +347,17 @@ export const notes = pgTable(
       sql`(${table.kind} = 'note' and ${table.materialFingerprint} is not null) or (${table.kind} = 'mark' and ${table.materialFingerprint} is null)`
     ),
     // Non-unique index accelerating the owner-scoped exact-material lookup (#711).
-    index("notes_material_fingerprint_idx").on(table.materialFingerprint)
+    index("notes_material_fingerprint_idx").on(table.materialFingerprint),
+    // The near-match key and its length travel together and only ever belong to a body-bearing note:
+    // either both are NULL (a mark, or an unsupported note — near matching is silent), or it is a note
+    // carrying both. Added VALID immediately: a freshly-added column is all-NULL, which already
+    // satisfies this, so no legacy rows violate it and no NOT VALID/backfill-validate dance is needed.
+    check(
+      "notes_relaxed_key_pair_ck",
+      sql`(${table.relaxedKey} is null and ${table.relaxedKeyLength} is null) or (${table.kind} = 'note' and ${table.relaxedKey} is not null and ${table.relaxedKeyLength} is not null)`
+    ),
+    // Non-unique index accelerating the owner-scoped near-match length-band scan (#713).
+    index("notes_relaxed_key_length_idx").on(table.relaxedKeyLength)
   ]
 );
 

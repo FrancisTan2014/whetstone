@@ -1,0 +1,42 @@
+{
+  "corpus": "near-v1",
+  "purpose": "Independent gold corpus for #713 high-precision near-Note matching. Each row carries two complete documents and a human-reviewed verdict (possible | distinct | unsupported); the consuming gate test asserts the real matcher agrees and measures the holdout gates.",
+  "generatedBy": "scripts/nearCorpus/generateNearCorpus.mjs",
+  "pinnedVersions": {
+    "normalizer": "near-match/v1",
+    "normalizerTransforms": [
+      "NFKC",
+      "whitespace-collapse",
+      "quote/apostrophe/dash equivalence to ASCII representative",
+      "ASCII case fold (relaxed key only)"
+    ],
+    "scorerPackage": "damerau-levenshtein",
+    "scorerPackageVersion": "1.0.8",
+    "scoreFormula": "1 - distance / max(codePointLength(a), codePointLength(b))",
+    "threshold": 0.84
+  },
+  "splits": {
+    "calibration": "Produced by the documented mutation rules in the generator; the threshold and guards are reviewed only against these.",
+    "holdout": "Hand-authored literals not produced by the mutation functions (real-world misspellings, curated distinct pairs, and the named test-matrix examples). The holdout gates are measured only here."
+  },
+  "expected": {
+    "possible": "Eligible pair the matcher must return as a near candidate.",
+    "distinct": "Eligible pair the matcher must NOT return (excluded, vetoed, case-only, or below threshold).",
+    "unsupported": "At least one document is ineligible, so the pair is unclassifiable and never a candidate."
+  },
+  "holdoutGates": {
+    "precision": 0.98,
+    "recall": 0.9,
+    "falsePositivesPerGuardFamily": 0,
+    "unsupportedClassification": 1.0
+  },
+  "guardFamilies": [
+    "protected-number",
+    "protected-symbol",
+    "protected-negation",
+    "protected-technical",
+    "case-only",
+    "lexical-content",
+    "lexical-order"
+  ]
+}

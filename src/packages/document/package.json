@@ -19,6 +19,7 @@
   "dependencies": {
     "@tiptap/core": "^3.27.3",
     "@tiptap/extension-unique-id": "^3.27.3",
+    "damerau-levenshtein": "1.0.8",
     "prosemirror-model": "^1.25.9"
   }
 }

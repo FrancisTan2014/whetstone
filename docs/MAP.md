@@ -30,7 +30,16 @@ specs with the UniqueID id attribute), `schema.ts` (`documentSchema` via `getSch
 string attrs, collapses prose whitespace (code/opaque runs kept verbatim), ignores bold/italic while
 keeping code + link marks/destinations, and preserves node type/order/structure and semantic attrs — so
 two notes share a projection iff their material is semantically identical; no hashing here (that stays
-server-side). Tests
+server-side). The pure **near-material** trio (#713, read-only) sits alongside it: `nearMatch.ts`
+(`projectNearMatch(json) -> NearMatchProjection | null`) gates eligibility (only doc/paragraph/text +
+bold/italic; 2-40 ASCII English tokens; 8-240 code points; letter required) and derives a relaxed key
+(NFKC + whitespace collapse + quote/apostrophe/dash fold + case fold) plus a `protectedEvidence`
+multiset (numbers/symbols/negation/identifier-case) for vetoes; `nearMatchScore.ts` is the pinned
+`damerau-levenshtein@1.0.8` adapter over code points (`score = 1 - distance / max(cpLen)`);
+`nearMatchRanking.ts` (`selectNearMatches`, `NEAR_MATCH_THRESHOLD = 0.84`) excludes exact/case-only
+pairs, vetoes on protected-evidence or lexical-guard mismatch, thresholds, and returns the top 5 by
+score then id. Calibrated + gated by `fixtures/card-matching/near-v1.jsonl` (630 rows) via
+`nearMatchCorpus.test.ts`; scale guarded by `nearMatchBenchmark.test.ts`. Tests
 colocated. Invariant: depends on nothing outward; no UI, ingestion, or editing here.
 
 ### `src/packages/domain/` — pure logic
@@ -213,7 +222,14 @@ can navigate them from another package.
   SHA-256 of `projectNoteMaterial`; marks get `null`) — enforced by migration `0074`'s biconditional
   `notes_material_fingerprint_kind_ck` (added `NOT VALID`) + non-unique index; legacy note rows are filled
   once at startup by `noteMaterialFingerprintBackfill.ts` (`backfillNoteMaterialFingerprints`, one tx, then
-  `VALIDATE CONSTRAINT`, no partial writes on abort). A saved note takes review cards
+  `VALIDATE CONSTRAINT`, no partial writes on abort). Every note write also stamps the read-only
+  near-match key pair `notes.relaxed_key`/`relaxed_key_length` via `projectNearMatchKey`
+  (`noteCommands.ts` `nearMatchColumns`; ineligible notes + marks get `null`/`null`) — enforced by
+  migration `0076`'s biconditional check + a `relaxed_key_length` index; legacy rows filled once at
+  startup by `noteNearMatchBackfill.ts` (`backfillNoteNearMatchKeys`). `noteNearMatchQuery.ts`
+  (`findNearMatchNotes`, zero writes) length-bands the owner's eligible pool by `relaxed_key_length`,
+  runs the pure `selectNearMatches` ranking, and returns high-precision near-duplicate candidates only
+  (exact/case-only pairs and evidence/lexical-guard mismatches excluded). A saved note takes review cards
   through card authoring (`POST /api/notes/review/author-cards`, above) — one or MANY, each independently
   scheduled (#688) — not a separate enrollment step. Web: `NotesPage.tsx`
   is the single Notes home (one continuous list via `NotesHomeList.tsx`, per-row Review projection via

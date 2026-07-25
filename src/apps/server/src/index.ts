@@ -34,6 +34,7 @@ import { readDiaryTidyConfig } from "./llm/aiUtilityConfig.js";
 import { checkAiUtilityHealth } from "./llm/aiUtilityHealth.js";
 import { resolveDiaryTidy } from "./features/diary/diaryTidy.js";
 import { backfillNoteMaterialFingerprints } from "./features/notes/noteMaterialFingerprintBackfill.js";
+import { backfillNoteNearMatchKeys } from "./features/notes/noteNearMatchBackfill.js";
 import { expireCardCreationAttempts } from "./features/notesReview/cardCreationAttemptStore.js";
 import {
   processNextVoiceCapture,
@@ -76,6 +77,10 @@ const db = createDbClient(pglite);
 // document-package projection after the pure-SQL migration, then VALIDATEs the shape constraint. It is
 // idempotent (only NULL note rows), so a restart re-runs it harmlessly.
 await backfillNoteMaterialFingerprints(db);
+// One-time backfill of near-match keys for legacy notes (#713). Composes the same document-package
+// projection as the write boundary; eligible notes get their relaxed key + length, unsupported notes stay
+// null. Idempotent — a filled note is skipped next time — so a restart re-runs it harmlessly.
+await backfillNoteNearMatchKeys(db);
 // A parked New-card material-review attempt (#712) holds one pending review per (owner, submission) until
 // the learner chooses Use existing material or Keep separate. An untouched attempt expires after this window
 // and is swept at startup and after each attempt operation, so a forgotten review never lingers; no
