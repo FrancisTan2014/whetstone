@@ -181,4 +181,23 @@ describe("loadNearMaterialReviewCandidates", () => {
       }
     ]);
   });
+
+  it("falls back to zero cards and a null source context for a cardless, unanchored near candidate", async () => {
+    await seedNote("note-near", { body: "in term of the design" });
+    const draft = createTextDocument("in terms of the design");
+
+    const candidates = await loadNearMaterialReviewCandidates(db, userId, draft, [
+      nearNote("note-near", "in term of the design", "in term of the design")
+    ]);
+
+    expect(candidates).toEqual([
+      {
+        answerExcerpt: "in term of the design",
+        cardCount: 0,
+        differences: [{ after: "terms", before: "term" }],
+        noteId: "note-near",
+        sourceContext: null
+      }
+    ]);
+  });
 });
