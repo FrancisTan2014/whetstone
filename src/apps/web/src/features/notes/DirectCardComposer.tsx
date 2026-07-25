@@ -5,9 +5,11 @@ import type {
   DirectCardSaveResultDto,
   MaterialReviewDto
 } from "@whetstone/contracts";
-import { type DocumentNodeJSON } from "@whetstone/document";
+import { type DocumentNodeJSON, documentReadableText } from "@whetstone/document";
+import { normalizeLexicalSurface } from "@whetstone/domain";
 
 import { MaterialReviewPanel } from "./MaterialReviewPanel";
+import { RelatedMaterialDisclosure } from "./RelatedMaterialDisclosure";
 import {
   RetrievalContractEditor,
   gradingTargetFor,
@@ -101,6 +103,10 @@ export function DirectCardComposer({
   const [hintRetry, setHintRetry] = useState(0);
 
   const answerBlank = isDocumentBlank(answerDoc);
+  // The eligible single-word surface of the Answer, or null when it is blank, multi-word, or not one ASCII
+  // English word — the same rule the lexical service applies (#715). Non-null gates the opt-in "Find related
+  // material" disclosure; the parent keys it by this surface so it remounts and resets when the word changes.
+  const relatedSurface = normalizeLexicalSurface(documentReadableText(answerDoc));
 
   useEffect(() => {
     // Every Answer change (or the panel opening, or a Retry) bumps the sequence so an in-flight response from
@@ -341,6 +347,9 @@ export function DirectCardComposer({
                     Similar material may already be in Notes. You can still create this card.
                   </p>
                 ) : null
+              ) : null}
+              {review === null && relatedSurface !== null ? (
+                <RelatedMaterialDisclosure answerDoc={answerDoc} key={relatedSurface} />
               ) : null}
             </>
           }

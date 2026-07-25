@@ -708,8 +708,8 @@ can navigate them from another package.
   sample text, plus one offline integration test against the real WordNet database).
   The route lives in `src/features/lookup/lookupRoutes.ts` (`GET /api/lookup?term=&language=`,
   language is `en`/`zh-CN`/`zh-TW`, thin: validates the query contract, delegates to the service).
-- Offline English lexical relationships (#715, read-only, capability only — not yet wired to any route;
-  the next issue owns the UI): `src/apps/server/src/features/lexical/` resolves, for ONE eligible English
+- Offline English lexical relationships (#715, read-only; exposed over HTTP + the composer disclosure by
+  #716): `src/apps/server/src/features/lexical/` resolves, for ONE eligible English
   word plus a caller-selected WordNet sense, the owner's single-word Notes connected by typed one-hop
   relations (inflection, synonym, antonym, derivation, direct hypernym, direct hyponym). The pure typing
   rules (surface eligibility, pointer-symbol classification, `sourceTarget` word indices, lemma-key
@@ -727,6 +727,20 @@ can navigate them from another package.
   outcome union so a corrupt/missing WordNet DB never masquerades as "no relation". Writes nothing (no
   edge/sense/note/card/link/event). Calibrated + gated by `fixtures/card-matching/lexical-v1.jsonl`
   (323 rows) via `lexicalCorpus.test.ts` against the REAL bundled WordNet database; unit tests colocated.
+- Show related saved material during card creation (#716, inspection aid — never blocks save, never
+  preselects/reuses a card, persists no relation or sense): exposes #715 over HTTP and surfaces it in the
+  New-card composer. Contracts in `contracts/relatedMaterialContracts.ts` (status-discriminated `found |
+  not_found | unsupported | unavailable` senses/relations DTOs; the surface is projected server-side, never
+  trusted from the client). Server `src/apps/server/src/features/relatedMaterial/`: `relatedMaterialRoutes.ts`
+  (`POST /api/notes/review/related-material/senses` and `/relations`, deps `{ db, service }`, wired in
+  `http/createServer.ts` + instantiated in `index.ts` from the shared `WordPOS`) maps the service outcomes to
+  the DTOs; `relatedMaterialQuery.ts` (`enrichRelatedMaterialGroups`) batches one `note_anchors` read to add
+  each related note's capture context. Web `notes/relatedMaterialApi.ts` folds any transport/non-2xx failure to
+  `unavailable` (Retry); `notes/RelatedMaterialDisclosure.tsx` is the collapsed, opt-in "Find related material"
+  disclosure (fetches only on open, explicit sense pick, "Open note" in a new tab, relation labels in
+  `relatedMaterial.tokens.ts`); `notes/DirectCardComposer.tsx` renders it only for an eligible single-word
+  Answer (`review === null`), keyed by the surface so it resets when the word changes. E2E:
+  `e2e/tests/notes-related-material.spec.ts`.
 - Backup/restore (#600): `src/data/` owns verified whole-instance backup and restore. Pure, covered
   modules — `archive.ts` (versioned single-ZIP format: `manifest.json` + gzip database dump + per-root
   files, with SHA-256 checksums and `verifyArchive`), `dataRoots.ts` (durable file-root inventory from
