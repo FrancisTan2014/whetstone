@@ -110,8 +110,9 @@ Notes/Today/Review own and can remove the card exactly like a UI-created card.
 
 A discriminated result:
 
-- `created` / `reused` / `kept_separate` — success. Carries the `noteEntryId`, `promptId`, the review
-  `state` and next `due`, and the rendered card — no private body beyond the approved preview.
+- `created` / `reused` / `kept_separate` — success. Carries a `card` object with the created/reused
+  `noteId`, the created `promptId`, and the seeded FSRS `review` state (its `state`, next `due`, and the
+  other FSRS fields) — no rendered card or private body beyond the already-approved preview.
 - `needs_approval` — matching moved (new/changed/deleted candidate or evidence version): the tool returns a
   **refreshed preview** and requires a fresh approval before it will commit.
 - `not_found` — no such owned `mcp` attempt (forged, foreign, or never staged).
