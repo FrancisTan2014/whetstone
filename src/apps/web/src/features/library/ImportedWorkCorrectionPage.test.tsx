@@ -8,6 +8,7 @@ import type { Mock } from "vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ImportedWorkCorrectionPage } from "./ImportedWorkCorrectionPage";
+import { extractionEvidenceCueClass } from "../../shared/editor/extractionEvidence.tokens";
 
 // The page renders the real shared rich editor, which drives ProseMirror against the DOM; jsdom lacks the
 // layout/pointer primitives ProseMirror probes, so stub the minimal surface the editor touches (mirrors the
@@ -52,16 +53,22 @@ vi.mock("./importedWorkApi", () => ({
   saveImportedWorkContent: vi.fn()
 }));
 
+vi.mock("./pdfExtractionEvidenceApi", () => ({
+  fetchPdfExtractionEvidence: vi.fn()
+}));
+
 const {
   addImportedWorkSection,
   fetchImportedWork,
   fetchImportedWorkUnit,
   saveImportedWorkContent
 } = await import("./importedWorkApi");
+const { fetchPdfExtractionEvidence } = await import("./pdfExtractionEvidenceApi");
 const mockedAdd = addImportedWorkSection as Mock<typeof addImportedWorkSection>;
 const mockedFetch = fetchImportedWork as Mock<typeof fetchImportedWork>;
 const mockedFetchUnit = fetchImportedWorkUnit as Mock<typeof fetchImportedWorkUnit>;
 const mockedSave = saveImportedWorkContent as Mock<typeof saveImportedWorkContent>;
+const mockedEvidence = fetchPdfExtractionEvidence as Mock<typeof fetchPdfExtractionEvidence>;
 
 // A realistic loaded document: a block with a stable persisted id, matching what the server reassembles
 // from stored blocks. The editor preserves these ids, so its mount-time normalization echo equals the
@@ -116,6 +123,8 @@ async function renderReadyEditor(): Promise<{
 beforeEach(() => {
   vi.clearAllMocks();
   mockMatchMedia(false);
+  // Default: the Work carries no extraction evidence (a non-PDF import), so the editor shows no cue.
+  mockedEvidence.mockResolvedValue(new Map());
 });
 
 afterEach(() => {
@@ -294,5 +303,72 @@ describe("ImportedWorkCorrectionPage", () => {
     await waitFor(() => {
       expect(mockedSave).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it("cues a review-suggested block, then refetches evidence after a correcting save so the cue clears", async () => {
+    const evidenceRow = {
+      blockId: "blk-1",
+      confidence: 0.4,
+      corrected: false,
+      label: "Section heading",
+      ocrEngine: null,
+      ocrLanguage: null,
+      page: 2,
+      reviewSuggested: true
+    };
+    mockedEvidence.mockResolvedValueOnce(new Map([["blk-1", evidenceRow]]));
+    // The corrected block keeps its persisted id, and the post-save refetch reports it as corrected.
+    mockedSave.mockResolvedValue({
+      status: "saved",
+      work: makeWork({
+        correctedAt: "2026-02-02T00:00:00.000Z",
+        document: {
+          content: [
+            {
+              attrs: { anchorId: null, id: "blk-1" },
+              content: [{ text: "Fixed", type: "text" }],
+              type: "paragraph"
+            }
+          ],
+          type: "doc"
+        },
+        revision: 1
+      })
+    });
+    mockedEvidence.mockResolvedValueOnce(new Map([["blk-1", { ...evidenceRow, corrected: true }]]));
+
+    const { textbox, user } = await renderReadyEditor();
+
+    // The uncorrected suggested block is cued once its evidence resolves.
+    await waitFor(() => {
+      expect(textbox.querySelector(`.${extractionEvidenceCueClass}`)).not.toBeNull();
+    });
+    expect(mockedEvidence).toHaveBeenCalledTimes(1);
+    expect(mockedEvidence.mock.calls[0]![0]).toBe("work-1");
+
+    await user.click(textbox);
+    await user.type(textbox, "Fixed");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    // A successful save refetches evidence; the block now reads corrected, so its cue is gone.
+    await waitFor(() => {
+      expect(mockedEvidence).toHaveBeenCalledTimes(2);
+    });
+    await waitFor(() => {
+      expect(textbox.querySelector(`.${extractionEvidenceCueClass}`)).toBeNull();
+    });
+  });
+
+  it("opens cleanly when the evidence fetch fails (evidence falls back to none)", async () => {
+    mockedEvidence.mockReset();
+    mockedEvidence.mockRejectedValue(new Error("evidence unavailable"));
+
+    const { textbox } = await renderReadyEditor();
+
+    await waitFor(() => {
+      expect(mockedEvidence).toHaveBeenCalled();
+    });
+    // A failed evidence fetch never blocks correction: the editor opens with no cue.
+    expect(textbox.querySelector(`.${extractionEvidenceCueClass}`)).toBeNull();
   });
 });

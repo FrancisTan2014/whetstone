@@ -2,10 +2,13 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { type DocumentNodeJSON, DocumentValidationError, documentText } from "@whetstone/document";
+import type { PdfExtractionEvidenceItemDto } from "@whetstone/contracts";
 import type { Mock } from "vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createEmptyDocument } from "./editorDocument";
+import { extractionEvidenceCueClass } from "./extractionEvidence.tokens";
+import type { ExtractionEvidenceMap } from "./extractionEvidenceDecoration";
 import { RichContentEditor } from "./RichContentEditor";
 
 type DocumentListener = (document: DocumentNodeJSON) => void;
@@ -718,5 +721,106 @@ describe("RichContentEditor contextual block gutter", () => {
     const gutter = window.document.querySelector(".richContentEditorGutter");
     expect(gutter).not.toBeNull();
     expect(within(gutter as HTMLElement).getByLabelText("Block actions")).toBeTruthy();
+  });
+});
+
+// The PDF extraction-evidence seam (#763): the shared editor is the ONE place the correction cue and the
+// "Review extraction" disclosure surface. Manual/notes surfaces thread no `evidence`, so the extension
+// stays inert. These cases drive the seam directly — the cue on uncorrected suggested blocks, the
+// contextual disclosure that follows the caret, and its absence on read-only or non-suggested blocks.
+function evidenceRow(
+  overrides: { blockId: string } & Partial<PdfExtractionEvidenceItemDto>
+): PdfExtractionEvidenceItemDto {
+  return {
+    confidence: 0.4,
+    corrected: false,
+    label: "Section heading",
+    ocrEngine: null,
+    ocrLanguage: null,
+    page: 3,
+    reviewSuggested: true,
+    ...overrides
+  };
+}
+
+function idBlocks(...ids: string[]): DocumentNodeJSON {
+  return idParagraphs(...ids.map((id) => ({ id, text: id })));
+}
+
+async function renderWithEvidence({
+  document,
+  editable = true,
+  evidence
+}: {
+  document: DocumentNodeJSON;
+  editable?: boolean;
+  evidence?: ExtractionEvidenceMap;
+}): Promise<HTMLElement> {
+  render(
+    <RichContentEditor
+      ariaLabel="Work body"
+      document={document}
+      editable={editable}
+      onChange={vi.fn()}
+      {...(evidence ? { evidence } : {})}
+    />
+  );
+  return screen.findByRole("textbox", { name: "Work body" });
+}
+
+const cuedBlockTexts = (textbox: HTMLElement): string[] =>
+  Array.from(textbox.querySelectorAll(`.${extractionEvidenceCueClass}`)).map(
+    (node) => node.textContent ?? ""
+  );
+
+describe("RichContentEditor extraction-evidence seam", () => {
+  it("threads no cue or disclosure when no evidence map is provided", async () => {
+    const textbox = await renderWithEvidence({ document: idBlocks("only") });
+
+    expect(cuedBlockTexts(textbox)).toEqual([]);
+    expect(screen.queryByRole("button", { name: "Review extraction" })).toBeNull();
+  });
+
+  it("cues only uncorrected suggested blocks and follows the caret with the disclosure", async () => {
+    const evidence: ExtractionEvidenceMap = new Map([
+      ["low", evidenceRow({ blockId: "low", reviewSuggested: true })],
+      ["done", evidenceRow({ blockId: "done", corrected: true, reviewSuggested: true })],
+      ["high", evidenceRow({ blockId: "high", confidence: 0.95, reviewSuggested: false })]
+    ]);
+    const textbox = await renderWithEvidence({
+      document: idBlocks("low", "done", "high"),
+      evidence
+    });
+
+    // The uncorrected suggested block is cued; the corrected and high-confidence blocks are not.
+    expect(cuedBlockTexts(textbox)).toEqual(["low"]);
+
+    // Caret defaults to the first block ("low"), which is review-suggested, so its disclosure shows.
+    expect(screen.getByRole("button", { name: "Review extraction" })).toBeTruthy();
+
+    // The corrected block keeps its disclosure (reframed) even though its cue is gone.
+    await placeCaretInBlock(textbox, 1);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Review extraction" })).toBeTruthy()
+    );
+
+    // A high-confidence mapped block carries no disclosure.
+    await placeCaretInBlock(textbox, 2);
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Review extraction" })).toBeNull()
+    );
+  });
+
+  it("mounts no disclosure on a read-only surface even with evidence", async () => {
+    const evidence: ExtractionEvidenceMap = new Map([["low", evidenceRow({ blockId: "low" })]]);
+    const textbox = await renderWithEvidence({
+      document: idBlocks("low"),
+      editable: false,
+      evidence
+    });
+
+    // The read-only surface still shows the passive cue but never the editing-time disclosure control.
+    expect(cuedBlockTexts(textbox)).toEqual(["low"]);
+    expect(screen.queryByRole("button", { name: "Review extraction" })).toBeNull();
   });
 });

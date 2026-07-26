@@ -5,6 +5,7 @@ import type { DocumentNodeJSON } from "@whetstone/document";
 import {
   RichContentEditor,
   editorDocumentsEqualIgnoringIds,
+  type ExtractionEvidenceMap,
   validateEditorDocument
 } from "../../shared/editor/index.js";
 import { Button } from "../../shared/ui/Button.js";
@@ -129,12 +130,20 @@ export function EditorFrame({
 
 export function WorkContentEditor<W extends WorkEditorWork>({
   api,
+  evidence,
   leadingAction,
+  onContentSaved,
   work: initialWork
 }: Readonly<{
   api: WorkEditorApi<W>;
+  // Optional PDF extraction evidence keyed by block id (#763), passed straight to the shared editor's
+  // evidence seam. The imported-correction page supplies it; the manual editor omits it, so nothing shows.
+  evidence?: ExtractionEvidenceMap;
   // An optional action rendered before the Save control (e.g. "Open in Reader" for a correction).
   leadingAction?: React.ReactNode;
+  // Called after every successful save so a consumer can refetch derived state — the correction page
+  // refetches extraction evidence so a just-corrected block's cue clears (#763).
+  onContentSaved?: () => void;
   work: W;
 }>): React.JSX.Element {
   const [work, setWork] = useState<W>(initialWork);
@@ -258,6 +267,7 @@ export function WorkContentEditor<W extends WorkEditorWork>({
         setDraft(result.work.document);
         setStatus("saved");
         savingRef.current = false;
+        onContentSaved?.();
         return "saved";
       }
 
@@ -289,7 +299,7 @@ export function WorkContentEditor<W extends WorkEditorWork>({
       savingRef.current = false;
       return "conflict";
     },
-    [api]
+    [api, onContentSaved]
   );
 
   // Open a section. Saves the current section first (save-before-switch); a failure/conflict leaves the
@@ -434,6 +444,7 @@ export function WorkContentEditor<W extends WorkEditorWork>({
           <RichContentEditor
             ariaLabel={`Edit ${work.title}`}
             document={savedDocument}
+            evidence={evidence}
             focusSignal={focusSignal}
             key={activeUnitEntryId}
             onChange={handleChange}
