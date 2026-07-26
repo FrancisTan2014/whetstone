@@ -10,7 +10,7 @@ import { toEntryId } from "@whetstone/domain";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
-import { entries, noteAnchors } from "../../db/schema.js";
+import { entries, noteAnchors, personalEntries } from "../../db/schema.js";
 import { createServer } from "../../http/createServer.js";
 import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
 import type {
@@ -65,6 +65,14 @@ afterEach(async () => {
 
 async function seedAnchoredNote(id: string, context: string): Promise<void> {
   await db.insert(entries).values({ id, type: "note" });
+  const now = new Date();
+  await db.insert(personalEntries).values({
+    entryId: id,
+    userId: DEFAULT_USER_ID,
+    occurredAt: now,
+    createdAt: now,
+    updatedAt: now
+  });
   await db.insert(noteAnchors).values({
     blockEntryId: id,
     contextSnapshot: context,

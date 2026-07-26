@@ -82,14 +82,17 @@ export function registerRelatedMaterialRoutes(
       return reply.code(400).send(invalidRequest);
     }
     const surface = documentReadableText(body.answerDoc as DocumentNodeJSON);
+    const userId = request.server.currentUser.getCurrentUserId();
     const outcome = await dependencies.service.relateNotes(dependencies.db, surface, body.sense, {
-      userId: request.server.currentUser.getCurrentUserId()
+      userId
     });
     if (outcome.kind !== "found") {
       const response: RelatedMaterialRelationsResponse = { status: outcome.kind };
       return reply.code(200).send(response);
     }
-    const groups = await enrichRelatedMaterialGroups(dependencies.db, outcome.value.groups);
+    const groups = await enrichRelatedMaterialGroups(dependencies.db, outcome.value.groups, {
+      userId
+    });
     const response: RelatedMaterialRelationsResponse = {
       status: "found",
       surface: outcome.value.surface,
