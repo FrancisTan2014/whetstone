@@ -16,10 +16,22 @@
 // either is unavailable. The rubric it applies is unit-tested in
 // src/packages/domain/src/pdfUsability.test.ts, so the harness owns only I/O and orchestration.
 //
+// BOUNDED-RUNNER INVARIANT (so the aggregate is equivalent to the real import lane): the harness drives
+// the worker under the SAME per-child memory ceiling the production runner enforces, or it refuses to
+// run. It (1) fences the same unsupported platforms the production runner does — reusing
+// `canEnforceStructuredPdfMemoryCeiling`, so win32, where no POSIX address-space ceiling can be applied,
+// is refused up front exactly like production's unavailable runner rather than measuring Docling
+// memory-unbounded; (2) sets `WHETSTONE_PDF_MEMORY_MIB` (PDF_STRUCTURED_MEMORY_MIB, default 2048 MiB —
+// mirroring the server config) on every worker child, so an over-ceiling conversion is killed here
+// (worker exit 7 -> `memory`, counted against the gate) just as it would be in production; and (3)
+// treats worker exit 8 (`memory_ceiling_unsupported`) as a fatal environment error that aborts the whole
+// run — if the ceiling could not be enforced, the numbers are not falsifiable against production, so the
+// harness must refuse rather than emit a report that would look passable while production would refuse.
+//
 // Usage (run under tsx so the TypeScript rubric/mapper import directly; build the workspace first):
 //   pnpm build
 //   node --import tsx scripts/probes/pdfUsabilityHarness.mjs --corpus <dir> [--extra <dir> ...] \
-//     [--range-size N] [--timeout-ms N] [--limit N] [--out report.json]
+//     [--range-size N] [--timeout-ms N] [--limit N] [--memory-mib N] [--out report.json]
 //   WHETSTONE_PDF_CORPUS=<dir> node --import tsx scripts/probes/pdfUsabilityHarness.mjs
 //
 // The baseline corpus root MUST be supplied explicitly (never hard-coded here). Additional --extra roots
@@ -44,13 +56,34 @@ const EXIT = {
   CONVERSION_FAILED: 4,
   PASSWORD_REQUIRED: 5,
   UNSUPPORTED_SCHEMA: 6,
-  MEMORY: 7
+  MEMORY: 7,
+  // The worker was asked for a per-child memory ceiling it could not enforce on this platform (POSIX
+  // `resource` unavailable, e.g. win32). In LOCKSTEP with WORKER_EXIT_MEMORY_CEILING_UNSUPPORTED.
+  MEMORY_CEILING_UNSUPPORTED: 8
 };
 
 const DEFAULT_RANGE_SIZE = 50;
 const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000;
 const MEMORY_SAMPLE_MS = 100;
 const LOW_CONFIDENCE_THRESHOLD = 0.75; // Mirrors domain PDF_EXTRACTION_CONFIDENCE_THRESHOLD.
+// Per-child address-space ceiling (MiB) the worker self-applies, matching the production runner. Mirrors
+// serverConfig `defaultServerConfig.pdfStructuredMemoryMib` (2 GiB) and the same PDF_STRUCTURED_MEMORY_MIB
+// env override, so the harness bounds each conversion exactly as the real import lane does.
+const DEFAULT_MEMORY_MIB = 2048;
+
+// Resolve the per-child memory ceiling like the server config's `parsePdfStructuredMemory`: a positive
+// integer number of MiB, or the default when unset. A non-positive/non-integer request is rejected so the
+// harness never silently runs with a broken ceiling.
+function parseMemoryMib(raw) {
+  if (raw === undefined || raw === null || raw === "") return DEFAULT_MEMORY_MIB;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new Error(
+      "PDF_STRUCTURED_MEMORY_MIB / --memory-mib must be a positive integer number of MiB."
+    );
+  }
+  return parsed;
+}
 
 function parseArgs(argv) {
   const args = {
@@ -59,6 +92,7 @@ function parseArgs(argv) {
     rangeSize: DEFAULT_RANGE_SIZE,
     timeoutMs: DEFAULT_TIMEOUT_MS,
     limit: Infinity,
+    memoryMib: parseMemoryMib(process.env.PDF_STRUCTURED_MEMORY_MIB),
     out: null
   };
   for (let i = 0; i < argv.length; i += 1) {
@@ -70,6 +104,7 @@ function parseArgs(argv) {
     else if (flag === "--timeout-ms")
       args.timeoutMs = Math.max(1000, Number.parseInt(argv[(i += 1)], 10) || DEFAULT_TIMEOUT_MS);
     else if (flag === "--limit") args.limit = Math.max(1, Number.parseInt(argv[(i += 1)], 10) || 1);
+    else if (flag === "--memory-mib") args.memoryMib = parseMemoryMib(argv[(i += 1)]);
     else if (flag === "--out") args.out = argv[(i += 1)] ?? null;
     else if (args.corpus === null) args.corpus = flag;
   }
@@ -140,10 +175,15 @@ function startPeakRssSampler(pid) {
   };
 }
 
-// Run one worker invocation with a wall-clock timeout, sampling peak memory.
-function runWorker(python, workerArgs, timeoutMs) {
+// Run one worker invocation with a wall-clock timeout, sampling peak memory. The child inherits the
+// SAME `WHETSTONE_PDF_MEMORY_MIB` ceiling the production runner sets (createDoclingRunner), so a
+// conversion that would exceed it is killed by the worker's own address-space limit (exit 7) here just
+// as in production — the measurement is not memory-unbounded.
+function runWorker(python, workerArgs, timeoutMs, memoryMib) {
   return new Promise((resolvePromise) => {
-    const child = spawn(python, [WORKER, ...workerArgs]);
+    const child = spawn(python, [WORKER, ...workerArgs], {
+      env: { ...process.env, WHETSTONE_PDF_MEMORY_MIB: String(memoryMib) }
+    });
     const sampler = startPeakRssSampler(child.pid);
     let stdout = "";
     let timedOut = false;
@@ -233,15 +273,30 @@ async function convertOne(python, contracts, mapStructuredDocument, path, args, 
   // Size is known from the filesystem alone: exclude an over-size PDF before spawning the worker.
   const sizeBytes = statSync(path).size;
   if (sizeBytes > bounds.maxBytes) {
-    return { observation: { kind: "no_content" }, pageCount: null, peakBytes, elapsedMs: elapsed() };
+    return {
+      observation: { kind: "no_content" },
+      pageCount: null,
+      peakBytes,
+      elapsedMs: elapsed()
+    };
   }
 
-  const probe = await runWorker(python, ["--probe", path], args.timeoutMs);
+  const probe = await runWorker(python, ["--probe", path], args.timeoutMs, args.memoryMib);
   peakBytes = Math.max(peakBytes, probe.peakBytes ?? 0);
-  if (probe.timedOut) return { observation: { kind: "timeout" }, pageCount: null, peakBytes, elapsedMs: elapsed() };
+  if (probe.timedOut)
+    return { observation: { kind: "timeout" }, pageCount: null, peakBytes, elapsedMs: elapsed() };
   if (probe.code === EXIT.TOOL_MISSING) return { toolMissing: true };
+  // The worker applies the memory ceiling before any command runs, so an environment that cannot enforce
+  // it surfaces here first. It is not a per-file failure: the whole run's numbers would be unbounded and
+  // non-equivalent to production, so abort rather than classify this file.
+  if (probe.code === EXIT.MEMORY_CEILING_UNSUPPORTED) return { memoryCeilingUnsupported: true };
   if (probe.code !== EXIT.OK)
-    return { observation: observationForExit(probe.code, "probe"), pageCount: null, peakBytes, elapsedMs: elapsed() };
+    return {
+      observation: observationForExit(probe.code, "probe"),
+      pageCount: null,
+      peakBytes,
+      elapsedMs: elapsed()
+    };
 
   const probeParsed = contracts.parseProbeClassification(probe.stdout);
   if (probeParsed.status !== "ok")
@@ -265,13 +320,21 @@ async function convertOne(python, contracts, mapStructuredDocument, path, args, 
     const range = await runWorker(
       python,
       ["--range", path, String(startPage), String(endPage)],
-      args.timeoutMs
+      args.timeoutMs,
+      args.memoryMib
     );
     peakBytes = Math.max(peakBytes, range.peakBytes ?? 0);
     if (range.timedOut)
       return { observation: { kind: "timeout" }, pageCount, peakBytes, elapsedMs: elapsed() };
+    if (range.code === EXIT.TOOL_MISSING) return { toolMissing: true };
+    if (range.code === EXIT.MEMORY_CEILING_UNSUPPORTED) return { memoryCeilingUnsupported: true };
     if (range.code !== EXIT.OK)
-      return { observation: observationForExit(range.code, "range"), pageCount, peakBytes, elapsedMs: elapsed() };
+      return {
+        observation: observationForExit(range.code, "range"),
+        pageCount,
+        peakBytes,
+        elapsedMs: elapsed()
+      };
     const parsed = contracts.parseRangeConversion(range.stdout);
     if (parsed.status !== "ok")
       return {
@@ -288,17 +351,29 @@ async function convertOne(python, contracts, mapStructuredDocument, path, args, 
     ranges
   );
   const mapping = mapStructuredDocument(document);
-  return { observation: observationForMapping(mapping), pageCount, peakBytes, elapsedMs: elapsed() };
+  return {
+    observation: observationForMapping(mapping),
+    pageCount,
+    peakBytes,
+    elapsedMs: elapsed()
+  };
 }
 
 async function loadTypeScriptDeps() {
   try {
     const contracts = await import("../../src/packages/contracts/src/index.js");
     const domain = await import("../../src/packages/domain/src/pdfUsability.js");
-    const mapper = await import(
-      "../../src/apps/server/src/features/pdfImport/pdfCanonicalMapping.js"
-    );
-    return { contracts, domain, mapStructuredDocument: mapper.mapStructuredDocument };
+    const mapper =
+      await import("../../src/apps/server/src/features/pdfImport/pdfCanonicalMapping.js");
+    // Reuse the production runner's platform fence so the harness supports exactly the platforms the real
+    // import lane does (a single source of truth for "where the memory ceiling can be enforced").
+    const adapter = await import("../../src/apps/server/src/files/pdfStructuredAdapter.js");
+    return {
+      contracts,
+      domain,
+      mapStructuredDocument: mapper.mapStructuredDocument,
+      canEnforceStructuredPdfMemoryCeiling: adapter.canEnforceStructuredPdfMemoryCeiling
+    };
   } catch (cause) {
     return { error: cause instanceof Error ? cause.message : String(cause) };
   }
@@ -323,9 +398,24 @@ async function main() {
   }
   const { contracts, domain } = deps;
 
+  // Fence unsupported platforms up front, exactly like the production runner (resolveStructuredPdfRunner
+  // -> createUnavailableDoclingRunner on win32): where no per-child address-space ceiling can be enforced,
+  // production refuses the whole adapter rather than convert memory-unbounded, so the harness refuses the
+  // whole run rather than emit an aggregate that would not be falsifiable against the real import lane.
+  if (!deps.canEnforceStructuredPdfMemoryCeiling(process.platform)) {
+    process.stderr.write(
+      `error: a per-child memory ceiling cannot be enforced on platform "${process.platform}", so the ` +
+        "structured PDF lane is unavailable here (same fence as the production runner). Run the harness " +
+        "on a POSIX platform (Linux/macOS) where the worker can apply an address-space ceiling.\n"
+    );
+    return 4;
+  }
+
   const python = resolvePython();
   if (python === null) {
-    process.stderr.write("error: Python 3 not found; run `pnpm setup:pdf` to enable the PDF lane.\n");
+    process.stderr.write(
+      "error: Python 3 not found; run `pnpm setup:pdf` to enable the PDF lane.\n"
+    );
     return 3;
   }
 
@@ -366,10 +456,28 @@ async function main() {
     index += 1;
     const caseId = `case-${index}`;
     const sizeBytes = statSync(path).size;
-    const converted = await convertOne(python, contracts, deps.mapStructuredDocument, path, args, bounds);
+    const converted = await convertOne(
+      python,
+      contracts,
+      deps.mapStructuredDocument,
+      path,
+      args,
+      bounds
+    );
     if (converted.toolMissing) {
       process.stderr.write("error: the pinned Docling runtime is missing; run `pnpm setup:pdf`.\n");
       return 3;
+    }
+    if (converted.memoryCeilingUnsupported) {
+      // Defense in depth behind the up-front platform fence: the worker itself refused because it could
+      // not enforce the requested ceiling (worker exit 8). Abort the whole run — a memory-unbounded
+      // measurement is not equivalent to production, so no aggregate is emitted.
+      process.stderr.write(
+        `error: the worker could not enforce the ${args.memoryMib} MiB per-child memory ceiling in this ` +
+          "environment (WHETSTONE_PDF_MEMORY_MIB), so the run would not be falsifiable against the " +
+          "production import lane. Run on a POSIX platform (Linux/macOS) where the ceiling can be applied.\n"
+      );
+      return 4;
     }
     const result = domain.evaluateCorpusCase({
       bounds,
