@@ -16,13 +16,13 @@ import {
   type WordPosSeekLike
 } from "../features/lexical/wordnetLexicalProvider.js";
 import { createDefaultCurrentUserProvider } from "../identity/currentUser.js";
-import { createMcpPreviewServer } from "./mcpServer.js";
+import { createMcpCardServer } from "./mcpServer.js";
 
-// The local stdio MCP bootstrap for the card-preview surface (#717). Coverage-excluded, wiring-only: it opens
-// the SAME local PostgreSQL (PGlite) database and offline WordNet the HTTP server uses, sweeps expired
-// card-creation attempts on startup (so a preview never blocks on a lapsed one), builds the shared preview
-// command, registers the single `preview_card_creation` tool, and serves it over stdio. All diagnostics go to
-// stderr — stdout is reserved for the JSON-RPC transport frames.
+// The local stdio MCP bootstrap for the card surface (#717 preview, #718 commit). Coverage-excluded,
+// wiring-only: it opens the SAME local PostgreSQL (PGlite) database and offline WordNet the HTTP server uses,
+// sweeps expired card-creation attempts on startup (so a preview never blocks on a lapsed one), builds the
+// shared preview/commit commands, registers the `preview_card_creation` and `commit_card_creation` tools, and
+// serves them over stdio. All diagnostics go to stderr — stdout is reserved for the JSON-RPC transport frames.
 
 // The 30-minute attempt window, matching the HTTP New-card review window (#712): a staged preview a learner
 // never approves expires and is swept, so no attempt lingers and no scheduler is added.
@@ -41,12 +41,17 @@ async function main(): Promise<void> {
     lemmatize: winkLemmatizer
   });
 
-  const server = createMcpPreviewServer({
+  const server = createMcpCardServer({
     preview: {
       attemptTtlMs: cardCreationAttemptTtlMs,
       createId: () => randomUUID(),
       db,
       lexical,
+      now: () => new Date()
+    },
+    commit: {
+      createId: () => randomUUID(),
+      db,
       now: () => new Date()
     },
     currentUser: createDefaultCurrentUserProvider(),
@@ -57,10 +62,10 @@ async function main(): Promise<void> {
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  process.stderr.write("whetstone card-preview MCP server ready on stdio\n");
+  process.stderr.write("whetstone card MCP server ready on stdio\n");
 }
 
 main().catch((error: unknown) => {
-  process.stderr.write(`whetstone card-preview MCP server failed to start: ${String(error)}\n`);
+  process.stderr.write(`whetstone card MCP server failed to start: ${String(error)}\n`);
   process.exitCode = 1;
 });

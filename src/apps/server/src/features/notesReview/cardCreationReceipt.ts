@@ -45,11 +45,15 @@ export function fingerprintPayload(payload: unknown): string {
 
 // Claim the receipt for one submission as the FIRST write of the creating transaction: the first submission
 // wins the insert; a retry (or a concurrent loser) inserts nothing and must fall through to
-// `resolveReceiptReplay`. Serializes concurrent/sequential retries on the receipt's primary key. Returns
+// `resolveReceiptReplay`. Serializes concurrent/sequential retries on the receipt's primary key. `channel`
+// records the immutable audit origin (`ui` for the in-app flows, `mcp` for a learner-approved local-MCP
+// commit, #718) and `attemptId` the consumed preview attempt for an `mcp` commit (null otherwise). Returns
 // whether this caller claimed the receipt (and therefore must perform the genuine create).
 export async function claimReceipt(
   tx: Transaction,
   receipt: Readonly<{
+    attemptId: string | null;
+    channel: "ui" | "mcp";
     createdAt: Date;
     noteEntryId: string;
     payloadFingerprint: string;

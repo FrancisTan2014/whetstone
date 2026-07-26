@@ -754,7 +754,9 @@ export const reviewEvents = pgTable(
 // text with NO foreign key to `entries`, so this receipt sits OUTSIDE the note delete cascade
 // (`deleteNoteInTx`) and survives as a non-resurrecting tombstone: once the note is deleted a replay
 // reports the result is gone and never recreates it. Owner-scoped (`user_id`) so different owners are
-// isolated even when they reuse the same `submission_id`.
+// isolated even when they reuse the same `submission_id`. `channel` records the immutable audit origin
+// (`ui`, or `mcp` for a learner-approved local-MCP commit, #718) and `attempt_id` the consumed preview
+// attempt for an `mcp` commit — audit metadata only, never a distinct card type.
 export const cardCreationReceipts = pgTable(
   "card_creation_receipts",
   {
@@ -763,6 +765,15 @@ export const cardCreationReceipts = pgTable(
     noteEntryId: text("note_entry_id").notNull(),
     promptEntryId: text("prompt_entry_id").notNull(),
     payloadFingerprint: text("payload_fingerprint").notNull(),
+    // The immutable audit channel the card was created through (#718): `ui` for the in-app New-card /
+    // saved-note flows, `mcp` for a learner-approved local-MCP commit. Audit metadata only — it is never a
+    // new card type and is never updated after the claim; reusing an existing Note does not change that
+    // Note's own origin. `attemptId` records the consumed `card_creation_attempt` for an `mcp` commit (null
+    // for a `ui` creation, which claims its receipt without an attempt).
+    channel: text("channel", { enum: ["ui", "mcp"] as const })
+      .notNull()
+      .default("ui"),
+    attemptId: text("attempt_id"),
     createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull().defaultNow()
   },
   (table) => [primaryKey({ columns: [table.userId, table.submissionId] })]
@@ -779,7 +790,8 @@ export const cardCreationReceipts = pgTable(
 // fences a decision against a stale client; `source` records where review was raised (`ui`, or `mcp` for a
 // local-MCP preview). An `mcp` preview (#717) additionally STAGES the exact drafted documents in
 // `draft_payload` so a later commit can recreate precisely the previewed card; a `ui` attempt leaves it
-// null (the composer re-sends the draft on its decision). A partial unique index keeps at most one PENDING
+// null (the composer re-sends the draft on its decision). A learner-approved local-MCP commit (#718)
+// consumes such an attempt, recording `create`, `reuse`, or `keep_separate` in `decision`. A partial unique index keeps at most one PENDING
 // attempt per (owner, submission), so a save retry or a same-request preview resumes the same attempt
 // instead of minting a second. The row is swept at its `expires_at` on startup and on each attempt
 // operation; it has no foreign key into the note cascade, so a deleted candidate simply fails a later
@@ -796,7 +808,7 @@ export const cardCreationAttempts = pgTable(
     source: text("source", { enum: ["ui", "mcp"] as const }).notNull(),
     draftPayload: jsonb("draft_payload"),
     state: text("state", { enum: ["pending", "consumed"] as const }).notNull(),
-    decision: text("decision", { enum: ["reuse", "keep_separate"] as const }),
+    decision: text("decision", { enum: ["reuse", "keep_separate", "create"] as const }),
     revision: integer("revision").notNull().default(0),
     expiresAt: timestamp("expires_at", { mode: "date", withTimezone: true }).notNull(),
     createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull().defaultNow(),

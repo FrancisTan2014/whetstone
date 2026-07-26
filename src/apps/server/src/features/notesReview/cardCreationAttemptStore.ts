@@ -23,7 +23,7 @@ type Transaction = Parameters<Parameters<DbClient["transaction"]>[0]>[0];
 // inside a decision's transaction as well as standalone.
 type Reader = Pick<DbClient, "select">;
 
-export type CardCreationDecision = "keep_separate" | "reuse";
+export type CardCreationDecision = "keep_separate" | "reuse" | "create";
 
 // Where a review/preview attempt was raised: `ui` for the in-app New-card save (#712), `mcp` for a local-MCP
 // preview (#717).

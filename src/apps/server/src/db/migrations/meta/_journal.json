@@ -547,6 +547,13 @@
       "when": 1785051296624,
       "tag": "0077_public_whizzer",
       "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1785058988222,
+      "tag": "0078_loose_chamber",
+      "breakpoints": true
     }
   ]
 }

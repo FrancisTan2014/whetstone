@@ -120,6 +120,8 @@ export type DirectCardWriteOutcome =
 export async function writeDirectCardInTx(
   tx: Transaction,
   params: Readonly<{
+    attemptId: string | null;
+    channel: "ui" | "mcp";
     draft: PreparedDirectCardDraft;
     noteEntryId: EntryId;
     now: Date;
@@ -128,8 +130,10 @@ export async function writeDirectCardInTx(
     userId: string;
   }>
 ): Promise<DirectCardWriteOutcome> {
-  const { draft, noteEntryId, now, promptId, submissionId, userId } = params;
+  const { attemptId, channel, draft, noteEntryId, now, promptId, submissionId, userId } = params;
   const claimed = await claimReceipt(tx, {
+    attemptId,
+    channel,
     createdAt: now,
     noteEntryId,
     payloadFingerprint: draft.fingerprint,
@@ -339,6 +343,8 @@ export async function createDirectCard(
       await discardPendingAttempt(tx, userId, pending.id);
     }
     const write = await writeDirectCardInTx(tx, {
+      attemptId: null,
+      channel: "ui",
       draft,
       noteEntryId: toEntryId(dependencies.createId()),
       now,
