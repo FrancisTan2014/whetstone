@@ -708,8 +708,8 @@ can navigate them from another package.
   sample text, plus one offline integration test against the real WordNet database).
   The route lives in `src/features/lookup/lookupRoutes.ts` (`GET /api/lookup?term=&language=`,
   language is `en`/`zh-CN`/`zh-TW`, thin: validates the query contract, delegates to the service).
-- Offline English lexical relationships (#715, read-only, capability only — not yet wired to any route;
-  the next issue owns the UI): `src/apps/server/src/features/lexical/` resolves, for ONE eligible English
+- Offline English lexical relationships (#715, read-only; exposed over HTTP by #772, the UI journey
+  follows in #716): `src/apps/server/src/features/lexical/` resolves, for ONE eligible English
   word plus a caller-selected WordNet sense, the owner's single-word Notes connected by typed one-hop
   relations (inflection, synonym, antonym, derivation, direct hypernym, direct hyponym). The pure typing
   rules (surface eligibility, pointer-symbol classification, `sourceTarget` word indices, lemma-key
@@ -727,6 +727,19 @@ can navigate them from another package.
   outcome union so a corrupt/missing WordNet DB never masquerades as "no relation". Writes nothing (no
   edge/sense/note/card/link/event). Calibrated + gated by `fixtures/card-matching/lexical-v1.jsonl`
   (323 rows) via `lexicalCorpus.test.ts` against the REAL bundled WordNet database; unit tests colocated.
+- Related-material HTTP boundary (#772, foundation only — no React UI or browser journey; the
+  **Find related material** disclosure and E2E land later in #716): exposes #715's read-only lexical
+  service as owned Note evidence. Contracts in `contracts/relatedMaterialContracts.ts` (status-
+  discriminated `found | not_found | unsupported | unavailable` senses/relations DTOs with stable sense
+  identity/POS/definition/examples/lemmas and typed relation direction; the eligible surface is projected
+  server-side, never trusted from the client). Server `src/apps/server/src/features/relatedMaterial/`:
+  `relatedMaterialRoutes.ts` (`POST /api/notes/review/related-material/senses` and `/relations`, deps
+  `{ db, service }`, wired in `http/createServer.ts` and instantiated in `index.ts` from the shared
+  `WordPOS`) validates once at the contract boundary, delegates sense/relation policy to #715's
+  `LexicalRelationService`, and maps outcomes to DTOs without auto-selecting a sense or reinterpreting a
+  relation; `relatedMaterialQuery.ts` (`enrichRelatedMaterialGroups`) batches one owner-scoped
+  `note_anchors` read to add each related note's capture context. Writes nothing on any path (no note,
+  card, link, sense, relation, review state, or event).
 - Backup/restore (#600): `src/data/` owns verified whole-instance backup and restore. Pure, covered
   modules — `archive.ts` (versioned single-ZIP format: `manifest.json` + gzip database dump + per-root
   files, with SHA-256 checksums and `verifyArchive`), `dataRoots.ts` (durable file-root inventory from

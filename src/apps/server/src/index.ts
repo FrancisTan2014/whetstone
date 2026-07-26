@@ -24,6 +24,12 @@ import { createLookupService, type LookupSource } from "./lookup/lookupService.j
 import { createMoedictProvider } from "./lookup/moedictProvider.js";
 import { createOfflineGloss } from "./lookup/offlineGloss.js";
 import { createWordNetProvider, type WordPosLike } from "./lookup/wordnetProvider.js";
+import { createLexicalRelationService } from "./features/lexical/lexicalRelationService.js";
+import { winkLemmatizer } from "./features/lexical/lexicalLemmatizer.js";
+import {
+  createWordNetLexical,
+  type WordPosSeekLike
+} from "./features/lexical/wordnetLexicalProvider.js";
 import { createZhWiktionaryProvider } from "./lookup/zhWiktionaryProvider.js";
 import { readExplainConfig, resolveExplainer } from "./lookup/explainProvider.js";
 import { createServer } from "./http/createServer.js";
@@ -107,9 +113,18 @@ const httpClient = createHttpClient();
 // always up) and the networked Wiktionary via the Free Dictionary API (rich, time-boxed). Neither
 // blocks the other, so a slow/down Wiktionary host never freezes the offline WordNet tab (#196).
 const wiktionaryLookup = createWiktionaryEntryLookup(createFreeDictionaryProvider({ httpClient }));
+const wordpos = new WordPOS();
 const wordNetLookup = createWordNetEntryLookup(
-  createWordNetProvider(new WordPOS() as unknown as WordPosLike)
+  createWordNetProvider(wordpos as unknown as WordPosLike)
 );
+
+// The offline typed lexical-relationship service (#715) reuses the same bundled WordNet instance behind its
+// own seam (it additionally reads `seek`/pointers), so "Find related material" during New-card creation
+// (#716) resolves fully offline with no extra database load.
+const lexicalRelationService = createLexicalRelationService({
+  wordnet: createWordNetLexical(wordpos as unknown as WordPosSeekLike),
+  lemmatize: winkLemmatizer
+});
 
 const lookupSources: LookupSource[] = [
   { id: "wordnet", languages: ["en"], lookup: wordNetLookup },
@@ -347,6 +362,7 @@ const server = createServer({
     db,
     now: () => new Date()
   },
+  relatedMaterial: { db, service: lexicalRelationService },
   pdfImport: {
     commands: pdfImportCommands,
     uploadLimitBytes: config.pdfUploadLimitBytes,

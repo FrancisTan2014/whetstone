@@ -42,6 +42,8 @@ import { registerRecitationRoutes } from "../features/recitation/recitationRoute
 import type { RecitationRouteDependencies } from "../features/recitation/recitationRoutes.js";
 import { registerNotesReviewRoutes } from "../features/notesReview/notesReviewRoutes.js";
 import type { NotesReviewRouteDependencies } from "../features/notesReview/notesReviewRoutes.js";
+import { registerRelatedMaterialRoutes } from "../features/relatedMaterial/relatedMaterialRoutes.js";
+import type { RelatedMaterialRouteDependencies } from "../features/relatedMaterial/relatedMaterialRoutes.js";
 import { registerTodayRoutes } from "../features/today/todayRoutes.js";
 import type { TodayRouteDependencies } from "../features/today/todayRoutes.js";
 import { registerWebStatic } from "./staticWeb.js";
@@ -75,6 +77,9 @@ export type CreateServerOptions = Readonly<{
   preferences?: PreferencesDependencies;
   readingPosition?: ReadingPositionDependencies;
   recitation?: RecitationRouteDependencies;
+  // The offline "Find related material" inspection aid for New-card creation (#716). When set, the composer's
+  // disclosure can list a single-word Answer's senses and the owner's typed related saved Notes; read-only.
+  relatedMaterial?: RelatedMaterialRouteDependencies;
   search?: SearchDependencies;
   today?: TodayRouteDependencies;
   // The server-owned Markdown creation-review boundary (#747). When set, imported-Markdown Work creation
@@ -178,6 +183,10 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
 
   if (options.notesReview !== undefined) {
     registerNotesReviewRoutes(server, options.notesReview);
+  }
+
+  if (options.relatedMaterial !== undefined) {
+    registerRelatedMaterialRoutes(server, options.relatedMaterial);
   }
 
   if (options.today !== undefined) {
