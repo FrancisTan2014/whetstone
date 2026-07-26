@@ -121,9 +121,7 @@ describe("RelatedMaterialDisclosure", () => {
     // "born -> bear . verb" header.
     await waitFor(() =>
       expect(
-        screen.getByText(
-          (_, element) => element?.textContent === "born → bear · verb"
-        )
+        screen.getByText((_, element) => element?.textContent === "born → bear · verb")
       ).toBeTruthy()
     );
     // The inflection reason is labelled with the selected part of speech; the synonym reason is fixed.

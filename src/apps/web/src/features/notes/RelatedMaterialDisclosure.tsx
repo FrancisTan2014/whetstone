@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 
 import type {
   LexicalPartOfSpeechDto,
@@ -72,26 +72,15 @@ function RelationGroup({
 
 // The related saved Notes under the selected sense. `found` renders the "born -> bear . verb" header and the
 // typed groups (possibly empty — a silent no-result); `unavailable` offers Retry and never blocks the save;
-// `not_found`/`unsupported` stay quiet. Loading is announced.
+// `not_found`/`unsupported` stay quiet. The caller renders the loading announcement and only mounts this once a
+// response is held, so this component never sees a pristine/loading state.
 function RelationsView({
-  loading,
   onRetry,
   relations
 }: Readonly<{
-  loading: boolean;
   onRetry: () => void;
-  relations: RelatedMaterialRelationsResponse | null;
-}>): React.JSX.Element | null {
-  if (loading) {
-    return (
-      <p className="text-sm text-text-muted" role="status">
-        Finding related saved notes…
-      </p>
-    );
-  }
-  if (relations === null) {
-    return null;
-  }
+  relations: RelatedMaterialRelationsResponse;
+}>): React.JSX.Element {
   if (relations.status === "unavailable") {
     return (
       <p className="text-sm text-text-muted" role="status">
@@ -174,64 +163,45 @@ function SenseChoice({
   );
 }
 
-// The senses step. `found` lists every sense for explicit selection and renders the relations for the selected
-// one beneath; `unavailable` offers Retry; `not_found`/`unsupported` stay quiet. Loading is announced.
+// The senses step, mounted only once a senses response is held. `found` lists every sense for explicit
+// selection and shows the related saved notes for the selected one beneath; `unavailable` offers Retry;
+// `not_found`/`unsupported` stay quiet. While a sense's relations are in flight the loading line is announced;
+// the caller announces senses loading, so this never sees a pristine/loading senses state.
 function SensesView({
   answerDoc,
   groupName,
-  loading,
   onRetry,
   senses
 }: Readonly<{
   answerDoc: DocumentNodeJSON;
   groupName: string;
-  loading: boolean;
   onRetry: () => void;
-  senses: RelatedMaterialSensesResponse | null;
-}>): React.JSX.Element | null {
+  senses: RelatedMaterialSensesResponse;
+}>): React.JSX.Element {
   const [selectedSense, setSelectedSense] = useState<RelatedMaterialSenseRef | null>(null);
   const [relations, setRelations] = useState<RelatedMaterialRelationsResponse | null>(null);
-  const [relationsLoading, setRelationsLoading] = useState(false);
   const relationsSeq = useRef(0);
-  const answerDocRef = useRef(answerDoc);
-  answerDocRef.current = answerDoc;
 
-  useEffect(() => {
-    // Fetch relations once a sense is explicitly selected and no result is held yet. Selecting a different
-    // sense (or Retry) clears `relations` to re-enter this. The cleanup bumps the sequence so a response that
-    // arrives after the sense changed — or after unmount — is ignored (stale/cancelled safety).
-    if (selectedSense === null || relations !== null) {
-      return;
-    }
+  // Fetch the related saved notes for an explicitly selected sense. Called only from event handlers (selecting a
+  // sense, or Retry). Clearing `relations` to null announces loading; the sequence guard means a response that
+  // arrives after the learner picked a different sense — or after Retry — is ignored, so a slow earlier request
+  // never overwrites the current selection's result.
+  function loadRelations(sense: RelatedMaterialSenseRef): void {
     const seq = (relationsSeq.current += 1);
-    setRelationsLoading(true);
-    void fetchRelatedRelations(answerDocRef.current, selectedSense).then((result) => {
+    setRelations(null);
+    void fetchRelatedRelations(answerDoc, sense).then((result) => {
       if (seq === relationsSeq.current) {
-        setRelationsLoading(false);
         setRelations(result);
       }
     });
-    return () => {
-      relationsSeq.current += 1;
-    };
-  }, [relations, selectedSense]);
+  }
 
   function selectSense(sense: RelatedMaterialSenseDto): void {
-    setSelectedSense({ offset: sense.offset, partOfSpeech: sense.partOfSpeech });
-    setRelations(null);
-    setRelationsLoading(false);
+    const ref = { offset: sense.offset, partOfSpeech: sense.partOfSpeech };
+    setSelectedSense(ref);
+    loadRelations(ref);
   }
 
-  if (loading) {
-    return (
-      <p className="text-sm text-text-muted" role="status">
-        Finding senses…
-      </p>
-    );
-  }
-  if (senses === null) {
-    return null;
-  }
   if (senses.status === "unavailable") {
     return (
       <p className="text-sm text-text-muted" role="status">
@@ -271,11 +241,13 @@ function SensesView({
           );
         })}
       </fieldset>
-      <RelationsView
-        loading={relationsLoading}
-        onRetry={() => setRelations(null)}
-        relations={relations}
-      />
+      {selectedSense === null ? null : relations === null ? (
+        <p className="text-sm text-text-muted" role="status">
+          Finding related saved notes…
+        </p>
+      ) : (
+        <RelationsView onRetry={() => loadRelations(selectedSense)} relations={relations} />
+      )}
     </div>
   );
 }
@@ -294,32 +266,28 @@ export function RelatedMaterialDisclosure({
 }: RelatedMaterialDisclosureProps): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const [senses, setSenses] = useState<RelatedMaterialSensesResponse | null>(null);
-  const [sensesLoading, setSensesLoading] = useState(false);
-  const sensesSeq = useRef(0);
-  const answerDocRef = useRef(answerDoc);
-  answerDocRef.current = answerDoc;
+  const [requested, setRequested] = useState(false);
   const panelId = useId();
   const groupName = useId();
 
-  useEffect(() => {
-    // Discover senses the first time the disclosure is open with no result held (Retry clears `senses` to
-    // re-enter this). A closed disclosure never requests. The cleanup bumps the sequence so a response that
-    // arrives after close/unmount is ignored.
-    if (!open || senses !== null) {
-      return;
-    }
-    const seq = (sensesSeq.current += 1);
-    setSensesLoading(true);
-    void fetchRelatedSenses(answerDocRef.current).then((result) => {
-      if (seq === sensesSeq.current) {
-        setSensesLoading(false);
-        setSenses(result);
-      }
+  // Discover the Answer's senses. Called only from event handlers (opening the disclosure the first time, or
+  // Retry) — never during render and never from an effect, so opening a closed disclosure is the sole trigger
+  // for the first request. Clearing `senses` to null announces loading until the response arrives.
+  function loadSenses(): void {
+    setSenses(null);
+    void fetchRelatedSenses(answerDoc).then((result) => {
+      setSenses(result);
     });
-    return () => {
-      sensesSeq.current += 1;
-    };
-  }, [open, senses]);
+  }
+
+  function toggle(): void {
+    const next = !open;
+    setOpen(next);
+    if (next && !requested) {
+      setRequested(true);
+      loadSenses();
+    }
+  }
 
   return (
     <section className="flex flex-col gap-3 rounded border border-border bg-bg p-3">
@@ -327,7 +295,7 @@ export function RelatedMaterialDisclosure({
         aria-controls={panelId}
         aria-expanded={open}
         className="min-h-11 self-start"
-        onClick={() => setOpen((value) => !value)}
+        onClick={toggle}
         size="sm"
         type="button"
         variant="ghost"
@@ -335,14 +303,24 @@ export function RelatedMaterialDisclosure({
         Find related material
       </Button>
       {open ? (
-        <div aria-label="Related material" className="flex flex-col gap-3" id={panelId} role="group">
-          <SensesView
-            answerDoc={answerDoc}
-            groupName={groupName}
-            loading={sensesLoading}
-            onRetry={() => setSenses(null)}
-            senses={senses}
-          />
+        <div
+          aria-label="Related material"
+          className="flex flex-col gap-3"
+          id={panelId}
+          role="group"
+        >
+          {senses === null ? (
+            <p className="text-sm text-text-muted" role="status">
+              Finding senses…
+            </p>
+          ) : (
+            <SensesView
+              answerDoc={answerDoc}
+              groupName={groupName}
+              onRetry={loadSenses}
+              senses={senses}
+            />
+          )}
         </div>
       ) : null}
     </section>

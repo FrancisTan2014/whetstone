@@ -8,9 +8,11 @@ import { createTextDocument } from "@whetstone/document";
 
 import { fetchRelatedRelations, fetchRelatedSenses } from "./relatedMaterialApi";
 
-function stubFetch(response: { ok: boolean; status?: number; body?: unknown }): ReturnType<
-  typeof vi.fn
-> {
+function stubFetch(response: {
+  ok: boolean;
+  status?: number;
+  body?: unknown;
+}): ReturnType<typeof vi.fn> {
   const fetchMock = vi.fn(async () => ({
     ok: response.ok,
     status: response.status ?? 200,
