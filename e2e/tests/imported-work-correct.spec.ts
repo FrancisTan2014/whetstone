@@ -88,8 +88,10 @@ async function seedImportedWork(
   return { title, workId: body.work!.entryId };
 }
 
-// Create an owner-scoped manual Work through the real review front door (#749). A unique title has no
-// duplicate candidate, so begin mints the owned, canonical empty-document Work immediately.
+// Create an owner-scoped manual Work through the real review front door (#749). The caller passes a
+// uniquely tokenised title (and matching author), so begin finds no duplicate candidate in the shared
+// smoke database — even against the identically-shaped "Manual …" titles that `manual-work-edit.spec.ts`
+// creates — and mints the owned, canonical empty-document Work immediately.
 async function createManualWork(page: Page, setup: SetupData, title: string): Promise<string> {
   const created = await page.request.post(`${setup.baseURL}api/works/manual`, {
     data: {
@@ -210,8 +212,11 @@ for (const theme of ["day", "night"] as const) {
       await expect(page.locator(READING)).toContainText(marker);
 
       // The owner-scoped manual editor shares the same editor but must stay owner-scoped: it exposes no
-      // administrative "Open in Reader" action, at this same theme and 320px/desktop viewport.
-      const manualTitle = `Manual ${theme} ${size}`;
+      // administrative "Open in Reader" action, at this same theme and 320px/desktop viewport. Tokenise the
+      // manual Work's title so it never collides with the identically-shaped "Manual …" titles that
+      // `manual-work-edit.spec.ts` creates in this shared database (a collision would park a duplicate review
+      // instead of minting the Work, breaking whichever spec ran second).
+      const manualTitle = `Manual ${theme} ${size} ${randomUUID()}`;
       const manualId = await createManualWork(page, setup, manualTitle);
       await page.goto(`${setup.baseURL}#/library/works/${encodeURIComponent(manualId)}/edit`);
       const manualEditor = page.getByRole("textbox", { name: `Edit ${manualTitle}` });
