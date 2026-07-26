@@ -162,12 +162,19 @@ function runWorker(python, workerArgs, timeoutMs) {
   });
 }
 
-// Map a non-OK worker exit code to a rubric observation.
-function observationForExit(code) {
+// Map a non-OK worker exit code to a rubric observation. `stage` disambiguates the worker's shared
+// EXIT_CONVERSION_FAILED (exit 4): the worker returns it BOTH when it cannot open/probe a file (a
+// corrupt input) AND when an openable, probeable file fails during range conversion (a genuine
+// unsupported conversion). The probe stage is only reachable by opening the file, so a probe-stage
+// exit 4 is corruption — excluded from the 95% denominator (`assessCorpusEligibility` drops `corrupt`)
+// rather than counted as an unsupported failure. A range-stage exit 4 stays `conversion_failed`, so
+// classifying corrupt inputs distinctly never hides a real conversion failure.
+function observationForExit(code, stage) {
   if (code === EXIT.PASSWORD_REQUIRED) return { kind: "password_required" };
   if (code === EXIT.MEMORY) return { kind: "memory" };
   if (code === EXIT.UNSUPPORTED_SCHEMA)
     return { kind: "conversion_failed", detail: "unsupported docling schema" };
+  if (code === EXIT.CONVERSION_FAILED && stage === "probe") return { kind: "corrupt" };
   return { kind: "conversion_failed", detail: `worker exit ${code}` };
 }
 
@@ -234,7 +241,7 @@ async function convertOne(python, contracts, mapStructuredDocument, path, args, 
   if (probe.timedOut) return { observation: { kind: "timeout" }, pageCount: null, peakBytes, elapsedMs: elapsed() };
   if (probe.code === EXIT.TOOL_MISSING) return { toolMissing: true };
   if (probe.code !== EXIT.OK)
-    return { observation: observationForExit(probe.code), pageCount: null, peakBytes, elapsedMs: elapsed() };
+    return { observation: observationForExit(probe.code, "probe"), pageCount: null, peakBytes, elapsedMs: elapsed() };
 
   const probeParsed = contracts.parseProbeClassification(probe.stdout);
   if (probeParsed.status !== "ok")
@@ -264,7 +271,7 @@ async function convertOne(python, contracts, mapStructuredDocument, path, args, 
     if (range.timedOut)
       return { observation: { kind: "timeout" }, pageCount, peakBytes, elapsedMs: elapsed() };
     if (range.code !== EXIT.OK)
-      return { observation: observationForExit(range.code), pageCount, peakBytes, elapsedMs: elapsed() };
+      return { observation: observationForExit(range.code, "range"), pageCount, peakBytes, elapsedMs: elapsed() };
     const parsed = contracts.parseRangeConversion(range.stdout);
     if (parsed.status !== "ok")
       return {
@@ -353,7 +360,6 @@ async function main() {
 
   const bounds = { maxBytes: contracts.MAX_STAGED_BYTES, maxPages: contracts.MAX_PAGE_COUNT };
   const cases = [];
-  const perCase = [];
   let index = 0;
   for (const path of unique) {
     if (index >= args.limit) break;
@@ -378,19 +384,13 @@ async function main() {
       observation: converted.observation
     });
     cases.push(result);
-    perCase.push({
-      caseId,
-      class: result.verdict ? result.verdict.class : null,
-      elapsedMs: result.metrics.elapsedMs,
-      excludedReason: result.eligibility.included ? null : result.eligibility.reason,
-      pageCount: result.metrics.pageCount,
-      reason: result.verdict ? result.verdict.reason : null
-    });
   }
 
+  // AGGREGATE-ONLY report: histograms, ratios, the gate verdict, timing percentiles, peak memory, and
+  // pinned tool fingerprints — never a per-file row (no caseId/class/page/time per PDF), so the output
+  // can be pasted as the #705/#779 acceptance evidence while the corpus stays private.
   const report = domain.summarizeCorpus(cases);
   const output = {
-    cases: perCase,
     gateRatioTarget: domain.PDF_USABILITY_GATE_RATIO,
     report,
     tooling: {
