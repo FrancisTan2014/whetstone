@@ -444,7 +444,7 @@ export function WorkContentEditor<W extends WorkEditorWork>({
           <RichContentEditor
             ariaLabel={`Edit ${work.title}`}
             document={savedDocument}
-            evidence={evidence}
+            {...(evidence ? { evidence } : {})}
             focusSignal={focusSignal}
             key={activeUnitEntryId}
             onChange={handleChange}

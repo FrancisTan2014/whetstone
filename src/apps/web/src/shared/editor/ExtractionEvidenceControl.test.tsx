@@ -107,9 +107,7 @@ describe("ExtractionEvidenceControl", () => {
     render(<ExtractionEvidenceControl evidence={evidence()} />);
 
     await user.tab();
-    expect(document.activeElement).toBe(
-      screen.getByRole("button", { name: "Review extraction" })
-    );
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Review extraction" }));
 
     await user.keyboard("{Enter}");
     expect(screen.queryByRole("group")).not.toBeNull();

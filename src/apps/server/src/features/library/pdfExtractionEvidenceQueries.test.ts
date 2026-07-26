@@ -81,7 +81,7 @@ async function seedBlockWithEvidence(
     correctedAt: block.correctedAt ?? null,
     id: block.id,
     nodeJson: { type: block.type },
-    orderIndex: sequence += 1,
+    orderIndex: (sequence += 1),
     plaintext: block.id,
     readingUnitEntryId: unitEntryId,
     type: block.type,

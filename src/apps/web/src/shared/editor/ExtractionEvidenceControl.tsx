@@ -59,20 +59,14 @@ export function ExtractionEvidenceControl({
               : extractionEvidenceCopy.heading}
           </p>
           <dl>
-            <EvidenceRow
-              term={extractionEvidenceCopy.pageTerm}
-              value={String(evidence.page)}
-            />
+            <EvidenceRow term={extractionEvidenceCopy.pageTerm} value={String(evidence.page)} />
             <EvidenceRow term={extractionEvidenceCopy.labelTerm} value={evidence.label} />
             <EvidenceRow
               term={extractionEvidenceCopy.confidenceTerm}
               value={extractionConfidenceBandLabels[band]}
             />
             {evidence.ocrEngine !== null ? (
-              <EvidenceRow
-                term={extractionEvidenceCopy.ocrEngineTerm}
-                value={evidence.ocrEngine}
-              />
+              <EvidenceRow term={extractionEvidenceCopy.ocrEngineTerm} value={evidence.ocrEngine} />
             ) : null}
             {evidence.ocrLanguage !== null ? (
               <EvidenceRow

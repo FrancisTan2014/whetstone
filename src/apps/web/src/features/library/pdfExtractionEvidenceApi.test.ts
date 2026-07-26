@@ -71,9 +71,7 @@ describe("fetchPdfExtractionEvidence", () => {
 
     await fetchPdfExtractionEvidence("work/1 a");
 
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/imported-works/work%2F1%20a/extraction-evidence"
-    );
+    expect(fetchMock).toHaveBeenCalledWith("/api/imported-works/work%2F1%20a/extraction-evidence");
   });
 
   it("throws on an unexpected non-2xx response", async () => {

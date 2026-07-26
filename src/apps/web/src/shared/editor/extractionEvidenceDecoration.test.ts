@@ -110,19 +110,13 @@ describe("ExtractionEvidenceDecoration", () => {
 
     setExtractionEvidence(
       editor,
-      evidenceMap(
-        evidenceItem({ blockId: "a" }),
-        evidenceItem({ blockId: "b" })
-      )
+      evidenceMap(evidenceItem({ blockId: "a" }), evidenceItem({ blockId: "b" }))
     );
     expect(cuedTexts(editor)).toEqual(["a", "b"]);
 
     setExtractionEvidence(
       editor,
-      evidenceMap(
-        evidenceItem({ blockId: "a", corrected: true }),
-        evidenceItem({ blockId: "b" })
-      )
+      evidenceMap(evidenceItem({ blockId: "a", corrected: true }), evidenceItem({ blockId: "b" }))
     );
     expect(cuedTexts(editor)).toEqual(["b"]);
   });

@@ -1,8 +1,4 @@
-import {
-  isUnmappedBlockType,
-  suggestsExtractionReview,
-  type EntryId
-} from "@whetstone/domain";
+import { isUnmappedBlockType, suggestsExtractionReview, type EntryId } from "@whetstone/domain";
 import type { PdfExtractionEvidenceDto, PdfExtractionEvidenceItemDto } from "@whetstone/contracts";
 import { asc, eq } from "drizzle-orm";
 

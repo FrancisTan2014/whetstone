@@ -411,7 +411,11 @@ describe("shared extraction-review policy over the mapper's output", () => {
     const result = mapped(
       mapEn(
         doc([
-          item({ confidence: PDF_EXTRACTION_CONFIDENCE_THRESHOLD - 0.25, label: "text", text: "Low" }),
+          item({
+            confidence: PDF_EXTRACTION_CONFIDENCE_THRESHOLD - 0.25,
+            label: "text",
+            text: "Low"
+          }),
           item({ confidence: 0.95, label: "text", text: "High" }),
           // A label with no canonical node type takes the mapper's unknown/fallback path.
           item({ confidence: 0.99, label: "sidebar", text: "Weird" })
@@ -445,7 +449,9 @@ describe("shared extraction-review policy over the mapper's output", () => {
     expect(reviewByText.get("text")).toBe(false);
     expect(reviewByText.get("Weird")).toBe(true);
 
-    const lowRow = result.evidence.find((row) => row.confidence < PDF_EXTRACTION_CONFIDENCE_THRESHOLD)!;
+    const lowRow = result.evidence.find(
+      (row) => row.confidence < PDF_EXTRACTION_CONFIDENCE_THRESHOLD
+    )!;
     expect(
       suggestsExtractionReview({
         confidence: lowRow.confidence,
