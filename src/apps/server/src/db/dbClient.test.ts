@@ -36,6 +36,9 @@ describe("createDbClient", () => {
         contentRevision: 0,
         entryId: "work-1",
         language: "en",
+        // #762: `manual_corrections_at` marks when an imported Work was first administratively corrected;
+        // it stays null until a real correction lands.
+        manualCorrectionsAt: null,
         origin: "imported",
         title: "Parable of the Sower",
         // #724: `title_key` is a generated column, derived from the title by `work_title_key`.
