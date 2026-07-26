@@ -740,6 +740,18 @@ can navigate them from another package.
   relation; `relatedMaterialQuery.ts` (`enrichRelatedMaterialGroups`) batches one owner-scoped
   `note_anchors` read to add each related note's capture context. Writes nothing on any path (no note,
   card, link, sense, relation, review state, or event).
+- Related-material disclosure during New-card creation (#716, the browser UI + journey over #772's HTTP
+  boundary): `src/apps/web/src/features/notes/`. `RelatedMaterialDisclosure.tsx` is the collapsed **Find
+  related material** disclosure the composer mounts only for an eligible single-word Answer when no
+  duplicate-review is active (`DirectCardComposer.tsx` gates on `normalizeLexicalSurface` and re-keys it by
+  that surface, so a changed Answer resets it). Opening it triggers sense discovery; the learner explicitly
+  selects a sense (never preselected) and inspects the typed related saved Notes ("same verb lemma",
+  synonym, antonym, derived form, broader/narrower term). `relatedMaterialApi.ts` calls #772's senses/
+  relations routes and maps any transport/non-2xx/drift to the retryable `unavailable` status;
+  `relatedMaterial.tokens.ts` holds the pure relation->reason-label map. Related rows offer only **Open
+  note** (opens in a new tab, preserving the draft); nothing here decides identity, preselects a card,
+  enters Possible duplicate, alters the direct-card save, or persists a sense/relation. E2E
+  `e2e/tests/notes-related-material.spec.ts`.
 - Backup/restore (#600): `src/data/` owns verified whole-instance backup and restore. Pure, covered
   modules — `archive.ts` (versioned single-ZIP format: `manifest.json` + gzip database dump + per-root
   files, with SHA-256 checksums and `verifyArchive`), `dataRoots.ts` (durable file-root inventory from
