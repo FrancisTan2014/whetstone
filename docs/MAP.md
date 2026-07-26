@@ -324,6 +324,21 @@ can navigate them from another package.
   word differences, never a score); `DirectCardComposer.tsx` shows a near hint and a Retry on query failure;
   `notesReviewApi.fetchMaterialMatches` returns a discriminated `{ status, exact, near }`. E2E:
   `e2e/tests/notes-near-duplicate-review.spec.ts`.
+- Preview corpus card drafts through a local MCP server (#717): `src/apps/server/src/mcp/` is the trusted local
+  stdio Model-Context-Protocol surface. `mcpServer.ts` (`createMcpPreviewServer`) registers EXACTLY ONE tool —
+  `preview_card_creation` (no commit/save/schedule/edit/delete tool) — as a thin transport over the shared
+  `notesReview/previewCardCreation.ts` (`previewCardCreation`) command; `mcp/main.ts` (coverage-excluded) is the
+  process bootstrap (opens PGlite, migrates, sweeps expired attempts, builds the lexical service, connects a
+  `StdioServerTransport`; stdout is reserved for JSON-RPC, logs go to stderr). Preview renders the SAME
+  Question/Answer/Success-check + exact/near candidate evidence (+ optional WordNet sense-selected related
+  material) as the HTTP "New card" path by reusing `prepareDirectCardDraft`, the exact/near matchers, and
+  `materialReviewCandidates`, but WRITES NO learning state (no note/prompt/card/event/link/receipt): it only
+  stages one opaque, 30-minute expiring `card_creation_attempt` (new `source='mcp'`, with a `draft_payload`
+  snapshot; migration `0077`) and is idempotent by `requestId` (same payload → replay/refresh; changed payload →
+  `changed_payload`). Input is validated once by the strict `mcpPreviewCardInputSchema` in `@whetstone/contracts`
+  `mcpPreviewContracts.ts` (rejects batch/user-id/override/file-path/unknown keys as invalid params); the result
+  is the discriminated `mcpPreviewCardResultSchema` (`previewed`|`invalid_*`|`changed_payload`). Run: `pnpm --filter
+  @whetstone/server mcp` (after build). Usage: `docs/MCP.md`. Depends on `@modelcontextprotocol/sdk`.
 - Import notebook lists into Notes (#661): the `notes` feature owns pasting a notebook list as many
   standalone Notes — the import surface replaced the retired Memory batch import (the Memory
   `importMemoryBatch` command was removed with the Memory experience, #662) with an owner-scoped Notes boundary. Server: `POST /api/notes/import` (`noteRoutes.ts`) →

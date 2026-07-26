@@ -1,13 +1,16 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
+import { PREVIEW_CARD_CREATION_TOOL } from "@whetstone/contracts";
 import { describe, expect, it } from "vitest";
 
 // The standalone Memory server surface and its MCP bridge are retired (#662): the Memory feature, the
 // deposit/search/prompt/review MCP tools, and every `/api/memory`/`/api/recall` route are gone. The
 // durable model is deliberately KEPT — the `memory_prompts` table, its migrations, and legacy-custom
 // reveal reads stay so existing prompts remain reviewable. These structural guards lock both halves in
-// place: the retired writers cannot return, and the preserved model cannot be dropped by accident.
+// place: the retired writers cannot return, and the preserved model cannot be dropped by accident. The
+// ONLY MCP surface allowed back is the local card-preview server (#717), which exposes exactly the single
+// read-mostly `preview_card_creation` tool and none of the retired descriptors.
 
 function abs(relative: string): string {
   return fileURLToPath(new URL(relative, import.meta.url));
@@ -43,9 +46,16 @@ function productionServerCode(): readonly { readonly path: string; readonly body
 }
 
 describe("standalone Memory server retirement (#662)", () => {
-  it("deletes the Memory feature and the MCP bridge", () => {
+  it("deletes the Memory feature and keeps only the card-preview MCP surface", () => {
+    // The Memory feature and its retired MCP bridge are gone. The only MCP surface that may exist is the
+    // #717 local card-preview server, and it registers exactly the single read-mostly preview tool.
     expect(existsSync(abs("../memory"))).toBe(false);
-    expect(existsSync(abs("../../mcp"))).toBe(false);
+    const mcpServer = read("../../mcp/mcpServer.ts");
+    expect(mcpServer).toContain(PREVIEW_CARD_CREATION_TOOL);
+    expect(PREVIEW_CARD_CREATION_TOOL).toBe("preview_card_creation");
+    // The retired Memory MCP bridge module is not resurrected under its old name.
+    expect(existsSync(abs("../../mcp/memoryMcpServer.ts"))).toBe(false);
+    expect(existsSync(abs("../../mcp/memoryBridge.ts"))).toBe(false);
   });
 
   it("removes every MCP tool descriptor from production server code", () => {

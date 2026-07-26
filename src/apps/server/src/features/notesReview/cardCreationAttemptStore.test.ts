@@ -39,17 +39,21 @@ async function seedPending(
     id: string;
     submissionId: string;
     userId: string;
+    source: "ui" | "mcp";
+    draftPayload: unknown;
   }> = {}
 ): Promise<CardCreationAttemptRecord> {
   return db.transaction((tx) =>
     insertPendingCardCreationAttempt(tx, {
       draftFingerprint: "draft-fp",
+      draftPayload: (over.draftPayload as never) ?? null,
       exactNoteIds: over.exactNoteIds ?? ["note-a", "note-b"],
       expiresAt: over.expiresAt ?? new Date(now.getTime() + ttlMs),
       id: over.id ?? "attempt-1",
       nearKeys: over.nearKeys ?? [],
       nearNoteIds: over.nearNoteIds ?? [],
       now,
+      source: over.source ?? "ui",
       submissionId: over.submissionId ?? "sub-1",
       userId: over.userId ?? userId
     })
@@ -131,12 +135,26 @@ describe("insertPendingCardCreationAttempt", () => {
       candidateNoteIds: ["note-a", "note-b"],
       decision: null,
       draftFingerprint: "draft-fp",
+      draftPayload: null,
       id: "attempt-1",
       revision: 0,
+      source: "ui",
       state: "pending",
       submissionId: "sub-1",
       userId
     });
+  });
+
+  it("records the raising source and stages the mcp draft payload verbatim", async () => {
+    const payload = { answerDoc: { type: "doc" }, questionDoc: { type: "doc" }, target: "x" };
+    const record = await seedPending({ source: "mcp", draftPayload: payload });
+    expect(record.source).toBe("mcp");
+    expect(record.draftPayload).toEqual(payload);
+
+    // The staged payload round-trips through a fresh read, proving it is persisted, not just echoed.
+    const reread = await getCardCreationAttempt(db, userId, "attempt-1");
+    expect(reread?.source).toBe("mcp");
+    expect(reread?.draftPayload).toEqual(payload);
   });
 
   it("stores the combined exact-then-near ids and binds both groups in the fingerprint", async () => {
