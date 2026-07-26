@@ -1283,6 +1283,18 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `isUnmappedBlockType`, `suggestsExtractionReview`; the SAME policy `pdfCanonicalMapping` publication tests
   assert), and projects the boundary DTOs in `contracts/pdfExtractionEvidenceContracts.ts` — never file
   paths, coordinates, or a page image.
+  **PDF usability gate (#705):** the shared `@whetstone/domain` `pdfUsability.ts` is the pure,
+  falsifiable rubric for the 95% supported-PDF claim — `classifyPdfUsability` labels one import
+  `automatic-usable`/`correctable`/`unsupported`, `assessCorpusEligibility` fixes the deduplicated,
+  in-bound denominator, and `summarizeCorpus` computes the class/reason histograms, the gate verdict
+  (`PDF_USABILITY_GATE_RATIO`), timing percentiles, and peak memory. The reproducible harness
+  `scripts/probes/pdfUsabilityHarness.mjs` (run under `tsx` after `pnpm build`) drives a private corpus
+  root (`--corpus`/`WHETSTONE_PDF_CORPUS`, recursive, SHA-256 deduped, bounds-enforced) through the
+  pinned worker + the SAME `pdfCanonicalMapping` mapper, applies that rubric, and emits an
+  aggregate-only report (counts, ratios, tool fingerprints — never a file name, path, or extracted
+  text); it skips cleanly without the built workspace or the Docling runtime. Flipping the supported
+  lane, rewriting PRODUCT/setup wording, and deleting the legacy Docling→Markdown route stay maintainer
+  steps gated on a measured passing run.
   `diary/` is the Diary mode (#246 origin, #571 rich-Entry rework): `DiaryPage.tsx` renders the shared
   `capture/CaptureCard` at the top (in the **workspace** presentation, #678), wiring `onCaptured` to prepend
   the newly saved diary Entry into the browsable Timeline. `CaptureCard` composes typed capture in the
