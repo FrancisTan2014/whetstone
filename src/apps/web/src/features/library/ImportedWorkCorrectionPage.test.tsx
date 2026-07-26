@@ -64,6 +64,7 @@ const {
   saveImportedWorkContent
 } = await import("./importedWorkApi");
 const { fetchPdfExtractionEvidence } = await import("./pdfExtractionEvidenceApi");
+type BlockExtractionEvidenceMap = Awaited<ReturnType<typeof fetchPdfExtractionEvidence>>;
 const mockedAdd = addImportedWorkSection as Mock<typeof addImportedWorkSection>;
 const mockedFetch = fetchImportedWork as Mock<typeof fetchImportedWork>;
 const mockedFetchUnit = fetchImportedWorkUnit as Mock<typeof fetchImportedWorkUnit>;
@@ -190,6 +191,32 @@ describe("ImportedWorkCorrectionPage", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("ignores an evidence fetch that rejects after the page has unmounted", async () => {
+    let rejectEvidence: (reason: Error) => void = () => {};
+    mockedEvidence.mockReset();
+    mockedEvidence.mockImplementation(
+      () =>
+        new Promise<BlockExtractionEvidenceMap>((_, reject) => {
+          rejectEvidence = reject;
+        })
+    );
+    mockedFetch.mockResolvedValue(makeWork());
+    const view = render(
+      <MemoryRouter>
+        <ImportedWorkCorrectionPage workEntryId="work-1" />
+      </MemoryRouter>
+    );
+
+    // Unmount while the evidence fetch is still pending, then reject it: the settled-after-unmount path
+    // must skip every state update so a late failure never surfaces the retry notice on a dead page.
+    view.unmount();
+    rejectEvidence(new Error("late evidence"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByText("Extraction evidence couldn’t load.")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
   });
 
   it("shows a correction-specific alert when the work cannot be opened", async () => {
