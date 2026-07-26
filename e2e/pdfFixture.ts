@@ -235,3 +235,35 @@ export const pdfReviewScannedEditionFixture = scannedReviewFixture(
   SCANNED_REVIEW_FILE,
   "review-scanned-edition"
 );
+
+// A mixed-confidence born-digital fixture for the extraction-evidence correction E2E (#763). One paragraph
+// carries a below-threshold extractor confidence (so the published block is review-suggested and cued),
+// while the title and the other paragraph are high-confidence (not cued). Publication persists each item's
+// confidence to `pdf_block_evidence`, so the correction editor can guide an administrator to the one block
+// the extractor was least sure about, then clear only that block's cue once it is corrected.
+function evidenceItem(text: string, confidence: number, label = "text"): DocItem {
+  return { ...item({ label, text }), confidence };
+}
+
+const evidenceBody: readonly DocItem[] = [
+  evidenceItem("Extraction Evidence Sample", 0.98, "title"),
+  evidenceItem("This paragraph mapped cleanly with high extractor confidence.", 0.98),
+  evidenceItem("This paragraph mapped with low extractor confidence.", 0.4)
+];
+
+const evidenceConversion = {
+  body: evidenceBody,
+  doclingSchema: { name: "DoclingDocument", version: "1.10.0" },
+  furniture: [],
+  pages: [{ hasNativeText: true, pageNumber: 1 }],
+  schemaVersion: RANGE_CONVERSION_SCHEMA_VERSION
+};
+
+export const pdfExtractionEvidenceFixture = {
+  buffer: Buffer.from(
+    `%PDF-1.7\n${FIXTURE_MARKER}\n${JSON.stringify(evidenceConversion)}`,
+    "utf8"
+  ),
+  mimeType: "application/pdf",
+  name: "Extraction Evidence Sample.pdf"
+} as const;

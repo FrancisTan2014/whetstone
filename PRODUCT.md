@@ -309,9 +309,17 @@ owning source flow:
   not successes hidden outside the denominator.
 - For the remaining supported PDFs, administrators correct the canonical blocks in the shared rich
   Work editor: edit or retype content, change block kind, split, merge, reorder, add, or remove blocks.
-  Low-confidence/unknown extraction evidence points to likely corrections. Corrected blocks remain
-  the sole readable authority; the immutable PDF stays provenance/export, and re-ingestion never
-  silently overwrites corrections.
+  Low-confidence/unknown extraction evidence points to likely corrections: in the shared editor only,
+  each uncorrected block the extractor was least sure about (below-threshold confidence or the mapper's
+  unknown/fallback path) carries a subordinate semantic-warning cue at its inline edge, and a
+  keyboard-operable **Review extraction** disclosure reveals the SAFE source facts — page, original
+  structure label, confidence band (**High**/**Review suggested**/**Not reported**), and OCR provenance
+  when present — never coordinates, a page image, editable fields, or a raw percentage. Correcting a
+  block clears its cue but keeps the disclosure as an immutable account of the original extraction. This
+  evidence is guidance only: it never becomes editable content, never appears in the Reader, search,
+  notes, or non-PDF Works, and saving changes only canonical blocks and correction markers. Corrected
+  blocks remain the sole readable authority; the immutable PDF stays provenance/export, and re-ingestion
+  never silently overwrites corrections.
 - **Current shipped scope (born-digital preview).** Today the PDF lane above is a born-digital
   preview: an uploaded PDF with usable native text on every page publishes as canonical blocks and
   opens in the Reader. Administrators now correct any canonical imported Work's blocks in the shared
