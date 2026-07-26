@@ -37,6 +37,11 @@
 // The baseline corpus root MUST be supplied explicitly (never hard-coded here). Additional --extra roots
 // EXTEND, never replace, the baseline. An empty/missing corpus is a hard, actionable failure — the
 // harness never substitutes fixtures or silently shrinks the denominator.
+//
+// `--limit N` is a LOCAL-ITERATION shortcut only: it processes just the first N deduplicated files, so the
+// aggregate is over a prefix, not the real denominator. A limited run always reports `run.limited: true`
+// and `corpusGatePass: false` and exits non-zero, so it can never be mistaken for #705 corpus evidence.
+// Omit --limit for a gate-producing run.
 
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -494,12 +499,28 @@ async function main() {
     cases.push(result);
   }
 
+  // Disclose the corpus coverage so a limited run can never be mistaken for corpus evidence: a `--limit`
+  // (or any early stop) processes only a PREFIX of the deduplicated corpus, so its rubric ratio is not
+  // the #705 denominator. `discovered` counts every .pdf path found across roots (pre-dedupe),
+  // `deduplicated` the unique files after SHA-256 dedupe (the intended denominator source), `processed`
+  // the files actually driven through the pipeline this run, and `limited` is true whenever fewer than
+  // every deduplicated file was processed.
+  const discovered = files.length;
+  const deduplicated = unique.length;
+  const processed = cases.length;
+  const limited = processed < deduplicated;
+
   // AGGREGATE-ONLY report: histograms, ratios, the gate verdict, timing percentiles, peak memory, and
   // pinned tool fingerprints — never a per-file row (no caseId/class/page/time per PDF), so the output
   // can be pasted as the #705/#779 acceptance evidence while the corpus stays private.
   const report = domain.summarizeCorpus(cases);
+  // The authoritative corpus gate: the rubric ratio only counts as #705 evidence when EVERY deduplicated
+  // file was processed. A limited run is never a pass, no matter how good the prefix looks.
+  const corpusGatePass = report.gatePass && !limited;
   const output = {
     gateRatioTarget: domain.PDF_USABILITY_GATE_RATIO,
+    corpusGatePass,
+    run: { discovered, deduplicated, processed, limited },
     report,
     tooling: {
       doclingCoreVersion: contracts.PINNED_DOCLING_CORE_VERSION,
@@ -510,7 +531,14 @@ async function main() {
   const serialized = JSON.stringify(output, null, 2);
   if (args.out) writeFileSync(args.out, serialized + "\n");
   else process.stdout.write(serialized + "\n");
-  return report.gatePass ? 0 : 1;
+  if (limited) {
+    process.stderr.write(
+      `warning: limited run — processed ${processed} of ${deduplicated} deduplicated PDFs (--limit). ` +
+        "This is NOT corpus evidence; corpusGatePass is false and the exit code is non-zero. Remove " +
+        "--limit for a gate-producing run.\n"
+    );
+  }
+  return corpusGatePass ? 0 : 1;
 }
 
 main().then((code) => {
