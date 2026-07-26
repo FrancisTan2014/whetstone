@@ -23,7 +23,9 @@ const fakeLexical: LexicalRelationService = {
   relateNotes: async () => ({ kind: "not_found" })
 };
 
-function previewDeps(over: Partial<PreviewCardCreationDependencies> = {}): PreviewCardCreationDependencies {
+function previewDeps(
+  over: Partial<PreviewCardCreationDependencies> = {}
+): PreviewCardCreationDependencies {
   return {
     attemptTtlMs: ttlMs,
     createId: () => `attempt-${(sequence += 1)}`,

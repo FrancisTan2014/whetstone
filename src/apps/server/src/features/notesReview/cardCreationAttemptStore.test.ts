@@ -157,7 +157,6 @@ describe("insertPendingCardCreationAttempt", () => {
     expect(reread?.draftPayload).toEqual(payload);
   });
 
-
   it("stores the combined exact-then-near ids and binds both groups in the fingerprint", async () => {
     const record = await seedPending({
       exactNoteIds: ["note-a"],

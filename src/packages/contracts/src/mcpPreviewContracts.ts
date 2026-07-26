@@ -72,9 +72,7 @@ export type McpRenderedCard = z.infer<typeof mcpRenderedCardSchema>;
 // re-derives lexical policy. A caller whose Answer is not one eligible word simply gets an `unsupported`/
 // `not_found` status inside the reused outcome.
 export const mcpRelatedMaterialSchema = z.discriminatedUnion("mode", [
-  z
-    .object({ mode: z.literal("senses"), senses: relatedMaterialSensesResponseSchema })
-    .strict(),
+  z.object({ mode: z.literal("senses"), senses: relatedMaterialSensesResponseSchema }).strict(),
   z
     .object({ mode: z.literal("relations"), relations: relatedMaterialRelationsResponseSchema })
     .strict()

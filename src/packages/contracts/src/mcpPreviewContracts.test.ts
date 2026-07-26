@@ -51,7 +51,10 @@ describe("mcpPreviewCardInputSchema", () => {
     ["blank answer", { ...validInput, answer: "\n\t " }],
     ["blank success check", { ...validInput, successCheck: "  " }],
     ["oversized answer", { ...validInput, answer: "x".repeat(MCP_PREVIEW_TEXT_MAX_LENGTH + 1) }],
-    ["oversized question", { ...validInput, question: "y".repeat(MCP_PREVIEW_TEXT_MAX_LENGTH + 1) }],
+    [
+      "oversized question",
+      { ...validInput, question: "y".repeat(MCP_PREVIEW_TEXT_MAX_LENGTH + 1) }
+    ],
     [
       "oversized requestId",
       { ...validInput, requestId: "z".repeat(MCP_PREVIEW_REQUEST_ID_MAX_LENGTH + 1) }
@@ -107,12 +110,14 @@ describe("mcpPreviewCardResultSchema", () => {
     expect(parseMcpPreviewCardResult(withRelations)).toEqual(withRelations);
   });
 
-  it.each(["invalid_question", "invalid_answer", "invalid_success_check", "changed_payload"] as const)(
-    "parses the %s outcome",
-    (status) => {
-      expect(parseMcpPreviewCardResult({ status })).toEqual({ status });
-    }
-  );
+  it.each([
+    "invalid_question",
+    "invalid_answer",
+    "invalid_success_check",
+    "changed_payload"
+  ] as const)("parses the %s outcome", (status) => {
+    expect(parseMcpPreviewCardResult({ status })).toEqual({ status });
+  });
 
   it("rejects a previewed result whose approval gate is not true", () => {
     expect(

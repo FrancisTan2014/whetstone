@@ -93,11 +93,17 @@ async function buildRelatedMaterial(
     const outcome = await dependencies.lexical.resolveSenses(surface);
     const senses: RelatedMaterialSensesResponse =
       outcome.kind === "found"
-        ? { status: "found", surface: outcome.value.surface, senses: outcome.value.senses.map(toSenseDto) }
+        ? {
+            status: "found",
+            surface: outcome.value.surface,
+            senses: outcome.value.senses.map(toSenseDto)
+          }
         : { status: outcome.kind };
     return { mode: "senses", senses };
   }
-  const outcome = await dependencies.lexical.relateNotes(dependencies.db, surface, sense, { userId });
+  const outcome = await dependencies.lexical.relateNotes(dependencies.db, surface, sense, {
+    userId
+  });
   if (outcome.kind !== "found") {
     const relations: RelatedMaterialRelationsResponse = { status: outcome.kind };
     return { mode: "relations", relations };
@@ -135,8 +141,7 @@ function buildPreviewedResult(
     renderedCard: {
       question: draft.cueText,
       answer: draft.bodyText,
-      successCheck:
-        draft.reveal.revealKind === "expected_response" ? draft.reveal.answerText : null
+      successCheck: draft.reveal.revealKind === "expected_response" ? draft.reveal.answerText : null
     },
     candidates: [...candidates],
     nearCandidates: [...nearCandidates],
@@ -191,7 +196,12 @@ export async function previewCardCreation(
     const nearNoteIds = near.map((note) => note.noteEntryId);
     const nearKeys = near.map((note) => note.caseSensitiveKey);
     const candidates = await loadMaterialReviewCandidates(tx, userId, matches);
-    const nearCandidates = await loadNearMaterialReviewCandidates(tx, userId, draft.answerDoc, near);
+    const nearCandidates = await loadNearMaterialReviewCandidates(
+      tx,
+      userId,
+      draft.answerDoc,
+      near
+    );
 
     if (pending !== null) {
       // A still-live preview for this request whose draft has since changed is a conflict, not a silent

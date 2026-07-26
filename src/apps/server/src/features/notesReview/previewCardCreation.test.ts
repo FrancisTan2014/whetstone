@@ -1,5 +1,4 @@
 import { PGlite } from "@electric-sql/pglite";
-import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createTextDocument } from "@whetstone/document";
@@ -52,7 +51,9 @@ function fakeLexical(
   };
 }
 
-function buildDeps(lexical: LexicalRelationService = fakeLexical()): PreviewCardCreationDependencies {
+function buildDeps(
+  lexical: LexicalRelationService = fakeLexical()
+): PreviewCardCreationDependencies {
   return {
     attemptTtlMs: ttlMs,
     createId: () => `attempt-${(sequence += 1)}`,
@@ -187,7 +188,11 @@ describe("previewCardCreation", () => {
     const seededId = await seedMaterial(answer, "seed-exact");
     const notesBefore = (await listNotes()).length;
 
-    const result = await previewCardCreation(buildDeps(), DEFAULT_USER_ID, request({ answerDoc: createTextDocument(answer) }));
+    const result = await previewCardCreation(
+      buildDeps(),
+      DEFAULT_USER_ID,
+      request({ answerDoc: createTextDocument(answer) })
+    );
     if (result.status !== "previewed") throw new Error("expected previewed");
     expect(result.candidates.map((candidate) => candidate.noteId)).toEqual([seededId]);
     expect(result.nearCandidates).toEqual([]);
@@ -220,7 +225,12 @@ describe("previewCardCreation", () => {
     ["invalid_answer", { answerDoc: blankDoc }],
     [
       "invalid_success_check",
-      { target: { kind: "expected_response", successCheckDoc: blankDoc } as PreviewCardCreationRequest["target"] }
+      {
+        target: {
+          kind: "expected_response",
+          successCheckDoc: blankDoc
+        } as PreviewCardCreationRequest["target"]
+      }
     ]
   ])("rejects a %s draft before staging anything", async (status, over) => {
     const result = await previewCardCreation(buildDeps(), DEFAULT_USER_ID, request(over));
@@ -243,13 +253,21 @@ describe("previewCardCreation", () => {
   it("refreshes the replayed attempt's evidence and bumps the fence when the corpus changed", async () => {
     const answer = "Merge sort is stable and O(n log n).";
     const deps = buildDeps();
-    const first = await previewCardCreation(deps, DEFAULT_USER_ID, request({ answerDoc: createTextDocument(answer) }));
+    const first = await previewCardCreation(
+      deps,
+      DEFAULT_USER_ID,
+      request({ answerDoc: createTextDocument(answer) })
+    );
     if (first.status !== "previewed") throw new Error("expected previewed");
     expect(first.candidates).toEqual([]);
 
     // A matching note appears after the first preview; a repeat of the SAME request must refresh the evidence.
     const seededId = await seedMaterial(answer, "seed-late");
-    const second = await previewCardCreation(deps, DEFAULT_USER_ID, request({ answerDoc: createTextDocument(answer) }));
+    const second = await previewCardCreation(
+      deps,
+      DEFAULT_USER_ID,
+      request({ answerDoc: createTextDocument(answer) })
+    );
     if (second.status !== "previewed") throw new Error("expected previewed");
     expect(second.attemptId).toBe(first.attemptId);
     expect(second.candidates.map((candidate) => candidate.noteId)).toEqual([seededId]);
@@ -294,18 +312,28 @@ describe("previewCardCreation", () => {
     const answer = "Merge sort is stable and O(n log n).";
     await seedMaterial(answer, "seed-owner");
     const deps = buildDeps();
-    const mine = await previewCardCreation(deps, DEFAULT_USER_ID, request({ answerDoc: createTextDocument(answer) }));
+    const mine = await previewCardCreation(
+      deps,
+      DEFAULT_USER_ID,
+      request({ answerDoc: createTextDocument(answer) })
+    );
     if (mine.status !== "previewed") throw new Error("expected previewed");
     expect(mine.candidates).toHaveLength(1);
 
     // Owner B, same request id and draft: gets their OWN attempt and sees none of A's material.
-    const theirs = await previewCardCreation(deps, otherUser, request({ answerDoc: createTextDocument(answer) }));
+    const theirs = await previewCardCreation(
+      deps,
+      otherUser,
+      request({ answerDoc: createTextDocument(answer) })
+    );
     if (theirs.status !== "previewed") throw new Error("expected previewed");
     expect(theirs.attemptId).not.toBe(mine.attemptId);
     expect(theirs.candidates).toEqual([]);
 
     const attempts = await listAttempts();
-    expect(attempts.map((attempt) => attempt.userId).sort()).toEqual([DEFAULT_USER_ID, otherUser].sort());
+    expect(attempts.map((attempt) => attempt.userId).sort()).toEqual(
+      [DEFAULT_USER_ID, otherUser].sort()
+    );
   });
 
   it("returns sense choices to select from when no sense is supplied", async () => {
@@ -379,6 +407,9 @@ describe("previewCardCreation", () => {
       request({ sense: { offset: "02133435", partOfSpeech: "verb" } })
     );
     if (result.status !== "previewed") throw new Error("expected previewed");
-    expect(result.relatedMaterial).toEqual({ mode: "relations", relations: { status: "unavailable" } });
+    expect(result.relatedMaterial).toEqual({
+      mode: "relations",
+      relations: { status: "unavailable" }
+    });
   });
 });
