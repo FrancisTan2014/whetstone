@@ -4,6 +4,7 @@ import { asc, eq, isNotNull, sql } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { authors, workMeta } from "../../db/schema.js";
+import { correctableImportedWorkSql } from "./importedWorkContentQueries.js";
 
 type AuthorRow = Readonly<{ id: string; name: string }>;
 
@@ -58,6 +59,7 @@ export async function listWorks(db: DbClient): Promise<WorkListDto> {
     .select({
       authorId: authors.id,
       authorName: authors.name,
+      correctable: correctableImportedWorkSql,
       entryId: workMeta.entryId,
       language: workMeta.language,
       origin: workMeta.origin,
@@ -70,6 +72,7 @@ export async function listWorks(db: DbClient): Promise<WorkListDto> {
 
   const works: ReadonlyArray<WorkListItemDto> = rows.map((row) => ({
     author: { id: toAuthorId(row.authorId), name: row.authorName },
+    correctable: row.correctable,
     work: {
       authorId: toAuthorId(row.authorId),
       entryId: toEntryId(row.entryId),
