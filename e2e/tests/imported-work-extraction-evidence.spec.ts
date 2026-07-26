@@ -58,7 +58,17 @@ test("guides PDF correction with extraction evidence: only a corrected block's c
   await page.goto(`${setup.baseURL}#/library/works/${encodeURIComponent(workId)}/correct`);
   const editor = page.getByRole("textbox", { name: "Edit Extraction Evidence Sample" });
   await expect(editor).toBeVisible();
-  await expect(page.getByRole("status")).toHaveText("Saved");
+  // Scope the save status to the editor header (a transient publish toast also carries role="status").
+  const saveStatus = page
+    .locator("header")
+    .filter({ has: page.getByRole("button", { exact: true, name: "Save" }) })
+    .getByRole("status");
+  await expect(saveStatus).toHaveText("Saved");
+
+  // The editor mounts and focuses "start" asynchronously; settle that before targeting a specific block,
+  // otherwise the async focus snaps the caret back to the heading and races the block clicks below.
+  await editor.click();
+  await expect(editor).toBeFocused();
 
   // Exactly one block is cued — the low-confidence paragraph — and it carries the low-confidence text.
   const cues = editor.locator(".is-extraction-review");
@@ -80,12 +90,16 @@ test("guides PDF correction with extraction evidence: only a corrected block's c
   await editor.getByText(HIGH_CONFIDENCE_TEXT, { exact: true }).click();
   await expect(page.getByRole("button", { name: "Review extraction" })).toHaveCount(0);
 
-  // Correct the flagged block: place the caret in it and prepend a marker, then save.
-  await editor.getByText(LOW_CONFIDENCE_TEXT, { exact: true }).click();
+  // Correct the flagged block: place the caret at its start and prepend a marker, then save. Click near the
+  // paragraph's left edge (caret at the block start) and wait for the disclosure to reappear first — that
+  // proves the caret settled in the low-confidence block, so the keystrokes prepend there and nowhere else.
+  const lowBlock = editor.getByText(LOW_CONFIDENCE_TEXT, { exact: true });
+  await lowBlock.click({ position: { x: 1, y: 4 } });
+  await expect(disclosure).toBeVisible();
   await page.keyboard.type("Corrected: ");
   await expect(editor).toContainText(`Corrected: ${LOW_CONFIDENCE_TEXT}`);
   await page.getByRole("button", { exact: true, name: "Save" }).click();
-  await expect(page.getByRole("status")).toHaveText("Saved");
+  await expect(saveStatus).toHaveText("Saved");
 
   // After the save the page refetches evidence: the corrected block's cue is gone, yet its disclosure
   // remains — now reframed as the immutable original-extraction account.
