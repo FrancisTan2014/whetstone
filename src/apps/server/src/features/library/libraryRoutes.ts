@@ -1,5 +1,7 @@
 import {
+  addImportedWorkSectionRequestSchema,
   addManualWorkSectionRequestSchema,
+  correctImportedWorkContentRequestSchema,
   createAuthorRequestSchema,
   updateManualWorkContentRequestSchema
 } from "@whetstone/contracts";
@@ -12,6 +14,14 @@ import {
   type DeleteWorkDependencies,
   type LibraryDependencies
 } from "./libraryCommands.js";
+import {
+  addImportedWorkSection,
+  correctImportedWorkContent
+} from "./importedWorkContentCommands.js";
+import {
+  loadImportedWorkForCorrection,
+  loadImportedWorkUnit
+} from "./importedWorkContentQueries.js";
 import { addManualWorkSection, updateManualWorkContent } from "./manualWorkContentCommands.js";
 import { loadManualWorkForEditing, loadManualWorkUnit } from "./manualWorkContentQueries.js";
 import { listWorks, searchAuthors } from "./libraryQueries.js";
@@ -186,6 +196,127 @@ export function registerLibraryRoutes(
           workEntryId: result.work.entryId
         },
         "manual_work_saved"
+      );
+
+      return reply.code(200).send(result.work);
+    }
+  );
+
+  // Load one canonical imported Work opened at its first section, with that section's reassembled document
+  // and the ordered section list, for the shared Library editor to open in CORRECTION mode (#762). Scoped
+  // to `origin = 'imported'` AND fully-canonical `doc_blocks` content: an unknown id, a manual/authored
+  // Work, or an imported Work with any legacy-mdast section is 404. No ownership is consulted — in v0 the
+  // current-user provider is the sole administrator for shared Library correction.
+  server.get<{ Params: WorkParams }>(
+    "/api/imported-works/:workEntryId",
+    async (request, reply) => {
+      const work = await loadImportedWorkForCorrection(
+        dependencies.db,
+        toEntryId(request.params.workEntryId)
+      );
+
+      if (work === undefined) {
+        return reply.code(404).send(notFound);
+      }
+
+      return reply.code(200).send(work);
+    }
+  );
+
+  // Load one section's reassembled canonical document, for the correction editor to open a section the
+  // administrator navigated to in the Outline (#762). Origin/eligibility-scoped like the parent Work, and
+  // the section must belong to that Work — otherwise 404.
+  server.get<{ Params: WorkUnitParams }>(
+    "/api/imported-works/:workEntryId/units/:unitEntryId",
+    async (request, reply) => {
+      const unit = await loadImportedWorkUnit(
+        dependencies.db,
+        toEntryId(request.params.workEntryId),
+        toEntryId(request.params.unitEntryId)
+      );
+
+      if (unit === undefined) {
+        return reply.code(404).send(notFound);
+      }
+
+      return reply.code(200).send(unit);
+    }
+  );
+
+  // Append a new section (a new reading unit seeded with a heading block) to a correctable imported Work
+  // and return it opened at that section (#762). Origin/eligibility-scoped (404 otherwise); a stale
+  // revision is a 409 that writes nothing, so the editor keeps its state and can reload.
+  server.post<{ Params: WorkParams }>(
+    "/api/imported-works/:workEntryId/units",
+    async (request, reply) => {
+      const parsed = addImportedWorkSectionRequestSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send(invalidRequestBody);
+      }
+
+      const result = await addImportedWorkSection(
+        dependencies,
+        toEntryId(request.params.workEntryId),
+        parsed.data.revision
+      );
+
+      if (result.status === "not_found") {
+        return reply.code(404).send(notFound);
+      }
+
+      if (result.status === "conflict") {
+        return reply.code(409).send({ error: "revision_conflict" });
+      }
+
+      request.log.info(
+        {
+          route: "POST /api/imported-works/:workEntryId/units",
+          unitEntryId: result.work.unitEntryId,
+          workEntryId: result.work.entryId
+        },
+        "imported_work_section_added"
+      );
+
+      return reply.code(201).send(result.work);
+    }
+  );
+
+  // Correct one section's canonical document with work-level revision protection (#762): id-preserving
+  // replace scoped to `origin = 'imported'` AND fully-canonical content (404 otherwise), and the section
+  // must belong to the Work (404). A malformed/unsafe document is rejected at the boundary (400); a stale
+  // revision — another session saved in between — is a 409 and writes nothing. On success the Work marker
+  // and per-block `corrected_at` record the correction; an unchanged Save advances the revision only.
+  server.put<{ Params: WorkUnitParams }>(
+    "/api/imported-works/:workEntryId/units/:unitEntryId/content",
+    async (request, reply) => {
+      const parsed = correctImportedWorkContentRequestSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send(invalidRequestBody);
+      }
+
+      const result = await correctImportedWorkContent(
+        dependencies,
+        toEntryId(request.params.workEntryId),
+        toEntryId(request.params.unitEntryId),
+        parsed.data.document,
+        parsed.data.revision
+      );
+
+      if (result.status === "not_found") {
+        return reply.code(404).send(notFound);
+      }
+
+      if (result.status === "conflict") {
+        return reply.code(409).send({ error: "revision_conflict" });
+      }
+
+      request.log.info(
+        {
+          route: "PUT /api/imported-works/:workEntryId/units/:unitEntryId/content",
+          unitEntryId: result.work.unitEntryId,
+          workEntryId: result.work.entryId
+        },
+        "imported_work_corrected"
       );
 
       return reply.code(200).send(result.work);
