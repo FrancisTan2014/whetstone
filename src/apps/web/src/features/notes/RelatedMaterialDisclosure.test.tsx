@@ -79,6 +79,25 @@ describe("RelatedMaterialDisclosure (#716)", () => {
     expect(fetchSensesMock).toHaveBeenCalledTimes(1);
   });
 
+  it("lists each sense's lemma choices and WordNet examples for inspection before choosing", async () => {
+    fetchSensesMock.mockResolvedValue({
+      status: "found",
+      surface: "bear",
+      senses: [verbSense, nounSense]
+    });
+    const user = renderDisclosure();
+
+    await open(user);
+
+    // The eligible-word senses show POS + definition AND the lemma choices and example evidence, so the
+    // learner can pick the intended meaning without guessing (#716 acceptance).
+    expect(await screen.findByText("bear · birth")).not.toBeNull();
+    expect(screen.getByText("“she bore a son”")).not.toBeNull();
+    // The noun sense still lists its lemma but carries no example, so no stray example evidence appears.
+    expect(screen.getByText("bear")).not.toBeNull();
+    expect(screen.queryByText("“a large mammal”")).toBeNull();
+  });
+
   it("offers Retry when the senses lookup is unavailable and refetches on Retry", async () => {
     fetchSensesMock
       .mockResolvedValueOnce({ status: "unavailable" })

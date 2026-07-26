@@ -137,6 +137,16 @@ export function RelatedMaterialDisclosure({
               >
                 <span className="relatedMaterialSensePos">{sense.partOfSpeech}</span>{" "}
                 <span className="relatedMaterialSenseGloss">{sense.definition}</span>
+                <span className="relatedMaterialSenseLemmas">{sense.lemmas.join(" · ")}</span>
+                {sense.examples.length > 0 ? (
+                  <span className="relatedMaterialSenseExamples">
+                    {sense.examples.map((example) => (
+                      <span className="relatedMaterialSenseExample" key={example}>
+                        “{example}”
+                      </span>
+                    ))}
+                  </span>
+                ) : null}
               </Button>
             </li>
           ))}
