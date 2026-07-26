@@ -636,4 +636,38 @@ describe("DirectCardComposer", () => {
       expect(createDirectCard).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe("related material disclosure", () => {
+    it("offers Find related material only for an eligible single-word Answer", async () => {
+      const user = userEvent.setup();
+      renderComposer();
+
+      await user.type(screen.getByLabelText("Answer"), "born");
+      expect(screen.getByRole("button", { name: "Find related material" })).toBeTruthy();
+
+      // A multi-word Answer is ineligible for lexical inspection, so the disclosure is not offered.
+      await user.clear(screen.getByLabelText("Answer"));
+      await user.type(screen.getByLabelText("Answer"), "born free");
+      expect(screen.queryByRole("button", { name: "Find related material" })).toBeNull();
+    });
+
+    it("hides Find related material while a duplicate review is active", async () => {
+      const user = userEvent.setup();
+      vi.mocked(createDirectCard).mockResolvedValue({
+        review: materialReview(),
+        status: "needs_material_review"
+      });
+      renderComposer();
+
+      await user.type(screen.getByLabelText("Answer"), "born");
+      await user.type(screen.getByLabelText("Question"), "What is birth?");
+      expect(screen.getByRole("button", { name: "Find related material" })).toBeTruthy();
+
+      await user.click(screen.getByRole("button", { name: "Create card" }));
+      await screen.findByRole("heading", { name: "This material is already in Notes" });
+
+      // The disclosure is suppressed while a duplicate-review decision owns the surface.
+      expect(screen.queryByRole("button", { name: "Find related material" })).toBeNull();
+    });
+  });
 });
