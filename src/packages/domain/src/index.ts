@@ -179,6 +179,32 @@ export {
   UNMAPPED_BLOCK_TYPE
 } from "./pdfExtractionReview.js";
 export type { ExtractionConfidenceBand } from "./pdfExtractionReview.js";
+export {
+  assessCorpusEligibility,
+  classifyPdfUsability,
+  evaluateCorpusCase,
+  MAX_AUTOMATIC_LOW_CONFIDENCE_RATIO,
+  MAX_AUTOMATIC_UNKNOWN_BLOCK_RATIO,
+  PDF_USABILITY_GATE_RATIO,
+  summarizeCorpus
+} from "./pdfUsability.js";
+export type {
+  ClassifiableObservation,
+  CorpusBounds,
+  CorpusCaseInput,
+  CorpusCaseResult,
+  CorpusEligibility,
+  CorpusExclusionReason,
+  CorpusReport,
+  LatencySummary,
+  MappedWorkSummary,
+  PdfCaseMetrics,
+  PdfCorpusFileFacts,
+  PdfImportObservation,
+  PdfUsabilityClass,
+  PdfUsabilityReason,
+  PdfUsabilityVerdict
+} from "./pdfUsability.js";
 export { buildSearchSnippet, SEARCH_SNIPPET_MAX_CODE_POINTS } from "./searchSnippet.js";
 export type { BuildSearchSnippetInput, SearchSnippet } from "./searchSnippet.js";
 export {
