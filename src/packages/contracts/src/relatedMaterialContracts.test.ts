@@ -35,8 +35,12 @@ describe("relatedMaterial senses contracts", () => {
     });
     expect(found).toEqual({ status: "found", surface: "bear", senses: [sense] });
     expect(parseRelatedMaterialSensesResponse({ status: "not_found" }).status).toBe("not_found");
-    expect(parseRelatedMaterialSensesResponse({ status: "unsupported" }).status).toBe("unsupported");
-    expect(parseRelatedMaterialSensesResponse({ status: "unavailable" }).status).toBe("unavailable");
+    expect(parseRelatedMaterialSensesResponse({ status: "unsupported" }).status).toBe(
+      "unsupported"
+    );
+    expect(parseRelatedMaterialSensesResponse({ status: "unavailable" }).status).toBe(
+      "unavailable"
+    );
   });
 
   it("rejects an unknown senses status or a malformed sense", () => {
@@ -110,9 +114,7 @@ describe("relatedMaterial relations contracts", () => {
         surface: "bear",
         selectedLemma: "bear",
         partOfSpeech: "verb",
-        groups: [
-          { relation: "synonym", direction: "lateral", notes: [{ ...note, extra: true }] }
-        ]
+        groups: [{ relation: "synonym", direction: "lateral", notes: [{ ...note, extra: true }] }]
       })
     ).toThrow();
   });

@@ -82,12 +82,9 @@ export function registerRelatedMaterialRoutes(
       return reply.code(400).send(invalidRequest);
     }
     const surface = documentReadableText(body.answerDoc as DocumentNodeJSON);
-    const outcome = await dependencies.service.relateNotes(
-      dependencies.db,
-      surface,
-      body.sense,
-      { userId: request.server.currentUser.getCurrentUserId() }
-    );
+    const outcome = await dependencies.service.relateNotes(dependencies.db, surface, body.sense, {
+      userId: request.server.currentUser.getCurrentUserId()
+    });
     if (outcome.kind !== "found") {
       const response: RelatedMaterialRelationsResponse = { status: outcome.kind };
       return reply.code(200).send(response);

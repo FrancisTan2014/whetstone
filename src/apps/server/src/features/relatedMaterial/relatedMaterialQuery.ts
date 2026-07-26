@@ -1,7 +1,4 @@
-import type {
-  RelatedMaterialGroupDto,
-  RelatedMaterialNoteDto
-} from "@whetstone/contracts";
+import type { RelatedMaterialGroupDto, RelatedMaterialNoteDto } from "@whetstone/contracts";
 import { inArray } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
