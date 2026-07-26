@@ -8,6 +8,7 @@ import type { Mock } from "vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ImportedWorkCorrectionPage } from "./ImportedWorkCorrectionPage";
+import { extractionEvidenceCueClass } from "../../shared/editor/extractionEvidence.tokens";
 
 // The page renders the real shared rich editor, which drives ProseMirror against the DOM; jsdom lacks the
 // layout/pointer primitives ProseMirror probes, so stub the minimal surface the editor touches (mirrors the
@@ -52,16 +53,23 @@ vi.mock("./importedWorkApi", () => ({
   saveImportedWorkContent: vi.fn()
 }));
 
+vi.mock("./pdfExtractionEvidenceApi", () => ({
+  fetchPdfExtractionEvidence: vi.fn()
+}));
+
 const {
   addImportedWorkSection,
   fetchImportedWork,
   fetchImportedWorkUnit,
   saveImportedWorkContent
 } = await import("./importedWorkApi");
+const { fetchPdfExtractionEvidence } = await import("./pdfExtractionEvidenceApi");
+type BlockExtractionEvidenceMap = Awaited<ReturnType<typeof fetchPdfExtractionEvidence>>;
 const mockedAdd = addImportedWorkSection as Mock<typeof addImportedWorkSection>;
 const mockedFetch = fetchImportedWork as Mock<typeof fetchImportedWork>;
 const mockedFetchUnit = fetchImportedWorkUnit as Mock<typeof fetchImportedWorkUnit>;
 const mockedSave = saveImportedWorkContent as Mock<typeof saveImportedWorkContent>;
+const mockedEvidence = fetchPdfExtractionEvidence as Mock<typeof fetchPdfExtractionEvidence>;
 
 // A realistic loaded document: a block with a stable persisted id, matching what the server reassembles
 // from stored blocks. The editor preserves these ids, so its mount-time normalization echo equals the
@@ -116,6 +124,8 @@ async function renderReadyEditor(): Promise<{
 beforeEach(() => {
   vi.clearAllMocks();
   mockMatchMedia(false);
+  // Default: the Work carries no extraction evidence (a non-PDF import), so the editor shows no cue.
+  mockedEvidence.mockResolvedValue(new Map());
 });
 
 afterEach(() => {
@@ -181,6 +191,32 @@ describe("ImportedWorkCorrectionPage", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("ignores an evidence fetch that rejects after the page has unmounted", async () => {
+    let rejectEvidence: (reason: Error) => void = () => {};
+    mockedEvidence.mockReset();
+    mockedEvidence.mockImplementation(
+      () =>
+        new Promise<BlockExtractionEvidenceMap>((_, reject) => {
+          rejectEvidence = reject;
+        })
+    );
+    mockedFetch.mockResolvedValue(makeWork());
+    const view = render(
+      <MemoryRouter>
+        <ImportedWorkCorrectionPage workEntryId="work-1" />
+      </MemoryRouter>
+    );
+
+    // Unmount while the evidence fetch is still pending, then reject it: the settled-after-unmount path
+    // must skip every state update so a late failure never surfaces the retry notice on a dead page.
+    view.unmount();
+    rejectEvidence(new Error("late evidence"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByText("Extraction evidence couldn’t load.")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
   });
 
   it("shows a correction-specific alert when the work cannot be opened", async () => {
@@ -294,5 +330,160 @@ describe("ImportedWorkCorrectionPage", () => {
     await waitFor(() => {
       expect(mockedSave).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it("cues a review-suggested block, then refetches evidence after a correcting save so the cue clears", async () => {
+    const evidenceRow = {
+      blockId: "blk-1",
+      confidence: 0.4,
+      corrected: false,
+      label: "Section heading",
+      ocrEngine: null,
+      ocrLanguage: null,
+      page: 2,
+      reviewSuggested: true
+    };
+    mockedEvidence.mockResolvedValueOnce(new Map([["blk-1", evidenceRow]]));
+    // The corrected block keeps its persisted id, and the post-save refetch reports it as corrected.
+    mockedSave.mockResolvedValue({
+      status: "saved",
+      work: makeWork({
+        correctedAt: "2026-02-02T00:00:00.000Z",
+        document: {
+          content: [
+            {
+              attrs: { anchorId: null, id: "blk-1" },
+              content: [{ text: "Fixed", type: "text" }],
+              type: "paragraph"
+            }
+          ],
+          type: "doc"
+        },
+        revision: 1
+      })
+    });
+    mockedEvidence.mockResolvedValueOnce(new Map([["blk-1", { ...evidenceRow, corrected: true }]]));
+
+    const { textbox, user } = await renderReadyEditor();
+
+    // The uncorrected suggested block is cued once its evidence resolves.
+    await waitFor(() => {
+      expect(textbox.querySelector(`.${extractionEvidenceCueClass}`)).not.toBeNull();
+    });
+    expect(mockedEvidence).toHaveBeenCalledTimes(1);
+    expect(mockedEvidence.mock.calls[0]![0]).toBe("work-1");
+
+    await user.click(textbox);
+    await user.type(textbox, "Fixed");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    // A successful save refetches evidence; the block now reads corrected, so its cue is gone.
+    await waitFor(() => {
+      expect(mockedEvidence).toHaveBeenCalledTimes(2);
+    });
+    await waitFor(() => {
+      expect(textbox.querySelector(`.${extractionEvidenceCueClass}`)).toBeNull();
+    });
+  });
+
+  it("keeps the existing cue and surfaces a retry when the post-save evidence refetch fails", async () => {
+    const evidenceRow = {
+      blockId: "blk-1",
+      confidence: 0.4,
+      corrected: false,
+      label: "Section heading",
+      ocrEngine: null,
+      ocrLanguage: null,
+      page: 2,
+      reviewSuggested: true
+    };
+    mockedEvidence.mockReset();
+    // Initial load succeeds and cues the block; the post-save refetch then fails unexpectedly.
+    mockedEvidence.mockResolvedValueOnce(new Map([["blk-1", evidenceRow]]));
+    mockedEvidence.mockRejectedValueOnce(new Error("refetch failed"));
+    mockedSave.mockResolvedValue({
+      status: "saved",
+      work: makeWork({
+        correctedAt: "2026-02-02T00:00:00.000Z",
+        document: {
+          content: [
+            {
+              attrs: { anchorId: null, id: "blk-1" },
+              content: [{ text: "Fixed", type: "text" }],
+              type: "paragraph"
+            }
+          ],
+          type: "doc"
+        },
+        revision: 1
+      })
+    });
+
+    const { textbox, user } = await renderReadyEditor();
+
+    await waitFor(() => {
+      expect(textbox.querySelector(`.${extractionEvidenceCueClass}`)).not.toBeNull();
+    });
+
+    await user.click(textbox);
+    await user.type(textbox, "Fixed");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    // The refetch failed: rather than blanking the cue into a silent "no evidence", the page keeps the
+    // known cue and surfaces a non-blocking retry so the stale guidance is visibly flagged.
+    await screen.findByText("Extraction evidence couldn’t load.");
+    expect(screen.getByRole("button", { name: "Retry" })).toBeDefined();
+    expect(textbox.querySelector(`.${extractionEvidenceCueClass}`)).not.toBeNull();
+  });
+
+  it("opens with no evidence notice when the Work simply has none (inert empty-map path)", async () => {
+    // The default beforeEach resolves an empty map — the inert 404/non-PDF path. This must NOT read as an
+    // error: correction opens cleanly with no cue and no retry notice.
+    const { textbox } = await renderReadyEditor();
+
+    await waitFor(() => {
+      expect(mockedEvidence).toHaveBeenCalled();
+    });
+    expect(textbox.querySelector(`.${extractionEvidenceCueClass}`)).toBeNull();
+    expect(screen.queryByText("Extraction evidence couldn’t load.")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  });
+
+  it("surfaces a non-blocking retry when the evidence fetch fails, then recovers on Retry", async () => {
+    const evidenceRow = {
+      blockId: "blk-1",
+      confidence: 0.4,
+      corrected: false,
+      label: "Section heading",
+      ocrEngine: null,
+      ocrLanguage: null,
+      page: 2,
+      reviewSuggested: true
+    };
+    mockedEvidence.mockReset();
+    // First load fails unexpectedly (500/contract/network); the retry then succeeds with a cued block.
+    mockedEvidence.mockRejectedValueOnce(new Error("evidence unavailable"));
+    mockedEvidence.mockResolvedValueOnce(new Map([["blk-1", evidenceRow]]));
+
+    const { textbox, user } = await renderReadyEditor();
+
+    // Correction is never blocked: the editor opens even though evidence failed to load.
+    expect(textbox.querySelector(`.${extractionEvidenceCueClass}`)).toBeNull();
+
+    // The failure is surfaced as a non-blocking retry — NOT silently presented as "no evidence".
+    const notice = await screen.findByText("Extraction evidence couldn’t load.");
+    expect(notice).toBeDefined();
+    const retry = screen.getByRole("button", { name: "Retry" });
+
+    // Retrying reloads the evidence; the cue now appears and the error notice clears.
+    await user.click(retry);
+    await waitFor(() => {
+      expect(mockedEvidence).toHaveBeenCalledTimes(2);
+    });
+    await waitFor(() => {
+      expect(textbox.querySelector(`.${extractionEvidenceCueClass}`)).not.toBeNull();
+    });
+    expect(screen.queryByText("Extraction evidence couldn’t load.")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
   });
 });

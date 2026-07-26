@@ -1831,6 +1831,57 @@ describe("imported work correction editor (#762)", () => {
     expect(markdownResponse.statusCode).toBe(404);
   });
 
+  it("serves per-block extraction evidence for a correctable imported Work (#763)", async () => {
+    const { workEntryId } = await seedCorrectableImported();
+    const [block] = await context.db
+      .select({ id: docBlocks.id })
+      .from(docBlocks)
+      .where(eq(docBlocks.workEntryId, workEntryId));
+    await context.db.insert(pdfBlockEvidence).values({
+      blockId: block!.id,
+      confidence: 0.4,
+      label: "text",
+      ocrEngine: "tesseract-5.3",
+      ocrLanguage: "eng",
+      page: 1,
+      workEntryId
+    });
+
+    const response = await context.server.inject({
+      method: "GET",
+      url: `/api/imported-works/${workEntryId}/extraction-evidence`
+    });
+
+    expect(response.statusCode).toBe(200);
+    const dto = response.json();
+    expect(dto.items).toHaveLength(1);
+    expect(dto.items[0]).toMatchObject({
+      blockId: block!.id,
+      confidence: 0.4,
+      corrected: false,
+      ocrEngine: "tesseract-5.3",
+      page: 1,
+      reviewSuggested: true
+    });
+  });
+
+  it("404s extraction evidence for an unknown or manual Work (#763)", async () => {
+    const manual = await seedCorrectableImported(undefined, "manual");
+
+    const unknown = await context.server.inject({
+      method: "GET",
+      url: "/api/imported-works/work-missing/extraction-evidence"
+    });
+    const manualResponse = await context.server.inject({
+      method: "GET",
+      url: `/api/imported-works/${manual.workEntryId}/extraction-evidence`
+    });
+
+    expect(unknown.statusCode).toBe(404);
+    expect(unknown.json()).toEqual({ error: "not_found" });
+    expect(manualResponse.statusCode).toBe(404);
+  });
+
   it("loads a section on demand and 404s a cross-work unit", async () => {
     const { unitEntryId, workEntryId } = await seedCorrectableImported();
     const other = await seedCorrectableImported();

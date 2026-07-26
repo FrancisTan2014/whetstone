@@ -3,6 +3,7 @@ export {
   type RichContentEditorPresentation,
   type RichContentEditorProps
 } from "./RichContentEditor.js";
+export { type ExtractionEvidenceMap } from "./extractionEvidenceDecoration.js";
 export {
   blockCommands,
   type BlockCommand,

@@ -919,7 +919,14 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   keyboard (Shift+F10) and a touch/coarse-pointer "More block actions" trigger reach the same menu. The
   drag-handle peer graph pulls in `@tiptap/y-tiptap`/`extension-collaboration`, but collaboration/Yjs is
   not enabled (no `Collaboration` extension or `Y.Doc` is constructed). Block transforms and undo/redo
-  live on the slash menu, gutter, and keyboard, not a toolbar. Persistence
+  live on the slash menu, gutter, and keyboard, not a toolbar. The PDF extraction-evidence seam (#763)
+  is the editor's one optional guidance layer: `extractionEvidenceDecoration.ts` is the inert-by-default
+  ProseMirror extension (`setExtractionEvidence(editor, map)`) that cues each uncorrected review-suggested
+  block by its stable id, `ExtractionEvidenceControl.tsx` is the keyboard **Review extraction** disclosure
+  (page, raw label, confidence band, OCR provenance; reframed once corrected), and `extractionEvidence.tokens.ts`
+  holds the cue class + copy; `RichContentEditor.tsx` takes an optional `evidence?: ExtractionEvidenceMap`
+  and surfaces both only for the caret's suggested block — every non-PDF surface threads nothing and stays
+  inert. Persistence
   and autosave policy stay with consuming features.
 - Features: `src/features/<feature>/` with page + `*Api.ts` (current: `library/`, `content/`,
   `reader/`, `notes/`, `lookup/`, `search/`, `diary/`). `search/` is the Search mode: `SearchPage.tsx` is a query
@@ -1266,7 +1273,16 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   same source reopens through `content/sourceClaims.claimUploadedSource`'s `exact_existing` branch without
   restaging, so corrected blocks and markers are never overwritten. `importedWorkContracts.ts` (in
   `@whetstone/contracts`) holds the `ImportedWorkDto` (no owner chronology; `+correctedAt`), the unit DTO,
-  and the correction/add requests.
+  and the correction/add requests. The correction page also fetches the Work's SAFE PDF extraction
+  evidence (#763) via `pdfExtractionEvidenceApi.fetchPdfExtractionEvidence` (`GET
+  /api/imported-works/:id/extraction-evidence`, 404/non-PDF → empty map), threads it into the shared
+  editor's evidence seam, and refetches after each save (`onContentSaved`) so a just-corrected block's cue
+  clears. Server: `library/pdfExtractionEvidenceQueries.ts` JOINs `pdf_block_evidence` (page/label/
+  confidence/OCR) with `doc_blocks` (type/`corrected_at`) for the owning Work only, derives review
+  suggestion via the shared `@whetstone/domain` `pdfExtractionReview.ts` policy (`classifyExtractionConfidence`,
+  `isUnmappedBlockType`, `suggestsExtractionReview`; the SAME policy `pdfCanonicalMapping` publication tests
+  assert), and projects the boundary DTOs in `contracts/pdfExtractionEvidenceContracts.ts` — never file
+  paths, coordinates, or a page image.
   `diary/` is the Diary mode (#246 origin, #571 rich-Entry rework): `DiaryPage.tsx` renders the shared
   `capture/CaptureCard` at the top (in the **workspace** presentation, #678), wiring `onCaptured` to prepend
   the newly saved diary Entry into the browsable Timeline. `CaptureCard` composes typed capture in the

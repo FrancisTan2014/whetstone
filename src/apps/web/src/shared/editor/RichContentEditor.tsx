@@ -4,6 +4,7 @@ import { Placeholder } from "@tiptap/extensions/placeholder";
 import { UndoRedo } from "@tiptap/extensions/undo-redo";
 import { EditorContent, useEditor } from "@tiptap/react";
 import { BubbleMenu, type BubbleMenuProps } from "@tiptap/react/menus";
+import type { PdfExtractionEvidenceItemDto } from "@whetstone/contracts";
 import { MoreHorizontal } from "lucide-react";
 import {
   type DocumentNodeJSON,
@@ -28,6 +29,12 @@ import {
 import { EditorFormattingMenu } from "./EditorFormattingMenu.js";
 import { EditorToolbar } from "./EditorToolbar.js";
 import { editorDocumentsEqual, validateEditorDocument } from "./editorDocument.js";
+import { ExtractionEvidenceControl } from "./ExtractionEvidenceControl.js";
+import {
+  ExtractionEvidenceDecoration,
+  type ExtractionEvidenceMap,
+  setExtractionEvidence
+} from "./extractionEvidenceDecoration.js";
 import { editorClassNames } from "./RichContentEditor.tokens.js";
 import { SlashCommand } from "./slashCommand.js";
 
@@ -41,6 +48,9 @@ const baseExtensions: Extensions = [
   UndoRedo,
   // The transient gutter wash — an editing-only decoration the static reader never mounts (#590).
   BlockGutterHighlight as unknown as Extensions[number],
+  // The PDF extraction-review cue (#763): inert until a consumer sets a non-empty evidence map, so every
+  // non-PDF surface that mounts the shared editor shows nothing. Editing-only; the reader never mounts it.
+  ExtractionEvidenceDecoration as unknown as Extensions[number],
   // A restrained, decoration-only hint on a focused empty paragraph — never stored, copied, or read
   // by the static reader (which mounts `documentExtensions` without this editing-only extension).
   Placeholder.configure({
@@ -65,6 +75,11 @@ export interface RichContentEditorProps {
   // When false the editor is read-only (Tiptap's native `editable`): the content stays visible but every
   // edit is blocked. Consumers freeze the surface this way (e.g. an in-flight import). Defaults to true.
   readonly editable?: boolean;
+  // Optional PDF extraction evidence keyed by block id (#763): the ONE evidence-decoration seam. When
+  // provided (the imported-Work correction page), uncorrected suggested blocks get a warning cue and the
+  // active block's evidence surfaces a "Review extraction" disclosure. Omitted everywhere else (manual
+  // editor, notes, authoring), so those surfaces mount the extension inert and show nothing.
+  readonly evidence?: ExtractionEvidenceMap;
   // A monotonically-changing token a consumer bumps to place the caret at the document start (the
   // section's heading) — the manual-Work Outline's "selection focuses the exact heading" (#697).
   // `undefined` (the default) never focuses, so every other surface is unchanged; a number focuses on
@@ -102,6 +117,27 @@ function activeBlockStart(state: EditorState): number {
   return block?.start ?? 0;
 }
 
+// The PDF extraction evidence for the block the caret sits in (#763), or undefined when no evidence map
+// is threaded (every non-PDF surface) or the active block carries no evidence row. Keyed by the block's
+// stable UniqueID, so moving the caret moves the disclosure. Recomputed each transaction.
+function activeBlockEvidence(
+  state: EditorState,
+  evidence: ExtractionEvidenceMap | undefined
+): PdfExtractionEvidenceItemDto | undefined {
+  if (evidence === undefined) {
+    return undefined;
+  }
+
+  const block = resolveTopLevelBlock(state.doc, state.selection.from);
+  /* v8 ignore next 2 -- a focused selection always resolves to an id'd top-level block; the null
+     fallback only guards a document-end gap cursor, covered by resolveTopLevelBlock's own unit tests. */
+  if (block === null) {
+    return undefined;
+  }
+
+  return evidence.get(block.node.attrs.id as string);
+}
+
 // The horizontal ellipsis for the compact/touch `More block actions` trigger.
 function MoreIcon(): React.JSX.Element {
   return <MoreHorizontal aria-hidden height={16} strokeWidth={1.75} width={16} />;
@@ -117,6 +153,7 @@ export function RichContentEditor({
   ariaLabel = "Rich content editor",
   document,
   editable = true,
+  evidence,
   focusSignal,
   onChange,
   onSave,
@@ -231,11 +268,29 @@ export function RichContentEditor({
     setBlockGutterTarget(editor, openMenu !== null ? openMenu.pos : gutterPos);
   }, [editor, openMenu, gutterPos]);
 
+  // Push the current Work's extraction evidence into the cue decoration whenever it changes — the
+  // correction page refetches after a save so a just-corrected block's cue clears. An absent map (every
+  // non-PDF surface) sets an empty map, keeping the extension inert. A no-op meta transaction: it never
+  // edits the document, enters undo, or emits onChange.
+  useEffect(() => {
+    if (editor === null) {
+      return;
+    }
+
+    setExtractionEvidence(editor, evidence ?? new Map());
+  }, [editor, evidence]);
+
   if (editor === null) {
     return (
       <div aria-busy="true" className={editorClassNames.root} data-presentation={presentation} />
     );
   }
+
+  // The evidence for the block the caret sits in, if it carries a review-suggested row: the shared editor
+  // surfaces the "Review extraction" disclosure only for a suggested (or already-corrected) block, so a
+  // high-confidence mapped block shows no control. Recomputed each transaction (the editor re-renders on
+  // every transaction), so moving the caret moves the disclosure.
+  const activeEvidence = activeBlockEvidence(editor.state, evidence);
 
   const dismissFormattingMenu = (): void => {
     const { from, to } = editor.state.selection;
@@ -295,6 +350,13 @@ export function RichContentEditor({
             }
           />
         </div>
+      ) : null}
+
+      {/* The extraction-evidence disclosure (#763): a contextual, keyboard-operable control shown only when
+          the caret's block carries a review-suggested evidence row. It is its own contextual affordance
+          (never a permanently occupied gutter), so it renders nothing until such a block is active. */}
+      {editable && activeEvidence?.reviewSuggested === true ? (
+        <ExtractionEvidenceControl evidence={activeEvidence} />
       ) : null}
 
       <EditorContent editor={editor} />

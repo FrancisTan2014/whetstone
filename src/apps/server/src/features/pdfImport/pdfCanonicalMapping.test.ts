@@ -1,6 +1,12 @@
 import type { StructuredDocItem, StructuredDocument, StructuredPage } from "@whetstone/contracts";
 import { STRUCTURED_DOCUMENT_SCHEMA_VERSION } from "@whetstone/contracts";
 import { parseDocument } from "@whetstone/document";
+import {
+  classifyExtractionConfidence,
+  isUnmappedBlockType,
+  PDF_EXTRACTION_CONFIDENCE_THRESHOLD,
+  suggestsExtractionReview
+} from "@whetstone/domain";
 import { describe, expect, it } from "vitest";
 
 import { mapStructuredDocument, type PdfCanonicalMappingResult } from "./pdfCanonicalMapping.js";
@@ -393,5 +399,64 @@ describe("mapStructuredDocument", () => {
         parseDocument({ content: unit.docBlocks.map((block) => block.node), type: "doc" })
       ).not.toThrow();
     }
+  });
+});
+
+// The shared `needs review` policy (#763) is the SAME pure function the editor's evidence query uses, so
+// asserting it here over the mapper's own output proves the two never diverge: a block's review suggestion
+// is derived from the mapper's node type (`unknown` = the unknown/fallback path) and its retained
+// confidence, not from a second label list duplicated in the web client.
+describe("shared extraction-review policy over the mapper's output", () => {
+  it("agrees with the mapper: low confidence OR the unknown/fallback path suggests review", () => {
+    const result = mapped(
+      mapEn(
+        doc([
+          item({
+            confidence: PDF_EXTRACTION_CONFIDENCE_THRESHOLD - 0.25,
+            label: "text",
+            text: "Low"
+          }),
+          item({ confidence: 0.95, label: "text", text: "High" }),
+          // A label with no canonical node type takes the mapper's unknown/fallback path.
+          item({ confidence: 0.99, label: "sidebar", text: "Weird" })
+        ])
+      )
+    );
+
+    const typeById = new Map(
+      result.units.flatMap((unit) => unit.docBlocks.map((block) => [block.id, block.type] as const))
+    );
+    const reviewByText = new Map(
+      result.evidence.map((row) => {
+        const unmapped = isUnmappedBlockType(typeById.get(row.blockId) ?? "");
+        return [
+          row.label === "sidebar" ? "Weird" : row.label,
+          suggestsExtractionReview({ confidence: row.confidence, unmapped })
+        ] as const;
+      })
+    );
+
+    // The unknown block reached the fallback path, so the mapper reports its label as unmapped.
+    expect(result.unmappedLabels).toContain("sidebar");
+    const unknownRow = result.evidence.find((row) => row.label === "sidebar")!;
+    expect(isUnmappedBlockType(typeById.get(unknownRow.blockId) ?? "")).toBe(true);
+
+    // A below-threshold mapped block is suggested by confidence; a high-confidence mapped block is not;
+    // the unknown block is suggested by its fallback path even though its confidence is high.
+    expect(classifyExtractionConfidence(PDF_EXTRACTION_CONFIDENCE_THRESHOLD - 0.25)).toBe(
+      "review-suggested"
+    );
+    expect(reviewByText.get("text")).toBe(false);
+    expect(reviewByText.get("Weird")).toBe(true);
+
+    const lowRow = result.evidence.find(
+      (row) => row.confidence < PDF_EXTRACTION_CONFIDENCE_THRESHOLD
+    )!;
+    expect(
+      suggestsExtractionReview({
+        confidence: lowRow.confidence,
+        unmapped: isUnmappedBlockType(typeById.get(lowRow.blockId) ?? "")
+      })
+    ).toBe(true);
   });
 });

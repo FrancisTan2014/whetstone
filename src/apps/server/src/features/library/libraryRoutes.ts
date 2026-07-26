@@ -22,6 +22,7 @@ import {
   loadImportedWorkForCorrection,
   loadImportedWorkUnit
 } from "./importedWorkContentQueries.js";
+import { loadPdfExtractionEvidence } from "./pdfExtractionEvidenceQueries.js";
 import { addManualWorkSection, updateManualWorkContent } from "./manualWorkContentCommands.js";
 import { loadManualWorkForEditing, loadManualWorkUnit } from "./manualWorkContentQueries.js";
 import { listWorks, searchAuthors } from "./libraryQueries.js";
@@ -237,6 +238,27 @@ export function registerLibraryRoutes(
       }
 
       return reply.code(200).send(unit);
+    }
+  );
+
+  // Return the SAFE PDF extraction evidence for a correctable imported Work (#763): each block's page,
+  // raw structure label, confidence, OCR provenance, the derived review suggestion, and whether it has
+  // been corrected — so the shared editor can guide correction toward the least-certain blocks. Origin/
+  // eligibility-scoped exactly like the correction endpoints (404 otherwise). No block id is accepted from
+  // the client and no coordinate/image/path is returned; a non-PDF imported Work yields an empty list.
+  server.get<{ Params: WorkParams }>(
+    "/api/imported-works/:workEntryId/extraction-evidence",
+    async (request, reply) => {
+      const evidence = await loadPdfExtractionEvidence(
+        dependencies.db,
+        toEntryId(request.params.workEntryId)
+      );
+
+      if (evidence === undefined) {
+        return reply.code(404).send(notFound);
+      }
+
+      return reply.code(200).send(evidence);
     }
   );
 
