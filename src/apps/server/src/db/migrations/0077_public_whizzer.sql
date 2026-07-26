@@ -1,0 +1,1 @@
+ALTER TABLE "card_creation_attempts" ADD COLUMN "draft_payload" jsonb;

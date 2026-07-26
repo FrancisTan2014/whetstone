@@ -772,15 +772,18 @@ export const cardCreationReceipts = pgTable(
 // Answer already exact-projected in the learner's Notes. It is operational state — never an Entry, never
 // on the Timeline/Today, excluded from backup — that binds one pending material review so a follow-on
 // decision (Use existing material / Keep separate) is authoritative and fenced. It stores no learning
-// content: `draft_fingerprint` is the opaque sha256 of the full authored draft (answer+question+target),
-// so a decision whose draft changed (an edited Answer) is detected without persisting the draft;
+// content beyond one optional staged draft: `draft_fingerprint` is the opaque sha256 of the full authored
+// draft (answer+question+target), so a decision whose draft changed (an edited Answer) is detected;
 // `candidate_note_ids` are the reviewed candidate note ids and `candidate_fingerprint` their opaque
 // digest, so a new/changed/deleted candidate since review is detected and forces a refresh. `revision`
-// fences a decision against a stale client; `source` records where review was raised (`ui`). A partial
-// unique index keeps at most one PENDING attempt per (owner, submission), so a save retry resumes the
-// same review instead of minting a second. The row is swept at its `expires_at` on startup and on each
-// attempt operation; it has no foreign key into the note cascade, so a deleted candidate simply fails a
-// later recheck rather than resurrecting anything.
+// fences a decision against a stale client; `source` records where review was raised (`ui`, or `mcp` for a
+// local-MCP preview). An `mcp` preview (#717) additionally STAGES the exact drafted documents in
+// `draft_payload` so a later commit can recreate precisely the previewed card; a `ui` attempt leaves it
+// null (the composer re-sends the draft on its decision). A partial unique index keeps at most one PENDING
+// attempt per (owner, submission), so a save retry or a same-request preview resumes the same attempt
+// instead of minting a second. The row is swept at its `expires_at` on startup and on each attempt
+// operation; it has no foreign key into the note cascade, so a deleted candidate simply fails a later
+// recheck rather than resurrecting anything.
 export const cardCreationAttempts = pgTable(
   "card_creation_attempts",
   {
@@ -790,7 +793,8 @@ export const cardCreationAttempts = pgTable(
     draftFingerprint: text("draft_fingerprint").notNull(),
     candidateNoteIds: jsonb("candidate_note_ids").$type<ReadonlyArray<string>>().notNull(),
     candidateFingerprint: text("candidate_fingerprint").notNull(),
-    source: text("source", { enum: ["ui"] as const }).notNull(),
+    source: text("source", { enum: ["ui", "mcp"] as const }).notNull(),
+    draftPayload: jsonb("draft_payload"),
     state: text("state", { enum: ["pending", "consumed"] as const }).notNull(),
     decision: text("decision", { enum: ["reuse", "keep_separate"] as const }),
     revision: integer("revision").notNull().default(0),

@@ -287,12 +287,14 @@ export async function createDirectCard(
       if (resumable === null) {
         const attempt = await insertPendingCardCreationAttempt(tx, {
           draftFingerprint: draft.fingerprint,
+          draftPayload: null,
           exactNoteIds,
           expiresAt: new Date(now.getTime() + dependencies.attemptTtlMs),
           id: dependencies.createId(),
           nearKeys,
           nearNoteIds,
           now,
+          source: "ui",
           submissionId: request.submissionId,
           userId
         });

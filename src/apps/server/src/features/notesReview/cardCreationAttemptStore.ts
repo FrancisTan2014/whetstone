@@ -1,4 +1,6 @@
 import { NEAR_MATCH_EVIDENCE_VERSION } from "@whetstone/document";
+import type { DocumentNodeJSON } from "@whetstone/document";
+import type { NoteGradingTarget } from "@whetstone/contracts";
 import { and, eq, lte } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
@@ -10,7 +12,8 @@ import { fingerprintPayload } from "./cardCreationReceipt.js";
 // fenced. It persists no learning content — only opaque fingerprints and the reviewed candidate ids — and
 // has no foreign key into the note cascade, so a deleted candidate simply fails a later recheck. Every
 // transition is compare-and-set fenced by the row's `revision`, so a stale client or a replayed decision is
-// rejected, never reapplied.
+// rejected, never reapplied. A local-MCP preview (#717) reuses the SAME row with `source: "mcp"`, additionally
+// staging the exact drafted documents in `draftPayload` for a later commit; it never writes a card.
 
 // The transaction handle drizzle passes into `db.transaction`, so a decision's lock, recheck, consume, and
 // write run in ONE atomic write.
@@ -22,15 +25,30 @@ type Reader = Pick<DbClient, "select">;
 
 export type CardCreationDecision = "keep_separate" | "reuse";
 
+// Where a review/preview attempt was raised: `ui` for the in-app New-card save (#712), `mcp` for a local-MCP
+// preview (#717).
+export type CardCreationAttemptSource = "ui" | "mcp";
+
+// The exact drafted documents an `mcp` preview stages so a later commit issue can recreate precisely the
+// previewed card without trusting the client to resend it. A `ui` attempt stages nothing (null): its composer
+// resends the draft on the decision.
+export type CardCreationDraftPayload = Readonly<{
+  answerDoc: DocumentNodeJSON;
+  questionDoc: DocumentNodeJSON;
+  target: NoteGradingTarget;
+}>;
+
 // The in-memory shape of one attempt row.
 export type CardCreationAttemptRecord = Readonly<{
   candidateFingerprint: string;
   candidateNoteIds: ReadonlyArray<string>;
   decision: CardCreationDecision | null;
   draftFingerprint: string;
+  draftPayload: CardCreationDraftPayload | null;
   expiresAt: Date;
   id: string;
   revision: number;
+  source: CardCreationAttemptSource;
   state: "consumed" | "pending";
   submissionId: string;
   userId: string;
@@ -44,9 +62,11 @@ function toRecord(row: AttemptRow): CardCreationAttemptRecord {
     candidateNoteIds: row.candidateNoteIds,
     decision: row.decision,
     draftFingerprint: row.draftFingerprint,
+    draftPayload: (row.draftPayload as CardCreationDraftPayload | null) ?? null,
     expiresAt: row.expiresAt,
     id: row.id,
     revision: row.revision,
+    source: row.source,
     state: row.state,
     submissionId: row.submissionId,
     userId: row.userId
@@ -90,12 +110,14 @@ function combinedCandidateNoteIds(groups: ReviewCandidateGroups): string[] {
 
 export type InsertPendingAttemptInput = Readonly<{
   draftFingerprint: string;
+  draftPayload: CardCreationDraftPayload | null;
   exactNoteIds: ReadonlyArray<string>;
   expiresAt: Date;
   id: string;
   nearNoteIds: ReadonlyArray<string>;
   nearKeys: ReadonlyArray<string>;
   now: Date;
+  source: CardCreationAttemptSource;
   submissionId: string;
   userId: string;
 }>;
@@ -116,10 +138,11 @@ export async function insertPendingCardCreationAttempt(
       createdAt: input.now,
       decision: null,
       draftFingerprint: input.draftFingerprint,
+      draftPayload: input.draftPayload,
       expiresAt: input.expiresAt,
       id: input.id,
       revision: 0,
-      source: "ui",
+      source: input.source,
       state: "pending",
       submissionId: input.submissionId,
       updatedAt: input.now,
@@ -258,9 +281,14 @@ export async function discardPendingAttempt(
 
 // Sweep every attempt whose TTL has passed (`expires_at <= now`), pending or consumed: a forgotten review
 // never lingers, and a consumed tombstone is not kept past its window. Runs at startup and after each
-// attempt operation; adds no scheduler. Returns how many rows were removed.
-export async function expireCardCreationAttempts(db: DbClient, now: Date): Promise<number> {
-  const removed = await db
+// attempt operation; adds no scheduler. Accepts any deleter, so a preview can sweep an expired same-request
+// attempt inside its own transaction before staging a fresh one (never resurrecting the expired one).
+// Returns how many rows were removed.
+export async function expireCardCreationAttempts(
+  deleter: Pick<DbClient, "delete">,
+  now: Date
+): Promise<number> {
+  const removed = await deleter
     .delete(cardCreationAttempts)
     .where(lte(cardCreationAttempts.expiresAt, now))
     .returning({ id: cardCreationAttempts.id });
