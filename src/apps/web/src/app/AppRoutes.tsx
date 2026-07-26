@@ -5,6 +5,7 @@ import { AuthoredWorkPage } from "../features/authoredWorks/AuthoredWorkPage.js"
 import { WritingHomePage } from "../features/authoredWorks/WritingHomePage.js";
 import { DiaryPage } from "../features/diary/DiaryPage.js";
 import { ManualWorkEditorPage } from "../features/library/ManualWorkEditorPage.js";
+import { ImportedWorkCorrectionPage } from "../features/library/ImportedWorkCorrectionPage.js";
 import { NotesPage } from "../features/notes/NotesPage.js";
 import { ReaderPage } from "../features/reader/ReaderPage.js";
 import { NotesReviewPage } from "../features/notesReview/NotesReviewPage.js";
@@ -86,6 +87,23 @@ function ManualWorkEditorRoute(): React.JSX.Element {
   return <ManualWorkEditorPage key={workEntryId} workEntryId={workEntryId} />;
 }
 
+// The Library's imported-Work "Correct content" action routes to
+// `#/library/works/:workEntryId/correct`. The route reads the id and opens the shared editor bound to the
+// imported-correction endpoints for that canonical imported Work (#762). Keyed by the id so switching works
+// remounts the editor to its initial loading state.
+function ImportedWorkCorrectionRoute(): React.JSX.Element {
+  const { workEntryId } = useParams();
+
+  /* v8 ignore next 3 -- defensive: this component only mounts under the `:workEntryId` route, so the
+     param is always present; the redirect guards against a future route wiring change and cannot be
+     reached through the real router. */
+  if (workEntryId === undefined) {
+    return <Navigate replace to="/library" />;
+  }
+
+  return <ImportedWorkCorrectionPage key={workEntryId} workEntryId={workEntryId} />;
+}
+
 // Routes for the four navigation modes, all nested under the shell layout. Hash/memory
 // routing is provided by the composition root so this works under file/Capacitor/Tauri.
 export function AppRoutes(): React.JSX.Element {
@@ -95,6 +113,10 @@ export function AppRoutes(): React.JSX.Element {
         <Route element={<TodayPage />} index />
         <Route element={<LibraryMode />} path="library" />
         <Route element={<ManualWorkEditorRoute />} path="library/works/:workEntryId/edit" />
+        <Route
+          element={<ImportedWorkCorrectionRoute />}
+          path="library/works/:workEntryId/correct"
+        />
         <Route element={<ReaderRoute />} path="reader" />
         <Route element={<WriteRoute />} path="write" />
         {/* The standalone Memory/Recall experience is retired (#662): `/memory` and `/recall` are

@@ -19,6 +19,7 @@ const mockedFetchWorkContent = vi.mocked(fetchWorkContent);
 const author = { id: toAuthorId("author-1"), name: "George Orwell" };
 
 const workA: WorkListItemDto = {
+  correctable: false,
   author,
   work: {
     authorId: author.id,
@@ -31,6 +32,7 @@ const workA: WorkListItemDto = {
 };
 
 const workB: WorkListItemDto = {
+  correctable: false,
   author,
   work: {
     authorId: author.id,

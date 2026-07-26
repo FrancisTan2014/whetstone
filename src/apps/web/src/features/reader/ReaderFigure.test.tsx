@@ -96,6 +96,7 @@ const mockedSaveReadingPosition = vi.mocked(saveReadingPosition);
 const author = { id: toAuthorId("author-1"), name: "A. Writer" };
 
 const work: WorkListItemDto = {
+  correctable: false,
   author,
   work: {
     authorId: author.id,

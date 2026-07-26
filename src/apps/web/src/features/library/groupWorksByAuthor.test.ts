@@ -6,6 +6,7 @@ import { toAuthorId, toEntryId } from "@whetstone/domain";
 function work(authorId: string, authorName: string, entryId: string): WorkListItemDto {
   return {
     author: { id: toAuthorId(authorId), name: authorName },
+    correctable: false,
     work: {
       authorId: toAuthorId(authorId),
       entryId: toEntryId(entryId),

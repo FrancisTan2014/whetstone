@@ -33,6 +33,7 @@ afterEach(() => {
 });
 
 const item: WorkListItemDto = {
+  correctable: false,
   author: { id: toAuthorId("author-1"), name: "George Orwell" },
   work: {
     authorId: toAuthorId("author-1"),
@@ -121,6 +122,23 @@ describe("WorkOverflowMenu", () => {
     expect(within(menu).getByRole("menuitem", { name: "Edit content" }).getAttribute("href")).toBe(
       "#/library/works/work-1/edit"
     );
+  });
+
+  it("offers Correct content routing to the shared editor for a correctable imported Work", async () => {
+    const { onManageContent, user } = setup({ item: { ...item, correctable: true } });
+    const menu = await openMenu(user);
+
+    expect(
+      within(menu)
+        .getAllByRole("menuitem")
+        .map((node) => node.textContent)
+    ).toEqual(["I can recite this", "View notes", "Correct content", "Delete work"]);
+    const correct = within(menu).getByRole("menuitem", { name: "Correct content" });
+    expect(correct.getAttribute("href")).toBe("#/library/works/work-1/correct");
+
+    // Correction is a navigation, not the manage-content panel action.
+    await user.click(correct);
+    expect(onManageContent).not.toHaveBeenCalled();
   });
 
   it("enrolls the Work when 'I can recite this' is chosen", async () => {

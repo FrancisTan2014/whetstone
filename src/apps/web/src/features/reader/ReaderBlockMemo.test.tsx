@@ -58,6 +58,7 @@ const mockedLookupTerm = vi.mocked(lookupTerm);
 const author = { id: toAuthorId("author-1"), name: "A. Writer" };
 
 const work: WorkListItemDto = {
+  correctable: false,
   author,
   work: {
     authorId: author.id,
