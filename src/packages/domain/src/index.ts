@@ -171,6 +171,14 @@ export {
   pdfImportPhases
 } from "./pdfImportAttempt.js";
 export type { PdfImportAttemptState, PdfImportPhase } from "./pdfImportAttempt.js";
+export {
+  classifyExtractionConfidence,
+  isUnmappedBlockType,
+  PDF_EXTRACTION_CONFIDENCE_THRESHOLD,
+  suggestsExtractionReview,
+  UNMAPPED_BLOCK_TYPE
+} from "./pdfExtractionReview.js";
+export type { ExtractionConfidenceBand } from "./pdfExtractionReview.js";
 export { buildSearchSnippet, SEARCH_SNIPPET_MAX_CODE_POINTS } from "./searchSnippet.js";
 export type { BuildSearchSnippetInput, SearchSnippet } from "./searchSnippet.js";
 export {

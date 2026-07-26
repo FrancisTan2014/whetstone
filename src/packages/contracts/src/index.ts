@@ -98,6 +98,15 @@ export type {
   ImportedWorkUnitDto
 } from "./importedWorkContracts.js";
 export {
+  parsePdfExtractionEvidenceDto,
+  pdfExtractionEvidenceDtoSchema,
+  pdfExtractionEvidenceItemDtoSchema
+} from "./pdfExtractionEvidenceContracts.js";
+export type {
+  PdfExtractionEvidenceDto,
+  PdfExtractionEvidenceItemDto
+} from "./pdfExtractionEvidenceContracts.js";
+export {
   enrollRecitationRequestSchema,
   parseEnrollRecitationRequest,
   parseRecitationOverviewDto,
