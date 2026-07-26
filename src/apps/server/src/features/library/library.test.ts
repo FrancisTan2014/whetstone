@@ -47,6 +47,10 @@ import { createWork } from "./libraryCommands.js";
 import type { LibraryRouteDependencies } from "./libraryRoutes.js";
 import { updateManualWorkContent, addManualWorkSection } from "./manualWorkContentCommands.js";
 import { loadManualWorkForEditing, loadManualWorkUnit } from "./manualWorkContentQueries.js";
+import {
+  initializeEditableWorkContent,
+  reconcileEditableWorkContent
+} from "../content/editableWorkContent.js";
 import { loadWorkStructure } from "../content/contentQueries.js";
 import { insertCurrentNotePromptInTx, insertNoteInTx } from "../notes/noteCommands.js";
 import { seedReviewCard } from "../review/reviewCardCommands.js";
@@ -292,6 +296,7 @@ describe("library routes", () => {
     }
     expect(created.work).toEqual({
       author: { id: "author-1", name: "George Orwell" },
+      correctable: false,
       work: {
         authorId: "author-1",
         entryId: created.work.work.entryId,
@@ -315,6 +320,7 @@ describe("library routes", () => {
       works: [
         {
           author: { id: "author-1", name: "George Orwell" },
+          correctable: false,
           work: {
             authorId: "author-1",
             entryId: created.work.work.entryId,
@@ -354,6 +360,7 @@ describe("library routes", () => {
     }
     expect(created.work).toEqual({
       author: { id: "author-1", name: "Charles Dickens" },
+      correctable: false,
       work: {
         authorId: "author-1",
         entryId: created.work.work.entryId,
@@ -1692,5 +1699,249 @@ describe("manual work editor (#720, sections #697)", () => {
 
     // A lone headless unit needs no table of contents (a "Start" label only appears alongside headings).
     expect(structure.tableOfContents ?? []).toEqual([]);
+  });
+});
+
+describe("imported work correction editor (#762)", () => {
+  let seedSequence = 0;
+
+  function paragraph(text: string): DocumentNodeJSON {
+    return { content: [{ text, type: "text" }], type: "paragraph" };
+  }
+
+  function heading(level: number, text: string): DocumentNodeJSON {
+    return { attrs: { level }, content: [{ text, type: "text" }], type: "heading" };
+  }
+
+  // A canonical imported Work (origin=imported, one section fully in doc_blocks) — the shape a PDF import
+  // produces and the only shape the correction editor opens. Seeded directly so the fixture is independent
+  // of any ingest route.
+  async function seedCorrectableImported(
+    entryId = `imported-${(seedSequence += 1)}`,
+    origin: "imported" | "manual" = "imported"
+  ): Promise<{ unitEntryId: string; workEntryId: string }> {
+    const makeUnitId = (): string => `${entryId}-u${(seedSequence += 1)}`;
+    await context.db
+      .insert(authorsTable)
+      .values({ id: `author-${entryId}`, name: entryId, nameKey: entryId });
+    await context.db.insert(entries).values({ id: entryId, type: "work" });
+    await context.db.insert(workMeta).values({
+      authorId: `author-${entryId}`,
+      entryId,
+      language: "en",
+      origin,
+      title: `Work ${entryId}`,
+      workType: "book"
+    });
+    const { unitEntryId } = await context.db.transaction((tx) =>
+      initializeEditableWorkContent(tx, {
+        createEntryId: makeUnitId,
+        workEntryId: toEntryId(entryId)
+      })
+    );
+    await context.db.transaction((tx) =>
+      reconcileEditableWorkContent(tx, {
+        document: { content: [heading(1, "Chapter"), paragraph("Body")], type: "doc" },
+        unitEntryId,
+        workEntryId: toEntryId(entryId)
+      })
+    );
+    return { unitEntryId, workEntryId: entryId };
+  }
+
+  async function seedMarkdownImported(entryId = `md-${(seedSequence += 1)}`): Promise<string> {
+    await context.db
+      .insert(authorsTable)
+      .values({ id: `author-${entryId}`, name: entryId, nameKey: entryId });
+    await context.db.insert(entries).values({ id: entryId, type: "work" });
+    await context.db.insert(workMeta).values({
+      authorId: `author-${entryId}`,
+      entryId,
+      language: "en",
+      origin: "imported",
+      title: `Markdown ${entryId}`,
+      workType: "book"
+    });
+    const unitId = `${entryId}-unit`;
+    const blockId = `${entryId}-legacy`;
+    await context.db.insert(entries).values([
+      { id: unitId, type: "reading_unit" },
+      { id: blockId, type: "block" }
+    ]);
+    await context.db.insert(readingUnits).values({
+      entryId: unitId,
+      orderIndex: 0,
+      sourceFile: null,
+      title: null,
+      workEntryId: entryId
+    });
+    await context.db.insert(blocks).values({
+      blockType: "paragraph",
+      deletedAt: null,
+      entryId: blockId,
+      mdastJson: { type: "paragraph" },
+      orderIndex: 0,
+      plaintext: "legacy",
+      readingUnitEntryId: unitId,
+      workEntryId: entryId
+    });
+    return entryId;
+  }
+
+  it("opens a correctable imported Work at its first section", async () => {
+    const { unitEntryId, workEntryId } = await seedCorrectableImported();
+
+    const response = await context.server.inject({
+      method: "GET",
+      url: `/api/imported-works/${workEntryId}`
+    });
+
+    expect(response.statusCode).toBe(200);
+    const dto = response.json();
+    expect(dto.entryId).toBe(workEntryId);
+    expect(dto.unitEntryId).toBe(unitEntryId);
+    expect(dto.correctedAt).toBeNull();
+    expect(dto.revision).toBe(0);
+    expect(dto.sections).toHaveLength(1);
+    // The imported editor DTO carries no owner chronology fields.
+    expect(dto.createdAt).toBeUndefined();
+    expect(dto.updatedAt).toBeUndefined();
+  });
+
+  it("returns 404 opening an unknown, manual, or Markdown-only Work", async () => {
+    const manual = await seedCorrectableImported(undefined, "manual");
+    const markdown = await seedMarkdownImported();
+
+    const unknown = await context.server.inject({
+      method: "GET",
+      url: "/api/imported-works/work-missing"
+    });
+    const manualResponse = await context.server.inject({
+      method: "GET",
+      url: `/api/imported-works/${manual.workEntryId}`
+    });
+    const markdownResponse = await context.server.inject({
+      method: "GET",
+      url: `/api/imported-works/${markdown}`
+    });
+
+    expect(unknown.statusCode).toBe(404);
+    expect(unknown.json()).toEqual({ error: "not_found" });
+    expect(manualResponse.statusCode).toBe(404);
+    expect(markdownResponse.statusCode).toBe(404);
+  });
+
+  it("loads a section on demand and 404s a cross-work unit", async () => {
+    const { unitEntryId, workEntryId } = await seedCorrectableImported();
+    const other = await seedCorrectableImported();
+
+    const unit = await context.server.inject({
+      method: "GET",
+      url: `/api/imported-works/${workEntryId}/units/${unitEntryId}`
+    });
+    const foreign = await context.server.inject({
+      method: "GET",
+      url: `/api/imported-works/${workEntryId}/units/${other.unitEntryId}`
+    });
+
+    expect(unit.statusCode).toBe(200);
+    expect(unit.json().unitEntryId).toBe(unitEntryId);
+    expect(foreign.statusCode).toBe(404);
+  });
+
+  it("corrects a section, stamping the correction marker in the response", async () => {
+    const { unitEntryId, workEntryId } = await seedCorrectableImported();
+    const opened = (
+      await context.server.inject({ method: "GET", url: `/api/imported-works/${workEntryId}` })
+    ).json();
+    const [headingBlock, bodyBlock] = opened.document.content as Array<Record<string, unknown>>;
+
+    const response = await context.server.inject({
+      method: "PUT",
+      url: `/api/imported-works/${workEntryId}/units/${unitEntryId}/content`,
+      payload: {
+        document: {
+          content: [headingBlock, { ...bodyBlock, content: [{ text: "Corrected", type: "text" }] }],
+          type: "doc"
+        },
+        revision: opened.revision
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    const dto = response.json();
+    expect(dto.revision).toBe(1);
+    expect(typeof dto.correctedAt).toBe("string");
+    expect(documentText(dto.document)).toBe("ChapterCorrected");
+  });
+
+  it("rejects a malformed correction body with 400", async () => {
+    const { unitEntryId, workEntryId } = await seedCorrectableImported();
+
+    const response = await context.server.inject({
+      method: "PUT",
+      url: `/api/imported-works/${workEntryId}/units/${unitEntryId}/content`,
+      payload: { document: { type: "not-a-doc" }, revision: "r" }
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: "invalid_request" });
+  });
+
+  it("returns 404 correcting an unknown Work and 409 on a stale revision", async () => {
+    const { unitEntryId, workEntryId } = await seedCorrectableImported();
+
+    const unknown = await context.server.inject({
+      method: "PUT",
+      url: "/api/imported-works/work-missing/units/unit-x/content",
+      payload: { document: { content: [paragraph("x")], type: "doc" }, revision: 0 }
+    });
+    const stale = await context.server.inject({
+      method: "PUT",
+      url: `/api/imported-works/${workEntryId}/units/${unitEntryId}/content`,
+      payload: { document: { content: [paragraph("x")], type: "doc" }, revision: 99 }
+    });
+
+    expect(unknown.statusCode).toBe(404);
+    expect(stale.statusCode).toBe(409);
+    expect(stale.json()).toEqual({ error: "revision_conflict" });
+  });
+
+  it("appends a section, opens it, and protects against malformed, stale, and unknown adds", async () => {
+    const { workEntryId } = await seedCorrectableImported();
+    const opened = (
+      await context.server.inject({ method: "GET", url: `/api/imported-works/${workEntryId}` })
+    ).json();
+
+    const added = await context.server.inject({
+      method: "POST",
+      url: `/api/imported-works/${workEntryId}/units`,
+      payload: { revision: opened.revision }
+    });
+    expect(added.statusCode).toBe(201);
+    const addedDto = added.json();
+    expect(addedDto.sections).toHaveLength(2);
+    expect(addedDto.unitEntryId).toBe(addedDto.sections[1].unitEntryId);
+    expect(addedDto.document.content[0].type).toBe("heading");
+
+    const malformed = await context.server.inject({
+      method: "POST",
+      url: `/api/imported-works/${workEntryId}/units`,
+      payload: { revision: "r" }
+    });
+    const stale = await context.server.inject({
+      method: "POST",
+      url: `/api/imported-works/${workEntryId}/units`,
+      payload: { revision: 99 }
+    });
+    const unknown = await context.server.inject({
+      method: "POST",
+      url: "/api/imported-works/work-missing/units",
+      payload: { revision: 0 }
+    });
+
+    expect(malformed.statusCode).toBe(400);
+    expect(stale.statusCode).toBe(409);
+    expect(unknown.statusCode).toBe(404);
   });
 });

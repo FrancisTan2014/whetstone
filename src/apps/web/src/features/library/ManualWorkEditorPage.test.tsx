@@ -236,6 +236,15 @@ describe("ManualWorkEditorPage", () => {
     expect(screen.getByRole("button", { name: "Save" })).toBeDefined();
   });
 
+  it("stays owner-scoped: exposes no administrative Open in Reader action", async () => {
+    // The manual page shares the editor with the imported-correction page, but only the administrative
+    // correction surface injects an "Open in Reader" action. The owner-scoped manual editor must never
+    // gain it through the generalization, so a leak of that affordance fails here.
+    await renderReadyEditor();
+
+    expect(screen.queryByRole("link", { name: "Open in Reader" })).toBeNull();
+  });
+
   it("opens a freshly created work (canonical empty document) in a clean Saved state", async () => {
     mockedFetch.mockResolvedValue(
       makeWork({

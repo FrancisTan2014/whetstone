@@ -92,7 +92,14 @@ export const workMeta = pgTable(
     // `personal_entries.updated_at` stays owner chronology, never a second revision truth. Every Work of
     // every origin — including imported Works with no `personal_entries` facet — carries a valid initial
     // revision, so an imported-Work correction command (#762) can reuse the same fence.
-    contentRevision: integer("content_revision").notNull().default(0)
+    contentRevision: integer("content_revision").notNull().default(0),
+    // #762 durable correction marker: the instant an administrator first hand-corrected this imported
+    // Work's canonical blocks in the shared editor. NULL for a Work never corrected (every manual/authored
+    // Work and every as-ingested imported Work). Set once, on the first save that makes a real change, and
+    // NEVER cleared by a later edit — so a future replace/re-ingestion path can refuse to overwrite a Work
+    // whose content a human has since corrected. Correction evidence, not a chronology: an unchanged save
+    // advances `content_revision` but must not stamp this marker.
+    manualCorrectionsAt: timestamp("manual_corrections_at", { mode: "date", withTimezone: true })
   },
   (table) => [
     index("work_meta_author_idx").on(table.authorId),
@@ -187,6 +194,14 @@ export const docBlocks = pgTable(
     anchors: jsonb("anchors")
       .notNull()
       .default(sql`'[]'::jsonb`),
+    // #762 per-block correction marker: the instant this current block was last changed or newly inserted
+    // by an administrator correction save (imported-Work editor). NULL for a block written by ingestion,
+    // manual authoring, or authored writing and never touched by a correction. A correction stamps it on
+    // every changed/inserted current block (a reordered-but-unchanged block is not re-stamped), and it is
+    // never cleared — so corrected content is distinguishable from as-ingested content and a future
+    // re-ingestion path can preserve human edits. Kept off `node_json` so the stored node stays pure
+    // render content.
+    correctedAt: timestamp("corrected_at", { mode: "date", withTimezone: true }),
     id: text("id").primaryKey(),
     nodeJson: jsonb("node_json").notNull(),
     orderIndex: integer("order_index").notNull(),

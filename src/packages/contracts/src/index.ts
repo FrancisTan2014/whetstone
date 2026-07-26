@@ -82,6 +82,22 @@ export type {
   UpdateManualWorkContentRequest
 } from "./manualWorkContracts.js";
 export {
+  addImportedWorkSectionRequestSchema,
+  correctImportedWorkContentRequestSchema,
+  importedWorkDtoSchema,
+  importedWorkUnitDtoSchema,
+  parseAddImportedWorkSectionRequest,
+  parseCorrectImportedWorkContentRequest,
+  parseImportedWorkDto,
+  parseImportedWorkUnitDto
+} from "./importedWorkContracts.js";
+export type {
+  AddImportedWorkSectionRequest,
+  CorrectImportedWorkContentRequest,
+  ImportedWorkDto,
+  ImportedWorkUnitDto
+} from "./importedWorkContracts.js";
+export {
   enrollRecitationRequestSchema,
   parseEnrollRecitationRequest,
   parseRecitationOverviewDto,

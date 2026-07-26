@@ -1,5 +1,8 @@
 import {
+  diffBlockSequences,
   planSectionRepartition,
+  type BlockChangeSet,
+  type BlockSequenceEntry,
   type EntryId,
   type RepartitionBlock,
   type RepartitionPlan
@@ -56,6 +59,8 @@ export type AppendEditableWorkSectionContext = Readonly<{
 
 export type AppendEditableWorkSectionResult = Readonly<{
   document: DocumentNodeJSON;
+  // Every block written for the new section (all genuinely new), so a correction caller can mark them.
+  insertedBlockIds: readonly string[];
   unitEntryId: string;
 }>;
 
@@ -87,6 +92,10 @@ export type RepartitionEditableWorkContentContext = Readonly<{
 
 export type RepartitionEditableWorkContentResult = Readonly<{
   activeUnitEntryId: string;
+  // The precise before/after block change set over the affected span (#762): which current blocks were
+  // inserted, had their content changed, were removed, or only reordered. A correction caller uses it to
+  // stamp correction markers; the manual editor ignores it. An unchanged save reports an empty set.
+  changeSet: BlockChangeSet;
 }>;
 
 type EditableBlock = Readonly<{
@@ -96,6 +105,27 @@ type EditableBlock = Readonly<{
   plaintext: string;
   type: string;
 }>;
+
+// A stable, order-independent serialization of a block's node used only to decide whether two blocks have
+// identical content (#762). PostgreSQL `jsonb` does not preserve object key order, so a stored node read
+// back and a freshly serialized draft node can differ byte-for-byte while being semantically identical;
+// canonicalizing (recursively sorting object keys, preserving array order which is content-significant)
+// makes the comparison faithful — a real content edit differs, a mere reorder or round-trip does not.
+function canonicalContentKey(node: unknown): string {
+  if (Array.isArray(node)) {
+    return `[${node.map(canonicalContentKey).join(",")}]`;
+  }
+  if (node !== null && typeof node === "object") {
+    const entries = Object.keys(node as Record<string, unknown>)
+      .sort()
+      .map(
+        (key) =>
+          `${JSON.stringify(key)}:${canonicalContentKey((node as Record<string, unknown>)[key])}`
+      );
+    return `{${entries.join(",")}}`;
+  }
+  return JSON.stringify(node);
+}
 
 // Decompose an editor document into its top-level block rows, stamping stable ids first (idempotent, so
 // unchanged nodes keep the id an existing `doc_blocks` row is keyed by and annotations stay anchored). The
@@ -175,7 +205,7 @@ async function writeEditableWorkSection(
     await insertBlock(tx, context.workEntryId, unitEntryId, block);
   }
 
-  return { document, unitEntryId };
+  return { document, insertedBlockIds: blocks.map((block) => block.id), unitEntryId };
 }
 
 // Reconcile an editable Work's single reading unit to match `document`, preserving the id of every block
@@ -305,6 +335,7 @@ export async function repartitionEditableWorkContent(
   const existingBlockRows = await tx
     .select({
       id: docBlocks.id,
+      nodeJson: docBlocks.nodeJson,
       orderIndex: docBlocks.orderIndex,
       readingUnitEntryId: docBlocks.readingUnitEntryId,
       type: docBlocks.type
@@ -318,6 +349,12 @@ export async function repartitionEditableWorkContent(
   for (const row of [...existingBlockRows].sort((a, b) => a.orderIndex - b.orderIndex)) {
     (orderedIdsByUnit.get(row.readingUnitEntryId) as string[]).push(row.id);
   }
+  // Each span block's content key BEFORE the edit, so the change set can tell a genuine content change from
+  // a pure reorder (#762). Preceding-unit blocks (not in the draft) keep this key; draft blocks are keyed
+  // from their new node below.
+  const beforeContentById = new Map<string, string>(
+    existingBlockRows.map((row) => [row.id, canonicalContentKey(row.nodeJson)])
+  );
 
   // The affected stream after substitution: each preceding span unit contributes its blocks unchanged; the
   // edited unit contributes the draft blocks in their place (the edited unit is always the span's last).
@@ -357,6 +394,30 @@ export async function repartitionEditableWorkContent(
     }
   }
   const removedBlockIds = [...existingSpanBlockIdSet].filter((id) => !finalBlockIds.has(id));
+
+  // The precise change set over the span (#762). Before: the span's existing blocks in stream order.
+  // After: the planned block stream, keyed by the draft node for an edited block and by the unchanged
+  // before-key for a preceding block, so a content edit, insertion, removal, and reorder are told apart.
+  const beforeStream: BlockSequenceEntry[] = [];
+  for (const unitId of spanUnitIds) {
+    for (const id of orderedIdsByUnit.get(unitId) as string[]) {
+      beforeStream.push({ contentKey: beforeContentById.get(id) as string, id });
+    }
+  }
+  const afterStream: BlockSequenceEntry[] = [];
+  for (const unit of plan.units) {
+    for (const id of unit.blockIds) {
+      const draft = draftBlockById.get(id);
+      afterStream.push({
+        contentKey:
+          draft === undefined
+            ? (beforeContentById.get(id) as string)
+            : canonicalContentKey(draft.node),
+        id
+      });
+    }
+  }
+  const changeSet = diffBlockSequences(beforeStream, afterStream);
 
   // Insert each newly minted unit and re-index every resulting unit to its span position, so the affected
   // span occupies order indices `spanStart .. spanStart + units - 1` densely.
@@ -493,7 +554,10 @@ export async function repartitionEditableWorkContent(
     }, Promise.resolve());
   }
 
-  return { activeUnitEntryId: plan.blockUnitEntryId.get(firstDraft.id) as string };
+  return {
+    activeUnitEntryId: plan.blockUnitEntryId.get(firstDraft.id) as string,
+    changeSet
+  };
 }
 
 // Remap the Work's saved reading positions onto the repartitioned units (#698). A position anchored to a

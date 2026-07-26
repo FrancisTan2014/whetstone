@@ -4,6 +4,8 @@ export { blockTypes } from "./block.js";
 export type { BlockType } from "./block.js";
 export { blockSimilarity, diffBlocks } from "./blockDiff.js";
 export type { BlockDiff, DiffNewBlock, DiffOldBlock } from "./blockDiff.js";
+export { diffBlockSequences, isEmptyBlockChangeSet } from "./blockChangeSet.js";
+export type { BlockChangeSet, BlockSequenceEntry } from "./blockChangeSet.js";
 export { buildDiaryTidyPrompt, diaryTidyInstructions, isFaithfulTidy } from "./diaryTidy.js";
 export {
   entryTypeForTimelineKind,

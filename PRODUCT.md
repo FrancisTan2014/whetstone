@@ -314,8 +314,9 @@ owning source flow:
   silently overwrites corrections.
 - **Current shipped scope (born-digital preview).** Today the PDF lane above is a born-digital
   preview: an uploaded PDF with usable native text on every page publishes as canonical blocks and
-  opens in the Reader, but language-aware OCR for scanned/mixed pages (#704), the in-editor correction
-  tooling (#703), and the measured corpus-calibration claim (#705) are still pending. A page lacking
+  opens in the Reader. Administrators now correct any canonical imported Work's blocks in the shared
+  rich editor (#762); language-aware OCR for scanned/mixed pages (#704) and the measured
+  corpus-calibration claim (#705) are still pending. A page lacking
   native text returns a typed **OCR required** outcome and publishes no partial Work; until #704,
   scanned/mixed uploads report **OCR support is not available yet** rather than falling back to legacy
   Markdown or silently persisting incomplete content. #705 alone replaces this preview copy with the
@@ -326,7 +327,11 @@ owning source flow:
   save — never a second block writer. There is no legacy-manual mdast
   migration: pre-canonical local development data is deliberately reset, so manual Works are canonical
   from their first save. Retained uploads are provenance, never a second current copy. Correcting an
-  imported Work changes its canonical blocks without changing its imported origin or immutable source.
+  imported Work is an administrative action that changes its canonical blocks in place — reusing the
+  same shared editor, Outline, and revision fence — without changing its imported origin, creating an
+  owner facet, or touching its immutable source. A corrected Work is durably marked (the Work records
+  when it was first hand-corrected, and each corrected block records that it diverged from ingestion),
+  so a later re-ingestion of the exact same source never silently overwrites the correction.
 - The shared Work editor uses explicit save (a visible **Save** control
   and `Ctrl/Cmd+S`), not autosave: the owner saves deliberately, sending the revision loaded with the
   document so the server rejects a stale revision instead of silently overwriting another session's
@@ -562,7 +567,7 @@ entries, Recitation plans, and review targets.
   authorization, routes, and navigation — the shared substrate never collapses them into one concept.
 - Content concurrency belongs to the Work, not to ownership or chronology. Every Work carries a
   Work-scoped `content_revision` that an editable-origin save compares-and-sets, so one origin-neutral
-  fence protects manual writes today and imported-Work correction (a future step) with no owner facet.
+  fence protects both manual writes and imported-Work correction with no owner facet.
   `personal_entries.updated_at` stays owner chronology only, never a second revision truth.
 - A Recitation plan is one owner-scoped enrollment referencing a canonical Work. Its Work-level review
   target owns no source copy. Legacy passage Entries may remain for audit but are not active targets.

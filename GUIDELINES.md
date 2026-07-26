@@ -408,9 +408,15 @@ Block storage rules:
   hierarchy can commit consistently.
 - Block ids are stable (UUIDv7/cuid2) and preserved across re-ingestion via a content-similarity diff;
   removed blocks are soft-deleted so note anchors stay valid.
-- Administrative correction edits the canonical imported blocks through the shared rich editor.
-  Retain immutable source provenance and correction evidence, but never a second current content copy;
-  re-ingestion cannot overwrite corrected blocks without an explicit future reconciliation flow.
+- Administrative correction edits the canonical imported blocks through the same shared rich editor as
+  manual authoring — one origin-neutral editor generalized over an injected work API, never a forked
+  imported clone. A canonical imported Work (imported blocks, no unit still rendering from legacy mdast)
+  is correctable; the shelf exposes "Correct content" for it. Corrections save atomically behind the
+  Work-revision fence with no `personal_entries` facet and carry administrative, not owner, authority.
+  Stamp durable correction markers (`work_meta.manual_corrections_at`, `doc_blocks.corrected_at`) so a
+  correction is visible everywhere. Retain immutable source provenance and correction evidence, but never
+  a second current content copy; re-ingestion cannot overwrite corrected blocks without an explicit
+  future reconciliation flow.
 - The deployment contains no legacy PDF Works, so there is no PDF migration or quarantine path; PDF
   ingestion publishes canonical blocks directly. The format-agnostic legacy fallback is retained only
   for residual imported-Markdown debt, and no new PDF ingestion may write that fallback.

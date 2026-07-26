@@ -167,6 +167,7 @@ const orwell: AuthorDto = { id: toAuthorId("author-1"), name: "George Orwell" };
 const dickens: AuthorDto = { id: toAuthorId("author-2"), name: "Charles Dickens" };
 
 const essayWorkItem: WorkListItemDto = {
+  correctable: false,
   author: orwell,
   work: {
     authorId: orwell.id,
@@ -179,6 +180,7 @@ const essayWorkItem: WorkListItemDto = {
 };
 
 const animalFarmItem: WorkListItemDto = {
+  correctable: false,
   author: orwell,
   work: {
     authorId: orwell.id,
@@ -581,6 +583,7 @@ describe("AdminLibraryPage", () => {
   it("creates a work for an existing author chosen from the author field", async () => {
     const user = await renderReady();
     const bookItem: WorkListItemDto = {
+      correctable: false,
       author: dickens,
       work: {
         authorId: dickens.id,
@@ -753,6 +756,7 @@ describe("AdminLibraryPage", () => {
     const user = await renderReady();
     const epubAuthor: AuthorDto = { id: toAuthorId("author-9"), name: "司马迁" };
     const epubWork: WorkListItemDto = {
+      correctable: false,
       author: epubAuthor,
       work: {
         authorId: epubAuthor.id,
@@ -786,6 +790,7 @@ describe("AdminLibraryPage", () => {
     const onManageContent = vi.fn();
     const epubAuthor: AuthorDto = { id: toAuthorId("author-9"), name: "司马迁" };
     const epubWork: WorkListItemDto = {
+      correctable: false,
       author: epubAuthor,
       work: {
         authorId: epubAuthor.id,
@@ -822,6 +827,7 @@ describe("AdminLibraryPage", () => {
     // door — no duplicate Work is created.
     const epubAuthor: AuthorDto = { id: toAuthorId("author-9"), name: "司马迁" };
     const epubWork: WorkListItemDto = {
+      correctable: false,
       author: epubAuthor,
       work: {
         authorId: epubAuthor.id,
@@ -982,6 +988,7 @@ describe("AdminLibraryPage", () => {
   it("ingests a selected EPUB directly without showing the Add-work form", async () => {
     const epubAuthor: AuthorDto = { id: toAuthorId("author-9"), name: "司马迁" };
     const epubWork: WorkListItemDto = {
+      correctable: false,
       author: epubAuthor,
       work: {
         authorId: epubAuthor.id,

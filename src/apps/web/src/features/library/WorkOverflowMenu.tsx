@@ -25,9 +25,11 @@ export type WorkOverflowMenuProps = Readonly<{
 // semantics (roles, keyboard, Escape, outside dismissal, focus restored to the trigger, viewport-aware
 // placement) through Radix. Navigations are anchors so they route on select and close the menu.
 //
-// The content action is a three-way split on the Work's origin (#720): an authored (owned) Work edits in
-// the Writing editor, a manual (learner-curated) Work edits its canonical document in the Library's manual
-// editor, and an imported Work manages its ingested content in the content panel. Exactly one entry shows.
+// The content action is a four-way split on the Work's origin (#720, #762): an authored (owned) Work edits
+// in the Writing editor, a manual (learner-curated) Work edits its canonical document in the Library's
+// shared editor, an imported Work whose content is fully canonical ("Correct content", #762) opens the
+// same shared editor to correct its blocks, and any other imported Work manages its ingested content in the
+// content panel. Exactly one entry shows.
 export function WorkOverflowMenu({
   item,
   enrolled,
@@ -73,6 +75,10 @@ export function WorkOverflowMenu({
           ) : item.work.origin === "manual" ? (
             <DropdownMenu.Item asChild className={cx.item}>
               <a href={`#/library/works/${encoded}/edit`}>Edit content</a>
+            </DropdownMenu.Item>
+          ) : item.correctable ? (
+            <DropdownMenu.Item asChild className={cx.item}>
+              <a href={`#/library/works/${encoded}/correct`}>Correct content</a>
             </DropdownMenu.Item>
           ) : (
             <DropdownMenu.Item className={cx.item} onSelect={onManageContent}>

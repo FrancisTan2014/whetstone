@@ -98,8 +98,15 @@ export type WorkDto = Readonly<{
   workType: WorkType;
 }>;
 
+// One Work in the Library listing: its author and projected identity, plus `correctable` (#762) — the
+// canonical-content eligibility for imported correction, true only for an `imported` Work whose complete
+// readable hierarchy is canonical `doc_blocks`. The Library menu offers **Correct content** exactly when
+// this is true, so the decision needs no second per-Work query. Always false for manual and authored
+// Works. It lives on the list item, not the shared `WorkDto`, because it is a whole-content property
+// meaningful only for an already-published Work, not part of a Work's creation-time identity.
 export type WorkListItemDto = Readonly<{
   author: AuthorDto;
+  correctable: boolean;
   work: WorkDto;
 }>;
 

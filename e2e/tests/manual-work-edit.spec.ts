@@ -70,7 +70,10 @@ for (const theme of ["day", "night"] as const) {
       await expect
         .poll(() => page.evaluate(() => document.documentElement.classList.contains("dark")))
         .toBe(theme === "night");
-      await page.getByRole("button", { name: `More actions for ${title}` }).click();
+      // Pin with `exact: true`: the shared smoke database also carries tokenised "Manual … <uuid>"
+      // Works (imported-work-correct.spec.ts), whose "More actions for Manual … <uuid>" buttons
+      // substring-match this loose name and would otherwise trip a strict-mode violation.
+      await page.getByRole("button", { exact: true, name: `More actions for ${title}` }).click();
       await page.getByRole("menuitem", { name: "Edit content" }).click();
 
       const editor = page.getByRole("textbox", { name: `Edit ${title}` });

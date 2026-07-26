@@ -129,7 +129,10 @@ export async function createWork(
       workType: request.workType
     };
 
-    return { status: "created", work: { author, work } };
+    // A freshly created Work is never yet correctable: a manual Work carries `origin = manual`, and an
+    // imported Work has not ingested any canonical block at this point (#762). Correctability is a
+    // whole-content property recomputed from the persisted blocks by the Library listing.
+    return { status: "created", work: { author, correctable: false, work } };
   });
 }
 

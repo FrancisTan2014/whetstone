@@ -1213,7 +1213,10 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   inspection-only for them and their content is authored in the dedicated manual editor below.
   `ManualWorkEditorPage.tsx` (#720, sections #697) is the owner-only manual-Work editor at
   `/library/works/:id/edit`, reached from the Library shelf's **Edit content** action on a manual Work
-  (`WorkOverflowMenu` routes manual origins there; imported → Manage content, authored → Writing). A
+  (`WorkOverflowMenu` routes manual origins there; a **correctable** imported Work → **Correct content**
+  (#762, below), other imported → Manage content, authored → Writing). It is a thin loader over the shared,
+  origin-neutral `workContentEditor.tsx` (`WorkContentEditor` + `WorkEditorApi`, extracted from the former
+  inline editor), binding it to the owner-scoped `manualWorkApi` adapter. A
   manual Work is now **N ordered ReadingUnits (sections)**, each section's first block a heading; the page
   is a responsive workspace whose **live Outline** (`WorkOutline.tsx` `projectDraftOutline` over
   `domain/headingOutline.buildHeadingOutline`) projects the active section's DRAFT headings into the
@@ -1242,11 +1245,28 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   (`updateManualWorkContent` per unit + `addManualWorkSection` via
   `content/editableWorkContent.appendEditableWorkSection`) own the owner/origin guard; the stale-revision
   check is the origin-neutral `content/workContentRevision.claimWorkContentRevision` compare-and-set over
-  `work_meta.content_revision` (#703 — a monotonic non-negative integer, reusable by future imported-Work
-  correction), and a successful claim bumps the owner-only `personal_entries.updated_at` chronology in the
+  `work_meta.content_revision` (#703 — a monotonic non-negative integer, also reused by imported-Work
+  correction, #762), and a successful claim bumps the owner-only `personal_entries.updated_at` chronology in the
   same transaction (`ManualWorkDto.revision` is that integer, `updatedAt` the chronology, display-only);
   `manualWorkContracts.ts` (in `@whetstone/contracts`) holds the `ManualWorkDto` (with `sections`), the
   per-unit update request, and the section/unit DTOs.
+  `ImportedWorkCorrectionPage.tsx` (#762) is the administrative counterpart at
+  `/library/works/:id/correct`, reached from **Correct content** on a canonical imported Work (`imported`
+  origin, fully `doc_blocks`, exposed by `WorkListItemDto.correctable` from the `listWorks` projection). It
+  reuses the SAME shared `WorkContentEditor` (Outline, save/Ctrl+S, conflict/draft retention, add-section,
+  heading repartition) bound to `importedWorkApi.ts` against `/api/imported-works/:id{,/units/:unitId
+  ,/units/:unitId/content,/units}`, plus an **Open in Reader** header action the manual editor omits.
+  Correction never creates a personal Entry and never rewrites the immutable source: server
+  `library/importedWorkContentQueries` (`correctableImportedWorkSql`, `findCorrectableImportedWork`,
+  `loadImportedWorkForCorrection`, `loadImportedWorkUnit`) + `importedWorkContentCommands`
+  (`correctImportedWorkContent`, `addImportedWorkSection`) reuse the same repartition and origin-neutral
+  `workContentRevision` fence, then stamp durable correction markers via `content/workCorrectionMarkers`
+  (`work_meta.manual_corrections_at` set once on the first real change; `doc_blocks.corrected_at` on each
+  inserted/changed block; a no-op save advances the revision but stamps nothing). A re-upload of the exact
+  same source reopens through `content/sourceClaims.claimUploadedSource`'s `exact_existing` branch without
+  restaging, so corrected blocks and markers are never overwritten. `importedWorkContracts.ts` (in
+  `@whetstone/contracts`) holds the `ImportedWorkDto` (no owner chronology; `+correctedAt`), the unit DTO,
+  and the correction/add requests.
   `diary/` is the Diary mode (#246 origin, #571 rich-Entry rework): `DiaryPage.tsx` renders the shared
   `capture/CaptureCard` at the top (in the **workspace** presentation, #678), wiring `onCaptured` to prepend
   the newly saved diary Entry into the browsable Timeline. `CaptureCard` composes typed capture in the

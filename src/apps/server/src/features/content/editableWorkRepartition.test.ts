@@ -302,3 +302,100 @@ describe("repartitionEditableWorkContent — reading positions", () => {
     expect(await positionOf("outside")).toEqual({ anchorBlockEntryId: "b1", unitEntryId: u2 });
   });
 });
+
+describe("repartitionEditableWorkContent — change set", () => {
+  async function changeSetOf(
+    editedUnitEntryId: string,
+    document: DocumentNodeJSON
+  ): Promise<{ changed: string[]; inserted: string[]; moved: string[]; removed: string[] }> {
+    return db.transaction(async (tx) => {
+      const { changeSet } = await repartitionEditableWorkContent(tx, {
+        createEntryId,
+        document,
+        editedUnitEntryId,
+        workEntryId: WORK_ID
+      });
+      return {
+        changed: [...changeSet.changed],
+        inserted: [...changeSet.inserted],
+        moved: [...changeSet.moved],
+        removed: [...changeSet.removed]
+      };
+    });
+  }
+
+  it("reports an empty change set when the section is saved unchanged", async () => {
+    const { u1 } = await seedThreeSections();
+
+    // Re-saving the exact same blocks touches nothing, even though the caller may advance the revision.
+    const changeSet = await changeSetOf(
+      u1,
+      doc(heading(1, "Chapter One", "h1"), para("A body", "a1"))
+    );
+
+    expect(changeSet).toEqual({ changed: [], inserted: [], moved: [], removed: [] });
+  });
+
+  it("reports only the block whose content the edit changed", async () => {
+    const { u1 } = await seedThreeSections();
+
+    const changeSet = await changeSetOf(
+      u1,
+      doc(heading(1, "Chapter One", "h1"), para("A body, corrected", "a1"))
+    );
+
+    // The heading is byte-identical, so only the edited paragraph is `changed`.
+    expect(changeSet).toEqual({ changed: ["a1"], inserted: [], moved: [], removed: [] });
+  });
+
+  it("reports a newly inserted block", async () => {
+    const { u1 } = await seedThreeSections();
+
+    const changeSet = await changeSetOf(
+      u1,
+      doc(heading(1, "Chapter One", "h1"), para("A body", "a1"), para("A second body", "a2"))
+    );
+
+    expect(changeSet).toEqual({ changed: [], inserted: ["a2"], moved: [], removed: [] });
+  });
+
+  it("reports a removed block", async () => {
+    const { u1 } = await seedThreeSections();
+
+    // Dropping the body leaves only the heading; a1 is gone from the resulting stream.
+    const changeSet = await changeSetOf(u1, doc(heading(1, "Chapter One", "h1")));
+
+    expect(changeSet).toEqual({ changed: [], inserted: [], moved: [], removed: ["a1"] });
+  });
+
+  it("reports a reorder among surviving blocks as a move, not a change", async () => {
+    const { u1 } = await seedThreeSections();
+
+    // Give Chapter One two bodies, then swap their order without touching content. A single-unit edit, so
+    // every block comes from the draft; the two paragraphs change rank among the survivors, the heading does
+    // not, so exactly the two swapped bodies are `moved` and nothing is `changed`.
+    await changeSetOf(
+      u1,
+      doc(heading(1, "Chapter One", "h1"), para("A body", "a1"), para("Second body", "a2"))
+    );
+    const changeSet = await changeSetOf(
+      u1,
+      doc(heading(1, "Chapter One", "h1"), para("Second body", "a2"), para("A body", "a1"))
+    );
+
+    expect(changeSet).toEqual({ changed: [], inserted: [], moved: ["a2", "a1"], removed: [] });
+  });
+
+  it("keeps an unedited preceding block untouched when a section merges left", async () => {
+    const { u0, u1 } = await seedThreeSections();
+
+    // Chapter One loses its heading, so its body merges left into the leading "Start" unit. The span is
+    // u0..u1: p-pre is a preceding-unit block (not in the draft), so it exercises the "kept, unchanged" arm
+    // and is never reported. Removing the heading shifts a1's absolute position but not its rank among the
+    // survivors, so a1 is untouched — only the removed heading is reported.
+    void u0;
+    const changeSet = await changeSetOf(u1, doc(para("A body", "a1")));
+
+    expect(changeSet).toEqual({ changed: [], inserted: [], moved: [], removed: ["h1"] });
+  });
+});
