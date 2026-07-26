@@ -325,8 +325,9 @@ can navigate them from another package.
   `notesReviewApi.fetchMaterialMatches` returns a discriminated `{ status, exact, near }`. E2E:
   `e2e/tests/notes-near-duplicate-review.spec.ts`.
 - Preview corpus card drafts through a local MCP server (#717): `src/apps/server/src/mcp/` is the trusted local
-  stdio Model-Context-Protocol surface. `mcpServer.ts` (`createMcpPreviewServer`) registers EXACTLY ONE tool —
-  `preview_card_creation` (no commit/save/schedule/edit/delete tool) — as a thin transport over the shared
+  stdio Model-Context-Protocol surface. `mcpServer.ts` (`createMcpCardServer`) registers the corpus-card tools —
+  `preview_card_creation` (#717) and `commit_card_creation` (#718, below), and no other (no save/schedule/edit/delete/
+  search/bulk/file-scan tool) — as thin transports over the shared
   `notesReview/previewCardCreation.ts` (`previewCardCreation`) command; `mcp/main.ts` (coverage-excluded) is the
   process bootstrap (opens PGlite, migrates, sweeps expired attempts, builds the lexical service, connects a
   `StdioServerTransport`; stdout is reserved for JSON-RPC, logs go to stderr). Preview renders the SAME
@@ -339,6 +340,23 @@ can navigate them from another package.
   `mcpPreviewContracts.ts` (rejects batch/user-id/override/file-path/unknown keys as invalid params); the result
   is the discriminated `mcpPreviewCardResultSchema` (`previewed`|`invalid_*`|`changed_payload`). Run: `pnpm --filter
   @whetstone/server mcp` (after build). Usage: `docs/MCP.md`. Depends on `@modelcontextprotocol/sdk`.
+- Commit an approved MCP preview through Notes (#718): `mcpServer.ts`'s second tool `commit_card_creation` consumes
+  one approved `card_creation_attempt` (`source='mcp'`) by opaque `attemptId` plus one `decision` — `create`,
+  `reuse` (reviewed Note id), or `keep_separate` — and accepts NO changed content (edits require a new preview).
+  It is a thin transport + audit channel: the shared `notesReview/commitCardCreation.ts` (`commitCardCreation`)
+  command reloads the owned attempt under the exact-fingerprint advisory lock (`acquireCardMaterialLock`), reruns
+  authoritative matching, and — when the candidate set is unchanged — composes the SAME canonical writers as the
+  HTTP path (`create`/`keep_separate` → #689 `createDirectCard`'s `writeDirectCardInTx`; `reuse` → #688
+  `authorNoteCard`'s `writeAuthorNoteCardInTx`) for an unchanged Question/Answer/Success-check, 0.90 due-now card,
+  zero-event transaction, and a `card_creation_receipts` row. New/changed/deleted candidates → refreshed preview +
+  `needs_approval` (re-approval required). The receipt gains an immutable `channel` (`ui`|`mcp`, default `ui`) plus
+  nullable `attempt_id` audit metadata (migration `0078`; the UI writers pass `channel='ui'`); reusing a Note never
+  changes that Note's origin. Retry after success replays the original result via the receipt; a consumed attempt
+  committed with a different decision kind → `decision_conflict`; forged/expired/foreign/changed attempts fail by
+  name with zero writes. Wire contracts: `@whetstone/contracts` `mcpCommitContracts.ts` (strict
+  `mcpCommitCardInputSchema`; discriminated `mcpCommitCardResultSchema` —
+  `created`|`reused`|`kept_separate`|`needs_approval`|`not_found`|`expired`|`candidates_exist`|`not_a_candidate`|
+  `no_material`|`decision_conflict`|`conflict`|`gone`). Usage: `docs/MCP.md`.
 - Import notebook lists into Notes (#661): the `notes` feature owns pasting a notebook list as many
   standalone Notes — the import surface replaced the retired Memory batch import (the Memory
   `importMemoryBatch` command was removed with the Memory experience, #662) with an owner-scoped Notes boundary. Server: `POST /api/notes/import` (`noteRoutes.ts`) →

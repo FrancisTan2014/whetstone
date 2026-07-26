@@ -1,17 +1,20 @@
-# Local MCP: card preview
+# Local MCP: card preview and commit
 
 Whetstone exposes a single, trusted **local** [Model Context Protocol](https://modelcontextprotocol.io)
-server so a local agent (e.g. an editor assistant) can **preview** a corpus-grounded flashcard before a
-human commits it. It is a thin transport into the same shared card validation/matching used by the HTTP
-**New card** flow — not a new content boundary.
+server so a local agent (e.g. an editor assistant) can **preview** a corpus-grounded flashcard and, after a
+human approves it, **commit** exactly that preview. Both tools are thin transports into the same shared card
+validation/matching/writer boundaries used by the HTTP **New card** flow — not a new content boundary.
 
 ## What it does — and does not do
 
-- Exposes **exactly one** tool: `preview_card_creation`. There is no commit, save, schedule, edit, delete,
-  search, bulk, or file-scan tool, and none of the retired Memory/Recall tools.
-- **Writes no learning state.** A preview creates no Note, prompt, card, review event, link, or receipt. It
-  only stages one opaque, **30-minute** expiring `card_creation_attempt` (source `mcp`) so a later commit
-  surface can approve the exact previewed draft. Nothing is scheduled and nothing becomes due.
+- Exposes **exactly two** tools: `preview_card_creation` and `commit_card_creation`. There is no save-with-
+  changed-content, schedule, edit, delete, search, bulk, or file-scan tool, and none of the retired
+  Memory/Recall tools.
+- **Preview writes no learning state.** A preview creates no Note, prompt, card, review event, link, or
+  receipt. It only stages one opaque, **30-minute** expiring `card_creation_attempt` (source `mcp`) so a later
+  commit can approve the exact previewed draft. Nothing is scheduled and nothing becomes due.
+- **Commit writes only the canonical card**, by composing the same direct-card / existing-Note writers as the
+  HTTP path — it never introduces a second content writer and accepts no changed content.
 - Renders the **same** Question / Answer / Success check plus exact/near candidate evidence (and optional
   sense-selected related material) as the HTTP path, by reusing the shared draft, matcher, and candidate
   boundaries.
@@ -70,6 +73,64 @@ Same `requestId` + same payload returns the same live attempt (candidate evidenc
 corpus moved). A changed payload conflicts. Expired or consumed attempts never resurrect. Cleanup runs on
 startup and on attempt operations only — there is no scheduler.
 
+## The `commit_card_creation` tool
+
+Commits **exactly one previously approved preview**. The learner must approve the previewed card in the
+trusted agent conversation first; the tool description states this precondition, and the local trusted-client
+boundary cannot cryptographically prove a human message (any untrusted/remote client stays out of scope until
+a first-party approval UI enforces it).
+
+### Input
+
+| Field       | Required | Notes                                                                                        |
+| ----------- | -------- | -------------------------------------------------------------------------------------------- |
+| `attemptId` | yes      | The opaque id returned by `preview_card_creation`. Identifies the owned, staged attempt.     |
+| `decision`  | yes      | Exactly one of: `{ kind: "create" }`, `{ kind: "reuse", noteEntryId }`, `{ kind: "keep_separate" }`. |
+
+The input is validated **once** by a strict schema. It accepts **no changed content** — no question/answer/
+success-check, user id, Note override, FSRS/due/event fields, or unknown keys. To change the card, run a new
+preview. `create` is for when no candidate Note exists; `reuse` adds the card to a reviewed existing Note by
+id; `keep_separate` deliberately creates a new Note despite near-duplicate candidates.
+
+### What it does
+
+Under the exact-fingerprint advisory lock it reloads the owned attempt, **reruns authoritative matching**, and
+either composes the canonical writer or asks for re-approval:
+
+- `create` / `keep_separate` → the #689 direct-card writer (a new Note + prompt + card).
+- `reuse` → the #688 existing-Note writer (adds the prompt/card to the chosen Note; that Note's origin is
+  unchanged).
+
+Every commit produces an unchanged Question/Answer/Success-check, a `0.90` retention card **due now**, a
+zero-event transaction, and a `card_creation_receipts` row carrying an immutable audit `channel` of `mcp`
+(the HTTP path records `ui`) plus the originating `attempt_id`. This is audit metadata, not a new card type —
+Notes/Today/Review own and can remove the card exactly like a UI-created card.
+
+### Result
+
+A discriminated result:
+
+- `created` / `reused` / `kept_separate` — success. Carries the `noteEntryId`, `promptId`, the review
+  `state` and next `due`, and the rendered card — no private body beyond the approved preview.
+- `needs_approval` — matching moved (new/changed/deleted candidate or evidence version): the tool returns a
+  **refreshed preview** and requires a fresh approval before it will commit.
+- `not_found` — no such owned `mcp` attempt (forged, foreign, or never staged).
+- `expired` — the attempt's 30-minute window elapsed; preview again.
+- `candidates_exist` / `not_a_candidate` / `no_material` — the decision disagrees with the live candidate set
+  (`create` despite candidates, `reuse` of a Note that is not a candidate, or `keep_separate` with no
+  candidates).
+- `decision_conflict` — the attempt was already consumed with a **different** decision kind (or `reuse`
+  targeting a different Note); the first commit stands.
+- `conflict` — a concurrent/prior commit already produced the card for this submission under a different
+  fingerprint.
+- `gone` — the attempt succeeded earlier but the resulting Note was since deleted; it does not resurrect.
+
+### Idempotency and concurrency
+
+A retry after success **replays the original result** through the receipt (no second card). Concurrent commits
+of the same attempt collapse to one winner; the loser observes the consumed/`decision_conflict`/`conflict`
+outcome. Expired, forged, foreign, or changed-evidence attempts fail by name with **zero writes**.
+
 ## Logging and privacy
 
 Operational logs contain only ids, the outcome status, and candidate counts — never card text, corpus
@@ -77,9 +138,12 @@ content, prompts, credentials, file paths, or surrounding records.
 
 ## Where the code lives
 
-- Server: `src/apps/server/src/mcp/mcpServer.ts` (tool registration) and `src/apps/server/src/mcp/main.ts`
-  (process bootstrap).
-- Shared command: `src/apps/server/src/features/notesReview/previewCardCreation.ts`.
-- Wire contracts: `src/packages/contracts/src/mcpPreviewContracts.ts`.
+- Server: `src/apps/server/src/mcp/mcpServer.ts` (both tools' registration) and
+  `src/apps/server/src/mcp/main.ts` (process bootstrap).
+- Shared commands: `src/apps/server/src/features/notesReview/previewCardCreation.ts` (preview) and
+  `src/apps/server/src/features/notesReview/commitCardCreation.ts` (commit, composing the #689 direct-card and
+  #688 existing-Note writers).
+- Wire contracts: `src/packages/contracts/src/mcpPreviewContracts.ts` and
+  `src/packages/contracts/src/mcpCommitContracts.ts`.
 
 See `docs/MAP.md` for how this fits the wider Notes/Review map.
