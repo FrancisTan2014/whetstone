@@ -239,6 +239,8 @@ export async function useExistingMaterial(
       }
 
       const write = await writeAuthorNoteCardInTx(tx, {
+        attemptId: null,
+        channel: "ui",
         cueText: draft.cueText,
         noteEntryId: request.noteEntryId,
         now,
@@ -314,6 +316,8 @@ export async function keepSeparateMaterial(
       }
 
       const write = await writeDirectCardInTx(tx, {
+        attemptId: null,
+        channel: "ui",
         draft,
         noteEntryId: toEntryId(dependencies.createId()),
         now,

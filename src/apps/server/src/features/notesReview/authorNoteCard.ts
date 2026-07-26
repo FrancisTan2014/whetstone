@@ -58,6 +58,8 @@ export type AuthorNoteCardWriteOutcome =
 export async function writeAuthorNoteCardInTx(
   tx: Transaction,
   params: Readonly<{
+    attemptId: string | null;
+    channel: "ui" | "mcp";
     cueText: string;
     noteEntryId: string;
     now: Date;
@@ -69,11 +71,24 @@ export async function writeAuthorNoteCardInTx(
     userId: string;
   }>
 ): Promise<AuthorNoteCardWriteOutcome> {
-  const { cueText, noteEntryId, now, promptId, questionDoc, reveal, submissionId, target, userId } =
-    params;
+  const {
+    attemptId,
+    channel,
+    cueText,
+    noteEntryId,
+    now,
+    promptId,
+    questionDoc,
+    reveal,
+    submissionId,
+    target,
+    userId
+  } = params;
   const fingerprint = fingerprintPayload({ note: noteEntryId, question: questionDoc, target });
 
   const claimed = await claimReceipt(tx, {
+    attemptId,
+    channel,
     createdAt: now,
     noteEntryId,
     payloadFingerprint: fingerprint,
@@ -169,6 +184,8 @@ export async function authorNoteCard(
   try {
     return await dependencies.db.transaction(async (tx) => {
       const outcome = await writeAuthorNoteCardInTx(tx, {
+        attemptId: null,
+        channel: "ui",
         cueText,
         noteEntryId: request.noteEntryId,
         now,
