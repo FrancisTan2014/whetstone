@@ -45,7 +45,15 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readSync,
+  statSync,
+  writeFileSync
+} from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -138,8 +146,26 @@ function listPdfsRecursive(root) {
   return out.sort();
 }
 
+// SHA-256 chunk size: bounded memory, never a single full-file buffer.
+const HASH_CHUNK_BYTES = 1 << 20; // 1 MiB.
+
+// Stream the SHA-256 in bounded chunks so even a large in-bound PDF is hashed without ever being loaded
+// into memory as one buffer. Over-size PDFs are excluded by `statSync` before this is ever called, so a
+// multi-GiB out-of-scope file is never read here — the dedupe pass stays bounded and cannot stall or
+// exhaust the run.
 function sha256(path) {
-  return createHash("sha256").update(readFileSync(path)).digest("hex");
+  const hash = createHash("sha256");
+  const fd = openSync(path, "r");
+  try {
+    const buffer = Buffer.allocUnsafe(HASH_CHUNK_BYTES);
+    let bytesRead;
+    while ((bytesRead = readSync(fd, buffer, 0, buffer.length, null)) > 0) {
+      hash.update(bytesRead === buffer.length ? buffer : buffer.subarray(0, bytesRead));
+    }
+  } finally {
+    closeSync(fd);
+  }
+  return hash.digest("hex");
 }
 
 // Sample the child's resident memory while it runs; peak bytes, or null where another process's RSS is
@@ -437,10 +463,28 @@ async function main() {
     }
   }
 
-  // Deduplicate by source SHA-256; the first path wins, but no path ever enters the report.
+  const bounds = { maxBytes: contracts.MAX_STAGED_BYTES, maxPages: contracts.MAX_PAGE_COUNT };
+
+  // Deduplicate the corpus, but keep the pre-conversion path BOUNDED: `statSync` the size first, before
+  // reading a single byte. An over-size PDF is outside the 95% denominator (assessCorpusEligibility
+  // excludes it), so it must be recognised and excluded without ever loading the whole file into memory
+  // or reaching Docling — otherwise a single multi-GiB out-of-scope file could stall or exhaust the
+  // reproducible run the gate depends on. In-bound files are deduped by a streaming SHA-256 (bounded
+  // chunks, never a full-file buffer); the first path wins and no path ever enters the report. Over-size
+  // files are deduped by resolved path (overlapping roots never record the same file twice) — content
+  // dedupe is unnecessary and would require the very read we must avoid, and it cannot affect the gate
+  // because the case is excluded regardless. Over-size files still flow through so they are counted as
+  // excluded; `convertOne` re-checks the size and returns without spawning the worker.
   const seen = new Set();
+  const seenOversize = new Set();
   const unique = [];
   for (const path of files) {
+    if (statSync(path).size > bounds.maxBytes) {
+      if (seenOversize.has(path)) continue;
+      seenOversize.add(path);
+      unique.push(path);
+      continue;
+    }
     const digest = sha256(path);
     if (seen.has(digest)) continue;
     seen.add(digest);
@@ -453,7 +497,6 @@ async function main() {
     return 1;
   }
 
-  const bounds = { maxBytes: contracts.MAX_STAGED_BYTES, maxPages: contracts.MAX_PAGE_COUNT };
   const cases = [];
   let index = 0;
   for (const path of unique) {
@@ -502,7 +545,8 @@ async function main() {
   // Disclose the corpus coverage so a limited run can never be mistaken for corpus evidence: a `--limit`
   // (or any early stop) processes only a PREFIX of the deduplicated corpus, so its rubric ratio is not
   // the #705 denominator. `discovered` counts every .pdf path found across roots (pre-dedupe),
-  // `deduplicated` the unique files after SHA-256 dedupe (the intended denominator source), `processed`
+  // `deduplicated` the unique files after dedupe (in-bound files by streaming SHA-256, over-size files
+  // by path; the intended denominator source), `processed`
   // the files actually driven through the pipeline this run, and `limited` is true whenever fewer than
   // every deduplicated file was processed.
   const discovered = files.length;
