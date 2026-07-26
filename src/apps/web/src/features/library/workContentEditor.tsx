@@ -2,7 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { DocumentNodeJSON } from "@whetstone/document";
 
-import { RichContentEditor, editorDocumentsEqualIgnoringIds } from "../../shared/editor/index.js";
+import {
+  RichContentEditor,
+  editorDocumentsEqualIgnoringIds,
+  validateEditorDocument
+} from "../../shared/editor/index.js";
 import { Button } from "../../shared/ui/Button.js";
 import { PageFrame } from "../../shared/ui/PageFrame.js";
 import type { ManualWorkSectionDto } from "@whetstone/contracts";
@@ -135,12 +139,23 @@ export function WorkContentEditor<W extends WorkEditorWork>({
 }>): React.JSX.Element {
   const [work, setWork] = useState<W>(initialWork);
   const [activeUnitEntryId, setActiveUnitEntryId] = useState<string>(initialWork.unitEntryId);
-  const [draft, setDraft] = useState<DocumentNodeJSON>(initialWork.document);
+  // Normalize the loaded document into the editor's own canonical shape up front. A manual Work's stored
+  // document was authored BY this editor and is already canonical, but a canonical imported Work's blocks
+  // were built by the ingestion pipeline, so the editor's mount echo re-serializes them into a shape that
+  // differs only in JSON form (default attrs / key order). Comparing that echo against the raw stored
+  // document would read "Unsaved changes" the instant a correction opens. Seeding the baseline with the
+  // editor-canonical form makes the mount echo match, so opening an imported Work reads "Saved" until a
+  // real edit lands. `editorDocumentsEqualIgnoringIds` still ignores generated ids on top of this.
+  const [draft, setDraft] = useState<DocumentNodeJSON>(() =>
+    validateEditorDocument(initialWork.document)
+  );
   // The last document the server confirmed for the ACTIVE section. `dirty` is derived against it, so the
   // status is truthful even after an undo back to the saved content; it is also the editor's `document`
   // prop, so adopting the server's canonical (possibly normalized) document after a save re-syncs the
   // visible editor.
-  const [savedDocument, setSavedDocument] = useState<DocumentNodeJSON>(initialWork.document);
+  const [savedDocument, setSavedDocument] = useState<DocumentNodeJSON>(() =>
+    validateEditorDocument(initialWork.document)
+  );
   const [status, setStatus] = useState<WorkEditorSaveStatus>("saved");
   const [addPending, setAddPending] = useState(false);
   // Bumped to a number to focus the active section's heading after a user-driven open (selection/add);
@@ -303,11 +318,14 @@ export function WorkContentEditor<W extends WorkEditorWork>({
       }
 
       activeUnitRef.current = unitEntryId;
-      savedDocumentRef.current = unit.document;
-      draftRef.current = unit.document;
+      // Canonicalize the freshly loaded section for the same reason as the initial load: a pipeline-built
+      // imported section must match the editor's mount echo so switching to it reads "Saved", not dirty.
+      const openedDocument = validateEditorDocument(unit.document);
+      savedDocumentRef.current = openedDocument;
+      draftRef.current = openedDocument;
       setActiveUnitEntryId(unitEntryId);
-      setSavedDocument(unit.document);
-      setDraft(unit.document);
+      setSavedDocument(openedDocument);
+      setDraft(openedDocument);
       setStatus("saved");
       bumpFocus();
     },
