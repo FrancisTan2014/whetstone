@@ -9,8 +9,8 @@ import { describe, expect, it } from "vitest";
 // durable model is deliberately KEPT — the `memory_prompts` table, its migrations, and legacy-custom
 // reveal reads stay so existing prompts remain reviewable. These structural guards lock both halves in
 // place: the retired writers cannot return, and the preserved model cannot be dropped by accident. The
-// ONLY MCP surface allowed back is the local card-preview server (#717), which exposes exactly the single
-// read-mostly `preview_card_creation` tool and none of the retired descriptors.
+// ONLY MCP surface allowed back is the local card server (#717 preview, #718 commit), which exposes the
+// corpus-grounded `preview_card_creation`/`commit_card_creation` tools and none of the retired descriptors.
 
 function abs(relative: string): string {
   return fileURLToPath(new URL(relative, import.meta.url));
@@ -46,9 +46,9 @@ function productionServerCode(): readonly { readonly path: string; readonly body
 }
 
 describe("standalone Memory server retirement (#662)", () => {
-  it("deletes the Memory feature and keeps only the card-preview MCP surface", () => {
+  it("deletes the Memory feature and keeps only the card MCP surface", () => {
     // The Memory feature and its retired MCP bridge are gone. The only MCP surface that may exist is the
-    // #717 local card-preview server, and it registers exactly the single read-mostly preview tool.
+    // #717/#718 local card server, whose corpus-grounded preview/commit tools replace the retired bridge.
     expect(existsSync(abs("../memory"))).toBe(false);
     const mcpServer = read("../../mcp/mcpServer.ts");
     expect(mcpServer).toContain(PREVIEW_CARD_CREATION_TOOL);
