@@ -215,6 +215,15 @@ describe("App shell and routes", () => {
     expect(markup).toContain("Opening this work…");
   });
 
+  it("resolves the imported-work correct route to the shared correction editor framed by the shell (#762)", () => {
+    const markup = renderAt("/library/works/work-1/correct");
+
+    // The imported-correction surface is reached from the Library's "Correct content" action: it mounts
+    // inside the shell (primary nav present) and, under static render (no effects run), in its loading arm.
+    expect(markup).toContain('aria-label="Primary"');
+    expect(markup).toContain("Opening this work…");
+  });
+
   it("resolves the notes route to the cross-work notes page", () => {
     const markup = renderAt("/notes");
 
