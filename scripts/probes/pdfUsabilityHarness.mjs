@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 // Reproducible private-corpus usability harness for the supported PDF lane (#705).
 //
 // It measures the ONE thing that defines "supported": how much of a real, private pressure corpus
@@ -42,6 +41,15 @@
 // run — if the ceiling could not be enforced, the numbers are not falsifiable against production, so the
 // harness must refuse rather than emit a report that would look passable while production would refuse.
 //
+// OUTPUT-CAP INVARIANT (so the harness can never overstate production support): production runs the worker
+// through `execFile(..., { maxBuffer: MAX_WORKER_OUTPUT_BYTES })` (src/apps/server/src/files/
+// pdfStructuredAdapter.ts), a 64 MiB stdout ceiling, and FAILS (child_crash -> failed import) any child
+// whose output exceeds it. The harness applies the SAME cap: each worker run's stdout is accumulated
+// through a bounded buffer that truncates and flags overflow at the cap, the over-cap child is killed, and
+// the run is classified as an in-bound `conversion_failed` (counted against the 95% gate) rather than
+// parsed from truncated output and counted as automatic/correctable. Without this, a large-but-in-bound
+// range whose JSON exceeds 64 MiB would look measurable/passable here while production refuses it.
+//
 // Usage (run under tsx so the TypeScript rubric/mapper import directly; build the workspace first):
 //   pnpm build
 //   node --import tsx scripts/probes/pdfUsabilityHarness.mjs --corpus <dir> [--extra <dir> ...] \
@@ -73,7 +81,7 @@ import {
   writeFileSync
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -82,7 +90,7 @@ const REPO = resolve(HERE, "../..");
 const WORKER = join(REPO, "src/apps/server/src/files/pdf_to_docling.py");
 
 // Exit-code contract of the pinned worker (mirrors scripts/probes/pdfStructuredCorpusProbe.mjs).
-const EXIT = {
+export const EXIT = {
   OK: 0,
   TOOL_MISSING: 3,
   CONVERSION_FAILED: 4,
@@ -241,29 +249,80 @@ function startPeakRssSampler(pid) {
   };
 }
 
+// The per-child worker stdout ceiling. Mirrors MAX_WORKER_OUTPUT_BYTES in
+// src/apps/server/src/files/pdfStructuredAdapter.ts, where production runs the worker via
+// `execFile(..., { maxBuffer: MAX_WORKER_OUTPUT_BYTES })` and fails any child whose stdout exceeds it. The
+// harness enforces the same cap so its aggregate cannot count an over-cap range as usable when production
+// would refuse it. A worker change to this bound must move both sides in lockstep.
+export const MAX_WORKER_OUTPUT_BYTES = 64 * 1024 * 1024;
+
+// A bounded stdout accumulator matching `execFile`'s `maxBuffer` semantics: it appends decoded chunks
+// until the byte cap is first exceeded, then reports overflow and retains no further output (production
+// truncates and fails such a child). Pure and cap-injectable so the exact boundary is unit-tested without
+// spawning a 64 MiB worker; `runWorker` uses the production default. `push` returns true once overflowed
+// so the caller can kill the child.
+export function createBoundedStdout(maxBytes = MAX_WORKER_OUTPUT_BYTES) {
+  let text = "";
+  let bytes = 0;
+  let overflowed = false;
+  return {
+    push(chunk) {
+      if (overflowed) return true;
+      bytes += chunk.length;
+      if (bytes > maxBytes) {
+        overflowed = true;
+        return true;
+      }
+      text += chunk.toString("utf-8");
+      return false;
+    },
+    get overflowed() {
+      return overflowed;
+    },
+    text() {
+      return text;
+    }
+  };
+}
+
+// The real spawn/sampler seam runWorker uses; injectable so the cap/kill wiring is testable with a fake
+// child without a live Python worker.
+const defaultWorkerIo = { spawn, createSampler: startPeakRssSampler };
+
 // Run one worker invocation with a wall-clock timeout, sampling peak memory. The child inherits the
 // SAME `WHETSTONE_PDF_MEMORY_MIB` ceiling the production runner sets (createDoclingRunner), so a
 // conversion that would exceed it is killed by the worker's own address-space limit (exit 7) here just
-// as in production — the measurement is not memory-unbounded.
-function runWorker(python, workerArgs, timeoutMs, memoryMib) {
+// as in production — the measurement is not memory-unbounded. Its stdout is bounded to the SAME 64 MiB
+// output cap production enforces via `execFile({ maxBuffer })`: an over-cap child is killed and reported
+// with `overCap`, so a range whose JSON exceeds the cap is classified as a failure (as production fails
+// it) instead of being parsed from truncated output.
+export function runWorker(python, workerArgs, timeoutMs, memoryMib, io = defaultWorkerIo) {
   return new Promise((resolvePromise) => {
-    const child = spawn(python, [WORKER, ...workerArgs], {
+    const child = io.spawn(python, [WORKER, ...workerArgs], {
       env: { ...process.env, WHETSTONE_PDF_MEMORY_MIB: String(memoryMib) }
     });
-    const sampler = startPeakRssSampler(child.pid);
-    let stdout = "";
+    const sampler = io.createSampler(child.pid);
+    const stdout = createBoundedStdout();
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
       child.kill("SIGKILL");
     }, timeoutMs);
     child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString("utf-8");
+      // Push into the bounded buffer; once the production stdout cap is first exceeded, kill the child
+      // (production truncates and fails such a run) rather than keep buffering unbounded output.
+      if (stdout.push(chunk)) child.kill("SIGKILL");
     });
     child.on("close", async (code) => {
       clearTimeout(timer);
       const peakBytes = await sampler.stop();
-      resolvePromise({ code: timedOut ? null : (code ?? 1), stdout, peakBytes, timedOut });
+      resolvePromise({
+        code: timedOut ? null : (code ?? 1),
+        stdout: stdout.text(),
+        peakBytes,
+        timedOut,
+        overCap: stdout.overflowed
+      });
     });
   });
 }
@@ -282,6 +341,29 @@ function observationForExit(code, stage) {
     return { kind: "conversion_failed", detail: "unsupported docling schema" };
   if (code === EXIT.CONVERSION_FAILED && stage === "probe") return { kind: "corrupt" };
   return { kind: "conversion_failed", detail: `worker exit ${code}` };
+}
+
+// Interpret how a single worker run ended, at a given pipeline `stage`, into either a control signal the
+// caller must act on (`{ abort }`), a rubric observation that classifies the file (`{ observation }`), or
+// `null` when the run succeeded and its stdout should be parsed. This centralises every worker-run failure
+// decision — including the OUTPUT-CAP INVARIANT: an over-cap run is a production failure (execFile's
+// maxBuffer overflow -> child_crash -> failed import), so it is classified as an IN-BOUND
+// `conversion_failed` that counts against the 95% gate, never parsed from truncated output. `timedOut`
+// takes precedence over any exit code (the run was killed mid-flight); tool-missing and the worker's
+// memory-ceiling-unsupported exit are fatal environment aborts.
+export function interpretWorkerRun(run, stage) {
+  if (run.timedOut) return { observation: { kind: "timeout" } };
+  if (run.overCap)
+    return {
+      observation: {
+        kind: "conversion_failed",
+        detail: `worker stdout exceeded the ${MAX_WORKER_OUTPUT_BYTES}-byte production output cap`
+      }
+    };
+  if (run.code === EXIT.TOOL_MISSING) return { abort: "toolMissing" };
+  if (run.code === EXIT.MEMORY_CEILING_UNSUPPORTED) return { abort: "memoryCeilingUnsupported" };
+  if (run.code !== EXIT.OK) return { observation: observationForExit(run.code, stage) };
+  return null;
 }
 
 // Sum readable code points inside a ProseMirror node (recurses into content).
@@ -404,20 +486,21 @@ async function convertOne(python, contracts, mapStructuredDocument, path, args, 
 
     const probe = await runWorker(python, ["--probe", path], args.timeoutMs, args.memoryMib);
     peakBytes = Math.max(peakBytes, probe.peakBytes ?? 0);
-    if (probe.timedOut)
-      return { observation: { kind: "timeout" }, pageCount: null, peakBytes, elapsedMs: elapsed() };
-    if (probe.code === EXIT.TOOL_MISSING) return { toolMissing: true };
-    // The worker applies the memory ceiling before any command runs, so an environment that cannot
-    // enforce it surfaces here first. It is not a per-file failure: the whole run's numbers would be
-    // unbounded and non-equivalent to production, so abort rather than classify this file.
-    if (probe.code === EXIT.MEMORY_CEILING_UNSUPPORTED) return { memoryCeilingUnsupported: true };
-    if (probe.code !== EXIT.OK)
+    // Interpret how the probe run ended (timeout, over-cap, tool-missing, memory-ceiling, or a non-OK
+    // worker exit). A tool-missing / memory-ceiling abort is fatal to the whole run — the worker applies
+    // the memory ceiling before any command runs and the numbers would be non-equivalent to production —
+    // so it propagates rather than classifying this one file.
+    const probeFailure = interpretWorkerRun(probe, "probe");
+    if (probeFailure) {
+      if (probeFailure.abort === "toolMissing") return { toolMissing: true };
+      if (probeFailure.abort === "memoryCeilingUnsupported") return { memoryCeilingUnsupported: true };
       return {
-        observation: observationForExit(probe.code, "probe"),
+        observation: probeFailure.observation,
         pageCount: null,
         peakBytes,
         elapsedMs: elapsed()
       };
+    }
 
     const probeParsed = contracts.parseProbeClassification(probe.stdout);
     if (probeParsed.status !== "ok")
@@ -461,17 +544,18 @@ async function convertOne(python, contracts, mapStructuredDocument, path, args, 
         args.memoryMib
       );
       peakBytes = Math.max(peakBytes, range.peakBytes ?? 0);
-      if (range.timedOut)
-        return { observation: { kind: "timeout" }, pageCount, peakBytes, elapsedMs: elapsed() };
-      if (range.code === EXIT.TOOL_MISSING) return { toolMissing: true };
-      if (range.code === EXIT.MEMORY_CEILING_UNSUPPORTED) return { memoryCeilingUnsupported: true };
-      if (range.code !== EXIT.OK)
+      const rangeFailure = interpretWorkerRun(range, "range");
+      if (rangeFailure) {
+        if (rangeFailure.abort === "toolMissing") return { toolMissing: true };
+        if (rangeFailure.abort === "memoryCeilingUnsupported")
+          return { memoryCeilingUnsupported: true };
         return {
-          observation: observationForExit(range.code, "range"),
+          observation: rangeFailure.observation,
           pageCount,
           peakBytes,
           elapsedMs: elapsed()
         };
+      }
       const parsed = contracts.parseRangeConversion(range.stdout);
       if (parsed.status !== "ok")
         return {
@@ -789,6 +873,10 @@ async function runCorpus(python, contracts, domain, deps, args, bounds, ocr, fil
   return corpusGatePass ? 0 : 1;
 }
 
-main().then((code) => {
-  process.exitCode = code;
-});
+// Only run when invoked directly (node scripts/probes/pdfUsabilityHarness.mjs); importing the module for
+// its exported pure decisions (e.g. unit tests) must not start a corpus run.
+if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().then((code) => {
+    process.exitCode = code;
+  });
+}
