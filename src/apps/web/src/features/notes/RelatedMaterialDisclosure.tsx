@@ -35,18 +35,15 @@ export function RelatedMaterialDisclosure({
   const [selectedSense, setSelectedSense] = useState<RelatedMaterialSenseRef | null>(null);
   const [relations, setRelations] = useState<RelatedMaterialRelationsResponse | null>(null);
   const [relationsLoading, setRelationsLoading] = useState(false);
-  // Monotonic request ids so only the most recent in-flight response is applied; selecting a new sense (or a
-  // Retry) bumps the counter, so any earlier response is stale and ignored (cancellation + out-of-order safety).
-  const sensesSeq = useRef(0);
+  // A monotonic request id so only the most recent in-flight RELATIONS response is applied: selecting a new
+  // sense (or a Retry) bumps it, so any earlier response is stale and ignored (cancellation + out-of-order
+  // safety). Senses need no such guard — the lazy-fetch gate and Retry-after-resolve flow keep at most one
+  // senses request in flight ever.
   const relationsSeq = useRef(0);
 
   function loadSenses(): void {
-    const seq = (sensesSeq.current += 1);
     setSensesLoading(true);
     void fetchRelatedSenses(answerDoc).then((result) => {
-      if (seq !== sensesSeq.current) {
-        return;
-      }
       setSenses(result);
       setSensesLoading(false);
     });
@@ -97,7 +94,7 @@ export function RelatedMaterialDisclosure({
       {open ? (
         <div className="relatedMaterialBody" role="status">
           {renderSenses()}
-          {selectedSense !== null ? renderRelations() : null}
+          {selectedSense !== null ? renderRelations(selectedSense) : null}
         </div>
       ) : null}
     </section>
@@ -148,7 +145,7 @@ export function RelatedMaterialDisclosure({
     );
   }
 
-  function renderRelations(): React.JSX.Element {
+  function renderRelations(sense: RelatedMaterialSenseRef): React.JSX.Element {
     if (relationsLoading || relations === null) {
       return <p className="text-text-muted">Looking for related notes…</p>;
     }
@@ -156,15 +153,7 @@ export function RelatedMaterialDisclosure({
       return (
         <p className="text-text-muted">
           Whetstone could not look up related notes just now.{" "}
-          <Button
-            onClick={() => {
-              if (selectedSense !== null) {
-                loadRelations(selectedSense);
-              }
-            }}
-            type="button"
-            variant="ghost"
-          >
+          <Button onClick={() => loadRelations(sense)} type="button" variant="ghost">
             Retry
           </Button>
         </p>

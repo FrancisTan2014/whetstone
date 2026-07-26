@@ -5,6 +5,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createTextDocument } from "@whetstone/document";
 
+import type {
+  RelatedMaterialRelationsResponse,
+  RelatedMaterialSenseDto
+} from "@whetstone/contracts";
+
 import { RelatedMaterialDisclosure } from "./RelatedMaterialDisclosure";
 import { fetchRelatedRelations, fetchRelatedSenses } from "./relatedMaterialApi";
 
@@ -18,21 +23,21 @@ const fetchRelationsMock = vi.mocked(fetchRelatedRelations);
 
 const answerDoc = createTextDocument("bear");
 
-const verbSense = {
+const verbSense: RelatedMaterialSenseDto = {
   offset: "02000001",
   partOfSpeech: "verb",
   definition: "give birth to",
   examples: ["she bore a son"],
   lemmas: ["bear", "birth"]
-} as const;
+};
 
-const nounSense = {
+const nounSense: RelatedMaterialSenseDto = {
   offset: "01000002",
   partOfSpeech: "noun",
   definition: "a large mammal",
   examples: [],
   lemmas: ["bear"]
-} as const;
+};
 
 afterEach(() => {
   cleanup();
@@ -199,21 +204,19 @@ describe("RelatedMaterialDisclosure (#716)", () => {
 
   it("offers Retry when the relations lookup is unavailable and refetches on Retry", async () => {
     fetchSensesMock.mockResolvedValue({ status: "found", surface: "bear", senses: [verbSense] });
-    fetchRelationsMock
-      .mockResolvedValueOnce({ status: "unavailable" })
-      .mockResolvedValueOnce({
-        status: "found",
-        surface: "bear",
-        selectedLemma: "bear",
-        partOfSpeech: "verb",
-        groups: [
-          {
-            relation: "synonym",
-            direction: "lateral",
-            notes: [{ noteId: "n2", word: "carry", context: null }]
-          }
-        ]
-      });
+    fetchRelationsMock.mockResolvedValueOnce({ status: "unavailable" }).mockResolvedValueOnce({
+      status: "found",
+      surface: "bear",
+      selectedLemma: "bear",
+      partOfSpeech: "verb",
+      groups: [
+        {
+          relation: "synonym",
+          direction: "lateral",
+          notes: [{ noteId: "n2", word: "carry", context: null }]
+        }
+      ]
+    });
     const user = renderDisclosure();
 
     await open(user);
@@ -244,9 +247,9 @@ describe("RelatedMaterialDisclosure (#716)", () => {
     await user.click(nounButton);
 
     await waitFor(() => expect(nounButton.getAttribute("aria-pressed")).toBe("true"));
-    expect(
-      screen.getByRole("button", { name: /give birth to/ }).getAttribute("aria-pressed")
-    ).toBe("false");
+    expect(screen.getByRole("button", { name: /give birth to/ }).getAttribute("aria-pressed")).toBe(
+      "false"
+    );
   });
 });
 
@@ -255,13 +258,11 @@ describe("RelatedMaterialDisclosure (#716)", () => {
 describe("RelatedMaterialDisclosure stale-response guard", () => {
   it("keeps the latest sense group when the relations Retry resolves after the first request", async () => {
     fetchSensesMock.mockResolvedValue({ status: "found", surface: "bear", senses: [verbSense] });
-    let resolveFirst: ((value: { status: "unavailable" }) => void) | null = null;
-    fetchRelationsMock.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          resolveFirst = resolve;
-        })
-    );
+    let resolveFirst!: (value: RelatedMaterialRelationsResponse) => void;
+    const firstPending = new Promise<RelatedMaterialRelationsResponse>((resolve) => {
+      resolveFirst = resolve;
+    });
+    fetchRelationsMock.mockReturnValueOnce(firstPending);
     const user = renderDisclosure();
 
     await open(user);
@@ -283,7 +284,7 @@ describe("RelatedMaterialDisclosure stale-response guard", () => {
     });
     // Re-select to launch a second, winning request, then resolve the first (now stale) one.
     await user.click(screen.getByRole("button", { name: /give birth to/ }));
-    resolveFirst?.({ status: "unavailable" });
+    resolveFirst({ status: "unavailable" });
 
     const groups = await screen.findByText("antonym");
     expect(within(groups.closest("div") as HTMLElement).queryByText("Retry")).toBeNull();

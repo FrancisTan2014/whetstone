@@ -167,7 +167,11 @@ describe("related-material relations route", () => {
     });
     expect(response.statusCode).toBe(200);
     expect(relationsCalls).toEqual([
-      { surface: "bear", sense: { offset: sense.offset, partOfSpeech: "verb" }, userId: DEFAULT_USER_ID }
+      {
+        surface: "bear",
+        sense: { offset: sense.offset, partOfSpeech: "verb" },
+        userId: DEFAULT_USER_ID
+      }
     ]);
     expect(response.json() as RelatedMaterialRelationsResponse).toEqual({
       status: "found",
@@ -200,7 +204,7 @@ describe("related-material relations route", () => {
         sense: { offset: sense.offset, partOfSpeech: "verb" }
       }
     });
-    expect((response.json() as RelatedMaterialRelationsResponse)).toEqual({
+    expect(response.json() as RelatedMaterialRelationsResponse).toEqual({
       status: "found",
       surface: "bear",
       selectedLemma: "bear",

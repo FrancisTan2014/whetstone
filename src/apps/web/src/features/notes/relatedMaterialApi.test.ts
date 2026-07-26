@@ -7,7 +7,11 @@ import { fetchRelatedRelations, fetchRelatedSenses } from "./relatedMaterialApi"
 // into the `unavailable` status the disclosure renders (with Retry), so it can never masquerade as "no
 // related material" or block the save. A 2xx body is parsed through the shared contracts schema.
 
-function stubFetch(response: { body?: unknown; ok: boolean; status?: number }): ReturnType<typeof vi.fn> {
+function stubFetch(response: {
+  body?: unknown;
+  ok: boolean;
+  status?: number;
+}): ReturnType<typeof vi.fn> {
   const fetchMock = vi.fn(async () => ({
     json: async () => response.body,
     ok: response.ok,

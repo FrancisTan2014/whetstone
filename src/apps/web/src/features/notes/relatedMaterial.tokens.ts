@@ -1,7 +1,4 @@
-import type {
-  LexicalPartOfSpeechDto,
-  LexicalRelationTypeDto
-} from "@whetstone/contracts";
+import type { LexicalPartOfSpeechDto, LexicalRelationTypeDto } from "@whetstone/contracts";
 
 // Pure presentation map for the "Find related material" disclosure (#716): the plain-language reason label
 // for each typed one-hop relation. An `inflection` is labelled with the selected sense's part of speech
