@@ -263,7 +263,9 @@ describe("loadImportedWorkForCorrection / loadImportedWorkUnit", () => {
     });
     await seedLegacyOnlyUnit("legacy-2");
 
-    expect(await loadImportedWorkUnit(db, toEntryId("legacy-2"), toEntryId("whatever"))).toBeUndefined();
+    expect(
+      await loadImportedWorkUnit(db, toEntryId("legacy-2"), toEntryId("whatever"))
+    ).toBeUndefined();
   });
 });
 
@@ -312,4 +314,3 @@ describe("listWorks — correctable projection", () => {
     expect(byId.get("markdown")).toBe(false);
   });
 });
-

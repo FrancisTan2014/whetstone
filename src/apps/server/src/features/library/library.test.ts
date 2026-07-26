@@ -1734,7 +1734,10 @@ describe("imported work correction editor (#762)", () => {
       workType: "book"
     });
     const { unitEntryId } = await context.db.transaction((tx) =>
-      initializeEditableWorkContent(tx, { createEntryId: makeUnitId, workEntryId: toEntryId(entryId) })
+      initializeEditableWorkContent(tx, {
+        createEntryId: makeUnitId,
+        workEntryId: toEntryId(entryId)
+      })
     );
     await context.db.transaction((tx) =>
       reconcileEditableWorkContent(tx, {

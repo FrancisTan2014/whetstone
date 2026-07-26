@@ -207,21 +207,18 @@ export function registerLibraryRoutes(
   // to `origin = 'imported'` AND fully-canonical `doc_blocks` content: an unknown id, a manual/authored
   // Work, or an imported Work with any legacy-mdast section is 404. No ownership is consulted — in v0 the
   // current-user provider is the sole administrator for shared Library correction.
-  server.get<{ Params: WorkParams }>(
-    "/api/imported-works/:workEntryId",
-    async (request, reply) => {
-      const work = await loadImportedWorkForCorrection(
-        dependencies.db,
-        toEntryId(request.params.workEntryId)
-      );
+  server.get<{ Params: WorkParams }>("/api/imported-works/:workEntryId", async (request, reply) => {
+    const work = await loadImportedWorkForCorrection(
+      dependencies.db,
+      toEntryId(request.params.workEntryId)
+    );
 
-      if (work === undefined) {
-        return reply.code(404).send(notFound);
-      }
-
-      return reply.code(200).send(work);
+    if (work === undefined) {
+      return reply.code(404).send(notFound);
     }
-  );
+
+    return reply.code(200).send(work);
+  });
 
   // Load one section's reassembled canonical document, for the correction editor to open a section the
   // administrator navigated to in the Outline (#762). Origin/eligibility-scoped like the parent Work, and

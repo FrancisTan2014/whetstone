@@ -118,12 +118,14 @@ function canonicalContentKey(node: unknown): string {
   if (node !== null && typeof node === "object") {
     const entries = Object.keys(node as Record<string, unknown>)
       .sort()
-      .map((key) => `${JSON.stringify(key)}:${canonicalContentKey((node as Record<string, unknown>)[key])}`);
+      .map(
+        (key) =>
+          `${JSON.stringify(key)}:${canonicalContentKey((node as Record<string, unknown>)[key])}`
+      );
     return `{${entries.join(",")}}`;
   }
   return JSON.stringify(node);
 }
-
 
 // Decompose an editor document into its top-level block rows, stamping stable ids first (idempotent, so
 // unchanged nodes keep the id an existing `doc_blocks` row is keyed by and annotations stay anchored). The
@@ -408,7 +410,9 @@ export async function repartitionEditableWorkContent(
       const draft = draftBlockById.get(id);
       afterStream.push({
         contentKey:
-          draft === undefined ? (beforeContentById.get(id) as string) : canonicalContentKey(draft.node),
+          draft === undefined
+            ? (beforeContentById.get(id) as string)
+            : canonicalContentKey(draft.node),
         id
       });
     }

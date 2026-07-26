@@ -328,7 +328,10 @@ describe("repartitionEditableWorkContent — change set", () => {
     const { u1 } = await seedThreeSections();
 
     // Re-saving the exact same blocks touches nothing, even though the caller may advance the revision.
-    const changeSet = await changeSetOf(u1, doc(heading(1, "Chapter One", "h1"), para("A body", "a1")));
+    const changeSet = await changeSetOf(
+      u1,
+      doc(heading(1, "Chapter One", "h1"), para("A body", "a1"))
+    );
 
     expect(changeSet).toEqual({ changed: [], inserted: [], moved: [], removed: [] });
   });

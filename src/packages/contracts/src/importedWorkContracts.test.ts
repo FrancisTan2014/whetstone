@@ -1,9 +1,7 @@
 import { createTextDocument } from "@whetstone/document";
 import { describe, expect, it } from "vitest";
 
-import {
-  MAX_WORK_CONTENT_REVISION
-} from "./manualWorkContracts.js";
+import { MAX_WORK_CONTENT_REVISION } from "./manualWorkContracts.js";
 import {
   parseAddImportedWorkSectionRequest,
   parseCorrectImportedWorkContentRequest,
@@ -120,8 +118,6 @@ describe("parseImportedWorkUnitDto", () => {
   });
 
   it("rejects an unknown extra field", () => {
-    expect(() =>
-      parseImportedWorkUnitDto({ document, extra: 1, unitEntryId: "unit-2" })
-    ).toThrow();
+    expect(() => parseImportedWorkUnitDto({ document, extra: 1, unitEntryId: "unit-2" })).toThrow();
   });
 });

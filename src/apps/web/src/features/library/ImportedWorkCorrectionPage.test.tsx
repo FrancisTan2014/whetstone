@@ -52,8 +52,12 @@ vi.mock("./importedWorkApi", () => ({
   saveImportedWorkContent: vi.fn()
 }));
 
-const { addImportedWorkSection, fetchImportedWork, fetchImportedWorkUnit, saveImportedWorkContent } =
-  await import("./importedWorkApi");
+const {
+  addImportedWorkSection,
+  fetchImportedWork,
+  fetchImportedWorkUnit,
+  saveImportedWorkContent
+} = await import("./importedWorkApi");
 const mockedAdd = addImportedWorkSection as Mock<typeof addImportedWorkSection>;
 const mockedFetch = fetchImportedWork as Mock<typeof fetchImportedWork>;
 const mockedFetchUnit = fetchImportedWorkUnit as Mock<typeof fetchImportedWorkUnit>;
