@@ -292,6 +292,7 @@ describe("library routes", () => {
     }
     expect(created.work).toEqual({
       author: { id: "author-1", name: "George Orwell" },
+      correctable: false,
       work: {
         authorId: "author-1",
         entryId: created.work.work.entryId,
@@ -315,6 +316,7 @@ describe("library routes", () => {
       works: [
         {
           author: { id: "author-1", name: "George Orwell" },
+          correctable: false,
           work: {
             authorId: "author-1",
             entryId: created.work.work.entryId,
@@ -354,6 +356,7 @@ describe("library routes", () => {
     }
     expect(created.work).toEqual({
       author: { id: "author-1", name: "Charles Dickens" },
+      correctable: false,
       work: {
         authorId: "author-1",
         entryId: created.work.work.entryId,

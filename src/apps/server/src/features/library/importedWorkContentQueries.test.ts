@@ -16,6 +16,7 @@ import {
   loadImportedWorkForCorrection,
   loadImportedWorkUnit
 } from "./importedWorkContentQueries.js";
+import { listWorks } from "./libraryQueries.js";
 
 // #762 canonical-content eligibility for imported correction. An imported Work is correctable only when
 // its COMPLETE readable hierarchy is canonical `doc_blocks` — every unit renders from `doc_blocks`, none
@@ -265,3 +266,50 @@ describe("loadImportedWorkForCorrection / loadImportedWorkUnit", () => {
     expect(await loadImportedWorkUnit(db, toEntryId("legacy-2"), toEntryId("whatever"))).toBeUndefined();
   });
 });
+
+describe("listWorks — correctable projection", () => {
+  it("marks a canonical imported Work correctable and everything else not", async () => {
+    await seedCanonicalImported("canonical");
+    // A manual Work is owner-authored, never a shared-content correction target.
+    await db.insert(authors).values({ id: "author-man", name: "man", nameKey: "man" });
+    await db.insert(entries).values({ id: "manual", type: "work" });
+    await db.insert(workMeta).values({
+      authorId: "author-man",
+      entryId: "manual",
+      language: "en",
+      origin: "manual",
+      title: "Manual",
+      workType: "book"
+    });
+    const { unitEntryId } = await db.transaction((tx) =>
+      initializeEditableWorkContent(tx, { createEntryId, workEntryId: toEntryId("manual") })
+    );
+    await db.transaction((tx) =>
+      reconcileEditableWorkContent(tx, {
+        document: doc(para("Manual body", "manual-b1")),
+        unitEntryId,
+        workEntryId: toEntryId("manual")
+      })
+    );
+    // A Markdown-only imported Work still renders from legacy mdast, so it is not correctable.
+    await db.insert(authors).values({ id: "author-md", name: "md", nameKey: "md" });
+    await db.insert(entries).values({ id: "markdown", type: "work" });
+    await db.insert(workMeta).values({
+      authorId: "author-md",
+      entryId: "markdown",
+      language: "en",
+      origin: "imported",
+      title: "Markdown",
+      workType: "book"
+    });
+    await seedLegacyOnlyUnit("markdown");
+
+    const { works } = await listWorks(db);
+    const byId = new Map(works.map((item) => [item.work.entryId, item.correctable]));
+
+    expect(byId.get("canonical")).toBe(true);
+    expect(byId.get("manual")).toBe(false);
+    expect(byId.get("markdown")).toBe(false);
+  });
+});
+
