@@ -16,6 +16,20 @@
 // either is unavailable. The rubric it applies is unit-tested in
 // src/packages/domain/src/pdfUsability.test.ts, so the harness owns only I/O and orchestration.
 //
+// OCR-EQUIVALENCE INVARIANT (so a scanned/mixed PDF is measured after the SAME OCR pass production runs):
+// before the structured range conversion, each in-bound case is routed through the production OCR
+// decision/source stage. The harness constructs the SAME seams the composition root wires
+// (`resolveStructuredPdfRunner` as the OCR adapter's before/after page probe + `resolvePdfOcrAdapter`
+// over OCRmyPDF/Tesseract), classifies routing from the per-page `hasNativeText` probe
+// (`classifyOcrRouting`), and — when a durable OCR pass is required (`ocrPassRequired`) — runs the real
+// adapter to produce a validated derived `ocr.pdf`, then range-converts THAT, exactly like
+// `pdfImportRunner`'s `resolveConversionSource`. Provenance (byteLength/sha256) always stays the
+// immutable original. This closes the divergence where an OCR-eligible scan would otherwise be reported
+// as `ocr_required`/unsupported instead of measured as production imports it. When the corpus contains a
+// scanned/mixed PDF but the OCR toolchain (or the chosen `--ocr-language` pack) is missing, the whole run
+// aborts with a distinct exit code rather than emit a non-equivalent report. All OCR working files
+// (source symlinks + validated outputs) live under one per-run temp root removed at the end of the run.
+//
 // BOUNDED-RUNNER INVARIANT (so the aggregate is equivalent to the real import lane): the harness drives
 // the worker under the SAME per-child memory ceiling the production runner enforces, or it refuses to
 // run. It (1) fences the same unsupported platforms the production runner does — reusing
@@ -31,7 +45,8 @@
 // Usage (run under tsx so the TypeScript rubric/mapper import directly; build the workspace first):
 //   pnpm build
 //   node --import tsx scripts/probes/pdfUsabilityHarness.mjs --corpus <dir> [--extra <dir> ...] \
-//     [--range-size N] [--timeout-ms N] [--limit N] [--memory-mib N] [--out report.json]
+//     [--range-size N] [--timeout-ms N] [--limit N] [--memory-mib N] [--out report.json] \
+//     [--ocr-language en|zh-CN|zh-TW] [--ocr-binary ocrmypdf] [--tesseract-binary tesseract]
 //   WHETSTONE_PDF_CORPUS=<dir> node --import tsx scripts/probes/pdfUsabilityHarness.mjs
 //
 // The baseline corpus root MUST be supplied explicitly (never hard-coded here). Additional --extra roots
@@ -47,13 +62,17 @@ import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   closeSync,
+  mkdtempSync,
   openSync,
   readdirSync,
   readFileSync,
   readSync,
+  rmSync,
   statSync,
+  symlinkSync,
   writeFileSync
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -84,6 +103,15 @@ const LOW_CONFIDENCE_THRESHOLD = 0.75; // Mirrors domain PDF_EXTRACTION_CONFIDEN
 // env override, so the harness bounds each conversion exactly as the real import lane does.
 const DEFAULT_MEMORY_MIB = 2048;
 
+// Default OCR language the durable OCR phase runs a scanned/mixed PDF in when none is given. Production
+// resolves this from the Work language; the corpus is language-unlabelled, so the harness defaults to
+// English (override with --ocr-language) and validates it against the closed Work-language set below.
+const DEFAULT_OCR_LANGUAGE = "en";
+const WORK_LANGUAGES = new Set(["en", "zh-CN", "zh-TW"]);
+// The production default OCR toolchain binaries (mirrors serverConfig `pdfOcrBinary` / `pdfTesseractBinary`).
+const DEFAULT_OCR_BINARY = "ocrmypdf";
+const DEFAULT_TESSERACT_BINARY = "tesseract";
+
 // Resolve the per-child memory ceiling like the server config's `parsePdfStructuredMemory`: a positive
 // integer number of MiB, or the default when unset. A non-positive/non-integer request is rejected so the
 // harness never silently runs with a broken ceiling.
@@ -106,6 +134,9 @@ function parseArgs(argv) {
     timeoutMs: DEFAULT_TIMEOUT_MS,
     limit: Infinity,
     memoryMib: parseMemoryMib(process.env.PDF_STRUCTURED_MEMORY_MIB),
+    ocrLanguage: process.env.WHETSTONE_PDF_OCR_LANGUAGE ?? DEFAULT_OCR_LANGUAGE,
+    ocrBinary: process.env.PDF_OCR_BINARY ?? DEFAULT_OCR_BINARY,
+    tesseractBinary: process.env.PDF_TESSERACT_BINARY ?? DEFAULT_TESSERACT_BINARY,
     out: null
   };
   for (let i = 0; i < argv.length; i += 1) {
@@ -118,6 +149,10 @@ function parseArgs(argv) {
       args.timeoutMs = Math.max(1000, Number.parseInt(argv[(i += 1)], 10) || DEFAULT_TIMEOUT_MS);
     else if (flag === "--limit") args.limit = Math.max(1, Number.parseInt(argv[(i += 1)], 10) || 1);
     else if (flag === "--memory-mib") args.memoryMib = parseMemoryMib(argv[(i += 1)]);
+    else if (flag === "--ocr-language") args.ocrLanguage = argv[(i += 1)] ?? args.ocrLanguage;
+    else if (flag === "--ocr-binary") args.ocrBinary = argv[(i += 1)] ?? args.ocrBinary;
+    else if (flag === "--tesseract-binary")
+      args.tesseractBinary = argv[(i += 1)] ?? args.tesseractBinary;
     else if (flag === "--out") args.out = argv[(i += 1)] ?? null;
     else if (args.corpus === null) args.corpus = flag;
   }
@@ -290,120 +325,218 @@ function observationForMapping(mapping) {
   }
 }
 
-// Drive one file through probe -> ranges -> mapping, returning { observation, pageCount, peakBytes }.
-// Corpus bounds are enforced BEFORE any expensive conversion work: an over-size or over-page PDF is
-// outside the 95% denominator (assessCorpusEligibility excludes it), so it must not pay Docling
-// convert time or memory. An out-of-bound early return still records the real sizeBytes/pageCount that
-// trigger the exclusion; its observation is a never-classified placeholder because eligibility drops
-// the case via `facts` before any observation is read.
-async function convertOne(python, contracts, mapStructuredDocument, path, args, bounds) {
+// Map a non-`ok` OCR outcome to either a whole-run ABORT or a per-file rubric observation, matching what
+// production does with the same failure:
+//   - `tool_missing` / `language_missing` are provisioning gaps in THIS environment, not properties of a
+//     single PDF (the harness picks one OCR language for the run, so a missing pack is not a per-file
+//     fact). A memory-unbounded/OCR-less run is not falsifiable against production, so abort the whole run
+//     — a report is only ever emitted when the real OCR toolchain and language pack actually ran;
+//   - `timeout` / `memory` stay their own rubric classes, exactly as the structured lane classifies them;
+//   - every other failure (geometry, native_text, output_validation, routing_mismatch, unsupported_input,
+//     child_crash, stage_write, cleanup) is a genuine per-file OCR failure production would FAIL the import
+//     on, so it counts against the 95% gate as `conversion_failed` rather than being hidden.
+function ocrOutcomeForFailure(failure) {
+  if (failure.kind === "tool_missing") return { abort: "ocrToolMissing" };
+  if (failure.kind === "language_missing") {
+    return { abort: "ocrLanguageMissing", detail: failure.what };
+  }
+  if (failure.kind === "timeout") return { observation: { kind: "timeout" } };
+  if (failure.kind === "memory") return { observation: { kind: "memory" } };
+  return { observation: { kind: "conversion_failed", detail: `ocr ${failure.kind}` } };
+}
+
+// Resolve which staged file structured range conversion reads, running the SAME durable OCR phase the
+// production runner does (src/.../pdfImportRunner.ts `resolveConversionSource`): classify OCR routing from
+// the probe's per-page native-text flags, and for a scanned/mixed PDF run one bounded, validated OCRmyPDF
+// pass through the real production adapter, then convert the DERIVED `ocr.pdf` — so an OCR-eligible scan is
+// measured after the OCR pass ingestion actually uses, not reported as `ocr_required`/unsupported. A
+// born-digital (`native`) document converts the ORIGINAL untouched. Returns `{ path }` (the conversion
+// source), `{ abort }` (an environment gap that invalidates the whole run), or `{ observation }` (a
+// per-file OCR failure). Any temporary staging is registered in `cleanupPaths` for the caller to remove.
+async function resolveOcrConversionSource(path, probePages, args, ocr, cleanupPaths) {
+  const routing = ocr.classifyOcrRouting(
+    probePages.map((page) => ({ pageNumber: page.pageNumber, hasNativeText: page.hasNativeText }))
+  );
+  if (!ocr.ocrPassRequired(routing.kind)) {
+    return { path };
+  }
+
+  // The OCR adapter reads through a SERVER-ISSUED handle whose name must be a simple, path-safe token, so
+  // stage the corpus PDF under a fixed `source.pdf` name via a symlink (POSIX-only, which the platform
+  // fence already guarantees) — no bytes are copied, keeping the pre-OCR path bounded.
+  const stageDir = mkdtempSync(join(ocr.tempRoot, "src-"));
+  cleanupPaths.push(stageDir);
+  symlinkSync(path, join(stageDir, "source.pdf"));
+  const source = ocr.issueStagedFileHandle(stageDir, "source.pdf");
+
+  const outcome = await ocr.adapter.execute({ source, routing, language: ocr.language });
+  if (!outcome.ok) {
+    return ocrOutcomeForFailure(outcome.failure);
+  }
+  // The validated OCR output is owned by the harness now; remove it after conversion.
+  cleanupPaths.push(outcome.result.output.path);
+  return { path: outcome.result.output.path };
+}
+
+// Drive one file through probe -> (OCR when scanned/mixed) -> ranges -> mapping, returning
+// { observation, pageCount, peakBytes }. Corpus bounds are enforced BEFORE any expensive conversion work:
+// an over-size or over-page PDF is outside the 95% denominator (assessCorpusEligibility excludes it), so it
+// must not pay Docling convert time or memory. An out-of-bound early return still records the real
+// sizeBytes/pageCount that trigger the exclusion; its observation is a never-classified placeholder because
+// eligibility drops the case via `facts` before any observation is read.
+async function convertOne(python, contracts, mapStructuredDocument, path, args, bounds, ocr) {
   const start = process.hrtime.bigint();
   let peakBytes = 0;
   const elapsed = () => Number(process.hrtime.bigint() - start) / 1e6;
+  const cleanupPaths = [];
 
-  // Size is known from the filesystem alone: exclude an over-size PDF before spawning the worker.
-  const sizeBytes = statSync(path).size;
-  if (sizeBytes > bounds.maxBytes) {
-    return {
-      observation: { kind: "no_content" },
-      pageCount: null,
-      peakBytes,
-      elapsedMs: elapsed()
-    };
-  }
+  try {
+    // Size is known from the filesystem alone: exclude an over-size PDF before spawning the worker.
+    const sizeBytes = statSync(path).size;
+    if (sizeBytes > bounds.maxBytes) {
+      return {
+        observation: { kind: "no_content" },
+        pageCount: null,
+        peakBytes,
+        elapsedMs: elapsed()
+      };
+    }
 
-  const probe = await runWorker(python, ["--probe", path], args.timeoutMs, args.memoryMib);
-  peakBytes = Math.max(peakBytes, probe.peakBytes ?? 0);
-  if (probe.timedOut)
-    return { observation: { kind: "timeout" }, pageCount: null, peakBytes, elapsedMs: elapsed() };
-  if (probe.code === EXIT.TOOL_MISSING) return { toolMissing: true };
-  // The worker applies the memory ceiling before any command runs, so an environment that cannot enforce
-  // it surfaces here first. It is not a per-file failure: the whole run's numbers would be unbounded and
-  // non-equivalent to production, so abort rather than classify this file.
-  if (probe.code === EXIT.MEMORY_CEILING_UNSUPPORTED) return { memoryCeilingUnsupported: true };
-  if (probe.code !== EXIT.OK)
-    return {
-      observation: observationForExit(probe.code, "probe"),
-      pageCount: null,
-      peakBytes,
-      elapsedMs: elapsed()
-    };
+    const probe = await runWorker(python, ["--probe", path], args.timeoutMs, args.memoryMib);
+    peakBytes = Math.max(peakBytes, probe.peakBytes ?? 0);
+    if (probe.timedOut)
+      return { observation: { kind: "timeout" }, pageCount: null, peakBytes, elapsedMs: elapsed() };
+    if (probe.code === EXIT.TOOL_MISSING) return { toolMissing: true };
+    // The worker applies the memory ceiling before any command runs, so an environment that cannot
+    // enforce it surfaces here first. It is not a per-file failure: the whole run's numbers would be
+    // unbounded and non-equivalent to production, so abort rather than classify this file.
+    if (probe.code === EXIT.MEMORY_CEILING_UNSUPPORTED) return { memoryCeilingUnsupported: true };
+    if (probe.code !== EXIT.OK)
+      return {
+        observation: observationForExit(probe.code, "probe"),
+        pageCount: null,
+        peakBytes,
+        elapsedMs: elapsed()
+      };
 
-  const probeParsed = contracts.parseProbeClassification(probe.stdout);
-  if (probeParsed.status !== "ok")
-    return {
-      observation: { kind: "conversion_failed", detail: `probe ${probeParsed.status}` },
-      pageCount: null,
-      peakBytes,
-      elapsedMs: elapsed()
-    };
-  const pageCount = probeParsed.pageCount;
+    const probeParsed = contracts.parseProbeClassification(probe.stdout);
+    if (probeParsed.status !== "ok")
+      return {
+        observation: { kind: "conversion_failed", detail: `probe ${probeParsed.status}` },
+        pageCount: null,
+        peakBytes,
+        elapsedMs: elapsed()
+      };
+    const pageCount = probeParsed.pageCount;
 
-  // The cheap probe gave the page count: exclude an over-page PDF here, before the range loop, so an
-  // out-of-bound input never pays for full range conversion.
-  if (pageCount > bounds.maxPages) {
-    return { observation: { kind: "no_content" }, pageCount, peakBytes, elapsedMs: elapsed() };
-  }
+    // The cheap probe gave the page count: exclude an over-page PDF here, before OCR or the range loop, so
+    // an out-of-bound input never pays for full range conversion.
+    if (pageCount > bounds.maxPages) {
+      return { observation: { kind: "no_content" }, pageCount, peakBytes, elapsedMs: elapsed() };
+    }
 
-  const ranges = [];
-  for (let startPage = 1; startPage <= pageCount; startPage += args.rangeSize) {
-    const endPage = Math.min(startPage + args.rangeSize - 1, pageCount);
-    const range = await runWorker(
-      python,
-      ["--range", path, String(startPage), String(endPage)],
-      args.timeoutMs,
-      args.memoryMib
+    // The durable OCR phase, before structured conversion — exactly as production sequences it. A
+    // scanned/mixed PDF is OCR'd and its DERIVED source converted; a born-digital PDF converts the
+    // original. An environment gap aborts; a per-file OCR failure is classified against the gate.
+    const conversion = await resolveOcrConversionSource(
+      path,
+      probeParsed.pages,
+      args,
+      ocr,
+      cleanupPaths
     );
-    peakBytes = Math.max(peakBytes, range.peakBytes ?? 0);
-    if (range.timedOut)
-      return { observation: { kind: "timeout" }, pageCount, peakBytes, elapsedMs: elapsed() };
-    if (range.code === EXIT.TOOL_MISSING) return { toolMissing: true };
-    if (range.code === EXIT.MEMORY_CEILING_UNSUPPORTED) return { memoryCeilingUnsupported: true };
-    if (range.code !== EXIT.OK)
-      return {
-        observation: observationForExit(range.code, "range"),
-        pageCount,
-        peakBytes,
-        elapsedMs: elapsed()
-      };
-    const parsed = contracts.parseRangeConversion(range.stdout);
-    if (parsed.status !== "ok")
-      return {
-        observation: { kind: "conversion_failed", detail: `range ${parsed.status}` },
-        pageCount,
-        peakBytes,
-        elapsedMs: elapsed()
-      };
-    ranges.push(parsed.value);
-  }
+    if (conversion.abort === "ocrToolMissing") return { ocrToolMissing: true };
+    if (conversion.abort === "ocrLanguageMissing") return { ocrLanguageMissing: conversion.detail };
+    if (conversion.observation)
+      return { observation: conversion.observation, pageCount, peakBytes, elapsedMs: elapsed() };
+    const conversionPath = conversion.path;
 
-  const document = contracts.concatenateRanges(
-    { byteLength: statSync(path).size, pageCount, sha256: sha256(path) },
-    ranges
-  );
-  const mapping = mapStructuredDocument(document);
-  return {
-    observation: observationForMapping(mapping),
-    pageCount,
-    peakBytes,
-    elapsedMs: elapsed()
-  };
+    const ranges = [];
+    for (let startPage = 1; startPage <= pageCount; startPage += args.rangeSize) {
+      const endPage = Math.min(startPage + args.rangeSize - 1, pageCount);
+      const range = await runWorker(
+        python,
+        ["--range", conversionPath, String(startPage), String(endPage)],
+        args.timeoutMs,
+        args.memoryMib
+      );
+      peakBytes = Math.max(peakBytes, range.peakBytes ?? 0);
+      if (range.timedOut)
+        return { observation: { kind: "timeout" }, pageCount, peakBytes, elapsedMs: elapsed() };
+      if (range.code === EXIT.TOOL_MISSING) return { toolMissing: true };
+      if (range.code === EXIT.MEMORY_CEILING_UNSUPPORTED) return { memoryCeilingUnsupported: true };
+      if (range.code !== EXIT.OK)
+        return {
+          observation: observationForExit(range.code, "range"),
+          pageCount,
+          peakBytes,
+          elapsedMs: elapsed()
+        };
+      const parsed = contracts.parseRangeConversion(range.stdout);
+      if (parsed.status !== "ok")
+        return {
+          observation: { kind: "conversion_failed", detail: `range ${parsed.status}` },
+          pageCount,
+          peakBytes,
+          elapsedMs: elapsed()
+        };
+      ranges.push(parsed.value);
+    }
+
+    // Provenance is always the IMMUTABLE ORIGINAL (byte length + hash), even when the converted bytes came
+    // from the derived OCR PDF — matching production, where the original upload is the Work's provenance.
+    const document = contracts.concatenateRanges(
+      { byteLength: statSync(path).size, pageCount, sha256: sha256(path) },
+      ranges
+    );
+    const mapping = mapStructuredDocument(document);
+    return {
+      observation: observationForMapping(mapping),
+      pageCount,
+      peakBytes,
+      elapsedMs: elapsed()
+    };
+  } finally {
+    for (const target of cleanupPaths) {
+      try {
+        rmSync(target, { force: true, recursive: true });
+      } catch {
+        // Best-effort: a stale symlink/derived file in the run's own temp root is harmless and the whole
+        // root is removed at the end of the run.
+      }
+    }
+  }
 }
 
 async function loadTypeScriptDeps() {
   try {
     const contracts = await import("../../src/packages/contracts/src/index.js");
     const domain = await import("../../src/packages/domain/src/pdfUsability.js");
+    // #704's pure OCR-routing policy (native/scanned/mixed) — the same decision production drives.
+    const ocrPolicy = await import("../../src/packages/domain/src/pdfOcr.js");
     const mapper =
       await import("../../src/apps/server/src/features/pdfImport/pdfCanonicalMapping.js");
     // Reuse the production runner's platform fence so the harness supports exactly the platforms the real
-    // import lane does (a single source of truth for "where the memory ceiling can be enforced").
+    // import lane does (a single source of truth for "where the memory ceiling can be enforced"), and its
+    // server-issued staged-handle mint so the OCR adapter reads the corpus PDF exactly as it reads an
+    // uploaded stage.
     const adapter = await import("../../src/apps/server/src/files/pdfStructuredAdapter.js");
+    // The SAME production seams the composition root wires (src/apps/server/src/index.ts): the memory-
+    // bounded structured runner and the bounded OCR adapter, so the harness routes each in-bound case
+    // through the real OCR decision/source stage before mapping rather than a divergent reimplementation.
+    const structuredResolution =
+      await import("../../src/apps/server/src/files/pdfStructuredRunnerResolution.js");
+    const ocrResolution = await import("../../src/apps/server/src/files/pdfOcrRunnerResolution.js");
     return {
       contracts,
       domain,
       mapStructuredDocument: mapper.mapStructuredDocument,
-      canEnforceStructuredPdfMemoryCeiling: adapter.canEnforceStructuredPdfMemoryCeiling
+      canEnforceStructuredPdfMemoryCeiling: adapter.canEnforceStructuredPdfMemoryCeiling,
+      issueStagedFileHandle: adapter.issueStagedFileHandle,
+      classifyOcrRouting: ocrPolicy.classifyOcrRouting,
+      ocrPassRequired: ocrPolicy.ocrPassRequired,
+      resolveStructuredPdfRunner: structuredResolution.resolveStructuredPdfRunner,
+      resolvePdfOcrAdapter: ocrResolution.resolvePdfOcrAdapter
     };
   } catch (cause) {
     return { error: cause instanceof Error ? cause.message : String(cause) };
@@ -448,6 +581,15 @@ async function main() {
       "error: Python 3 not found; run `pnpm setup:pdf` to enable the PDF lane.\n"
     );
     return 3;
+  }
+
+  // The OCR language the durable OCR phase runs a scanned/mixed PDF in. Production resolves it from the
+  // Work language; the corpus is language-unlabelled, so it is one closed-set value per run.
+  if (!WORK_LANGUAGES.has(args.ocrLanguage)) {
+    process.stderr.write(
+      `error: --ocr-language must be one of ${[...WORK_LANGUAGES].join(", ")} (got "${args.ocrLanguage}").\n`
+    );
+    return 2;
   }
 
   const roots = [args.corpus, ...args.extra].filter(Boolean).map((root) => resolve(root));
@@ -497,6 +639,50 @@ async function main() {
     return 1;
   }
 
+  // Construct the SAME production seams the composition root wires, so each in-bound case is measured
+  // through the real pipeline: the memory-bounded structured runner serves as the OCR adapter's before/
+  // after page probe, and the bounded OCRmyPDF adapter runs the durable OCR phase for scanned/mixed PDFs.
+  // A per-run temp root holds every OCR working file (source symlinks + validated outputs) under one
+  // directory removed at the end of the run.
+  const runTempRoot = mkdtempSync(join(tmpdir(), "whetstone-pdf-harness-"));
+  const structuredRunner = deps.resolveStructuredPdfRunner({
+    fixtureConversion: false,
+    pythonBinary: python,
+    scriptPath: WORKER,
+    perRangeTimeoutMs: args.timeoutMs,
+    memoryMib: args.memoryMib
+  });
+  const ocr = {
+    adapter: deps.resolvePdfOcrAdapter({
+      fixtureOcr: false,
+      probe: structuredRunner,
+      ocrBinary: args.ocrBinary,
+      tesseractBinary: args.tesseractBinary,
+      timeoutMs: args.timeoutMs,
+      outputStageRoot: join(runTempRoot, "ocr-output")
+    }),
+    classifyOcrRouting: deps.classifyOcrRouting,
+    ocrPassRequired: deps.ocrPassRequired,
+    issueStagedFileHandle: deps.issueStagedFileHandle,
+    language: args.ocrLanguage,
+    tempRoot: runTempRoot
+  };
+
+  try {
+    return await runCorpus(python, contracts, domain, deps, args, bounds, ocr, files, unique);
+  } finally {
+    try {
+      rmSync(runTempRoot, { force: true, recursive: true });
+    } catch {
+      // Best-effort: the OS temp directory reclaims a leftover run root; a removal failure is not a
+      // product failure of the measurement.
+    }
+  }
+}
+
+// Drive every deduplicated file through the production pipeline and emit the aggregate report. Split from
+// `main` so the run's temp root has a single try/finally cleanup surface around all conversion work.
+async function runCorpus(python, contracts, domain, deps, args, bounds, ocr, files, unique) {
   const cases = [];
   let index = 0;
   for (const path of unique) {
@@ -510,10 +696,28 @@ async function main() {
       deps.mapStructuredDocument,
       path,
       args,
-      bounds
+      bounds,
+      ocr
     );
     if (converted.toolMissing) {
       process.stderr.write("error: the pinned Docling runtime is missing; run `pnpm setup:pdf`.\n");
+      return 3;
+    }
+    if (converted.ocrToolMissing) {
+      // A scanned/mixed PDF needs the OCR toolchain the real import lane uses; without it the run cannot
+      // measure the production pipeline for scanned inputs, so abort rather than emit a non-equivalent
+      // report.
+      process.stderr.write(
+        "error: the pinned OCR toolchain (OCRmyPDF over Tesseract) is missing, but the corpus contains a " +
+          "scanned/mixed PDF that production would OCR. Run `pnpm setup:pdf` to provision it.\n"
+      );
+      return 3;
+    }
+    if (converted.ocrLanguageMissing) {
+      process.stderr.write(
+        `error: the OCR run cannot proceed: ${converted.ocrLanguageMissing} Install the language pack (` +
+          "`pnpm setup:pdf`) or choose an installed --ocr-language.\n"
+      );
       return 3;
     }
     if (converted.memoryCeilingUnsupported) {
