@@ -213,10 +213,21 @@ function observationForMapping(mapping) {
 }
 
 // Drive one file through probe -> ranges -> mapping, returning { observation, pageCount, peakBytes }.
-async function convertOne(python, contracts, mapStructuredDocument, path, args) {
+// Corpus bounds are enforced BEFORE any expensive conversion work: an over-size or over-page PDF is
+// outside the 95% denominator (assessCorpusEligibility excludes it), so it must not pay Docling
+// convert time or memory. An out-of-bound early return still records the real sizeBytes/pageCount that
+// trigger the exclusion; its observation is a never-classified placeholder because eligibility drops
+// the case via `facts` before any observation is read.
+async function convertOne(python, contracts, mapStructuredDocument, path, args, bounds) {
   const start = process.hrtime.bigint();
   let peakBytes = 0;
   const elapsed = () => Number(process.hrtime.bigint() - start) / 1e6;
+
+  // Size is known from the filesystem alone: exclude an over-size PDF before spawning the worker.
+  const sizeBytes = statSync(path).size;
+  if (sizeBytes > bounds.maxBytes) {
+    return { observation: { kind: "no_content" }, pageCount: null, peakBytes, elapsedMs: elapsed() };
+  }
 
   const probe = await runWorker(python, ["--probe", path], args.timeoutMs);
   peakBytes = Math.max(peakBytes, probe.peakBytes ?? 0);
@@ -234,6 +245,12 @@ async function convertOne(python, contracts, mapStructuredDocument, path, args) 
       elapsedMs: elapsed()
     };
   const pageCount = probeParsed.pageCount;
+
+  // The cheap probe gave the page count: exclude an over-page PDF here, before the range loop, so an
+  // out-of-bound input never pays for full range conversion.
+  if (pageCount > bounds.maxPages) {
+    return { observation: { kind: "no_content" }, pageCount, peakBytes, elapsedMs: elapsed() };
+  }
 
   const ranges = [];
   for (let startPage = 1; startPage <= pageCount; startPage += args.rangeSize) {
@@ -343,7 +360,7 @@ async function main() {
     index += 1;
     const caseId = `case-${index}`;
     const sizeBytes = statSync(path).size;
-    const converted = await convertOne(python, contracts, deps.mapStructuredDocument, path, args);
+    const converted = await convertOne(python, contracts, deps.mapStructuredDocument, path, args, bounds);
     if (converted.toolMissing) {
       process.stderr.write("error: the pinned Docling runtime is missing; run `pnpm setup:pdf`.\n");
       return 3;
