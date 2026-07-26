@@ -8,7 +8,6 @@ import { createTextDocument } from "@whetstone/document";
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
 import {
-  cardCreationAttempts,
   cardCreationReceipts,
   memoryPrompts,
   notes,
@@ -96,7 +95,9 @@ const expectedResponseTarget = (text: string): NoteGradingTarget => ({
   successCheckDoc: createTextDocument(text)
 });
 
-function previewRequest(over: Partial<PreviewCardCreationRequest> = {}): PreviewCardCreationRequest {
+function previewRequest(
+  over: Partial<PreviewCardCreationRequest> = {}
+): PreviewCardCreationRequest {
   return {
     submissionId: "req-1",
     questionDoc: createTextDocument("Which sorting algorithm is stable?"),
@@ -166,7 +167,9 @@ describe("commitCardCreation", () => {
   });
 
   it("creates a graded card carrying the staged success check", async () => {
-    const attemptId = await stage({ target: expectedResponseTarget("Names merge sort and stability.") });
+    const attemptId = await stage({
+      target: expectedResponseTarget("Names merge sort and stability.")
+    });
     const result = await commit(attemptId, { kind: "create" });
 
     expect(result.status).toBe("created");
@@ -198,7 +201,9 @@ describe("commitCardCreation", () => {
     const cardsBefore = await listCards();
     expect(cardsBefore).toHaveLength(1);
 
-    const attemptId = await stage({ target: expectedResponseTarget("Recalls merge sort stability.") });
+    const attemptId = await stage({
+      target: expectedResponseTarget("Recalls merge sort stability.")
+    });
     const result = await commit(attemptId, { kind: "reuse", noteEntryId: seededId });
 
     expect(result.status).toBe("reused");
@@ -210,14 +215,16 @@ describe("commitCardCreation", () => {
 
     // The sibling card that already existed on the reused note is untouched — same schedule.
     const preexisting = cardsBefore[0]!;
-    const after = (await listCards()).find((card) => card.targetEntryId === preexisting.targetEntryId);
+    const after = (await listCards()).find(
+      (card) => card.targetEntryId === preexisting.targetEntryId
+    );
     expect(after).toEqual(preexisting);
 
     const receipts = await listReceipts();
     expect(receipts).toHaveLength(2);
-    expect(receipts.some((receipt) => receipt.channel === "mcp" && receipt.attemptId === attemptId)).toBe(
-      true
-    );
+    expect(
+      receipts.some((receipt) => receipt.channel === "mcp" && receipt.attemptId === attemptId)
+    ).toBe(true);
   });
 
   it("reuses a near-match candidate note", async () => {
@@ -288,7 +295,9 @@ describe("commitCardCreation", () => {
   });
 
   it("renders the graded success check in a refreshed preview", async () => {
-    const attemptId = await stage({ target: expectedResponseTarget("Names merge sort and stability.") });
+    const attemptId = await stage({
+      target: expectedResponseTarget("Names merge sort and stability.")
+    });
     await seedMaterial(answerA, "seed-late-graded");
 
     const result = await commit(attemptId, { kind: "create" });

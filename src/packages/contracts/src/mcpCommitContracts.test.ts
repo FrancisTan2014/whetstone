@@ -46,8 +46,10 @@ describe("mcpCommitCardInputSchema", () => {
 
   it("accepts a reuse decision with a note id and a keep_separate decision", () => {
     expect(
-      parseMcpCommitCardInput({ attemptId: "a", decision: { kind: "reuse", noteEntryId: "note-9" } })
-        .decision
+      parseMcpCommitCardInput({
+        attemptId: "a",
+        decision: { kind: "reuse", noteEntryId: "note-9" }
+      }).decision
     ).toEqual({ kind: "reuse", noteEntryId: "note-9" });
     expect(
       parseMcpCommitCardInput({ attemptId: "a", decision: { kind: "keep_separate" } }).decision
@@ -68,7 +70,10 @@ describe("mcpCommitCardInputSchema", () => {
     ["missing decision", { attemptId: "a" }],
     ["unknown decision kind", { attemptId: "a", decision: { kind: "delete" } }],
     ["reuse without a note id", { attemptId: "a", decision: { kind: "reuse" } }],
-    ["reuse with a blank note id", { attemptId: "a", decision: { kind: "reuse", noteEntryId: " " } }],
+    [
+      "reuse with a blank note id",
+      { attemptId: "a", decision: { kind: "reuse", noteEntryId: " " } }
+    ],
     [
       "reuse with an oversized note id",
       {
@@ -77,7 +82,10 @@ describe("mcpCommitCardInputSchema", () => {
       }
     ],
     ["smuggled card content", { attemptId: "a", decision: { kind: "create" }, answer: "x" }],
-    ["an extra key inside the decision", { attemptId: "a", decision: { kind: "create", noteEntryId: "n" } }],
+    [
+      "an extra key inside the decision",
+      { attemptId: "a", decision: { kind: "create", noteEntryId: "n" } }
+    ],
     ["a batch payload", { attemptId: "a", decision: { kind: "create" }, drafts: [] }],
     ["a non-object decision", { attemptId: "a", decision: "create" }]
   ])("rejects %s", (_label, candidate) => {

@@ -80,7 +80,11 @@ function describeOutcome(requestId: string, result: McpPreviewCardResult): strin
 // written card — the created note/prompt ids, or — for a re-approval — the refreshed candidate counts. It
 // never includes the rendered card or any candidate excerpt, so the local log cannot leak corpus content.
 function describeCommitOutcome(attemptId: string, result: McpCommitCardResult): string {
-  if (result.status === "created" || result.status === "reused" || result.status === "kept_separate") {
+  if (
+    result.status === "created" ||
+    result.status === "reused" ||
+    result.status === "kept_separate"
+  ) {
     return (
       `commit attemptId=${attemptId} status=${result.status} ` +
       `noteId=${result.card.noteId} promptId=${result.card.promptId}`

@@ -43,7 +43,9 @@ function previewDeps(
   };
 }
 
-function commitDeps(over: Partial<CommitCardCreationDependencies> = {}): CommitCardCreationDependencies {
+function commitDeps(
+  over: Partial<CommitCardCreationDependencies> = {}
+): CommitCardCreationDependencies {
   return {
     createId: () => `card-${(sequence += 1)}`,
     db,
@@ -99,13 +101,11 @@ const validArgs = {
 };
 
 // Preview through the client and return the staged opaque attempt id.
-async function stage(
-  client: Client,
-  args: Record<string, unknown> = validArgs
-): Promise<string> {
+async function stage(client: Client, args: Record<string, unknown> = validArgs): Promise<string> {
   const result = await client.callTool({ name: "preview_card_creation", arguments: args });
   const structured = result.structuredContent as McpPreviewCardResult;
-  if (structured.status !== "previewed") throw new Error(`expected previewed, got ${structured.status}`);
+  if (structured.status !== "previewed")
+    throw new Error(`expected previewed, got ${structured.status}`);
   return structured.attemptId;
 }
 
@@ -296,7 +296,9 @@ describe("createMcpCardServer", () => {
     expect(result.status).toBe("needs_approval");
     if (result.status !== "needs_approval") throw new Error("expected needs_approval");
     expect(result.preview.candidates).toHaveLength(1);
-    expect(logLines.at(-1)).toBe(`commit attemptId=${attemptId} status=needs_approval exact=1 near=0`);
+    expect(logLines.at(-1)).toBe(
+      `commit attemptId=${attemptId} status=needs_approval exact=1 near=0`
+    );
   });
 
   it("logs a content-free line for a not_found commit", async () => {

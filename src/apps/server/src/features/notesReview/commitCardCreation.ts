@@ -257,7 +257,10 @@ async function commitPendingDecision(
     if (hasCandidates) {
       return { status: "candidates_exist" };
     }
-    result = mapWriteOutcome("created", await commitDirectCard(dependencies, tx, attempt, draft, now));
+    result = mapWriteOutcome(
+      "created",
+      await commitDirectCard(dependencies, tx, attempt, draft, now)
+    );
     recordedDecision = "create";
   } else if (decision.kind === "keep_separate") {
     if (!hasCandidates) {
@@ -277,7 +280,11 @@ async function commitPendingDecision(
   }
   // Only a genuine create/reuse/keep-separate consumes the review slot; a receipt-replay conflict/gone leaves
   // the attempt pending so the caller can resolve the reused id without stranding the slot.
-  if (result.status === "created" || result.status === "reused" || result.status === "kept_separate") {
+  if (
+    result.status === "created" ||
+    result.status === "reused" ||
+    result.status === "kept_separate"
+  ) {
     await consumeAttempt(tx, {
       decision: recordedDecision,
       expectedRevision: attempt.revision,
