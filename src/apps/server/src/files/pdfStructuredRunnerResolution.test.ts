@@ -64,15 +64,24 @@ describe("resolveStructuredPdfRunner", () => {
     });
   });
 
-  it("fails visibly on a platform where the memory ceiling cannot be enforced", async () => {
-    // Windows cannot enforce the per-child memory ceiling, so the real runner cannot construct there;
-    // the resolver must fall back to the fail-visibly runner rather than fabricate content.
-    const runner = resolveStructuredPdfRunner({ ...baseResolution, platform: "win32" });
+  it("fails visibly on a platform with no memory-boundary implementation", async () => {
+    // A platform with no worker boundary (not POSIX, not Windows) cannot construct the real runner, so
+    // the resolver falls back to the fail-visibly runner rather than fabricate content. Windows is now a
+    // supported platform (Job Object), so the unsupported case is represented by another platform.
+    const runner = resolveStructuredPdfRunner({ ...baseResolution, platform: "freebsd" });
     expect(await runner.probe("Q:/stage/any.pdf", undefined)).toEqual({ status: "tool_missing" });
     const outcome = await runner.convertRange("Q:/stage/any.pdf", 1, 1, undefined);
     expect(outcome.status).toBe("failure");
     if (outcome.status !== "failure") throw new Error("expected a failure outcome");
     expect(outcome.failure.kind).toBe("tool_missing");
+  });
+
+  it("selects the real Docling runner on Windows now that a Job Object boundary exists", () => {
+    // #782: win32 selects the real #701 runner (its runtime pywin32/Job Object failure is fail-closed in
+    // the worker). It must construct without throwing and expose the runner surface.
+    const runner = resolveStructuredPdfRunner({ ...baseResolution, platform: "win32" });
+    expect(typeof runner.probe).toBe("function");
+    expect(typeof runner.convertRange).toBe("function");
   });
 
   it("selects the real Docling runner on a platform that can enforce the ceiling", () => {

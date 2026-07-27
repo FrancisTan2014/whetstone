@@ -113,15 +113,16 @@ export function memoryFailure(): PdfStructuredFailure {
   });
 }
 
-// The child could not apply the per-child memory ceiling this platform requires (POSIX `resource` is
-// unavailable, e.g. Windows). The bounded adapter refuses rather than run a memory-unbounded
-// conversion; the real runner also fences itself off up front on such a platform.
+// The child could not apply the per-child memory ceiling this host requires: on Windows the pinned
+// pywin32 Job Object support is not provisioned (or the Job Object could not be created/assigned), on
+// POSIX `resource` is unavailable, or the platform has no boundary implementation at all. The bounded
+// adapter refuses fail-closed rather than run a memory-unbounded conversion (#701/#782).
 export function memoryCeilingUnsupportedFailure(): PdfStructuredFailure {
   return Object.freeze({
     kind: "memory_ceiling_unsupported",
-    what: "A per-child memory ceiling could not be enforced on this platform, so the bounded conversion was refused.",
+    what: "A per-child memory ceiling could not be enforced on this host, so the bounded conversion was refused.",
     remedy:
-      "Run the structured PDF adapter on a POSIX platform (Linux/macOS) where an address-space memory ceiling can be applied."
+      "Run `pnpm setup:pdf` to provision the platform memory-boundary support (on Windows the pinned pywin32 Job Object package); it verifies the ceiling can be enforced before reporting the PDF lane ready."
   });
 }
 

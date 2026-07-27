@@ -25,6 +25,8 @@ from pdf_to_docling import (  # noqa: E402  (path set above)
     EXIT_UNSUPPORTED_SCHEMA,
     EXIT_USAGE,
     MEMORY_LIMIT_ENV,
+    METRICS_PATH_ENV,
+    DEFAULT_PROBE_MEMORY_MIB,
     RANGE_SCHEMA_VERSION,
     SUPPORTED_SCHEMA_VERSIONS,
     ConversionFailed,
@@ -32,6 +34,11 @@ from pdf_to_docling import (  # noqa: E402  (path set above)
     PasswordRequired,
     UnsupportedSchema,
     apply_memory_limit,
+    resolve_memory_boundary,
+    run_check_memory_ceiling,
+    write_metrics_sidecar,
+    _PosixMemoryBoundary,
+    _WindowsMemoryBoundary,
     build_converter,
     build_document_metadata,
     build_range_payload,
@@ -431,17 +438,56 @@ class CountPagesTests(unittest.TestCase):
             count_pages("/tmp/a.pdf", opener)
 
 
-# --- Memory ceiling ----------------------------------------------------------------------------
+# --- Memory ceiling: the one worker-owned boundary contract (#782) ----------------------------
+
+
+class _FakeWin32JobApi:
+    """A fake pywin32 Job Object seam recording create/configure/assign, driving the Windows boundary."""
+
+    JOB_OBJECT_LIMIT_PROCESS_MEMORY = 0x100
+    JOB_OBJECT_LIMIT_JOB_MEMORY = 0x200
+    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+
+    def __init__(self, *, peak=None, fail_on=None):
+        self.calls = []
+        self.info = {
+            "BasicLimitInformation": {"LimitFlags": 0},
+            "ProcessMemoryLimit": 0,
+            "JobMemoryLimit": 0,
+            "PeakJobMemoryUsed": peak,
+        }
+        self._fail_on = fail_on
+
+    def create_job_object(self):
+        self.calls.append("create")
+        if self._fail_on == "create":
+            raise OSError("CreateJobObject failed")
+        return object()
+
+    def query_extended_limit(self, _job):
+        self.calls.append("query")
+        return self.info
+
+    def set_extended_limit(self, _job, info):
+        self.calls.append("set")
+        if self._fail_on == "set":
+            raise OSError("SetInformationJobObject failed")
+        self.info = info
+
+    def assign_current_process(self, _job):
+        self.calls.append("assign")
+        if self._fail_on == "assign":
+            raise OSError("AssignProcessToJobObject failed")
 
 
 class MemoryLimitTests(unittest.TestCase):
-    def test_no_ceiling_requested_is_a_noop_without_a_resource_module(self):
-        # No env (mib None) requests no ceiling, so a platform without `resource` is fine.
+    def test_no_ceiling_requested_is_a_noop_without_a_boundary(self):
+        # No env (mib None) requests no ceiling, so a host without any boundary is fine.
         apply_memory_limit(None, None)  # must not raise
 
-    def test_requested_ceiling_without_resource_module_is_refused(self):
-        # A positive ceiling requested but unenforceable (POSIX `resource` absent, e.g. Windows) must
-        # fail closed rather than run unbounded — the #701 memory-bounded invariant.
+    def test_requested_ceiling_without_a_boundary_is_refused(self):
+        # A positive ceiling requested but no boundary available (POSIX `resource` absent or Windows
+        # without pywin32) must fail closed rather than run unbounded — the #701 invariant.
         with self.assertRaises(MemoryCeilingUnsupported) as caught:
             apply_memory_limit("512", None)
         self.assertEqual(caught.exception.mib, 512)
@@ -449,23 +495,172 @@ class MemoryLimitTests(unittest.TestCase):
     def test_absent_or_non_numeric_env_is_ignored(self):
         recorder = types.SimpleNamespace(calls=[], RLIMIT_AS=object())
         recorder.setrlimit = lambda which, pair: recorder.calls.append((which, pair))
-        apply_memory_limit(None, recorder)
-        apply_memory_limit("not-a-number", recorder)
-        apply_memory_limit("0", recorder)
-        apply_memory_limit("-5", recorder)
+        boundary = _PosixMemoryBoundary(recorder)
+        apply_memory_limit(None, boundary)
+        apply_memory_limit("not-a-number", boundary)
+        apply_memory_limit("0", boundary)
+        apply_memory_limit("-5", boundary)
         self.assertEqual(recorder.calls, [])
 
-    def test_non_positive_env_is_ignored_even_without_a_resource_module(self):
-        # A zero/negative/non-numeric request is "no ceiling", so it never raises on Windows either.
+    def test_non_positive_env_is_ignored_even_without_a_boundary(self):
+        # A zero/negative/non-numeric request is "no ceiling", so it never raises without a boundary.
         apply_memory_limit("0", None)
         apply_memory_limit("-5", None)
         apply_memory_limit("not-a-number", None)
 
-    def test_valid_limit_sets_the_address_space_rlimit(self):
+    def test_posix_boundary_sets_the_address_space_rlimit(self):
         recorder = types.SimpleNamespace(calls=[], RLIMIT_AS="AS")
         recorder.setrlimit = lambda which, pair: recorder.calls.append((which, pair))
-        apply_memory_limit("256", recorder)
+        apply_memory_limit("256", _PosixMemoryBoundary(recorder))
         self.assertEqual(recorder.calls, [("AS", (256 * 1024 * 1024, 256 * 1024 * 1024))])
+
+    def test_posix_boundary_reports_no_worker_peak(self):
+        # POSIX peak stays the harness's external sampler, so the worker-side boundary has no peak.
+        self.assertIsNone(_PosixMemoryBoundary(object()).peak_bytes())
+
+    def test_windows_boundary_creates_configures_and_assigns_the_job(self):
+        api = _FakeWin32JobApi(peak=7 * 1024 * 1024)
+        boundary = _WindowsMemoryBoundary(api)
+        apply_memory_limit("128", boundary)
+        # It creates the unnamed job, sets the three limit flags + both memory limits, then assigns self.
+        self.assertEqual(api.calls, ["create", "query", "set", "assign"])
+        flags = api.info["BasicLimitInformation"]["LimitFlags"]
+        self.assertTrue(flags & api.JOB_OBJECT_LIMIT_PROCESS_MEMORY)
+        self.assertTrue(flags & api.JOB_OBJECT_LIMIT_JOB_MEMORY)
+        self.assertTrue(flags & api.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE)
+        self.assertEqual(api.info["ProcessMemoryLimit"], 128 * 1024 * 1024)
+        self.assertEqual(api.info["JobMemoryLimit"], 128 * 1024 * 1024)
+        # Peak is read back from the job's accounting.
+        self.assertEqual(boundary.peak_bytes(), 7 * 1024 * 1024)
+
+    def test_windows_boundary_peak_is_none_before_apply(self):
+        self.assertIsNone(_WindowsMemoryBoundary(_FakeWin32JobApi()).peak_bytes())
+
+    def test_windows_boundary_zero_peak_reports_none(self):
+        api = _FakeWin32JobApi(peak=0)
+        boundary = _WindowsMemoryBoundary(api)
+        apply_memory_limit("64", boundary)
+        self.assertIsNone(boundary.peak_bytes())
+
+    def test_windows_boundary_create_failure_is_refused(self):
+        with self.assertRaises(MemoryCeilingUnsupported):
+            apply_memory_limit("64", _WindowsMemoryBoundary(_FakeWin32JobApi(fail_on="create")))
+
+    def test_windows_boundary_configure_failure_is_refused(self):
+        with self.assertRaises(MemoryCeilingUnsupported):
+            apply_memory_limit("64", _WindowsMemoryBoundary(_FakeWin32JobApi(fail_on="set")))
+
+    def test_windows_boundary_assign_failure_is_refused(self):
+        with self.assertRaises(MemoryCeilingUnsupported):
+            apply_memory_limit("64", _WindowsMemoryBoundary(_FakeWin32JobApi(fail_on="assign")))
+
+
+class ResolveMemoryBoundaryTests(unittest.TestCase):
+    def test_posix_resolves_the_rlimit_boundary(self):
+        resource_module = types.SimpleNamespace(RLIMIT_AS="AS", setrlimit=lambda *_: None)
+        boundary = resolve_memory_boundary(
+            "linux", posix_loader=lambda: resource_module, windows_loader=lambda: None
+        )
+        self.assertIsInstance(boundary, _PosixMemoryBoundary)
+
+    def test_posix_without_resource_is_unsupported(self):
+        boundary = resolve_memory_boundary(
+            "linux", posix_loader=lambda: None, windows_loader=lambda: None
+        )
+        self.assertIsNone(boundary)
+
+    def test_windows_resolves_the_job_object_boundary(self):
+        api = _FakeWin32JobApi()
+        boundary = resolve_memory_boundary(
+            "win32", posix_loader=lambda: None, windows_loader=lambda: api
+        )
+        self.assertIsInstance(boundary, _WindowsMemoryBoundary)
+
+    def test_windows_without_pywin32_is_unsupported(self):
+        boundary = resolve_memory_boundary(
+            "win32", posix_loader=lambda: None, windows_loader=lambda: None
+        )
+        self.assertIsNone(boundary)
+
+
+class CheckMemoryCeilingTests(unittest.TestCase):
+    def test_capable_boundary_reports_enforced_ceiling(self):
+        stdout = io.StringIO()
+        code = run_check_memory_ceiling("128", _WindowsMemoryBoundary(_FakeWin32JobApi()), stdout, io.StringIO())
+        self.assertEqual(code, EXIT_OK)
+        self.assertEqual(json.loads(stdout.getvalue()), {"ceilingEnforced": True, "memoryMib": 128})
+
+    def test_missing_boundary_reports_unsupported(self):
+        stderr = io.StringIO()
+        code = run_check_memory_ceiling("128", None, io.StringIO(), stderr)
+        self.assertEqual(code, EXIT_MEMORY_CEILING_UNSUPPORTED)
+        self.assertIn("could not be enforced", stderr.getvalue())
+
+    def test_absent_ceiling_uses_the_default_probe_mib(self):
+        stdout = io.StringIO()
+        code = run_check_memory_ceiling(None, _PosixMemoryBoundary(
+            types.SimpleNamespace(RLIMIT_AS="AS", setrlimit=lambda *_: None)
+        ), stdout, io.StringIO())
+        self.assertEqual(code, EXIT_OK)
+        self.assertEqual(json.loads(stdout.getvalue())["memoryMib"], DEFAULT_PROBE_MEMORY_MIB)
+
+    def test_non_numeric_or_non_positive_ceiling_falls_back_to_default(self):
+        recorder = types.SimpleNamespace(RLIMIT_AS="AS", setrlimit=lambda *_: None)
+        for raw in ("not-a-number", "0", "-9"):
+            stdout = io.StringIO()
+            code = run_check_memory_ceiling(raw, _PosixMemoryBoundary(recorder), stdout, io.StringIO())
+            self.assertEqual(code, EXIT_OK)
+            self.assertEqual(json.loads(stdout.getvalue())["memoryMib"], DEFAULT_PROBE_MEMORY_MIB)
+
+
+class MetricsSidecarTests(unittest.TestCase):
+    class _FakeHandle:
+        def __init__(self):
+            self.written = ""
+            self.closed = False
+
+        def write(self, text):
+            self.written += text
+
+        def close(self):
+            self.closed = True
+
+    def test_writes_peak_when_path_and_peak_present(self):
+        handle = self._FakeHandle()
+        boundary = _WindowsMemoryBoundary(_FakeWin32JobApi(peak=9 * 1024 * 1024))
+        apply_memory_limit("64", boundary)
+        write_metrics_sidecar("/tmp/metrics.json", boundary, opener=lambda _p: handle)
+        self.assertEqual(json.loads(handle.written), {"peakMemoryBytes": 9 * 1024 * 1024})
+        self.assertTrue(handle.closed)
+
+    def test_no_path_writes_nothing(self):
+        opened = []
+        write_metrics_sidecar(None, _WindowsMemoryBoundary(_FakeWin32JobApi(peak=1)), opener=lambda p: opened.append(p))
+        self.assertEqual(opened, [])
+
+    def test_no_boundary_writes_nothing(self):
+        opened = []
+        write_metrics_sidecar("/tmp/m.json", None, opener=lambda p: opened.append(p))
+        self.assertEqual(opened, [])
+
+    def test_none_peak_writes_nothing(self):
+        opened = []
+        # A POSIX boundary reports no worker peak, so nothing is written even with a path.
+        write_metrics_sidecar(
+            "/tmp/m.json", _PosixMemoryBoundary(object()), opener=lambda p: opened.append(p)
+        )
+        self.assertEqual(opened, [])
+
+    def test_open_failure_is_swallowed(self):
+        boundary = _WindowsMemoryBoundary(_FakeWin32JobApi(peak=5))
+        apply_memory_limit("64", boundary)
+
+        def failing_opener(_path):
+            raise OSError("cannot open")
+
+        # Must not raise — metrics are diagnostics, never a reason to fail a good conversion.
+        write_metrics_sidecar("/tmp/m.json", boundary, opener=failing_opener)
+
 
 
 # --- build_converter (docling imports mocked) --------------------------------------------------
@@ -710,7 +905,7 @@ class MainTests(unittest.TestCase):
         code = main(
             ["--probe", "/tmp/a.pdf"],
             opener=lambda _p: FakeBackendDoc(3),
-            resource_module=None,
+            boundary=None,
             stdout=stdout,
             stderr=io.StringIO(),
         )
@@ -740,7 +935,7 @@ class MainTests(unittest.TestCase):
             converter_factory=lambda: FakeConverter(doc),
             prober_factory=lambda _path: (lambda page: page == 1),
             metadata_reader_factory=lambda _path: (lambda: {"Title": "Doc", "Author": "Ada"}),
-            resource_module=None,
+            boundary=None,
             stdout=stdout,
             stderr=io.StringIO(),
         )
@@ -753,7 +948,7 @@ class MainTests(unittest.TestCase):
         stderr = io.StringIO()
         code = main(
             ["--range", "/tmp/a.pdf", "0", "2"],
-            resource_module=None,
+            boundary=None,
             stdout=io.StringIO(),
             stderr=stderr,
         )
@@ -764,7 +959,7 @@ class MainTests(unittest.TestCase):
         stderr = io.StringIO()
         code = main(
             ["--range", "/tmp/a.pdf", "5", "2"],
-            resource_module=None,
+            boundary=None,
             stdout=io.StringIO(),
             stderr=stderr,
         )
@@ -773,7 +968,7 @@ class MainTests(unittest.TestCase):
 
     def test_unknown_mode_is_a_usage_error(self):
         stderr = io.StringIO()
-        code = main(["--nope"], resource_module=None, stdout=io.StringIO(), stderr=stderr)
+        code = main(["--nope"], boundary=None, stdout=io.StringIO(), stderr=stderr)
         self.assertEqual(code, EXIT_USAGE)
         self.assertIn("usage:", stderr.getvalue())
 
@@ -787,7 +982,7 @@ class MainTests(unittest.TestCase):
             code = main(
                 ["--probe", "/tmp/a.pdf"],
                 opener=lambda _p: FakeBackendDoc(3),
-                resource_module=None,
+                boundary=None,
                 stdout=io.StringIO(),
                 stderr=stderr,
             )
@@ -806,7 +1001,7 @@ class MainTests(unittest.TestCase):
         code = main(
             ["--probe", "/tmp/a.pdf"],
             opener=lambda _p: FakeBackendDoc(1),
-            resource_module=None,
+            boundary=None,
             stdout=stdout,
             stderr=io.StringIO(),
         )
@@ -815,6 +1010,113 @@ class MainTests(unittest.TestCase):
         self.assertEqual(payload["pageCount"], 1)
         self.assertEqual(payload["pages"][0]["hasNativeText"], True)
         self.assertEqual(payload["pages"][0]["rotation"], 0)
+
+    def test_check_memory_ceiling_mode_dispatches(self):
+        # The capability-probe mode exercises the injected boundary and reports readiness without a file.
+        stdout = io.StringIO()
+        code = main(
+            ["--check-memory-ceiling"],
+            boundary=_WindowsMemoryBoundary(_FakeWin32JobApi()),
+            stdout=stdout,
+            stderr=io.StringIO(),
+        )
+        self.assertEqual(code, EXIT_OK)
+        self.assertTrue(json.loads(stdout.getvalue())["ceilingEnforced"])
+
+    def test_check_memory_ceiling_mode_reports_unsupported(self):
+        stderr = io.StringIO()
+        code = main(["--check-memory-ceiling"], boundary=None, stdout=io.StringIO(), stderr=stderr)
+        self.assertEqual(code, EXIT_MEMORY_CEILING_UNSUPPORTED)
+
+    def test_successful_run_writes_the_metrics_sidecar(self):
+        # A successful probe writes peak memory through the injected metrics writer; a failure does not.
+        calls = []
+        boundary = _WindowsMemoryBoundary(_FakeWin32JobApi(peak=3))
+        previous = os.environ.get(METRICS_PATH_ENV)
+        os.environ[METRICS_PATH_ENV] = "/tmp/metrics.json"
+        try:
+            code = main(
+                ["--probe", "/tmp/a.pdf"],
+                opener=lambda _p: FakeBackendDoc(1),
+                boundary=boundary,
+                stdout=io.StringIO(),
+                stderr=io.StringIO(),
+                metrics_writer=lambda path, b: calls.append((path, b)),
+            )
+        finally:
+            if previous is None:
+                os.environ.pop(METRICS_PATH_ENV, None)
+            else:
+                os.environ[METRICS_PATH_ENV] = previous
+        self.assertEqual(code, EXIT_OK)
+        self.assertEqual(calls, [("/tmp/metrics.json", boundary)])
+
+    def test_failed_run_does_not_write_the_metrics_sidecar(self):
+        calls = []
+        code = main(
+            ["--range", "/tmp/a.pdf", "0", "2"],  # usage error -> not EXIT_OK
+            boundary=None,
+            stdout=io.StringIO(),
+            stderr=io.StringIO(),
+            metrics_writer=lambda path, b: calls.append((path, b)),
+        )
+        self.assertEqual(code, EXIT_USAGE)
+        self.assertEqual(calls, [])
+
+
+@unittest.skipUnless(sys.platform == "win32", "Windows Job Object enforcement is Windows-only")
+class WindowsMemoryCeilingEnforcementTests(unittest.TestCase):
+    """A REAL child-process contract test (#782): apply a deliberately small Windows ceiling and exceed it.
+
+    This proves the Job Object memory limit is actually enforced (an over-ceiling allocation fails), or —
+    where pywin32 is unavailable — that the worker returns the typed unsupported result. Asserting the
+    Job Object calls fired would be insufficient; this spawns a real interpreter under a real ceiling.
+    """
+
+    def _run_child(self, script):
+        import subprocess
+
+        worker_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        return subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            cwd=worker_dir,
+            timeout=60,
+        )
+
+    def test_small_ceiling_is_enforced_or_reports_unsupported(self):
+        # The child imports the worker, resolves the real Windows boundary, applies a 128 MiB ceiling, then
+        # tries to allocate ~1 GiB. Under an enforced Job Object limit the allocation raises MemoryError;
+        # without pywin32 the boundary is None and apply raises MemoryCeilingUnsupported.
+        script = (
+            "import sys\n"
+            "from pdf_to_docling import resolve_memory_boundary, apply_memory_limit, "
+            "MemoryCeilingUnsupported\n"
+            "boundary = resolve_memory_boundary('win32')\n"
+            "if boundary is None:\n"
+            "    print('UNSUPPORTED'); sys.exit(8)\n"
+            "try:\n"
+            "    apply_memory_limit('128', boundary)\n"
+            "except MemoryCeilingUnsupported:\n"
+            "    print('UNSUPPORTED'); sys.exit(8)\n"
+            "blobs = []\n"
+            "try:\n"
+            "    for _ in range(16):\n"
+            "        blobs.append(bytearray(64 * 1024 * 1024))\n"
+            "except MemoryError:\n"
+            "    print('ENFORCED'); sys.exit(0)\n"
+            "print('UNBOUNDED'); sys.exit(1)\n"
+        )
+        result = self._run_child(script)
+        self.assertIn(
+            result.returncode,
+            (0, 8),
+            msg=f"expected enforcement (0) or unsupported (8); got {result.returncode}: "
+            f"{result.stdout}{result.stderr}",
+        )
+        self.assertNotIn("UNBOUNDED", result.stdout)
+        self.assertIn(result.stdout.strip(), ("ENFORCED", "UNSUPPORTED"))
 
 
 if __name__ == "__main__":
