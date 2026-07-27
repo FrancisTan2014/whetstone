@@ -637,8 +637,8 @@ async function convertOne(python, contracts, mapStructuredDocument, path, args, 
       try {
         rmSync(target, { force: true, recursive: true });
       } catch {
-        // Best-effort: a stale symlink/derived file in the run's own temp root is harmless and the whole
-        // root is removed at the end of the run.
+        // Best-effort: a stale staged copy/derived file in the run's own temp root is harmless and the
+        // whole root is removed at the end of the run.
       }
     }
   }
@@ -808,7 +808,7 @@ async function main() {
   // Construct the SAME production seams the composition root wires, so each in-bound case is measured
   // through the real pipeline: the memory-bounded structured runner serves as the OCR adapter's before/
   // after page probe, and the bounded OCRmyPDF adapter runs the durable OCR phase for scanned/mixed PDFs.
-  // A per-run temp root holds every OCR working file (source symlinks + validated outputs) under one
+  // A per-run temp root holds every OCR working file (staged source copies + validated outputs) under one
   // directory removed at the end of the run.
   const runTempRoot = mkdtempSync(join(tmpdir(), "whetstone-pdf-harness-"));
   const structuredRunner = deps.resolveStructuredPdfRunner({
