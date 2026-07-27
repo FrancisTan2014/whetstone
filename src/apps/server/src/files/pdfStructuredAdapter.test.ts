@@ -36,6 +36,7 @@ import {
   type StructuredConversionOutcome
 } from "./pdfStructuredAdapter.js";
 import { timeoutFailure } from "./pdfStructuredErrors.js";
+import { defaultStructuredPdfMemoryMib } from "../config/serverConfig.js";
 
 const supportedVersion = SUPPORTED_DOCLING_CORE_SCHEMA_VERSIONS[0]!;
 const cleanupDirs: string[] = [];
@@ -486,9 +487,9 @@ function assertStructuredDocumentContract(
   }
 }
 
-// The real lane runs the actual spawn/worker wiring, so it needs a POSIX platform (the memory-ceiling
-// fence), a Python with Docling importable, and the pinned model snapshot cached locally. When any is
-// missing it skips cleanly — CI does not provision the heavy toolchain. Probed synchronously so
+// The real lane runs the actual spawn/worker wiring, so it needs a supported platform (the memory-ceiling
+// boundary gate), a Python with Docling importable, and the pinned model snapshot cached locally. When any
+// is missing it skips cleanly — CI does not provision the heavy toolchain. Probed synchronously so
 // `it`/`it.skip` is chosen at collection time.
 function detectRealLane(): { python: string } | null {
   if (!canEnforceStructuredPdfMemoryCeiling(process.platform)) {
@@ -534,7 +535,11 @@ describe("structured PDF adapter — shared validated-JSON contract", () => {
           pythonBinary: realLane!.python,
           scriptPath: workerScriptPath,
           perRangeTimeoutMs: 120_000,
-          memoryMib: 2048
+          // Use the platform-calibrated production default (2,048 MiB POSIX / 6,144 MiB Windows) so the
+          // real Docling conversion runs under the SAME hard ceiling production applies. The Windows
+          // worker peaks well above 2 GiB even for this small fixture (#782), so a hardcoded 2,048 would
+          // be killed by the Job Object here; the config owner is the single source of that number.
+          memoryMib: defaultStructuredPdfMemoryMib(process.platform)
         }),
         tempDir: await makeTempDir("whetstone-real-temp-")
       });
@@ -557,26 +562,41 @@ describe("createDoclingRunner", () => {
     expect(typeof runner.convertRange).toBe("function");
   });
 
-  it("refuses to construct where a per-child memory ceiling cannot be enforced (win32)", () => {
+  it("constructs the real runner on Windows now that a Job Object boundary exists", () => {
+    // #782: win32 is a supported platform (Job Object via pywin32). The runner constructs; a runtime
+    // boundary failure (no pywin32) is the worker's fail-closed concern, not a construction-time fence.
+    const runner = createDoclingRunner({
+      pythonBinary: "python",
+      scriptPath: "pdf_to_docling.py",
+      perRangeTimeoutMs: 1000,
+      memoryMib: 512,
+      platform: "win32"
+    });
+    expect(typeof runner.probe).toBe("function");
+    expect(typeof runner.convertRange).toBe("function");
+  });
+
+  it("refuses to construct on a platform with no boundary implementation", () => {
     expect(() =>
       createDoclingRunner({
         pythonBinary: "python",
         scriptPath: "pdf_to_docling.py",
         perRangeTimeoutMs: 1000,
         memoryMib: 512,
-        platform: "win32"
+        platform: "freebsd"
       })
-    ).toThrow(/memory ceiling/i);
+    ).toThrow(/no memory-boundary implementation/i);
   });
 
-  it("exposes the platform fence as a pure predicate", () => {
+  it("exposes the platform-support gate as a pure predicate", () => {
     expect(canEnforceStructuredPdfMemoryCeiling("linux")).toBe(true);
     expect(canEnforceStructuredPdfMemoryCeiling("darwin")).toBe(true);
-    expect(canEnforceStructuredPdfMemoryCeiling("win32")).toBe(false);
+    expect(canEnforceStructuredPdfMemoryCeiling("win32")).toBe(true);
+    expect(canEnforceStructuredPdfMemoryCeiling("freebsd")).toBe(false);
   });
 
   it("defaults to the host platform when none is injected", () => {
-    // Exercises the `?? process.platform` fallback: construct on a POSIX host, refuse on Windows.
+    // Exercises the `?? process.platform` fallback: construct on any supported host, refuse otherwise.
     const make = (): DoclingRunner =>
       createDoclingRunner({
         pythonBinary: "python",
@@ -587,7 +607,7 @@ describe("createDoclingRunner", () => {
     if (canEnforceStructuredPdfMemoryCeiling(process.platform)) {
       expect(typeof make().probe).toBe("function");
     } else {
-      expect(make).toThrow(/memory ceiling/i);
+      expect(make).toThrow(/no memory-boundary implementation/i);
     }
   });
 });

@@ -18,6 +18,8 @@
 // than force-installing them. Excluded from the base `pnpm setup` (heavy/network); every failure mode
 // returns an actionable { what, remedy }, never a raw crash.
 
+import { join } from "node:path";
+
 import { installSystemTool } from "../installSystemTool.mjs";
 import { error, isOk, missing, ok, withOutputTail } from "../step.mjs";
 
@@ -59,6 +61,23 @@ const MODEL_DOWNLOAD =
 
 const DOCLING_PIN_REMEDY = "Run `pnpm setup:pdf` to install the exact pinned versions.";
 const MODEL_REMEDY = "Run `pnpm setup:pdf` to download the exact pinned model snapshot.";
+
+// Windows-only structured-worker memory boundary (#782). POSIX enforces the per-child ceiling with
+// `resource.setrlimit(RLIMIT_AS)` and needs no extra package; Windows enforces it with an OS-native Job
+// Object through the pinned `pywin32`. The version is pinned in LOCKSTEP with the worker's documented
+// contract (pdf_to_docling.py) so a drifting pywin32 can never silently change how the ceiling is applied.
+const PYWIN32_PIN = "312";
+const PYWIN32_DOCS = "https://github.com/mhammond/pywin32";
+const WORKER_RELATIVE_PATH = "src/apps/server/src/files/pdf_to_docling.py";
+// Exit 0 only when the EXACT pinned pywin32 is installed (a different build could change Job Object
+// behavior), mirroring the born-digital Docling version probe.
+const PYWIN32_VERSION_PROBE =
+  `import importlib.metadata as m,sys;` +
+  `sys.exit(0 if m.version('pywin32')=='${PYWIN32_PIN}' else 1)`;
+const PYWIN32_REMEDY =
+  `Run \`pnpm setup:pdf\` to install the pinned pywin32 (\`python -m pip install pywin32==${PYWIN32_PIN}\`), ` +
+  "which provides the Windows Job Object memory boundary the structured PDF worker enforces.";
+
 const OCRMYPDF_DOCS = "https://ocrmypdf.readthedocs.io/en/latest/installation.html";
 const OCRMYPDF_REMEDY =
   "Install OCRmyPDF (`brew install ocrmypdf` / `sudo apt install ocrmypdf`, or on Windows see " +
@@ -187,7 +206,78 @@ export function probePdfLane(ctx) {
       DOCLING_DOCS
     );
   }
+  // The worker enforces one memory-boundary contract on every supported host; on Windows that boundary is
+  // a Job Object via the pinned pywin32, so the born-digital lane is not ready until the ceiling is
+  // provably enforceable here. A no-op on POSIX (RLIMIT_AS needs no package).
+  return probeWindowsMemoryBoundary(ctx, python);
+}
+
+/**
+ * Windows-only readiness of the structured worker's per-child memory boundary (#782): the pinned pywin32
+ * must be installed AND the Job Object ceiling must actually apply to a real child. Readiness is proven by
+ * running the worker's own `--check-memory-ceiling` capability probe against a small fixed test ceiling —
+ * importing pywin32 or checking `process.platform` alone is NOT readiness, because a create/configure/
+ * assign failure still leaves the worker refusing every conversion fail-closed. Returns the first gap
+ * distinctly, or null when the ceiling is enforceable (and always null on POSIX, whose RLIMIT_AS boundary
+ * needs no extra package). The probe uses the worker's small default test ceiling, never the production
+ * workload budget — it proves enforceability, not capacity.
+ *
+ * @param {import("../step.mjs").SetupContext} ctx
+ * @param {string} python
+ * @returns {import("../step.mjs").StepResult | null}
+ */
+export function probeWindowsMemoryBoundary(ctx, python) {
+  if (ctx.platform !== "win32") {
+    return null;
+  }
+  if (ctx.exec(python, ["-c", PYWIN32_VERSION_PROBE]).code !== 0) {
+    return missing(
+      `The pinned pywin32 (pywin32==${PYWIN32_PIN}) is not installed; the structured PDF worker needs ` +
+        "it to enforce a Windows Job Object memory ceiling (#782).",
+      PYWIN32_REMEDY,
+      PYWIN32_DOCS
+    );
+  }
+  const probe = ctx.exec(python, [join(ctx.root, WORKER_RELATIVE_PATH), "--check-memory-ceiling"]);
+  if (probe.code !== 0) {
+    return missing(
+      "The Windows Job Object memory ceiling could not be enforced (the worker capability probe failed), " +
+        "so the structured PDF worker would refuse every conversion fail-closed (#782).",
+      withOutputTail(PYWIN32_REMEDY, probe),
+      PYWIN32_DOCS
+    );
+  }
   return null;
+}
+
+/**
+ * Provision the Windows structured-worker memory boundary (#782): install the pinned pywin32 when it is
+ * absent, then verify the exact pin AND that the Job Object ceiling is enforceable via the worker's
+ * capability probe. A no-op ok() on POSIX. Returns an actionable error/missing when the package or the
+ * Job Object assignment is unavailable, exactly the repair `pnpm setup:pdf` would run.
+ *
+ * @param {import("../step.mjs").SetupContext} ctx
+ * @param {string} python
+ * @returns {import("../step.mjs").StepResult}
+ */
+export function provisionWindowsMemoryBoundary(ctx, python) {
+  if (ctx.platform !== "win32") {
+    return ok();
+  }
+  if (ctx.exec(python, ["-c", PYWIN32_VERSION_PROBE]).code !== 0) {
+    const pip = ctx.exec(python, ["-m", "pip", "install", `pywin32==${PYWIN32_PIN}`]);
+    if (pip.code !== 0) {
+      return error(
+        `\`pip install pywin32==${PYWIN32_PIN}\` failed.`,
+        withOutputTail(
+          "Ensure pip is available (`python -m ensurepip --upgrade`) and check your network/proxy, then re-run `pnpm setup:pdf`.",
+          pip
+        ),
+        PYWIN32_DOCS
+      );
+    }
+  }
+  return probeWindowsMemoryBoundary(ctx, python) ?? ok();
 }
 
 /**
@@ -313,6 +403,13 @@ export const pdfStep = {
           DOCLING_DOCS
         );
       }
+    }
+    // On Windows, install and verify the pinned pywin32 Job Object boundary the worker enforces its
+    // per-child memory ceiling through (#782), so the born-digital lane is never reported ready while a
+    // conversion would refuse fail-closed. A no-op on POSIX.
+    const boundaryReady = provisionWindowsMemoryBoundary(ctx, python);
+    if (!isOk(boundaryReady)) {
+      return boundaryReady;
     }
     // The OCR system tools (OCRmyPDF/Tesseract/`eng`+`chi_sim`+`chi_tra`) are platform installers this
     // step does not force-install; provision surfaces any remaining OCR gap as the same blocking,

@@ -24,10 +24,17 @@ Reliability contract (mirrors the #403 markdown worker, kept in LOCKSTEP with pd
   a cp1252 Windows console.
 - Failures self-classify via exit code (missing dependency, conversion failed, password required,
   unsupported schema, memory, memory-ceiling-unsupported) — never a bare traceback as the only signal.
-- The per-child memory ceiling is ENFORCED, not best-effort: if a ceiling is requested but the
-  platform cannot apply one (POSIX ``resource`` is unavailable, e.g. Windows) the worker refuses with
-  ``EXIT_MEMORY_CEILING_UNSUPPORTED`` instead of running unbounded. The Node runner additionally
-  fences the whole real adapter off on such a platform, so this is defense in depth.
+- The per-child memory ceiling is ENFORCED, not best-effort, through ONE worker-owned memory-boundary
+  contract with a per-platform implementation (#782): POSIX applies an address-space ``RLIMIT_AS``; a
+  supported Windows host applies a native Job Object memory limit (``JOB_OBJECT_LIMIT_PROCESS_MEMORY`` +
+  ``JOB_OBJECT_LIMIT_JOB_MEMORY`` + ``JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE``) via the pinned ``pywin32``,
+  assigning this worker (and its descendants) before Docling/model construction. If a ceiling is
+  requested but no boundary can be applied here (POSIX ``resource`` missing, or Windows without the
+  pinned pywin32, or any Job Object create/configure/assign failure) the worker refuses with
+  ``EXIT_MEMORY_CEILING_UNSUPPORTED`` instead of running unbounded — fail-closed, with an actionable
+  setup remedy. ``--check-memory-ceiling`` exercises the real controller as a cheap readiness probe, and
+  a successful run reports peak memory through a bounded metrics sidecar when ``WHETSTONE_PDF_METRICS_PATH``
+  is set (Windows Job Object accounting; POSIX peak stays the harness's external RSS sampler).
 
 Docling objects and real I/O are built behind ``build_converter`` / ``open_backend`` seams (mirroring
 the whisper wrapper's ``model_loader``) so the mapping, payload, dispatch, and bounds logic is
@@ -38,8 +45,9 @@ Permissive deps only: Docling + docling-core (MIT). OCR is disabled, not delegat
 from __future__ import annotations
 
 import json
+import os
 import sys
-from typing import Any, Callable, Mapping, Optional, Sequence
+from typing import Any, Callable, Mapping, Optional, Protocol, Sequence
 
 # Exit codes — kept in LOCKSTEP with WORKER_EXIT_* in pdfStructuredErrors.ts. Changing one side
 # requires changing the other; the Node adapter maps each to a named PdfStructuredFailure.
@@ -59,6 +67,13 @@ DOCLING_SCHEMA_NAME = "DoclingDocument"
 SUPPORTED_SCHEMA_VERSIONS = ("1.10.0",)
 
 MEMORY_LIMIT_ENV = "WHETSTONE_PDF_MEMORY_MIB"
+# Optional sidecar path: when set, a successful run writes {"peakMemoryBytes": N} here (see
+# write_metrics_sidecar). A SEPARATE channel from stdout so peak accounting never contaminates the
+# range/probe JSON contract. Consumed by the #779 corpus harness.
+METRICS_PATH_ENV = "WHETSTONE_PDF_METRICS_PATH"
+# The ceiling (MiB) --check-memory-ceiling applies when no explicit WHETSTONE_PDF_MEMORY_MIB is set, so
+# the probe always exercises the real controller. Mirrors the server's 2 GiB structured-memory default.
+DEFAULT_PROBE_MEMORY_MIB = 2048
 
 
 class PasswordRequired(Exception):
@@ -78,29 +93,153 @@ class ConversionFailed(Exception):
 
 
 class MemoryCeilingUnsupported(Exception):
-    """Raised when a memory ceiling is requested but the platform cannot enforce one (e.g. Windows).
+    """Raised when a memory ceiling is requested but no boundary can enforce one on this host.
 
     The bounded adapter (#701) promises a memory-bounded conversion, so an unenforceable ceiling is a
-    hard refusal — never a silent unbounded run.
+    hard refusal — never a silent unbounded run. This covers a POSIX host without ``resource``, a Windows
+    host without the pinned pywin32 Job Object support, and any Job Object create/configure/assign failure.
     """
 
     def __init__(self, mib: int) -> None:
         super().__init__(
-            f"a {mib} MiB per-child memory ceiling was requested but cannot be enforced on this "
-            "platform (POSIX `resource` is unavailable)"
+            f"a {mib} MiB per-child memory ceiling was requested but could not be enforced on this "
+            "platform; no memory-boundary controller is available (on Windows run `pnpm setup:pdf` to "
+            "install the pinned pywin32 Job Object support)"
         )
         self.mib = mib
 
 
-def apply_memory_limit(mib: Optional[str], resource_module: Any) -> None:
-    """Self-apply an address-space ceiling so an oversized conversion is killed, not left to swap.
+class MemoryBoundary(Protocol):
+    """A worker-owned, platform-native per-process memory ceiling — the one #782 boundary contract."""
 
-    The ceiling is ENFORCED, not best-effort. ``resource`` is POSIX-only; when a positive ceiling is
-    requested (a numeric, positive ``mib``) but the platform cannot apply one (``resource_module is
-    None``, e.g. Windows), this raises ``MemoryCeilingUnsupported`` rather than silently running
-    unbounded — the #701 memory-bounded invariant must hold or the conversion must refuse. A
-    non-numeric/absent/non-positive env requests no ceiling and is a no-op. Injected so the tests drive
-    both branches without a real rlimit.
+    def apply(self, limit_bytes: int) -> None:
+        """Enforce a hard ceiling of ``limit_bytes`` on this process and its descendants. Raise on failure."""
+
+    def peak_bytes(self) -> Optional[int]:
+        """Peak memory used under the ceiling, or None where this platform cannot cheaply report it."""
+
+
+class _PosixMemoryBoundary:
+    """Enforce a hard address-space ceiling with POSIX ``resource.setrlimit(RLIMIT_AS)`` (unchanged #701)."""
+
+    def __init__(self, resource_module: Any) -> None:
+        self._resource = resource_module
+
+    def apply(self, limit_bytes: int) -> None:
+        self._resource.setrlimit(self._resource.RLIMIT_AS, (limit_bytes, limit_bytes))
+
+    def peak_bytes(self) -> Optional[int]:
+        # POSIX peak accounting stays the harness's existing external RSS sampler (#782 "existing POSIX
+        # accounting"); the worker emits no sidecar peak here.
+        return None
+
+
+class _WindowsMemoryBoundary:
+    """Enforce a hard per-process/job memory ceiling with a Windows Job Object (pinned pywin32, #782).
+
+    An UNNAMED Job Object is created, configured with process- and job-level memory limits plus
+    KILL_ON_JOB_CLOSE, and THIS worker is assigned to it BEFORE Docling/model construction, so an
+    oversized conversion (and any descendant it spawns) is bounded by the OS rather than left to swap. A
+    worker already inside an outer job is placed in a NESTED job (no breakaway requested) on supported
+    Windows. The handle is RETAINED for the worker lifetime so KILL_ON_JOB_CLOSE does not tear the job
+    down early, and peak memory is read from the job's ``PeakJobMemoryUsed`` accounting.
+    """
+
+    def __init__(self, win32: Any) -> None:
+        self._win32 = win32
+        self._job: Any = None
+
+    def apply(self, limit_bytes: int) -> None:
+        win32 = self._win32
+        job = win32.create_job_object()
+        info = win32.query_extended_limit(job)
+        basic = info["BasicLimitInformation"]
+        basic["LimitFlags"] = (
+            basic["LimitFlags"]
+            | win32.JOB_OBJECT_LIMIT_PROCESS_MEMORY
+            | win32.JOB_OBJECT_LIMIT_JOB_MEMORY
+            | win32.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        )
+        info["ProcessMemoryLimit"] = limit_bytes
+        info["JobMemoryLimit"] = limit_bytes
+        win32.set_extended_limit(job, info)
+        win32.assign_current_process(job)
+        # Retain the handle so the job (and its KILL_ON_JOB_CLOSE ceiling) lives for the worker lifetime.
+        self._job = job
+
+    def peak_bytes(self) -> Optional[int]:
+        if self._job is None:
+            return None
+        info = self._win32.query_extended_limit(self._job)
+        peak = info.get("PeakJobMemoryUsed")
+        return int(peak) if peak else None
+
+
+class _Win32JobApi:
+    """Thin seam over pywin32's Job Object calls so ``_WindowsMemoryBoundary`` is testable against a fake."""
+
+    def __init__(self, win32api: Any, win32job: Any) -> None:
+        self._api = win32api
+        self._job = win32job
+        self.JOB_OBJECT_LIMIT_PROCESS_MEMORY = win32job.JOB_OBJECT_LIMIT_PROCESS_MEMORY
+        self.JOB_OBJECT_LIMIT_JOB_MEMORY = win32job.JOB_OBJECT_LIMIT_JOB_MEMORY
+        self.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = win32job.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+
+    def create_job_object(self) -> Any:
+        return self._job.CreateJobObject(None, "")
+
+    def query_extended_limit(self, job: Any) -> Any:
+        return self._job.QueryInformationJobObject(job, self._job.JobObjectExtendedLimitInformation)
+
+    def set_extended_limit(self, job: Any, info: Any) -> None:
+        self._job.SetInformationJobObject(job, self._job.JobObjectExtendedLimitInformation, info)
+
+    def assign_current_process(self, job: Any) -> None:
+        self._job.AssignProcessToJobObject(job, self._api.GetCurrentProcess())
+
+
+def _load_windows_job_api() -> Any:  # pragma: no cover - real pywin32; the seam is injected in tests.
+    """Build the Job Object API adapter over pywin32, or None when pywin32 is not provisioned (Windows)."""
+    try:
+        import win32api  # type: ignore
+        import win32job  # type: ignore
+    except ImportError:
+        return None
+    return _Win32JobApi(win32api, win32job)
+
+
+def resolve_memory_boundary(
+    platform: str,
+    posix_loader: Callable[[], Any] = None,  # type: ignore[assignment]
+    windows_loader: Callable[[], Any] = None,  # type: ignore[assignment]
+) -> Optional[MemoryBoundary]:
+    """Resolve the ONE worker-owned memory-boundary for ``platform``, or None when none is available here.
+
+    - ``win32``: a Job Object boundary when the pinned pywin32 is importable, else None (unsupported until
+      ``pnpm setup:pdf`` installs it).
+    - every other platform: the POSIX ``RLIMIT_AS`` boundary when ``resource`` is importable, else None.
+
+    None means the ceiling cannot be enforced right now, so a requested ceiling is refused with
+    ``EXIT_MEMORY_CEILING_UNSUPPORTED`` rather than run unbounded. Loaders are injected so tests drive the
+    Windows and POSIX branches (and their missing-module case) without the real modules.
+    """
+    load_posix = _load_resource_module if posix_loader is None else posix_loader
+    load_windows = _load_windows_job_api if windows_loader is None else windows_loader
+    if platform == "win32":
+        win32 = load_windows()
+        return _WindowsMemoryBoundary(win32) if win32 is not None else None
+    resource_module = load_posix()
+    return _PosixMemoryBoundary(resource_module) if resource_module is not None else None
+
+
+def apply_memory_limit(mib: Optional[str], boundary: Optional[MemoryBoundary]) -> None:
+    """Self-apply the per-child memory ceiling through the platform ``boundary``, ENFORCED not best-effort.
+
+    A non-numeric/absent/non-positive ``mib`` requests no ceiling and is a no-op. A positive ceiling with
+    no available boundary (``boundary is None`` — POSIX without ``resource``, or Windows without pywin32)
+    is a hard refusal: raise ``MemoryCeilingUnsupported`` rather than run unbounded. A boundary whose
+    create/configure/assign fails is likewise surfaced as ``MemoryCeilingUnsupported`` — the #701
+    memory-bounded invariant holds or the conversion refuses. Injected so tests drive every branch.
     """
     if mib is None:
         return
@@ -110,12 +249,48 @@ def apply_memory_limit(mib: Optional[str], resource_module: Any) -> None:
         return
     if limit_mib <= 0:
         return
-    if resource_module is None:
+    if boundary is None:
         raise MemoryCeilingUnsupported(limit_mib)
     limit_bytes = limit_mib * 1024 * 1024
-    resource_module.setrlimit(
-        resource_module.RLIMIT_AS, (limit_bytes, limit_bytes)
-    )
+    try:
+        boundary.apply(limit_bytes)
+    except MemoryCeilingUnsupported:
+        raise
+    except Exception as error:  # noqa: BLE001 - any create/configure/assign failure is a hard refusal.
+        raise MemoryCeilingUnsupported(limit_mib) from error
+
+
+def write_metrics_sidecar(
+    metrics_path: Optional[str],
+    boundary: Optional[MemoryBoundary],
+    opener: Callable[[str], Any] = None,  # type: ignore[assignment]
+) -> None:
+    """After a successful run, record the boundary's peak memory to the sidecar file, when both exist.
+
+    The sidecar is a SEPARATE channel from stdout (which carries the range/probe JSON), so peak accounting
+    never contaminates the conversion contract. Only a boundary that can cheaply report a peak (the
+    Windows Job Object via ``PeakJobMemoryUsed``) writes a value; POSIX peak stays the harness's external
+    RSS sampler. Absent path or peak -> no sidecar. A write failure is swallowed: metrics are diagnostics,
+    never a reason to fail a good conversion. ``opener`` is injected so tests drive it without real I/O.
+    """
+    if metrics_path is None or boundary is None:
+        return
+    peak = boundary.peak_bytes()
+    if peak is None:
+        return
+    open_file = _open_sidecar_for_write if opener is None else opener
+    try:
+        handle = open_file(metrics_path)
+    except OSError:
+        return
+    try:
+        handle.write(json.dumps({"peakMemoryBytes": int(peak)}))
+    finally:
+        handle.close()
+
+
+def _open_sidecar_for_write(path: str) -> Any:  # pragma: no cover - trivial real-I/O seam, faked in tests.
+    return open(path, "w", encoding="utf-8")
 
 
 def _load_resource_module() -> Any:
@@ -615,6 +790,34 @@ def _parse_positive_int(value: str) -> int:
     return number
 
 
+def run_check_memory_ceiling(
+    mib: Optional[str], boundary: Optional[MemoryBoundary], stdout: Any, stderr: Any
+) -> int:
+    """``--check-memory-ceiling``: exercise the real platform controller and report readiness.
+
+    The cheap capability probe setup (#510) and the #779 harness call BEFORE any conversion. It actually
+    creates/configures/assigns the platform boundary (a Job Object on Windows, ``RLIMIT_AS`` on POSIX)
+    against THIS process, so "ready" means the mechanism works here — not merely that a module imports or
+    that the platform name looks supported. A ceiling that cannot be enforced returns
+    ``EXIT_MEMORY_CEILING_UNSUPPORTED``; success prints the enforced ceiling as JSON and returns
+    ``EXIT_OK``. When no ceiling is configured the probe applies ``DEFAULT_PROBE_MEMORY_MIB`` so it always
+    exercises the controller.
+    """
+    try:
+        limit_mib = int(mib) if mib is not None else DEFAULT_PROBE_MEMORY_MIB
+    except (TypeError, ValueError):
+        limit_mib = DEFAULT_PROBE_MEMORY_MIB
+    if limit_mib <= 0:
+        limit_mib = DEFAULT_PROBE_MEMORY_MIB
+    try:
+        apply_memory_limit(str(limit_mib), boundary)
+    except MemoryCeilingUnsupported as error:
+        _write(stderr, f"{error}\n")
+        return EXIT_MEMORY_CEILING_UNSUPPORTED
+    _write(stdout, json.dumps({"ceilingEnforced": True, "memoryMib": limit_mib}))
+    return EXIT_OK
+
+
 def main(
     argv: Optional[Sequence[str]] = None,
     converter_factory: Callable[[], Any] = build_converter,
@@ -623,21 +826,22 @@ def main(
     geometry_factory: Optional[
         Callable[[str], Callable[[int], Mapping[str, float]]]
     ] = None,
-    resource_module: Any = "__default__",
+    boundary: Any = "__default__",
+    platform: Optional[str] = None,
     stdout: Any = None,
     stderr: Any = None,
     metadata_reader_factory: Optional[
         Callable[[str], Callable[[], Mapping[str, Any]]]
     ] = None,
+    metrics_writer: Callable[..., None] = write_metrics_sidecar,
 ) -> int:
-    """Parse args, apply the memory ceiling, and dispatch to the requested mode."""
-    import os
-
+    """Parse args, apply the memory ceiling through the platform boundary, and dispatch the requested mode."""
     argv = sys.argv[1:] if argv is None else list(argv)
     stdout = sys.stdout if stdout is None else stdout
     stderr = sys.stderr if stderr is None else stderr
-    if resource_module == "__default__":
-        resource_module = _load_resource_module()
+    resolved_platform = sys.platform if platform is None else platform
+    if boundary == "__default__":
+        boundary = resolve_memory_boundary(resolved_platform)
     if prober_factory is None:
         prober_factory = lambda path: native_text_prober(path, opener)
     if geometry_factory is None:
@@ -645,25 +849,26 @@ def main(
     if metadata_reader_factory is None:
         metadata_reader_factory = lambda path: pdf_metadata_reader(path, opener)
 
+    # The readiness probe exercises the real controller itself, so it precedes (and does not double-apply)
+    # the startup ceiling.
+    if len(argv) == 1 and argv[0] == "--check-memory-ceiling":
+        return run_check_memory_ceiling(os.environ.get(MEMORY_LIMIT_ENV), boundary, stdout, stderr)
+
     try:
-        apply_memory_limit(os.environ.get(MEMORY_LIMIT_ENV), resource_module)
+        apply_memory_limit(os.environ.get(MEMORY_LIMIT_ENV), boundary)
     except MemoryCeilingUnsupported as error:
-        _write(
-            stderr,
-            f"{error}; run the structured PDF adapter on a POSIX platform (Linux/macOS) where a "
-            "per-child memory ceiling can be enforced.\n",
-        )
+        _write(stderr, f"{error}\n")
         return EXIT_MEMORY_CEILING_UNSUPPORTED
 
     try:
         if len(argv) == 2 and argv[0] == "--probe":
-            return run_probe(argv[1], opener, prober_factory, geometry_factory, stdout, stderr)
-        if len(argv) == 4 and argv[0] == "--range":
+            code = run_probe(argv[1], opener, prober_factory, geometry_factory, stdout, stderr)
+        elif len(argv) == 4 and argv[0] == "--range":
             start_page = _parse_positive_int(argv[2])
             end_page = _parse_positive_int(argv[3])
             if end_page < start_page:
                 raise ValueError("end page must be >= start page")
-            return run_range(
+            code = run_range(
                 argv[1],
                 start_page,
                 end_page,
@@ -673,15 +878,22 @@ def main(
                 stderr,
                 metadata_reader_factory,
             )
+        else:
+            _write(
+                stderr,
+                "usage: pdf_to_docling.py --probe <file.pdf> | --range <file.pdf> <start> <end> | "
+                "--check-memory-ceiling\n",
+            )
+            return EXIT_USAGE
     except ValueError as error:
         _write(stderr, f"usage error: {error}\n")
         return EXIT_USAGE
 
-    _write(
-        stderr,
-        "usage: pdf_to_docling.py --probe <file.pdf> | --range <file.pdf> <start> <end>\n",
-    )
-    return EXIT_USAGE
+    # Emit the bounded peak-memory sidecar only for a successful conversion, so a failure's partial peak is
+    # never mistaken for a completed run's metric.
+    if code == EXIT_OK:
+        metrics_writer(os.environ.get(METRICS_PATH_ENV), boundary)
+    return code
 
 
 def _entrypoint() -> int:  # pragma: no cover - process entry

@@ -218,9 +218,11 @@ describe("resolvePdfOcrAdapter", () => {
     expect(outcome.ok).toBe(true);
   });
 
-  it("fails visibly on a platform where the memory ceiling cannot be enforced", async () => {
+  it("fails visibly on a platform with no memory-boundary implementation", async () => {
+    // Windows is now a supported platform (#782 Job Object), so the unavailable path is represented by a
+    // platform with no worker boundary implementation.
     const source = await stageFixture(fixtureWith([{ pageNumber: 1, hasNativeText: false }]));
-    const adapter = resolvePdfOcrAdapter({ ...base, platform: "win32" });
+    const adapter = resolvePdfOcrAdapter({ ...base, platform: "freebsd" });
 
     const outcome = await adapter.execute({
       source,
@@ -230,6 +232,11 @@ describe("resolvePdfOcrAdapter", () => {
     expect(outcome.ok).toBe(false);
     if (outcome.ok) throw new Error("expected failure");
     expect(outcome.failure.kind).toBe("tool_missing");
+  });
+
+  it("constructs the real bounded adapter on Windows now that a Job Object boundary exists", () => {
+    const adapter = resolvePdfOcrAdapter({ ...base, platform: "win32" });
+    expect(typeof adapter.execute).toBe("function");
   });
 
   it("constructs the real bounded adapter on a platform that can enforce the ceiling", () => {

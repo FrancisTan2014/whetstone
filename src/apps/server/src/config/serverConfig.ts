@@ -4,6 +4,42 @@ import { MAX_STAGED_BYTES } from "@whetstone/contracts";
 
 export type ServerLogLevel = "fatal" | "error" | "warn" | "info" | "debug" | "trace" | "silent";
 
+// The structured PDF worker (#701/#782) enforces one worker-owned memory-boundary contract on every
+// supported host, but the committed-memory floor differs by platform: Docling's torch/MKL layout+table
+// runtime commits roughly twice as much on Windows as on POSIX, so a POSIX-calibrated 2 GiB ceiling
+// hard-fails every real Windows conversion (measured ~3.9 GiB peak, #782). These are the two platform
+// defaults; PDF_STRUCTURED_MEMORY_MIB overrides either on every platform.
+export const POSIX_STRUCTURED_PDF_MEMORY_MIB = 2048;
+export const WINDOWS_STRUCTURED_PDF_MEMORY_MIB = 6144;
+
+// The single, pure, platform-injectable owner of the per-child structured PDF memory default. Production
+// (this config) and the #779 corpus harness both consume it, so neither duplicates the platform numbers.
+export function defaultStructuredPdfMemoryMib(
+  platform: NodeJS.Platform = process.platform
+): number {
+  return platform === "win32" ? WINDOWS_STRUCTURED_PDF_MEMORY_MIB : POSIX_STRUCTURED_PDF_MEMORY_MIB;
+}
+
+// Resolve the per-child ceiling: an explicit positive-integer PDF_STRUCTURED_MEMORY_MIB / --memory-mib
+// value wins on every platform; absent, the platform-aware default applies. Rejects a non-positive or
+// non-integer override so the worker never runs with a broken ceiling.
+export function resolveStructuredPdfMemoryMib(
+  override: string | undefined,
+  platform: NodeJS.Platform = process.platform
+): number {
+  if (override === undefined) {
+    return defaultStructuredPdfMemoryMib(platform);
+  }
+
+  const memory = Number.parseInt(override, 10);
+
+  if (!Number.isInteger(memory) || memory < 1) {
+    throw new Error("PDF_STRUCTURED_MEMORY_MIB must be a positive integer number of MiB.");
+  }
+
+  return memory;
+}
+
 export type ServerConfig = Readonly<{
   databaseDir: string | undefined;
   epubUploadLimitBytes: number;
@@ -22,7 +58,9 @@ export type ServerConfig = Readonly<{
   pdfUploadLimitBytes: number;
   pdfPythonBinary: string;
   pdfTimeoutMs: number;
-  // Per-child address-space ceiling (MiB) the structured PDF worker (#701) self-applies. Env-overridable.
+  // Per-child hard memory ceiling (MiB) the structured PDF worker (#701) self-applies through its
+  // platform boundary (POSIX RLIMIT_AS; Windows Job Object, #782). Platform-aware by default and
+  // overridable with PDF_STRUCTURED_MEMORY_MIB (see resolveStructuredPdfMemoryMib).
   pdfStructuredMemoryMib: number;
   // Dev/E2E only: convert born-digital PDF imports from an embedded fixture in the uploaded bytes instead
   // of the real Docling worker, so the journey runs without a Python/Docling install. Never set in
@@ -64,9 +102,10 @@ const defaultServerConfig: ServerConfig = {
   // minutes. Bound the spawn so a slow PDF is killed and rejected (422) instead of hanging the
   // ingest request. v0 targets born-digital, reasonably-sized PDFs (#403). Env-overridable.
   pdfTimeoutMs: 180_000,
-  // Docling's layout/table models are memory-hungry; 2 GiB per child comfortably fits a born-digital
-  // page range while still bounding a runaway conversion. Env-overridable (PDF_STRUCTURED_MEMORY_MIB).
-  pdfStructuredMemoryMib: 2048,
+  // Nominal POSIX baseline; the real per-child ceiling is resolved platform-aware in readServerConfig
+  // (POSIX 2 GiB, Windows 6 GiB — see resolveStructuredPdfMemoryMib). Env-overridable
+  // (PDF_STRUCTURED_MEMORY_MIB) on every platform.
+  pdfStructuredMemoryMib: POSIX_STRUCTURED_PDF_MEMORY_MIB,
   // Off by default: production converts with the real Docling worker (or fails visibly), never a fixture.
   pdfImportFixtureConversion: false,
   // Off by default: production OCRs with the real bounded adapter (or fails visibly), never a fixture.
@@ -87,13 +126,19 @@ const serverLogLevels = new Set<ServerLogLevel>([
   "silent"
 ]);
 
-export function readServerConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
+export function readServerConfig(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform
+): ServerConfig {
   const port = parsePort(env.PORT);
   const logLevel = parseLogLevel(env.LOG_LEVEL);
   const epubUploadLimitBytes = parseEpubUploadLimit(env.EPUB_UPLOAD_LIMIT_BYTES);
   const pdfUploadLimitBytes = parsePdfUploadLimit(env.PDF_UPLOAD_LIMIT_BYTES);
   const pdfTimeoutMs = parsePdfTimeout(env.PDF_TIMEOUT_MS);
-  const pdfStructuredMemoryMib = parsePdfStructuredMemory(env.PDF_STRUCTURED_MEMORY_MIB);
+  const pdfStructuredMemoryMib = resolveStructuredPdfMemoryMib(
+    env.PDF_STRUCTURED_MEMORY_MIB,
+    platform
+  );
 
   return {
     databaseDir: env.DATABASE_DIR ?? defaultServerConfig.databaseDir,
@@ -195,20 +240,6 @@ function parsePdfTimeout(rawTimeout: string | undefined): number {
   }
 
   return timeout;
-}
-
-function parsePdfStructuredMemory(rawMemory: string | undefined): number {
-  if (rawMemory === undefined) {
-    return defaultServerConfig.pdfStructuredMemoryMib;
-  }
-
-  const memory = Number.parseInt(rawMemory, 10);
-
-  if (!Number.isInteger(memory) || memory < 1) {
-    throw new Error("PDF_STRUCTURED_MEMORY_MIB must be a positive integer number of MiB.");
-  }
-
-  return memory;
 }
 
 // A permissive boolean env flag: `1`/`true`/`yes`/`on` (case-insensitive) enable it, anything else

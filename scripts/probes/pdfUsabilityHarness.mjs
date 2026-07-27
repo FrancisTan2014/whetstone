@@ -27,19 +27,24 @@
 // as `ocr_required`/unsupported instead of measured as production imports it. When the corpus contains a
 // scanned/mixed PDF but the OCR toolchain (or the chosen `--ocr-language` pack) is missing, the whole run
 // aborts with a distinct exit code rather than emit a non-equivalent report. All OCR working files
-// (source symlinks + validated outputs) live under one per-run temp root removed at the end of the run.
+// (staged source copies + validated outputs) live under one per-run temp root removed at the end of the run.
 //
 // BOUNDED-RUNNER INVARIANT (so the aggregate is equivalent to the real import lane): the harness drives
 // the worker under the SAME per-child memory ceiling the production runner enforces, or it refuses to
 // run. It (1) fences the same unsupported platforms the production runner does — reusing
-// `canEnforceStructuredPdfMemoryCeiling`, so win32, where no POSIX address-space ceiling can be applied,
-// is refused up front exactly like production's unavailable runner rather than measuring Docling
-// memory-unbounded; (2) sets `WHETSTONE_PDF_MEMORY_MIB` (PDF_STRUCTURED_MEMORY_MIB, default 2048 MiB —
-// mirroring the server config) on every worker child, so an over-ceiling conversion is killed here
+// `canEnforceStructuredPdfMemoryCeiling` — and, before measuring, runs the worker's `--check-memory-ceiling`
+// capability probe (exactly as `pnpm setup:pdf` does) to prove the platform boundary (Windows Job Object /
+// POSIX RLIMIT_AS) actually holds on THIS host, aborting with an actionable `pnpm setup:pdf` remedy
+// otherwise rather than measuring Docling memory-unbounded; (2) resolves the per-child ceiling from the
+// single production owner (serverConfig `resolveStructuredPdfMemoryMib`: platform-aware default —
+// 2,048 MiB POSIX / 6,144 MiB Windows — unless PDF_STRUCTURED_MEMORY_MIB / --memory-mib overrides it) and
+// sets `WHETSTONE_PDF_MEMORY_MIB` on every worker child, so an over-ceiling conversion is killed here
 // (worker exit 7 -> `memory`, counted against the gate) just as it would be in production; and (3)
 // treats worker exit 8 (`memory_ceiling_unsupported`) as a fatal environment error that aborts the whole
 // run — if the ceiling could not be enforced, the numbers are not falsifiable against production, so the
 // harness must refuse rather than emit a report that would look passable while production would refuse.
+// Peak memory comes from the external RSS sampler on POSIX and from the worker's Job Object metrics
+// sidecar on Windows (whichever the platform can report).
 //
 // OUTPUT-CAP INVARIANT (so the harness can never overstate production support): production runs the worker
 // through `execFile(..., { maxBuffer: MAX_WORKER_OUTPUT_BYTES })` (src/apps/server/src/files/
@@ -70,6 +75,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   closeSync,
+  copyFileSync,
   mkdtempSync,
   openSync,
   readdirSync,
@@ -77,7 +83,7 @@ import {
   readSync,
   rmSync,
   statSync,
-  symlinkSync,
+  unlinkSync,
   writeFileSync
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -106,10 +112,6 @@ const DEFAULT_RANGE_SIZE = 50;
 const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000;
 const MEMORY_SAMPLE_MS = 100;
 const LOW_CONFIDENCE_THRESHOLD = 0.75; // Mirrors domain PDF_EXTRACTION_CONFIDENCE_THRESHOLD.
-// Per-child address-space ceiling (MiB) the worker self-applies, matching the production runner. Mirrors
-// serverConfig `defaultServerConfig.pdfStructuredMemoryMib` (2 GiB) and the same PDF_STRUCTURED_MEMORY_MIB
-// env override, so the harness bounds each conversion exactly as the real import lane does.
-const DEFAULT_MEMORY_MIB = 2048;
 
 // Default OCR language the durable OCR phase runs a scanned/mixed PDF in when none is given. Production
 // resolves this from the Work language; the corpus is language-unlabelled, so the harness defaults to
@@ -120,20 +122,12 @@ const WORK_LANGUAGES = new Set(["en", "zh-CN", "zh-TW"]);
 const DEFAULT_OCR_BINARY = "ocrmypdf";
 const DEFAULT_TESSERACT_BINARY = "tesseract";
 
-// Resolve the per-child memory ceiling like the server config's `parsePdfStructuredMemory`: a positive
-// integer number of MiB, or the default when unset. A non-positive/non-integer request is rejected so the
-// harness never silently runs with a broken ceiling.
-function parseMemoryMib(raw) {
-  if (raw === undefined || raw === null || raw === "") return DEFAULT_MEMORY_MIB;
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isInteger(parsed) || parsed < 1) {
-    throw new Error(
-      "PDF_STRUCTURED_MEMORY_MIB / --memory-mib must be a positive integer number of MiB."
-    );
-  }
-  return parsed;
-}
-
+// Resolve the per-child memory ceiling through the SAME production owner the server config uses
+// (resolveStructuredPdfMemoryMib): a positive-integer PDF_STRUCTURED_MEMORY_MIB / --memory-mib override
+// wins on every platform, otherwise the platform-aware default applies (2,048 MiB POSIX, 6,144 MiB
+// Windows). The harness never duplicates those platform numbers — it holds only the raw override here and
+// hands it to the imported resolver once the workspace is loaded, so it bounds each conversion exactly as
+// the real import lane does.
 function parseArgs(argv) {
   const args = {
     corpus: process.env.WHETSTONE_PDF_CORPUS ?? null,
@@ -141,7 +135,7 @@ function parseArgs(argv) {
     rangeSize: DEFAULT_RANGE_SIZE,
     timeoutMs: DEFAULT_TIMEOUT_MS,
     limit: Infinity,
-    memoryMib: parseMemoryMib(process.env.PDF_STRUCTURED_MEMORY_MIB),
+    memoryMibOverride: process.env.PDF_STRUCTURED_MEMORY_MIB,
     ocrLanguage: process.env.WHETSTONE_PDF_OCR_LANGUAGE ?? DEFAULT_OCR_LANGUAGE,
     ocrBinary: process.env.PDF_OCR_BINARY ?? DEFAULT_OCR_BINARY,
     tesseractBinary: process.env.PDF_TESSERACT_BINARY ?? DEFAULT_TESSERACT_BINARY,
@@ -156,7 +150,7 @@ function parseArgs(argv) {
     else if (flag === "--timeout-ms")
       args.timeoutMs = Math.max(1000, Number.parseInt(argv[(i += 1)], 10) || DEFAULT_TIMEOUT_MS);
     else if (flag === "--limit") args.limit = Math.max(1, Number.parseInt(argv[(i += 1)], 10) || 1);
-    else if (flag === "--memory-mib") args.memoryMib = parseMemoryMib(argv[(i += 1)]);
+    else if (flag === "--memory-mib") args.memoryMibOverride = argv[(i += 1)];
     else if (flag === "--ocr-language") args.ocrLanguage = argv[(i += 1)] ?? args.ocrLanguage;
     else if (flag === "--ocr-binary") args.ocrBinary = argv[(i += 1)] ?? args.ocrBinary;
     else if (flag === "--tesseract-binary")
@@ -173,6 +167,20 @@ function resolvePython() {
     if (probe.status === 0) return command;
   }
   return null;
+}
+
+// The worker's cheap ceiling-capability probe: it exercises the real platform controller (a Job Object on
+// Windows, RLIMIT_AS on POSIX) against THIS process and reports whether the per-child memory ceiling can
+// actually be enforced here — not merely that a module imports or that the platform name looks supported.
+// The harness runs it in preflight BEFORE any conversion, exactly as `pnpm setup:pdf` does, so a host
+// where the ceiling cannot be applied is refused up front rather than measured memory-unbounded. It is
+// deliberately run WITHOUT WHETSTONE_PDF_MEMORY_MIB so the worker applies its own small fixed test ceiling
+// (proving enforceability, never allocating the production workload budget). Returns the worker exit code.
+function checkMemoryCeiling(python) {
+  const env = { ...process.env };
+  delete env.WHETSTONE_PDF_MEMORY_MIB;
+  const probe = spawnSync(python, [WORKER, "--check-memory-ceiling"], { encoding: "utf-8", env });
+  return probe.status;
 }
 
 // Recursively list every .pdf under a root (case-insensitive), sorted for a stable index assignment.
@@ -212,7 +220,8 @@ function sha256(path) {
 }
 
 // Sample the child's resident memory while it runs; peak bytes, or null where another process's RSS is
-// not cheaply available (win32). Identical approach to the structured-corpus probe.
+// not cheaply available (win32, which reports peak through the worker's Job Object sidecar instead —
+// see createWindowsMetricsSidecar). Identical approach to the structured-corpus probe.
 function startPeakRssSampler(pid) {
   let peak = 0;
   let stopped = false;
@@ -286,20 +295,60 @@ export function createBoundedStdout(maxBytes = MAX_WORKER_OUTPUT_BYTES) {
 }
 
 // The real spawn/sampler seam runWorker uses; injectable so the cap/kill wiring is testable with a fake
-// child without a live Python worker.
-const defaultWorkerIo = { spawn, createSampler: startPeakRssSampler };
+// child without a live Python worker. `createMetrics` provides the Windows peak-memory channel: the
+// worker cannot cheaply sample another process's RSS on Windows, so a successful run writes its Job Object
+// `PeakJobMemoryUsed` to a sidecar file (WHETSTONE_PDF_METRICS_PATH) the harness reads back. On POSIX it
+// is a no-op and the external RSS sampler supplies the peak (matching how the server config's platform
+// boundary reports peak). Omitted by test fakes, which need neither channel.
+function createWindowsMetricsSidecar() {
+  if (process.platform !== "win32") {
+    return null;
+  }
+  const path = join(mkdtempSync(join(tmpdir(), "whetstone-pdf-metrics-")), "metrics.json");
+  return {
+    env: { WHETSTONE_PDF_METRICS_PATH: path },
+    readPeakBytes() {
+      try {
+        const peak = JSON.parse(readFileSync(path, "utf-8")).peakMemoryBytes;
+        return Number.isFinite(peak) && peak > 0 ? peak : null;
+      } catch {
+        return null;
+      }
+    },
+    cleanup() {
+      try {
+        unlinkSync(path);
+      } catch {
+        // Best-effort: a leftover metrics file in the OS temp dir is harmless.
+      }
+    }
+  };
+}
+
+const defaultWorkerIo = {
+  spawn,
+  createSampler: startPeakRssSampler,
+  createMetrics: createWindowsMetricsSidecar
+};
 
 // Run one worker invocation with a wall-clock timeout, sampling peak memory. The child inherits the
 // SAME `WHETSTONE_PDF_MEMORY_MIB` ceiling the production runner sets (createDoclingRunner), so a
-// conversion that would exceed it is killed by the worker's own address-space limit (exit 7) here just
-// as in production — the measurement is not memory-unbounded. Its stdout is bounded to the SAME 64 MiB
-// output cap production enforces via `execFile({ maxBuffer })`: an over-cap child is killed and reported
-// with `overCap`, so a range whose JSON exceeds the cap is classified as a failure (as production fails
-// it) instead of being parsed from truncated output.
+// conversion that would exceed it is killed by the worker's own memory boundary (exit 7) here just
+// as in production — the measurement is not memory-unbounded. Peak memory comes from the external RSS
+// sampler on POSIX and from the worker's Job Object sidecar on Windows (whichever the platform can
+// report). Its stdout is bounded to the SAME 64 MiB output cap production enforces via
+// `execFile({ maxBuffer })`: an over-cap child is killed and reported with `overCap`, so a range whose
+// JSON exceeds the cap is classified as a failure (as production fails it) instead of being parsed from
+// truncated output.
 export function runWorker(python, workerArgs, timeoutMs, memoryMib, io = defaultWorkerIo) {
   return new Promise((resolvePromise) => {
+    const metrics = io.createMetrics ? io.createMetrics() : null;
     const child = io.spawn(python, [WORKER, ...workerArgs], {
-      env: { ...process.env, WHETSTONE_PDF_MEMORY_MIB: String(memoryMib) }
+      env: {
+        ...process.env,
+        WHETSTONE_PDF_MEMORY_MIB: String(memoryMib),
+        ...(metrics?.env ?? {})
+      }
     });
     const sampler = io.createSampler(child.pid);
     const stdout = createBoundedStdout();
@@ -315,11 +364,13 @@ export function runWorker(python, workerArgs, timeoutMs, memoryMib, io = default
     });
     child.on("close", async (code) => {
       clearTimeout(timer);
-      const peakBytes = await sampler.stop();
+      const samplerPeak = await sampler.stop();
+      const sidecarPeak = metrics ? metrics.readPeakBytes() : null;
+      if (metrics) metrics.cleanup();
       resolvePromise({
         code: timedOut ? null : (code ?? 1),
         stdout: stdout.text(),
-        peakBytes,
+        peakBytes: sidecarPeak ?? samplerPeak,
         timedOut,
         overCap: stdout.overflowed
       });
@@ -444,11 +495,12 @@ async function resolveOcrConversionSource(path, probePages, args, ocr, cleanupPa
   }
 
   // The OCR adapter reads through a SERVER-ISSUED handle whose name must be a simple, path-safe token, so
-  // stage the corpus PDF under a fixed `source.pdf` name via a symlink (POSIX-only, which the platform
-  // fence already guarantees) — no bytes are copied, keeping the pre-OCR path bounded.
+  // stage the corpus PDF under a fixed `source.pdf` name in the run temp root. The source is already
+  // in-bound (<= MAX_STAGED_BYTES; over-size files never reach here), so a plain COPY is bounded and works
+  // on every supported host — including Windows, where a POSIX symlink is unavailable (#782).
   const stageDir = mkdtempSync(join(ocr.tempRoot, "src-"));
   cleanupPaths.push(stageDir);
-  symlinkSync(path, join(stageDir, "source.pdf"));
+  copyFileSync(path, join(stageDir, "source.pdf"));
   const source = ocr.issueStagedFileHandle(stageDir, "source.pdf");
 
   const outcome = await ocr.adapter.execute({ source, routing, language: ocr.language });
@@ -585,8 +637,8 @@ async function convertOne(python, contracts, mapStructuredDocument, path, args, 
       try {
         rmSync(target, { force: true, recursive: true });
       } catch {
-        // Best-effort: a stale symlink/derived file in the run's own temp root is harmless and the whole
-        // root is removed at the end of the run.
+        // Best-effort: a stale staged copy/derived file in the run's own temp root is harmless and the
+        // whole root is removed at the end of the run.
       }
     }
   }
@@ -611,6 +663,10 @@ async function loadTypeScriptDeps() {
     const structuredResolution =
       await import("../../src/apps/server/src/files/pdfStructuredRunnerResolution.js");
     const ocrResolution = await import("../../src/apps/server/src/files/pdfOcrRunnerResolution.js");
+    // The single production owner of the per-child memory default (2,048 MiB POSIX, 6,144 MiB Windows) and
+    // override precedence, so the harness resolves the SAME ceiling the server does without duplicating the
+    // platform numbers here.
+    const serverConfig = await import("../../src/apps/server/src/config/serverConfig.js");
     return {
       contracts,
       domain,
@@ -620,7 +676,8 @@ async function loadTypeScriptDeps() {
       classifyOcrRouting: ocrPolicy.classifyOcrRouting,
       ocrPassRequired: ocrPolicy.ocrPassRequired,
       resolveStructuredPdfRunner: structuredResolution.resolveStructuredPdfRunner,
-      resolvePdfOcrAdapter: ocrResolution.resolvePdfOcrAdapter
+      resolvePdfOcrAdapter: ocrResolution.resolvePdfOcrAdapter,
+      resolveStructuredPdfMemoryMib: serverConfig.resolveStructuredPdfMemoryMib
     };
   } catch (cause) {
     return { error: cause instanceof Error ? cause.message : String(cause) };
@@ -647,16 +704,28 @@ async function main() {
   const { contracts, domain } = deps;
 
   // Fence unsupported platforms up front, exactly like the production runner (resolveStructuredPdfRunner
-  // -> createUnavailableDoclingRunner on win32): where no per-child address-space ceiling can be enforced,
-  // production refuses the whole adapter rather than convert memory-unbounded, so the harness refuses the
-  // whole run rather than emit an aggregate that would not be falsifiable against the real import lane.
+  // -> createUnavailableDoclingRunner where the ceiling cannot be applied): where no per-child memory
+  // ceiling can be enforced, production refuses the whole adapter rather than convert memory-unbounded, so
+  // the harness refuses the whole run rather than emit an aggregate that would not be falsifiable against
+  // the real import lane. The Windows Job Object / POSIX RLIMIT_AS boundary is supported on both platforms.
   if (!deps.canEnforceStructuredPdfMemoryCeiling(process.platform)) {
     process.stderr.write(
       `error: a per-child memory ceiling cannot be enforced on platform "${process.platform}", so the ` +
-        "structured PDF lane is unavailable here (same fence as the production runner). Run the harness " +
-        "on a POSIX platform (Linux/macOS) where the worker can apply an address-space ceiling.\n"
+        "structured PDF lane is unavailable here (same fence as the production runner).\n"
     );
     return 4;
+  }
+
+  // Resolve the per-child ceiling from the SINGLE production owner (serverConfig): platform-aware default
+  // (2,048 MiB POSIX / 6,144 MiB Windows) unless --memory-mib / PDF_STRUCTURED_MEMORY_MIB overrides it.
+  // The resolver rejects a non-positive / non-integer override, which is an operator error, not a run.
+  try {
+    args.memoryMib = deps.resolveStructuredPdfMemoryMib(args.memoryMibOverride, process.platform);
+  } catch (cause) {
+    process.stderr.write(
+      `error: invalid memory ceiling: ${cause instanceof Error ? cause.message : cause}\n`
+    );
+    return 2;
   }
 
   const python = resolvePython();
@@ -665,6 +734,19 @@ async function main() {
       "error: Python 3 not found; run `pnpm setup:pdf` to enable the PDF lane.\n"
     );
     return 3;
+  }
+
+  // Prove the platform memory boundary actually holds on THIS host before measuring anything — the same
+  // capability probe `pnpm setup:pdf` runs. On Windows this fails when pywin32 is missing so no Job Object
+  // can be created; refuse up front with an actionable remedy rather than measure memory-unbounded.
+  const ceilingStatus = checkMemoryCeiling(python);
+  if (ceilingStatus !== 0) {
+    process.stderr.write(
+      "error: the per-child memory ceiling could not be enforced by the worker on this host " +
+        `(check exited ${ceilingStatus === null ? "via signal" : ceilingStatus}). ` +
+        "Run `pnpm setup:pdf` to provision the memory boundary (on Windows this installs pywin32).\n"
+    );
+    return 4;
   }
 
   // The OCR language the durable OCR phase runs a scanned/mixed PDF in. Production resolves it from the
@@ -726,7 +808,7 @@ async function main() {
   // Construct the SAME production seams the composition root wires, so each in-bound case is measured
   // through the real pipeline: the memory-bounded structured runner serves as the OCR adapter's before/
   // after page probe, and the bounded OCRmyPDF adapter runs the durable OCR phase for scanned/mixed PDFs.
-  // A per-run temp root holds every OCR working file (source symlinks + validated outputs) under one
+  // A per-run temp root holds every OCR working file (staged source copies + validated outputs) under one
   // directory removed at the end of the run.
   const runTempRoot = mkdtempSync(join(tmpdir(), "whetstone-pdf-harness-"));
   const structuredRunner = deps.resolveStructuredPdfRunner({

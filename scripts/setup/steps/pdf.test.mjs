@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { pdfReadiness, pdfStep, probeOcrReadiness, probePdfLane } from "./pdf.mjs";
+import {
+  pdfReadiness,
+  pdfStep,
+  probeOcrReadiness,
+  probePdfLane,
+  probeWindowsMemoryBoundary,
+  provisionWindowsMemoryBoundary
+} from "./pdf.mjs";
 import { createFakeContext } from "../testSupport.mjs";
 
 const OK = { code: 0, stdout: "", stderr: "" };
@@ -17,6 +24,9 @@ function pdfContext({
   docling = false,
   doclingPinned,
   models,
+  pywin32 = true,
+  ceilingEnforced = true,
+  pywin32PipFails = false,
   ocrmypdf = false,
   tesseract = false,
   eng,
@@ -35,6 +45,10 @@ function pdfContext({
     // with its models cached — so existing "lane ready" cases stay ready.
     doclingPinned: doclingPinned === undefined ? docling : doclingPinned,
     models: models === undefined ? docling : models,
+    // Windows structured-worker memory boundary (#782); only consulted on win32. Ready by default so a
+    // fully-provisioned win32 context is ready; a test flips these to exercise the boundary gaps.
+    pywin32,
+    ceilingEnforced,
     ocrmypdf,
     tesseract,
     // A present Tesseract ships with every required pack by default, so existing "both tools present"
@@ -49,8 +63,29 @@ function pdfContext({
     if (key === "python --version") return state.python ? OK : FAIL;
     if (key === "python3 --version") return FAIL;
     if (key === "python -c import docling") return state.docling ? OK : FAIL;
+    // The pywin32 pin probe also uses importlib.metadata, so it must be matched BEFORE the Docling one.
+    if (command === "python" && args[0] === "-c" && args[1].includes("pywin32")) {
+      return state.pywin32 ? OK : FAIL;
+    }
     if (command === "python" && args[0] === "-c" && args[1].includes("importlib.metadata")) {
       return state.doclingPinned ? OK : FAIL;
+    }
+    if (command === "python" && args[args.length - 1] === "--check-memory-ceiling") {
+      return state.ceilingEnforced
+        ? { code: 0, stdout: '{"ceilingEnforced":true,"memoryMib":2048}', stderr: "" }
+        : { code: 8, stdout: "", stderr: "a per-child memory ceiling could not be enforced" };
+    }
+    if (
+      command === "python" &&
+      args[0] === "-m" &&
+      args[1] === "pip" &&
+      args[2] === "install" &&
+      String(args[3]).startsWith("pywin32==")
+    ) {
+      pipCalls.push(key);
+      if (pywin32PipFails) return { code: 1, stdout: "", stderr: "pip: could not resolve pywin32" };
+      state.pywin32 = true;
+      return OK;
     }
     if (command === "python" && args[0] === "-c" && args[1].includes("local_files_only")) {
       return state.models ? OK : FAIL;
@@ -146,6 +181,42 @@ describe("probePdfLane", () => {
 
   it("returns null when the whole lane is ready", () => {
     const { ctx } = pdfContext({ docling: true, ocrmypdf: true, tesseract: true });
+    expect(probePdfLane(ctx)).toBeNull();
+  });
+
+  it("blocks on Windows when the pinned pywin32 Job Object boundary is absent (#782)", () => {
+    // The born-digital prerequisites are all present, but Windows enforces the per-child memory ceiling
+    // through a Job Object via pywin32; without it the worker would refuse fail-closed.
+    const { ctx } = pdfContext({ platform: "win32", docling: true, pywin32: false });
+    const result = probePdfLane(ctx);
+    expect(result?.status).toBe("missing");
+    expect(result?.what).toContain("pywin32==312");
+    expect(result?.remedy).toContain("pywin32==312");
+  });
+
+  it("blocks on Windows when the Job Object ceiling cannot be enforced even with pywin32 present (#782)", () => {
+    // pywin32 is the pinned build, but the capability probe (the real controller) fails — importing the
+    // package is not readiness; the ceiling must actually apply.
+    const { ctx } = pdfContext({
+      platform: "win32",
+      docling: true,
+      pywin32: true,
+      ceilingEnforced: false
+    });
+    const result = probePdfLane(ctx);
+    expect(result?.status).toBe("missing");
+    expect(result?.what).toContain("could not be enforced");
+  });
+
+  it("is ready on Windows when pywin32 is pinned and the ceiling is enforceable (#782)", () => {
+    const { ctx } = pdfContext({
+      platform: "win32",
+      docling: true,
+      ocrmypdf: true,
+      tesseract: true,
+      pywin32: true,
+      ceilingEnforced: true
+    });
     expect(probePdfLane(ctx)).toBeNull();
   });
 });
@@ -344,6 +415,88 @@ describe("pdf step provision", () => {
     expect(result.status).toBe("missing");
     expect(result.what).toContain("OCRmyPDF");
     expect(result.remedy).toContain("OCRmyPDF");
+    expect(pipCalls).toEqual([]);
+  });
+
+  it("installs the pinned pywin32 Job Object boundary on Windows then reports ready (#782)", () => {
+    // Born-digital runtime + models present, pywin32 absent: provision pip-installs the pinned pywin32,
+    // the capability probe then confirms the ceiling is enforceable, and the lane is ready.
+    const { ctx, pipCalls } = pdfContext({
+      platform: "win32",
+      python: true,
+      docling: true,
+      doclingPinned: true,
+      models: true,
+      pywin32: false,
+      ceilingEnforced: true,
+      ocrmypdf: true,
+      tesseract: true
+    });
+    expect(pdfStep.provision(ctx)).toEqual({ status: "ok" });
+    expect(pipCalls).toHaveLength(1);
+    expect(pipCalls[0]).toContain("pip install pywin32==312");
+  });
+
+  it("maps a failing pinned pywin32 install to an actionable error with the output tail (#782)", () => {
+    const { ctx } = pdfContext({
+      platform: "win32",
+      python: true,
+      docling: true,
+      doclingPinned: true,
+      models: true,
+      pywin32: false,
+      pywin32PipFails: true
+    });
+    const result = pdfStep.provision(ctx);
+    expect(result.status).toBe("error");
+    expect(result.what).toContain("pywin32==312");
+    expect(result.remedy).toContain("could not resolve pywin32");
+  });
+
+  it("blocks after installing pywin32 when the Job Object ceiling still cannot be enforced (#782)", () => {
+    // pywin32 installs, but the capability probe fails (e.g. an outer job forbids assignment): provision
+    // surfaces the boundary gap rather than reporting ready.
+    const { ctx } = pdfContext({
+      platform: "win32",
+      python: true,
+      docling: true,
+      doclingPinned: true,
+      models: true,
+      pywin32: false,
+      ceilingEnforced: false
+    });
+    const result = pdfStep.provision(ctx);
+    expect(result.status).toBe("missing");
+    expect(result.what).toContain("could not be enforced");
+  });
+});
+
+describe("probeWindowsMemoryBoundary", () => {
+  it("is a no-op (null) on POSIX, whose RLIMIT_AS boundary needs no package", () => {
+    const { ctx } = pdfContext({ platform: "linux", pywin32: false, ceilingEnforced: false });
+    expect(probeWindowsMemoryBoundary(ctx, "python")).toBeNull();
+  });
+
+  it("returns null on Windows when pywin32 is pinned and the ceiling is enforceable", () => {
+    const { ctx } = pdfContext({ platform: "win32", pywin32: true, ceilingEnforced: true });
+    expect(probeWindowsMemoryBoundary(ctx, "python")).toBeNull();
+  });
+});
+
+describe("provisionWindowsMemoryBoundary", () => {
+  it("is ok and installs nothing on POSIX", () => {
+    const { ctx, pipCalls } = pdfContext({ platform: "linux" });
+    expect(provisionWindowsMemoryBoundary(ctx, "python")).toEqual({ status: "ok" });
+    expect(pipCalls).toEqual([]);
+  });
+
+  it("skips the install when the pinned pywin32 is already present and enforceable", () => {
+    const { ctx, pipCalls } = pdfContext({
+      platform: "win32",
+      pywin32: true,
+      ceilingEnforced: true
+    });
+    expect(provisionWindowsMemoryBoundary(ctx, "python")).toEqual({ status: "ok" });
     expect(pipCalls).toEqual([]);
   });
 });

@@ -414,11 +414,11 @@ export function createFakePdfStructuredAdapter(
   });
 }
 
-// The production fallback when no structured PDF converter is available on this host — an unsupported
-// platform where the per-child memory ceiling cannot be enforced (see `createDoclingRunner`), or a
-// toolchain that is simply not selected. Every attempt FAILS VISIBLY with `tool_missing`, the same
-// honest signal the real runner reports when Python/Docling is absent, so a user upload is never
-// silently turned into fabricated content. `pnpm setup:pdf` provisions the real converter.
+// The production fallback when no structured PDF converter is available on this host — a platform with
+// no worker memory-boundary implementation (see `createDoclingRunner`), or a toolchain that is simply
+// not selected. Every attempt FAILS VISIBLY with `tool_missing`, the same honest signal the real runner
+// reports when Python/Docling is absent, so a user upload is never silently turned into fabricated
+// content. `pnpm setup:pdf` provisions the real converter.
 export function createUnavailableDoclingRunner(): DoclingRunner {
   return Object.freeze({
     probe(): Promise<ProbeOutcome> {
@@ -504,13 +504,23 @@ export type DoclingRunnerDependencies = Readonly<{
 
 const MAX_WORKER_OUTPUT_BYTES = 64 * 1024 * 1024;
 
-// The worker enforces the per-child memory ceiling with POSIX `resource.setrlimit(RLIMIT_AS)`. Windows
-// has no equivalent the child can self-apply, so the #701 memory-bounded invariant cannot be met
-// there. Rather than run the real adapter memory-unbounded, the real runner is fenced off: it refuses
-// to construct on a platform where the ceiling cannot be enforced. The deterministic fake adapter is
-// pure in-memory and stays available on every platform for tests and #721's keyless default.
+// The worker enforces the per-child memory ceiling through one worker-owned boundary contract with a
+// per-platform implementation (#782): POSIX applies `resource.setrlimit(RLIMIT_AS)`; a supported Windows
+// host applies a native Job Object memory limit via the pinned pywin32. Both are supported platforms, so
+// the real adapter is selected on each; the runtime capability (POSIX `resource` present, or Windows
+// pywin32 provisioned and the Job Object assignable) is verified by the worker itself and fails CLOSED
+// with the typed `memory_ceiling_unsupported` result and an actionable setup remedy — never an unbounded
+// run. This predicate is only the platform-support gate (which platforms have a boundary implementation);
+// a platform with no implementation still resolves the honest unavailable runner. The deterministic fake
+// adapter is pure in-memory and stays available everywhere for tests and #721's keyless default.
+const BOUNDED_PDF_WORKER_PLATFORMS: ReadonlySet<NodeJS.Platform> = new Set([
+  "linux",
+  "darwin",
+  "win32"
+]);
+
 export function canEnforceStructuredPdfMemoryCeiling(platform: NodeJS.Platform): boolean {
-  return platform !== "win32";
+  return BOUNDED_PDF_WORKER_PLATFORMS.has(platform);
 }
 
 // The real runner: spawn the isolated Python worker, one child per operation, bounded by the
@@ -520,15 +530,17 @@ export function canEnforceStructuredPdfMemoryCeiling(platform: NodeJS.Platform):
 // lane; every decision it delegates to (classifyWorkerExit, parseProbePageCount, parseRangeConversion)
 // is unit-tested.
 export function createDoclingRunner(dependencies: DoclingRunnerDependencies): DoclingRunner {
-  // Fence the real adapter off where the memory ceiling cannot be enforced (see the predicate above),
-  // BEFORE any spawning, so an unsupported platform gets an honest "unavailable" instead of a
-  // memory-unbounded conversion. Checked outside the coverage-ignored region so the fence is tested.
+  // Fence the real adapter off only where NO worker memory-boundary implementation exists for the
+  // platform (see the predicate above) — POSIX and Windows both have one, so both construct the real
+  // runner. A supported platform whose boundary cannot be applied at runtime (Windows without pywin32,
+  // or any Job Object create/configure/assign failure) is not fenced here; the worker refuses fail-closed
+  // with the typed `memory_ceiling_unsupported` result. Checked outside the coverage-ignored region so
+  // the fence is tested.
   const platform = dependencies.platform ?? process.platform;
   if (!canEnforceStructuredPdfMemoryCeiling(platform)) {
     throw new Error(
-      `The structured PDF adapter requires a per-child memory ceiling, which cannot be enforced on ` +
-        `platform "${platform}". Run it on a POSIX platform (Linux/macOS) where the worker can apply ` +
-        `an address-space rlimit.`
+      `The structured PDF adapter has no memory-boundary implementation for platform "${platform}". ` +
+        `It runs on Linux, macOS (POSIX RLIMIT_AS), and Windows (Job Object via pywin32).`
     );
   }
   /* v8 ignore start -- real subprocess boundary; covered only by the skip-guarded real lane */
