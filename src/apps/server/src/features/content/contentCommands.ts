@@ -17,8 +17,6 @@ import { eq } from "drizzle-orm";
 import type { DbClient } from "../../db/dbClient.js";
 import type { EpubParser } from "../../files/epubSource.js";
 import type { ImageResourceStore } from "../../files/imageResourceStore.js";
-import type { PdfToMarkdown } from "../../files/pdfToMarkdown.js";
-import { PdfToolchainMissingError } from "../../files/pdfToolchain.js";
 import type { SourceFileStore } from "../../files/sourceFileStore.js";
 import { authors, entries, workMeta, workSources } from "../../db/schema.js";
 import { resolveNamedAuthor } from "../library/authorResolver.js";
@@ -26,11 +24,10 @@ import { reconcileWorkBlocks } from "./blockReconciler.js";
 import { claimUploadedSource } from "./sourceClaims.js";
 import type { IngestionEvidence } from "./htmlToDocument.js";
 import { assertContentPersisted } from "./insertBatching.js";
-import { loadWorkContent, loadWorkOrigin, workExists, workHasSource } from "./contentQueries.js";
+import { loadWorkContent, loadWorkOrigin, workHasSource } from "./contentQueries.js";
 
 // Real infrastructure boundaries (database, id generation, source file store, EPUB
-// parser, image-resource store, PDF worker) are passed in so ingestion stays
-// deterministic and testable.
+// parser, image-resource store) are passed in so ingestion stays deterministic and testable.
 export type ContentDependencies = Readonly<{
   createAuthorId: () => string;
   createEntryId: () => string;
@@ -43,7 +40,6 @@ export type ContentDependencies = Readonly<{
   // EPUB ingestion (#311). Injected so the ingestion flow records what it could not model rather
   // than silently dropping it; the composition root logs through the server logger / console.
   ingestionLogger: (records: ReadonlyArray<IngestionEvidence>) => void;
-  pdfToMarkdown: PdfToMarkdown;
   sourceFileStore: SourceFileStore;
 }>;
 
@@ -53,11 +49,6 @@ export type IngestMarkdownResult =
   | Readonly<{ status: "manual_work_unsupported" }>
   | Readonly<{ status: "work_not_found" }>;
 
-export type IngestPdfResult =
-  | IngestMarkdownResult
-  | Readonly<{ status: "invalid_pdf" }>
-  | Readonly<{ status: "pdf_toolchain_missing" }>;
-
 // The front-door result for minting an imported Work from an uploaded .md file (#706). `created` wrote
 // a new Work + its retained source + its single-owner claim atomically; `exact_existing` reopened the
 // Work that already owns these exact bytes (no duplicate). `empty_content` and `author_not_found` are
@@ -66,72 +57,6 @@ export type CreateImportedMarkdownWorkResult =
   | Readonly<{ result: IngestEpubResultDto; status: "created" | "exact_existing" }>
   | Readonly<{ status: "empty_content" }>
   | Readonly<{ status: "author_not_found"; authorId: AuthorId }>;
-
-// PDF ingestion converges on the Markdown pipeline (#15): the doc-AI worker converts the PDF to clean
-// Markdown one-shot, which is ingested exactly like an uploaded .md so a PDF and the equivalent .md
-// decompose to identical blocks. A conversion failure (no/garbled PDF) is invalid_pdf, not a crash;
-// a MISSING toolchain (no Python/Docling/OCRmyPDF on the host) is reported distinctly as
-// pdf_toolchain_missing so the app can point at `pnpm setup:pdf` instead of blaming the file (#510).
-//
-// Coverage: this function and its pipeline are now-unreachable dead code. The
-// `POST /api/works/:workEntryId/content/pdf` route was deactivated to a 503 (#702) and no longer
-// wires ingestPdf; born-digital PDFs mint their own Work through the structured `/api/pdf-imports`
-// lane. It is retained only until #705 deletes the obsolete lane, so it is excluded from coverage
-// rather than tested as reachable behavior.
-/* v8 ignore start */
-export async function ingestPdf(
-  dependencies: ContentDependencies,
-  workEntryId: EntryId,
-  fileName: string,
-  bytes: Uint8Array
-): Promise<IngestPdfResult> {
-  // Reject a manual-origin Work before converting: PDF (like Markdown) ingestion into a manual Work
-  // is a retired legacy path (#720), so it must return the deterministic manual_work_unsupported
-  // regardless of whether the PDF toolchain is installed — and never pay for an expensive/optional
-  // conversion just to refuse the upload at the boundary. A missing work stays undefined here and
-  // falls through to the post-convert workExists gate, preserving the existing 404 behavior.
-  if ((await loadWorkOrigin(dependencies.db, workEntryId)) === "manual") {
-    return { status: "manual_work_unsupported" };
-  }
-
-  let markdown: string;
-
-  try {
-    markdown = await dependencies.pdfToMarkdown.convert(bytes);
-  } catch (cause) {
-    return cause instanceof PdfToolchainMissingError
-      ? { status: "pdf_toolchain_missing" }
-      : { status: "invalid_pdf" };
-  }
-
-  // Gate before retaining anything so a failure never orphans a PDF file with no work_sources row:
-  // a missing work or Markdown that yields no blocks returns without writing the source (#15).
-  if (!(await workExists(dependencies.db, workEntryId))) {
-    return { status: "work_not_found" };
-  }
-
-  if (decomposeMarkdown(markdown).flatMap((unit) => unit.blocks).length === 0) {
-    return { status: "empty_content" };
-  }
-
-  // Provenance is the original PDF, written only on the persist path (the builder runs after the
-  // no-op/idempotence check) so an equivalent re-upload never orphans a PDF file. sha256 is the PDF
-  // payload, so retention and idempotence key off the bytes, not the converted Markdown (#15).
-  const sourceId = dependencies.createSourceId();
-  const buildPdfProvenance = async (): Promise<Provenance> => {
-    const written = await dependencies.sourceFileStore.writePdfSource({ bytes, id: sourceId });
-    return { fileName, filePath: written.path, sha256: written.sha256, sourceText: null };
-  };
-
-  return ingestMarkdown(
-    dependencies,
-    workEntryId,
-    { fileName, kind: "upload", markdown },
-    sourceId,
-    buildPdfProvenance
-  );
-}
-/* v8 ignore stop */
 
 type Provenance = Readonly<{
   fileName: string | null;
@@ -147,9 +72,7 @@ type Provenance = Readonly<{
 export async function ingestMarkdown(
   dependencies: ContentDependencies,
   workEntryId: EntryId,
-  source: IngestMarkdownRequest,
-  sourceIdOverride?: string,
-  buildProvenanceOverride?: () => Promise<Provenance>
+  source: IngestMarkdownRequest
 ): Promise<IngestMarkdownResult> {
   const origin = await loadWorkOrigin(dependencies.db, workEntryId);
   if (origin === undefined) {
@@ -187,16 +110,8 @@ export async function ingestMarkdown(
     return { content: current, status: "ingested" };
   }
 
-  const sourceId = sourceIdOverride ?? dependencies.createSourceId();
-  // `buildProvenanceOverride` is supplied only by the now-dead ingestPdf path (the PDF→Markdown route
-  // was deactivated to a 503 in #702) and is retained until #705 deletes the obsolete lane. Its
-  // override arm is unreachable in production, so it is excluded from coverage while the live default
-  // provenance path below stays counted.
-  /* v8 ignore next 3 */
-  const provenance =
-    buildProvenanceOverride !== undefined
-      ? await buildProvenanceOverride()
-      : await buildProvenance(dependencies.sourceFileStore, sourceId, source);
+  const sourceId = dependencies.createSourceId();
+  const provenance = await buildProvenance(dependencies.sourceFileStore, sourceId, source);
 
   const oldBlocks = current.readingUnits.flatMap((unit) =>
     unit.blocks.map((block) => ({ id: block.entryId, plaintext: block.plaintext }))

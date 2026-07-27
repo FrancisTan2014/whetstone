@@ -116,7 +116,6 @@ async function buildContext(makeEpub: () => ParsedEpub = corpusEpub): Promise<Te
     epubUploadLimitBytes: 50 * 1024 * 1024,
     imageResourceStore: createImageResourceStore(imagesDir),
     ingestionLogger: (records) => evidence.push(...records),
-    pdfToMarkdown: { convert: async () => "" },
     sourceFileStore: createSourceFileStore(sourcesDir)
   };
 

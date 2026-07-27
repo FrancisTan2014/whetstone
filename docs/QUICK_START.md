@@ -80,8 +80,8 @@ rather than falling back to the legacy Markdown lane or persisting incomplete co
 correction tooling (#703) and the measured "supported PDF" claim (#705) are likewise still pending;
 this lane is a preview until they arrive.
 
-> The legacy Docling→Markdown persistence route (`POST …/content/pdf`) is **deactivated** while this
-> canonical lane is authoritative and its now-unreachable code is removed in #705. Born-digital import
+> The legacy Docling→Markdown persistence route (`POST …/content/pdf`) has been **removed** (#783);
+> this canonical `/api/pdf-imports` lane is the only PDF path. Born-digital import
 > converts the uploaded bytes with the **real Docling runner**, so the `pnpm setup:pdf` toolchain (Python
 > / Docling) **is** required to import a PDF on a supported host; without it — or on a platform that cannot
 > enforce the converter's memory ceiling — an upload **fails visibly** (`tool_missing`) rather than

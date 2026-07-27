@@ -115,7 +115,6 @@ async function buildHarness(): Promise<Harness> {
     epubUploadLimitBytes: 1024,
     imageResourceStore: createImageResourceStore(imagesDir),
     ingestionLogger: () => undefined,
-    pdfToMarkdown: { convert: () => Promise.reject(new Error("pdf not used")) },
     sourceFileStore: createSourceFileStore(sourcesDir)
   };
 
