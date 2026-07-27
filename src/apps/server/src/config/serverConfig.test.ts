@@ -1,7 +1,11 @@
 import { MAX_STAGED_BYTES } from "@whetstone/contracts";
 import { describe, expect, it } from "vitest";
 
-import { readServerConfig } from "./serverConfig.js";
+import {
+  defaultStructuredPdfMemoryMib,
+  readServerConfig,
+  resolveStructuredPdfMemoryMib
+} from "./serverConfig.js";
 
 describe("readServerConfig PDF upload limit", () => {
   it("defaults the PDF upload limit to the structured staging bound, not the smaller EPUB limit", () => {
@@ -24,6 +28,47 @@ describe("readServerConfig PDF upload limit", () => {
     );
     expect(() => readServerConfig({ PDF_UPLOAD_LIMIT_BYTES: "not-a-number" })).toThrow(
       "PDF_UPLOAD_LIMIT_BYTES must be a positive integer number of bytes."
+    );
+  });
+});
+
+describe("readServerConfig structured PDF memory ceiling", () => {
+  it("defaults to 2,048 MiB on POSIX", () => {
+    // Docling's POSIX-calibrated committed footprint fits the historical 2 GiB address-space ceiling.
+    expect(readServerConfig({}, "linux").pdfStructuredMemoryMib).toBe(2048);
+    expect(readServerConfig({}, "darwin").pdfStructuredMemoryMib).toBe(2048);
+    expect(defaultStructuredPdfMemoryMib("linux")).toBe(2048);
+  });
+
+  it("defaults to 6,144 MiB on Windows", () => {
+    // Docling's torch/MKL runtime commits ~2x on Windows (measured ~3.9 GiB peak, #782); 6 GiB is a hard
+    // single-admission bound with headroom above that floor, never the survival-threshold 4 GiB.
+    expect(readServerConfig({}, "win32").pdfStructuredMemoryMib).toBe(6144);
+    expect(defaultStructuredPdfMemoryMib("win32")).toBe(6144);
+  });
+
+  it("honors an explicit PDF_STRUCTURED_MEMORY_MIB override on every platform", () => {
+    expect(
+      readServerConfig({ PDF_STRUCTURED_MEMORY_MIB: "4096" }, "linux").pdfStructuredMemoryMib
+    ).toBe(4096);
+    expect(
+      readServerConfig({ PDF_STRUCTURED_MEMORY_MIB: "4096" }, "win32").pdfStructuredMemoryMib
+    ).toBe(4096);
+    // The pure resolver is the single owner both production and the #779 harness consume.
+    expect(resolveStructuredPdfMemoryMib("3072", "win32")).toBe(3072);
+    expect(resolveStructuredPdfMemoryMib(undefined, "win32")).toBe(6144);
+    expect(resolveStructuredPdfMemoryMib(undefined, "linux")).toBe(2048);
+  });
+
+  it("rejects a non-positive or non-integer PDF_STRUCTURED_MEMORY_MIB", () => {
+    expect(() => readServerConfig({ PDF_STRUCTURED_MEMORY_MIB: "0" }, "win32")).toThrow(
+      "PDF_STRUCTURED_MEMORY_MIB must be a positive integer number of MiB."
+    );
+    expect(() => resolveStructuredPdfMemoryMib("-1", "linux")).toThrow(
+      "PDF_STRUCTURED_MEMORY_MIB must be a positive integer number of MiB."
+    );
+    expect(() => resolveStructuredPdfMemoryMib("not-a-number", "linux")).toThrow(
+      "PDF_STRUCTURED_MEMORY_MIB must be a positive integer number of MiB."
     );
   });
 });
