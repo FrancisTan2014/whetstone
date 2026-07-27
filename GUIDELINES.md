@@ -405,7 +405,11 @@ Block storage rules:
 - Stream large uploads to a bounded staged file. Run expensive conversion in a feature-owned,
   memory-limited, single-admission worker over bounded page ranges; terminate or fence every attempt,
   checkpoint only validated structured results, and publish no Work until source plus canonical
-  hierarchy can commit consistently.
+  hierarchy can commit consistently. The per-child memory ceiling is one worker-owned, fail-closed
+  contract enforced by the platform's native controller (POSIX `RLIMIT_AS`; Windows Job Object via
+  pinned `pywin32`), shared by production and calibration — server config owns the single
+  platform-injectable default resolver, so the harness and worker never duplicate platform numbers; a
+  host that cannot apply the ceiling returns the typed unsupported result and converts nothing.
 - Block ids are stable (UUIDv7/cuid2) and preserved across re-ingestion via a content-similarity diff;
   removed blocks are soft-deleted so note anchors stay valid.
 - Administrative correction edits the canonical imported blocks through the same shared rich editor as

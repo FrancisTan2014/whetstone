@@ -297,7 +297,11 @@ owning source flow:
   `Work -> ReadingUnit -> Block` hierarchy and opens in the existing Reader. Format-specific logic
   stops at ingestion; Whetstone has no PDF-, EPUB-, or other format-specific reader.
 - PDF ingestion stages a bounded source and runs a pinned structured-document pipeline in an
-  isolated, recoverable job. It validates versioned DoclingDocument output and maps its ordered typed
+  isolated, recoverable job. The job runs on every supported host OS under one fail-closed
+  worker contract and a hard, single-admission memory ceiling enforced by the platform's native
+  controller, so the same canonical pipeline governs a POSIX and a Windows installation; a host that
+  cannot enforce the ceiling refuses the import rather than converting unbounded. It validates
+  versioned DoclingDocument output and maps its ordered typed
   items directly to canonical ProseMirror nodes, never through Markdown. Page number, bounding box,
   character span, and extraction confidence remain provenance/evidence, not content identity.
 - Born-digital text is preferred. Pages without usable native text receive language-aware OCR during

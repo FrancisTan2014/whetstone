@@ -85,8 +85,12 @@ this lane is a preview until they arrive.
 > converts the uploaded bytes with the **real Docling runner**, so the `pnpm setup:pdf` toolchain (Python
 > / Docling) **is** required to import a PDF on a supported host; without it — or on a platform that cannot
 > enforce the converter's memory ceiling — an upload **fails visibly** (`tool_missing`) rather than
-> publishing any canned content. `pnpm setup:doctor` reports that toolchain (and the future OCR lane's
-> OCRmyPDF / Tesseract).
+> publishing any canned content. The converter always runs under a hard, single-admission memory ceiling
+> enforced by the platform's native controller — POSIX `RLIMIT_AS` and, on Windows, an OS Job Object via
+> pinned `pywin32==312` — so on Windows `pnpm setup:pdf` additionally installs and pin-verifies `pywin32`
+> and runs the worker's ceiling-capability probe; the default ceiling is 2,048 MiB on POSIX and 6,144 MiB
+> on Windows (`PDF_STRUCTURED_MEMORY_MIB` overrides it on every platform). `pnpm setup:doctor` reports that
+> toolchain (and the future OCR lane's OCRmyPDF / Tesseract).
 
 No separate database server is required: v0 uses an embedded PostgreSQL engine
 ([PGlite](https://github.com/electric-sql/pglite)) that runs in-process, so `setup` provisions no
