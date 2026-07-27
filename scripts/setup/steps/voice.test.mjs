@@ -1,3 +1,5 @@
+import { spawnSync } from "node:child_process";
+
 import { describe, expect, it } from "vitest";
 
 import { createFakeContext } from "../testSupport.mjs";
@@ -5,15 +7,23 @@ import {
   upsertEnvVars,
   validateWhisperContract,
   parseEnvVars,
+  probeWhisperContract,
   voiceStep
 } from "./voice.mjs";
 
 const ENV_PATH = "/repo/.env";
 const LAUNCHER = "/bin/whetstone-whisper";
+// The compatible contract probe payload the current whetstone-whisper launcher emits for
+// `--contract-version` (mirrors CONTRACT_VERSION in whisper-wrapper/whetstone_whisper/cli.py).
+const CONTRACT_STDOUT = '{"contractVersion":"1"}';
 
 // A default handler where every external call succeeds; individual tests override one branch.
 function happyExec(command, args) {
   const joined = args.join(" ");
+  // The launcher's cheap contract probe reports the supported version, so readiness passes.
+  if (command === LAUNCHER && args[0] === "--contract-version") {
+    return { code: 0, stdout: CONTRACT_STDOUT, stderr: "" };
+  }
   if (args[0] === "--version") return { code: 0, stdout: "Python 3.11", stderr: "" };
   if (joined === "-c import faster_whisper") return { code: 0, stdout: "", stderr: "" };
   if (joined.includes("pip install faster-whisper")) return { code: 0, stdout: "", stderr: "" };
@@ -142,6 +152,64 @@ describe("voiceStep.check", () => {
     });
     expect(voiceStep.check(ctx)).toEqual({ status: "ok" });
   });
+
+  // The core #780 regression: a launcher file exists but the contract probe fails, so readiness must
+  // report the wrapper incompatible (naming it + pointing at `pnpm setup:voice`), never "ready".
+  const wiredLauncher = {
+    files: [LAUNCHER],
+    fileContents: { [ENV_PATH]: `WHISPER_BINARY=${LAUNCHER}\nWHISPER_MODEL_PATH=small\n` }
+  };
+  const probeExec = (stdout, code = 0) => (command, args) =>
+    command === LAUNCHER && args[0] === "--contract-version"
+      ? { code, stdout, stderr: "boom stderr that must not leak" }
+      : happyExec(command, args);
+
+  it("reports the stale wrapper incompatible when the contract probe exits nonzero (no traceback)", () => {
+    const { ctx } = createFakeContext({ ...wiredLauncher, execHandler: probeExec("", 2) });
+    const result = voiceStep.check(ctx);
+    expect(result.status).toBe("missing");
+    expect(result.what).toContain("incompatible");
+    expect(result.remedy).toContain("pnpm setup:voice");
+    // Doctor must not surface a traceback: the launcher's stderr never reaches the operator message.
+    expect(`${result.what}${result.remedy}`).not.toContain("boom stderr");
+  });
+
+  it("reports incompatible when the probe emits malformed JSON", () => {
+    const { ctx } = createFakeContext({ ...wiredLauncher, execHandler: probeExec("not json") });
+    expect(voiceStep.check(ctx).what).toContain("incompatible");
+  });
+
+  it("reports incompatible when the probe reports a mismatched contract version", () => {
+    const { ctx } = createFakeContext({
+      ...wiredLauncher,
+      execHandler: probeExec('{"contractVersion":"0"}')
+    });
+    const result = voiceStep.check(ctx);
+    expect(result.status).toBe("missing");
+    expect(result.what).toContain("incompatible");
+  });
+});
+
+describe("probeWhisperContract", () => {
+  const run = (stdout, code = 0) => {
+    const { ctx } = createFakeContext({
+      execHandler: () => ({ code, stdout, stderr: "" })
+    });
+    return probeWhisperContract(ctx, LAUNCHER);
+  };
+
+  it("is ok only for the exact supported contract version", () => {
+    expect(run(CONTRACT_STDOUT)).toEqual({ ok: true });
+  });
+
+  it("rejects a nonzero exit, malformed output, a missing version, and a mismatch", () => {
+    expect(run("", 1).ok).toBe(false);
+    expect(run("not json").ok).toBe(false);
+    expect(run('{"other":"1"}').ok).toBe(false);
+    expect(run("42").ok).toBe(false);
+    expect(run('{"contractVersion":2}').ok).toBe(false);
+    expect(run('{"contractVersion":"9"}').ok).toBe(false);
+  });
 });
 
 describe("voiceStep.provision", () => {
@@ -214,15 +282,55 @@ describe("voiceStep.provision", () => {
 
   it("maps a failing `pip install faster-whisper` to an actionable error", () => {
     const { ctx } = createFakeContext({
-      execHandler: (command, args) =>
-        args.join(" ").includes("pip install faster-whisper")
-          ? { code: 1, stdout: "", stderr: "no network" }
-          : happyExec(command, args)
+      execHandler: (command, args) => {
+        const joined = args.join(" ");
+        // faster-whisper is not importable, so provisioning attempts the install (which then fails).
+        if (joined === "-c import faster_whisper") return { code: 1, stdout: "", stderr: "" };
+        if (joined.includes("pip install faster-whisper")) {
+          return { code: 1, stdout: "", stderr: "no network" };
+        }
+        return happyExec(command, args);
+      }
     });
     const result = voiceStep.provision(ctx);
     expect(result.status).toBe("error");
     expect(result.remedy).toContain("ensurepip");
     expect(result.remedy).toContain("no network");
+  });
+
+  it("reinstalls only the wrapper (force-reinstall, --no-deps) when faster-whisper is already healthy (#780)", () => {
+    // The stale-wrapper repair path: faster-whisper imports fine, so its install is skipped and the
+    // wrapper is force-reinstalled in place — replacing a same-version stale wrapper without touching
+    // the healthy speech stack.
+    const { ctx, execCalls } = createFakeContext({
+      execHandler: happyExec,
+      fileContents: { [ENV_PATH]: "# WHISPER_BINARY=\n# WHISPER_MODEL_PATH=\n" }
+    });
+    expect(voiceStep.provision(ctx)).toEqual({ status: "ok" });
+    // faster-whisper is never (re)installed.
+    expect(execCalls.some((call) => call.join(" ").includes("pip install faster-whisper"))).toBe(
+      false
+    );
+    // The wrapper install forces a reinstall and skips deps so faster-whisper is left untouched.
+    const wrapperInstall = execCalls.find(
+      (call) => call.join(" ").includes("pip") && call.join(" ").includes("whisper-wrapper")
+    );
+    expect(wrapperInstall).toContain("--force-reinstall");
+    expect(wrapperInstall).toContain("--no-deps");
+  });
+
+  it("installs faster-whisper when its import probe fails", () => {
+    const { ctx, execCalls } = createFakeContext({
+      execHandler: (command, args) =>
+        args.join(" ") === "-c import faster_whisper"
+          ? { code: 1, stdout: "", stderr: "" }
+          : happyExec(command, args),
+      fileContents: { [ENV_PATH]: "# WHISPER_BINARY=\n# WHISPER_MODEL_PATH=\n" }
+    });
+    expect(voiceStep.provision(ctx)).toEqual({ status: "ok" });
+    expect(execCalls.some((call) => call.join(" ").includes("pip install faster-whisper"))).toBe(
+      true
+    );
   });
 
   it("maps a failing wrapper install to an error", () => {
@@ -299,17 +407,36 @@ describe("voiceStep.provision", () => {
 
 describe("voiceStep.verify", () => {
   const wired = { [ENV_PATH]: `WHISPER_BINARY=${LAUNCHER}\nWHISPER_MODEL_PATH=small\n` };
+  // Verify runs two launcher calls: the cheap `--contract-version` probe, then the sample inference.
+  // A helper that answers the probe with the supported version and routes the sample call to `onSample`.
+  const launcherExec = (onSample) => (command, args) => {
+    if (command !== LAUNCHER) return { code: 0, stdout: "", stderr: "" };
+    if (args[0] === "--contract-version") return { code: 0, stdout: CONTRACT_STDOUT, stderr: "" };
+    return onSample();
+  };
 
   it("errors when .env is not wired after provisioning", () => {
     const { ctx } = createFakeContext();
     expect(voiceStep.verify(ctx).what).toContain("not wired");
   });
 
+  it("errors when the freshly installed wrapper still fails the contract probe (#780)", () => {
+    const { ctx } = createFakeContext({
+      fileContents: wired,
+      execHandler: (command, args) =>
+        command === LAUNCHER && args[0] === "--contract-version"
+          ? { code: 2, stdout: "", stderr: "" }
+          : { code: 0, stdout: "", stderr: "" }
+    });
+    const result = voiceStep.verify(ctx);
+    expect(result.status).toBe("error");
+    expect(result.what).toContain("incompatible");
+  });
+
   it("errors when the wrapper exits non-zero on the sample", () => {
     const { ctx } = createFakeContext({
       fileContents: wired,
-      execHandler: (command) =>
-        command === LAUNCHER ? { code: 1, stdout: "", stderr: "boom" } : { code: 0, stdout: "", stderr: "" }
+      execHandler: launcherExec(() => ({ code: 1, stdout: "", stderr: "boom" }))
     });
     expect(voiceStep.verify(ctx).what).toContain("failed on the sample");
   });
@@ -317,26 +444,65 @@ describe("voiceStep.verify", () => {
   it("errors when the wrapper emits output the runtime adapter would reject (segment without words)", () => {
     const { ctx } = createFakeContext({
       fileContents: wired,
-      execHandler: (command) =>
-        command === LAUNCHER
-          ? { code: 0, stdout: '{"text":"","segments":[{}]}', stderr: "" }
-          : { code: 0, stdout: "", stderr: "" }
+      execHandler: launcherExec(() => ({
+        code: 0,
+        stdout: '{"text":"","segments":[{}]}',
+        stderr: ""
+      }))
     });
     expect(voiceStep.verify(ctx).what).toContain("off-contract");
   });
 
-  it("is ok when the wrapper emits valid strict contract JSON", () => {
+  it("is ok when the wrapper passes the probe AND emits valid strict contract JSON", () => {
     const { ctx } = createFakeContext({
       fileContents: wired,
-      execHandler: (command) =>
-        command === LAUNCHER
-          ? {
-              code: 0,
-              stdout: '{"text":"Help","segments":[{"words":[{"word":"Help","start":0,"end":0.4}]}]}',
-              stderr: ""
-            }
-          : { code: 0, stdout: "", stderr: "" }
+      execHandler: launcherExec(() => ({
+        code: 0,
+        stdout: '{"text":"Help","segments":[{"words":[{"word":"Help","start":0,"end":0.4}]}]}',
+        stderr: ""
+      }))
     });
     expect(voiceStep.verify(ctx)).toEqual({ status: "ok" });
+  });
+});
+
+// Fixture launchers executed as REAL subprocesses, so the contract probe (the heart of readiness) is
+// proven at the process boundary and cannot pass merely because a mocked exec returned the right string
+// (#780). Node-based (CI has Node, not Python); the real cli.py launcher is exercised end-to-end by the
+// Python wrapper tests (whisper-wrapper/tests/test_cli.py). `node -e <script> <args>` runs each fixture
+// as its own process, with the probe flag reaching it as process.argv.
+const CURRENT_LAUNCHER =
+  'const a=process.argv.slice(1);' +
+  'if(a.includes("--contract-version")){process.stdout.write(JSON.stringify({contractVersion:"1"}));process.exit(0)}' +
+  "process.exit(1);";
+// The stale pre-#647 launcher: it predates the probe, so it rejects the unknown flag with a nonzero exit
+// (and would forward the literal "auto" on a real transcribe call).
+const STALE_LAUNCHER =
+  'const a=process.argv.slice(1);' +
+  'if(a.includes("--contract-version")){process.stderr.write("unrecognized: --contract-version");process.exit(2)}' +
+  'process.stdout.write(JSON.stringify({text:"",language:"auto",segments:[]}));process.exit(0);';
+
+function launcherProcessCtx(script) {
+  return {
+    exec(_command, args) {
+      const result = spawnSync(process.execPath, ["-e", script, "--", ...args], {
+        encoding: "utf8"
+      });
+      return {
+        code: result.status ?? 1,
+        stdout: result.stdout ?? "",
+        stderr: result.stderr ?? ""
+      };
+    }
+  };
+}
+
+describe("probeWhisperContract against real launcher processes (#780)", () => {
+  it("passes the current launcher and rejects the stale one, each executed as its own process", () => {
+    expect(probeWhisperContract(launcherProcessCtx(CURRENT_LAUNCHER), "whetstone-whisper")).toEqual({
+      ok: true
+    });
+    const stale = probeWhisperContract(launcherProcessCtx(STALE_LAUNCHER), "whetstone-whisper");
+    expect(stale.ok).toBe(false);
   });
 });
