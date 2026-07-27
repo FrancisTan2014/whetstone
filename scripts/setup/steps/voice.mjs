@@ -19,6 +19,14 @@ const DEFAULT_MODEL = "small";
 const WRAPPER_DIR = fileURLToPath(new URL("../whisper-wrapper", import.meta.url));
 const SAMPLE_AUDIO = fileURLToPath(new URL("./voice-sample.wav", import.meta.url));
 
+// The executable contract version this Whetstone build requires from the whetstone-whisper launcher.
+// The bundled wrapper prints it via the cheap `--contract-version` probe (no model/audio load); readiness
+// requires an EXACT match. This is deliberately separate from the wrapper's pip package version — a
+// pre-#647 wrapper that forwards `--language auto` literally can share a package version with the current
+// one, so only an executable-contract probe (not file presence) can tell them apart (#780). Keep this in
+// lockstep with `CONTRACT_VERSION` in scripts/setup/whisper-wrapper/whetstone_whisper/cli.py.
+const SUPPORTED_WHISPER_CONTRACT_VERSION = "1";
+
 const PYTHON_DOCS = "https://www.python.org/downloads";
 const PYTHON_REMEDY =
   "Install Python 3 (https://www.python.org/downloads, or `winget install Python.Python.3` / " +
@@ -85,6 +93,60 @@ export function validateWhisperContract(stdout) {
     }
   }
   return { ok: true };
+}
+
+/**
+ * Execute the wrapper's cheap machine-readable contract probe (`--contract-version`) through the
+ * configured launcher and require the EXACT supported contract version. This is what turns "the launcher
+ * file exists" into "the launcher proves the contract Whetstone will invoke" (#780): a wrapper installed
+ * before the `--language auto` -> detection fix predates the probe and either lacks the flag (nonzero
+ * exit) or reports a different version, and a nonzero exit, non-JSON/malformed output, or a version
+ * mismatch is treated as **incompatible — never ready**. Only the structured reason is returned; the raw
+ * stderr/traceback is intentionally dropped so doctor never surfaces a stack trace.
+ *
+ * @param {import("../step.mjs").SetupContext} ctx
+ * @param {string} binaryPath  The configured WHISPER_BINARY launcher.
+ * @returns {{ ok: true } | { ok: false, reason: string }}
+ */
+export function probeWhisperContract(ctx, binaryPath) {
+  const isRecord = (value) =>
+    typeof value === "object" && value !== null && !Array.isArray(value);
+  const result = ctx.exec(binaryPath, ["--contract-version"]);
+  if (result.code !== 0) {
+    return {
+      ok: false,
+      reason: "it does not answer the --contract-version readiness probe (nonzero exit)"
+    };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(result.stdout);
+  } catch {
+    return { ok: false, reason: "its --contract-version probe did not emit valid JSON" };
+  }
+  const version = isRecord(parsed) ? parsed.contractVersion : undefined;
+  if (typeof version !== "string") {
+    return { ok: false, reason: 'its probe output is missing a string "contractVersion"' };
+  }
+  if (version !== SUPPORTED_WHISPER_CONTRACT_VERSION) {
+    return {
+      ok: false,
+      reason: `it reports contract version ${version}, but this Whetstone requires ${SUPPORTED_WHISPER_CONTRACT_VERSION}`
+    };
+  }
+  return { ok: true };
+}
+
+// The shared readiness message + remedy for an incompatible/stale wrapper: doctor names it and points at
+// `pnpm setup:voice` (which repairs the bundled wrapper without redownloading the speech stack), and a
+// custom WHISPER_BINARY is told the exact contract version to emit rather than being silently trusted.
+function incompatibleWrapper(reason) {
+  return {
+    what: `The installed whetstone-whisper wrapper is incompatible: ${reason}. A wrapper installed before the language fix forwards "--language auto" to Whisper literally, which fails transcription.`,
+    remedy:
+      "Run `pnpm setup:voice` to repair the bundled wrapper (it upgrades the wrapper in place without " +
+      `redownloading the speech model). A custom WHISPER_BINARY must emit \`--contract-version\` as ${SUPPORTED_WHISPER_CONTRACT_VERSION} — see docs/SPEECH.md.`
+  };
 }
 
 /**
@@ -160,6 +222,14 @@ export const voiceStep = {
         "Run `pnpm setup:voice` to reinstall it."
       );
     }
+    // File presence is not readiness: run the cheap contract probe through the launcher and require the
+    // exact supported contract version, so a stale pre-#647 wrapper is reported incompatible (never
+    // ready) and `pnpm setup:voice` repairs it instead of skipping provisioning (#780).
+    const contract = probeWhisperContract(ctx, env.WHISPER_BINARY);
+    if (!contract.ok) {
+      const { what, remedy } = incompatibleWrapper(contract.reason);
+      return missing(what, remedy);
+    }
     return ok();
   },
   provision(ctx) {
@@ -173,18 +243,34 @@ export const voiceStep = {
     // guaranteed to resolve here (its "installed but still off PATH" case already returns `missing`).
     // Capture which command — `python` vs `python3` — for the pip invocations below.
     const python = resolvePython(ctx);
-    const pip = ctx.exec(python, ["-m", "pip", "install", "faster-whisper"]);
-    if (pip.code !== 0) {
-      return error(
-        "`pip install faster-whisper` failed.",
-        withOutputTail(
-          "Ensure pip is available (`python -m ensurepip --upgrade`) and check your network/proxy, then re-run `pnpm setup:voice`.",
-          pip
-        )
-      );
+    // Only install faster-whisper when its own probe fails: on a stale-wrapper repair the speech stack is
+    // already healthy, so re-running `pip install faster-whisper` (and any model redownload) is wasted
+    // work — the wrapper is the only thing that needs replacing (#780).
+    if (ctx.exec(python, ["-c", "import faster_whisper"]).code !== 0) {
+      const pip = ctx.exec(python, ["-m", "pip", "install", "faster-whisper"]);
+      if (pip.code !== 0) {
+        return error(
+          "`pip install faster-whisper` failed.",
+          withOutputTail(
+            "Ensure pip is available (`python -m ensurepip --upgrade`) and check your network/proxy, then re-run `pnpm setup:voice`.",
+            pip
+          )
+        );
+      }
     }
 
-    const wrapper = ctx.exec(python, ["-m", "pip", "install", WRAPPER_DIR]);
+    // Always (re)install the bundled wrapper, even when an older installed package shares its version:
+    // `--force-reinstall` replaces a same-version stale wrapper (the #780 repair), and `--no-deps` keeps
+    // this from reinstalling the already-healthy faster-whisper.
+    const wrapper = ctx.exec(python, [
+      "-m",
+      "pip",
+      "install",
+      "--upgrade",
+      "--force-reinstall",
+      "--no-deps",
+      WRAPPER_DIR
+    ]);
     if (wrapper.code !== 0) {
       return error(
         "Installing the whetstone-whisper wrapper failed.",
@@ -242,6 +328,15 @@ export const voiceStep = {
         "Whisper is not wired into .env after provisioning.",
         "Re-run `pnpm setup:voice`."
       );
+    }
+    // Post-provision verification requires BOTH the cheap contract probe and the sample-audio inference
+    // (#780): the probe proves the freshly installed launcher speaks the exact contract, and the sample
+    // proves `--language auto` reaches the model and produces on-contract output before a saved capture
+    // is retried.
+    const contract = probeWhisperContract(ctx, env.WHISPER_BINARY);
+    if (!contract.ok) {
+      const { what, remedy } = incompatibleWrapper(contract.reason);
+      return error(what, remedy);
     }
     const result = ctx.exec(env.WHISPER_BINARY, [
       "--model",

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "whetstone-whisper"
-version = "0.1.0"
+version = "0.2.0"
 description = "Local Whisper STT wrapper for whetstone: emits the docs/SPEECH.md word-timestamp JSON contract."
 requires-python = ">=3.9"
 dependencies = ["faster-whisper>=1.0"]
