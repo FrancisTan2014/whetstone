@@ -7,7 +7,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   epubContentType,
-  pdfContentType,
   type BlockUnitLocatorDto,
   type IngestEpubResultDto,
   type ReadingUnitContentDto,
@@ -66,7 +65,6 @@ type PmNode = Readonly<{
 
 let context: TestContext;
 let epubResponder: (bytes: Uint8Array) => Promise<ParsedEpub>;
-let pdfResponder: () => Promise<string>;
 let epubUploadLimitBytes: number;
 let loggedEvidence: IngestionEvidence[];
 
@@ -109,7 +107,6 @@ async function buildContext(): Promise<TestContext> {
     epubUploadLimitBytes,
     imageResourceStore: createImageResourceStore(imagesDir),
     ingestionLogger: (records) => loggedEvidence.push(...records),
-    pdfToMarkdown: { convert: () => pdfResponder() },
     sourceFileStore: createSourceFileStore(sourcesDir)
   };
   // The EPUB creation front door now lives on the work-creation review boundary (#748), so the content
@@ -167,15 +164,6 @@ function ingest(workEntryId: string, payload: unknown): ReturnType<typeof contex
   });
 }
 
-function ingestPdf(workEntryId: string, bytes: Buffer): ReturnType<typeof context.server.inject> {
-  return context.server.inject({
-    headers: { "content-type": pdfContentType },
-    method: "POST",
-    payload: bytes,
-    url: `/api/works/${workEntryId}/content/pdf`
-  });
-}
-
 async function getContent(workEntryId: string): Promise<WorkContentDto> {
   return loadWorkContent(context.db, toEntryId(workEntryId));
 }
@@ -209,7 +197,6 @@ async function createAuthorNamed(name: string): Promise<string> {
 
 beforeEach(async () => {
   epubResponder = async () => twoChapterEpub();
-  pdfResponder = async () => "# PDF\n\nConverted body.";
   epubUploadLimitBytes = 50 * 1024 * 1024;
   loggedEvidence = [];
   context = await buildContext();
@@ -475,24 +462,6 @@ describe("content routes", () => {
 
     const onDisk = await readFile(join(context.sourcesDir, "source-1.md"), "utf8");
     expect(onDisk).toBe(markdown);
-  });
-
-  it("deactivates the legacy PDF content route, reporting OCR support is not available yet (#702)", async () => {
-    // The Docling-to-Markdown lane is retired: born-digital PDFs create their own Work through the
-    // structured /api/pdf-imports lane, and scanned/mixed PDFs have no lane until language-aware OCR
-    // lands (#704). This route never persists mdast content again; it reports the sequenced limitation
-    // and writes nothing.
-    const workEntryId = await createWork();
-    const response = await ingestPdf(workEntryId, Buffer.from("%PDF-1.7 born-digital"));
-    expect(response.statusCode).toBe(503);
-    expect(response.json()).toEqual({ error: "ocr_support_unavailable" });
-
-    const sources = await context.db
-      .select()
-      .from(workSources)
-      .where(eq(workSources.workEntryId, workEntryId));
-    expect(sources).toHaveLength(0);
-    expect((await readdir(context.sourcesDir)).filter((name) => name.endsWith(".pdf"))).toEqual([]);
   });
 
   it("rejects image-only Markdown that has no supported blocks and records no source", async () => {

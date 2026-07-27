@@ -2,7 +2,7 @@
 
 No real Docling models or network: ``build_converter``'s docling imports are mocked via
 ``sys.modules``, and the probe/convert/mapping paths run against fakes injected through
-``opener`` / ``converter_factory`` / ``prober_factory``. Mirrors ``test_pdf_to_markdown.py``.
+``opener`` / ``converter_factory`` / ``prober_factory``.
 
 Run with ``python -m unittest`` from this folder.
 """

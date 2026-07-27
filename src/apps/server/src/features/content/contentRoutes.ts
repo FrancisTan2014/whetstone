@@ -12,15 +12,10 @@ import {
 } from "./contentQueries.js";
 
 const invalidRequestBody = { error: "invalid_request" } as const;
-// The born-digital PDF lane (#702) is authoritative and the legacy Docling-to-Markdown route is
-// deactivated; scanned/mixed PDFs (and any legacy content/pdf caller) get this sequenced limitation until
-// language-aware OCR lands (#704). 503 (Service Unavailable) + a distinct body so the client can show the
-// "OCR support is not available yet" copy rather than a generic failure.
-const ocrSupportUnavailableBody = { error: "ocr_support_unavailable" } as const;
 const workNotFoundBody = { error: "work_not_found" } as const;
 const emptyContentBody = { error: "empty_content" } as const;
 // A manual-origin Work owns a canonical ProseMirror document edited only through the manual-Work editor
-// (#720); legacy Markdown/PDF ingestion into it is refused (409) so the two content formats never mix.
+// (#720); legacy Markdown ingestion into it is refused (409) so the two content formats never mix.
 const manualWorkUnsupportedBody = { error: "manual_work_unsupported" } as const;
 const unitNotFoundBody = { error: "unit_not_found" } as const;
 const blockNotFoundBody = { error: "block_not_found" } as const;
@@ -76,17 +71,6 @@ export function registerContentRoutes(
     return reply.code(201).send(result.content);
   });
 
-  // PDF upload into an existing Work is DEACTIVATED (#702): born-digital PDFs now create their own Work
-  // through the structured `/api/pdf-imports` lane (canonical blocks, no Markdown), and scanned/mixed PDFs
-  // have no lane until language-aware OCR lands (#704). This route no longer runs the legacy
-  // Docling-to-Markdown persistence; it reports the sequenced limitation explicitly rather than silently
-  // persisting incomplete or mdast content. `ingestPdf` and its pipeline stay as now-unreachable code
-  // until #705 deletes the obsolete lane.
-  server.post<{ Params: WorkParams }>(
-    "/api/works/:workEntryId/content/pdf",
-    { bodyLimit: dependencies.epubUploadLimitBytes },
-    async (_request, reply) => reply.code(503).send(ocrSupportUnavailableBody)
-  );
   server.get<{ Params: WorkParams }>(
     "/api/works/:workEntryId/structure",
     async (request, reply) => {

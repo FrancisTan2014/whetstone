@@ -12,8 +12,6 @@ import { createDbClient } from "./db/dbClient.js";
 import { runMigrations } from "./db/migrate.js";
 import { createEpubParser } from "./files/epubSource.js";
 import { createImageResourceStore } from "./files/imageResourceStore.js";
-import { composePdfToMarkdown, createDoclingPdfToMarkdown } from "./files/pdfToMarkdown.js";
-import { createOcrmypdfPreprocess } from "./files/pdfOcr.js";
 import { createSourceFileStore } from "./files/sourceFileStore.js";
 import { createCedictProvider, parseCedict } from "./lookup/cedict.js";
 import { createWiktionaryEntryLookup, createWordNetEntryLookup } from "./lookup/englishLookup.js";
@@ -252,17 +250,6 @@ const contentDependencies = {
       console.warn("[ingestion] unrecognized block element", JSON.stringify(record));
     }
   },
-  pdfToMarkdown: composePdfToMarkdown(
-    createOcrmypdfPreprocess({
-      ocrmypdfBinary: config.pdfOcrBinary,
-      timeoutMs: config.pdfTimeoutMs
-    }),
-    createDoclingPdfToMarkdown({
-      pythonBinary: config.pdfPythonBinary,
-      scriptPath: fileURLToPath(new URL("./files/pdf_to_markdown.py", import.meta.url)),
-      timeoutMs: config.pdfTimeoutMs
-    })
-  ),
   sourceFileStore
 } satisfies ContentDependencies;
 
