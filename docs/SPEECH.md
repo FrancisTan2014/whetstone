@@ -53,6 +53,24 @@ The wrapper is a pip package with a `console_scripts` entry point, so pip genera
 executable on every OS that the server's `execFile` runs directly (a `.py`/`.cmd` cannot be
 `execFile`-d). It honours the arguments below and emits the JSON contract.
 
+### Readiness contract probe
+
+`whetstone-whisper` also answers a machine-readable readiness probe so setup can detect a **stale**
+wrapper — an older build that no longer honours this contract (e.g. a pre-#647 launcher that forwards
+`--language auto` literally, which Whisper rejects). Invoked as:
+
+```
+<WHISPER_BINARY> --contract-version
+```
+
+it must print the compact JSON `{"contractVersion":"1"}` on stdout, exit `0`, and **load no model**.
+`pnpm setup:doctor` and `pnpm setup:voice` run this probe as their readiness check instead of only
+checking that the launcher file exists, and require the version to match exactly. A launcher that
+errors, prints anything else, or reports a different version fails readiness with an explicit remedy;
+`pnpm setup:voice` then force-reinstalls only the wrapper to repair it. If you point `WHISPER_BINARY`
+at your own executable, it must answer this probe to be accepted as ready.
+
+
 ## Runtime + model (manual)
 
 Use an OSS Whisper runtime, e.g.:
@@ -84,4 +102,5 @@ detected):
 ```
 
 If your tool's flags or output differ, point `WHISPER_BINARY` at a thin wrapper that honours the
-arguments above and emits this JSON contract.
+arguments above, answers the `--contract-version` readiness probe (see above), and emits this JSON
+contract.

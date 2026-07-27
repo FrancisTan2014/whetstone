@@ -657,9 +657,7 @@ describe("voice capture routes", () => {
     });
     // A stale pre-#647 wrapper makes transcription throw; the capture is kept as retryable
     // transcription_failed (its raw audio is preserved), never a fabricated ready entry.
-    const failed = await processNextVoiceCapture(
-      buildWorker(route.db, { speech: throwingSpeech })
-    );
+    const failed = await processNextVoiceCapture(buildWorker(route.db, { speech: throwingSpeech }));
     expect(failed).toMatchObject({ status: "failed", code: "transcription_failed" });
     expect((await readRow(route.db, "stale-fail")).failureReason).toBe("transcription_failed");
 
@@ -690,9 +688,9 @@ describe("voice capture routes", () => {
     expect(ids.filter((id) => id === "stale-fail")).toEqual(["stale-fail"]);
 
     // Retry processed the capture exactly once: a second worker tick finds nothing queued.
-    expect(
-      await processNextVoiceCapture(buildWorker(route.db, { speech: repaired }))
-    ).toEqual({ status: "idle" });
+    expect(await processNextVoiceCapture(buildWorker(route.db, { speech: repaired }))).toEqual({
+      status: "idle"
+    });
   });
 
   it("refuses to retry a non-retryable failure and leaves it failed (no re-queue loop)", async () => {
