@@ -15,6 +15,15 @@ language the model detected back in the contract:
 installs it as the `whetstone-whisper` console script (a native launcher on every OS), so `execFile`
 can run it directly. See docs/SPEECH.md. Model loading is isolated behind `model_loader` so the
 arg-parsing and JSON-shaping logic is unit-tested against a mock model with no real inference or network.
+
+The launcher also answers a cheap machine-readable readiness probe, `--contract-version`, which prints
+the executable contract version and exits WITHOUT loading a model or touching audio. `pnpm setup:voice`
+runs this through the configured `WHISPER_BINARY` so voice readiness can require the exact supported
+contract version instead of trusting a launcher file's mere presence: a wrapper installed before the
+`--language auto` -> `None` fix (which still forwards the literal "auto" and predates this probe) is
+detected as incompatible and repaired, rather than reported ready. The contract version is deliberately
+independent of the pip package version (two stale packages can share a release version), so it is bumped
+only when the executable's argument/output contract changes.
 """
 from __future__ import annotations
 
@@ -22,6 +31,20 @@ import argparse
 import json
 import sys
 from typing import Any, Callable, List, Optional, Sequence
+
+# The executable's argument/output contract version. Bumped only when the CLI contract changes (e.g. the
+# `--language auto` -> detection mapping), NOT on every package release. `pnpm setup:voice` requires an
+# exact match, so an older wrapper that lacks this probe (or reports a different version) fails readiness.
+CONTRACT_VERSION = "1"
+
+# The flag that triggers the readiness probe. Kept as a module constant so the wrapper and its tests
+# agree on the exact token the Node setup step invokes.
+CONTRACT_VERSION_FLAG = "--contract-version"
+
+
+def contract_version_report() -> str:
+    """The machine-readable probe payload: the supported contract version as compact JSON on one line."""
+    return json.dumps({"contractVersion": CONTRACT_VERSION})
 
 
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
@@ -86,7 +109,14 @@ def main(
     argv: Optional[Sequence[str]] = None,
     model_loader: Callable[[str], Any] = _load_model,
 ) -> int:
-    args = parse_args(sys.argv[1:] if argv is None else argv)
+    raw = list(sys.argv[1:] if argv is None else argv)
+    # The cheap readiness probe: report the contract version and exit BEFORE any model load or audio
+    # access, so `pnpm setup:voice` can verify compatibility without paying for inference. Checked ahead
+    # of `parse_args` because the probe intentionally takes none of the transcription arguments.
+    if CONTRACT_VERSION_FLAG in raw:
+        sys.stdout.write(contract_version_report())
+        return 0
+    args = parse_args(raw)
     model = model_loader(args.model)
     contract = transcribe_to_contract(model, args.audio, args.language)
     json.dump(contract, sys.stdout)
