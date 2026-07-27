@@ -177,7 +177,8 @@ function resolvePython() {
 // deliberately run WITHOUT WHETSTONE_PDF_MEMORY_MIB so the worker applies its own small fixed test ceiling
 // (proving enforceability, never allocating the production workload budget). Returns the worker exit code.
 function checkMemoryCeiling(python) {
-  const { WHETSTONE_PDF_MEMORY_MIB: _omit, ...env } = process.env;
+  const env = { ...process.env };
+  delete env.WHETSTONE_PDF_MEMORY_MIB;
   const probe = spawnSync(python, [WORKER, "--check-memory-ceiling"], { encoding: "utf-8", env });
   return probe.status;
 }

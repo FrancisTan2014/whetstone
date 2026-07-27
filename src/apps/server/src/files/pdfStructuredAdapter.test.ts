@@ -36,6 +36,7 @@ import {
   type StructuredConversionOutcome
 } from "./pdfStructuredAdapter.js";
 import { timeoutFailure } from "./pdfStructuredErrors.js";
+import { defaultStructuredPdfMemoryMib } from "../config/serverConfig.js";
 
 const supportedVersion = SUPPORTED_DOCLING_CORE_SCHEMA_VERSIONS[0]!;
 const cleanupDirs: string[] = [];
@@ -534,7 +535,11 @@ describe("structured PDF adapter — shared validated-JSON contract", () => {
           pythonBinary: realLane!.python,
           scriptPath: workerScriptPath,
           perRangeTimeoutMs: 120_000,
-          memoryMib: 2048
+          // Use the platform-calibrated production default (2,048 MiB POSIX / 6,144 MiB Windows) so the
+          // real Docling conversion runs under the SAME hard ceiling production applies. The Windows
+          // worker peaks well above 2 GiB even for this small fixture (#782), so a hardcoded 2,048 would
+          // be killed by the Job Object here; the config owner is the single source of that number.
+          memoryMib: defaultStructuredPdfMemoryMib(process.platform)
         }),
         tempDir: await makeTempDir("whetstone-real-temp-")
       });

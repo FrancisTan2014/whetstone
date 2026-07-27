@@ -17,9 +17,7 @@ export const WINDOWS_STRUCTURED_PDF_MEMORY_MIB = 6144;
 export function defaultStructuredPdfMemoryMib(
   platform: NodeJS.Platform = process.platform
 ): number {
-  return platform === "win32"
-    ? WINDOWS_STRUCTURED_PDF_MEMORY_MIB
-    : POSIX_STRUCTURED_PDF_MEMORY_MIB;
+  return platform === "win32" ? WINDOWS_STRUCTURED_PDF_MEMORY_MIB : POSIX_STRUCTURED_PDF_MEMORY_MIB;
 }
 
 // Resolve the per-child ceiling: an explicit positive-integer PDF_STRUCTURED_MEMORY_MIB / --memory-mib
@@ -41,7 +39,6 @@ export function resolveStructuredPdfMemoryMib(
 
   return memory;
 }
-
 
 export type ServerConfig = Readonly<{
   databaseDir: string | undefined;
