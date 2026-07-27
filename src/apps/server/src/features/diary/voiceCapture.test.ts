@@ -648,6 +648,53 @@ describe("voice capture routes", () => {
     expect((response.json() as VoiceCaptureStatusDto).status).toBe("queued");
   });
 
+  it("recovers a retryable transcription_failed capture after wrapper repair: repaired adapter yields the detected language and exactly one diary entry (#780)", async () => {
+    await seedVoiceCapture(route.db, {
+      id: "stale-fail",
+      occurredAt: "2026-07-09T09:00:00.000Z",
+      processingStatus: "queued",
+      rawAudioPath: "audio-stale"
+    });
+    // A stale pre-#647 wrapper makes transcription throw; the capture is kept as retryable
+    // transcription_failed (its raw audio is preserved), never a fabricated ready entry.
+    const failed = await processNextVoiceCapture(
+      buildWorker(route.db, { speech: throwingSpeech })
+    );
+    expect(failed).toMatchObject({ status: "failed", code: "transcription_failed" });
+    expect((await readRow(route.db, "stale-fail")).failureReason).toBe("transcription_failed");
+
+    // After `pnpm setup:voice` repairs the wrapper, the learner retries the same saved capture.
+    const retry = await route.server.inject({
+      method: "POST",
+      url: "/api/diary/voice-captures/stale-fail/retry"
+    });
+    expect(retry.statusCode).toBe(200);
+
+    // The repaired adapter now transcribes and reports Whisper's auto-detected language as metadata.
+    const repaired = createFakeSpeechInput({
+      language: "zh",
+      transcript: "the deploy is green",
+      words: []
+    });
+    const processed = await processNextVoiceCapture(
+      buildWorker(route.db, { speech: repaired, speechConfigured: true })
+    );
+    expect(processed).toMatchObject({ status: "processed", id: "stale-fail" });
+
+    const row = await readRow(route.db, "stale-fail");
+    expect(row.processingStatus).toBe("ready");
+    expect(row.language).toBe("zh");
+
+    // The same capture completed in place — the Timeline holds exactly one entry, never a duplicate.
+    const ids = await timelineIds();
+    expect(ids.filter((id) => id === "stale-fail")).toEqual(["stale-fail"]);
+
+    // Retry processed the capture exactly once: a second worker tick finds nothing queued.
+    expect(
+      await processNextVoiceCapture(buildWorker(route.db, { speech: repaired }))
+    ).toEqual({ status: "idle" });
+  });
+
   it("refuses to retry a non-retryable failure and leaves it failed (no re-queue loop)", async () => {
     await seedVoiceCapture(route.db, {
       id: "no-speech-cap",
