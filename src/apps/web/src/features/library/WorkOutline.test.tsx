@@ -148,7 +148,7 @@ describe("projectDraftOutline", () => {
   });
 });
 
-describe("WorkOutline (drawer, < 48rem)", () => {
+describe("WorkOutline (drawer, < 80rem)", () => {
   it("marks the active section with aria-current and leaves the others unset", () => {
     renderOutline();
 
@@ -239,10 +239,11 @@ describe("WorkOutline (drawer, < 48rem)", () => {
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
   });
 
-  it("shows the empty hint and no list when there are no outline entries", () => {
+  it("renders nothing when there are no outline entries", () => {
     renderOutline({ entries: [] });
 
-    expect(screen.getByText("Add a section to build your outline.")).toBeDefined();
+    expect(screen.queryByRole("navigation", { name: "Outline" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Outline" })).toBeNull();
     expect(screen.queryByRole("list")).toBeNull();
   });
 
@@ -261,7 +262,7 @@ describe("WorkOutline (drawer, < 48rem)", () => {
   });
 });
 
-describe("WorkOutline (sidebar, >= 48rem)", () => {
+describe("WorkOutline (sidebar, >= 80rem)", () => {
   beforeEach(() => {
     mockMatchMedia(true);
   });

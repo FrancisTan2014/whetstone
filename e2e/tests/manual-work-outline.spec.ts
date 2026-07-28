@@ -1,6 +1,7 @@
 import { type Page } from "@playwright/test";
 
 import { type SetupData } from "../stack";
+import { chooseBlockStyle } from "../select";
 import { expect, test } from "../fixtures";
 
 // The manual-Work live Outline journey (#697): build a real Part/Chapter/Section hierarchy out of ordered
@@ -42,26 +43,27 @@ test("build a Part/Chapter/Section hierarchy, navigate distant sections, and rea
   const editor = page.getByRole("textbox", { name: `Edit ${title}` });
   await expect(editor).toBeVisible();
   await expect(page.getByRole("status")).toHaveText("Saved");
-  const toolbar = page.getByRole("toolbar", { exact: true, name: "Formatting" });
   const outline = page.getByRole("navigation", { name: "Outline" });
 
   // Section 1: turn the opening block into a level-1 "Part One" heading and save.
   await editor.click();
   await page.keyboard.type("Part One");
   await page.keyboard.press("ControlOrMeta+a");
-  await toolbar.getByRole("button", { name: "Heading 1" }).click();
+  await chooseBlockStyle(page, "Heading 1");
   await expect(editor.locator("h1")).toContainText("Part One");
   await page.getByRole("button", { exact: true, name: "Save" }).click();
   await expect(page.getByRole("status")).toHaveText("Saved");
-  // A single-section Work has no useful outline yet — the empty hint stands in until a section is added.
-  await expect(outline.getByText("Add a section to build your outline.")).toBeVisible();
+  // A single-section Work has no useful outline yet — it reserves no sidebar track, so section creation is
+  // a single "Add section" control above the canvas instead of an empty Outline.
+  await expect(outline).toBeHidden();
+  await expect(page.getByRole("button", { name: "Add section" })).toBeVisible();
 
   // Section 2: add a section, name its seeded heading, and demote it to level 2 ("Chapter One").
-  await outline.getByRole("button", { name: "Add section" }).click();
+  await page.getByRole("button", { name: "Add section" }).click();
   await expect(page.getByRole("status")).toHaveText("Saved");
   await editor.locator("h1").click();
   await page.keyboard.type("Chapter One");
-  await toolbar.getByRole("button", { name: "Heading 2" }).click();
+  await chooseBlockStyle(page, "Heading 2");
   await expect(editor.locator("h2")).toContainText("Chapter One");
   await page.getByRole("button", { exact: true, name: "Save" }).click();
   await expect(page.getByRole("status")).toHaveText("Saved");
@@ -72,7 +74,7 @@ test("build a Part/Chapter/Section hierarchy, navigate distant sections, and rea
   await expect(page.getByRole("status")).toHaveText("Saved");
   await editor.locator("h1").click();
   await page.keyboard.type("Section One");
-  await toolbar.getByRole("button", { name: "Heading 3" }).click();
+  await chooseBlockStyle(page, "Heading 3");
   await expect(editor.locator("h3")).toContainText("Section One");
   await page.getByRole("button", { exact: true, name: "Save" }).click();
   await expect(page.getByRole("status")).toHaveText("Saved");

@@ -478,10 +478,14 @@ describe("ManualWorkEditorPage", () => {
 
   // ---- #697 live Outline ---------------------------------------------------
 
-  it("shows the empty-outline hint for a single-section work", async () => {
+  it("shows an above-canvas Add section control and no Outline track for a single-section work", async () => {
     await renderReadyEditor();
 
-    expect(screen.getByText("Add a section to build your outline.")).toBeDefined();
+    // No headings yet → the Outline renders nothing (no sidebar/drawer track); section creation is a single
+    // control above the canvas instead of an empty outline.
+    expect(screen.queryByRole("navigation", { name: "Outline" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Outline" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Add section" })).toBeDefined();
   });
 
   it("renders the derived outline and marks the opened section active", async () => {

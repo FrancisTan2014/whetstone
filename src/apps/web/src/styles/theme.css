@@ -292,6 +292,24 @@
 }
 
 /*
+ * The Work editor's "paper" surface (#791): the shared rich editor becomes a bordered composition sheet an
+ * administrator writes on, origin-neutral (manual authoring and imported correction render the same). Unlike
+ * the compact/workspace boxes it must NOT clip its own overflow, because the attached formatting toolbar is
+ * sticky and would be trapped by an `overflow: hidden` ancestor. The rounded top corners are shared with the
+ * toolbar so the toolbar reads as part of the paper; the focus ring lives on the sheet, not the inner text.
+ */
+.richContentEditor[data-presentation="work"] {
+  border: 1px solid var(--color-border);
+  border-radius: 0.75rem;
+  background-color: var(--color-paper);
+}
+
+.richContentEditor[data-presentation="work"]:focus-within {
+  border-color: var(--color-ring);
+  box-shadow: 0 0 0 2px var(--color-ring);
+}
+
+/*
  * The contextual formatting toolbar rendered inside Tiptap's BubbleMenu, plus its anchored link form
  * (a Radix Popover). Both float above the page, so they carry their own surface, border, and shadow.
  */
@@ -388,6 +406,57 @@
   .richContentEditor[data-presentation="workspace"] .richContentEditorContent {
     min-block-size: clamp(12rem, 34dvh, 20rem);
   }
+}
+
+/*
+ * The Work editor's writing column (#791): the editable area is centered inside the wider paper and capped
+ * to a comfortable measure, with generous side gutters at >=48rem so the line box lands near 46rem. A tall
+ * minimum keeps the sheet a real page — never a cramped input — even for a headingless, single-block Work.
+ */
+.richContentEditor[data-presentation="work"] .richContentEditorContent {
+  max-inline-size: 54rem;
+  min-block-size: clamp(20rem, 52dvh, 32rem);
+  margin-inline: auto;
+  padding-inline: 1rem;
+  font-size: 1.125rem;
+  line-height: 1.75;
+}
+
+@media (min-width: 48rem) {
+  .richContentEditor[data-presentation="work"] .richContentEditorContent {
+    min-block-size: clamp(32rem, 64dvh, 50rem);
+    padding-inline: clamp(1.5rem, 5vw, 4rem);
+  }
+}
+
+/* The sheet carries its own focus ring, so the inner editable text drops the box outline the other
+   surfaces show — a single, calm focus treatment on the paper rather than a double ring. */
+.richContentEditor[data-presentation="work"] .richContentEditorContent:focus-visible {
+  outline: none;
+}
+
+/* Editing-only heading typography mirroring the reader (#791): headings look while writing exactly as they
+   read, so structure is legible in the editor. Editing-only — the static reader mounts its own `.reader`
+   heading rules and never these. */
+.richContentEditor[data-presentation="work"] .richContentEditorContent :where(h1, h2, h3) {
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  line-height: 1.25;
+}
+
+.richContentEditor[data-presentation="work"] .richContentEditorContent h1 {
+  font-size: 2em;
+  font-weight: 700;
+}
+
+.richContentEditor[data-presentation="work"] .richContentEditorContent h2 {
+  font-size: 1.6em;
+  font-weight: 700;
+}
+
+.richContentEditor[data-presentation="work"] .richContentEditorContent h3 {
+  font-size: 1.3em;
+  font-weight: 600;
 }
 
 .richContentEditorContent:focus-visible {
@@ -625,11 +694,12 @@
 }
 
 /*
- * The manual-Work editor workspace (#720 canvas, #697 live Outline). A learner-curated Library work is
- * edited section by section: a live Outline sits beside a centered reading-width canvas so the writing
- * measure matches the reader. The Outline is a persistent sticky sidebar at >=48rem and collapses to a
- * single 44px control opening a full-height drawer below 48rem, so the canvas is never split on a phone.
- * All color, type, and motion come from semantic tokens and honor reduced motion.
+ * The shared Work editor workspace (#720 canvas, #697 live Outline, #791 composition frame). A Work is
+ * edited section by section: a live Outline sits beside a centered document canvas. The Outline is a
+ * persistent sticky 14rem sidebar only at >=80rem AND only when it has entries — an empty outline reserves
+ * NO column, so a headingless Work gets the full canvas width. Below 80rem (or while empty) it is a drawer
+ * opened by a 44px control; below 48rem that drawer is full-width. All color, type, and motion come from
+ * semantic tokens and honor reduced motion.
  */
 .manualWorkWorkspace {
   display: grid;
@@ -638,15 +708,41 @@
   gap: 1.5rem;
 }
 
-/* The editing canvas: a centered reading-width column so the writing measure matches the reader, with
-   responsive gutters on narrow screens. min-inline-size: 0 lets it shrink inside the grid track rather
-   than forcing overflow beside the sidebar. */
+/* The editing canvas: a centered document-width column (the paper caps the writing measure inside it), wide
+   enough to be a real composition surface. min-inline-size: 0 lets it shrink inside the grid track rather
+   than forcing overflow beside the sidebar; the page frame owns the viewport gutters. */
 .manualWorkCanvas {
   min-inline-size: 0;
   inline-size: 100%;
-  max-inline-size: 48rem;
+  max-inline-size: 60rem;
   margin-inline: auto;
-  padding-inline: clamp(0.75rem, 4vw, 1.5rem);
+}
+
+/* The 44px control shown above the canvas when the Work has NO headings yet (the Outline renders nothing),
+   so an administrator can still add the first section without an empty sidebar occupying space. */
+.manualWorkAddSection {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: 44px;
+  padding-inline: 0.75rem;
+  border: 1px dashed var(--color-border);
+  border-radius: 0.5rem;
+  background: transparent;
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.manualWorkAddSection:focus-visible {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 2px;
+}
+
+.manualWorkAddSection:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 /* Below the sidebar breakpoint the Outline is a drawer, so only its 44px toggle occupies flow; the panel
@@ -655,8 +751,8 @@
   position: relative;
 }
 
-/* The control that opens the drawer (<48rem only). A real >=44px tap target; hidden once the Outline
-   becomes a persistent sidebar. Shares its chrome with the Add-section button. */
+/* The control that opens the drawer (below the 80rem sidebar breakpoint only). A real >=44px tap target;
+   hidden once the Outline becomes a persistent sidebar. Shares its chrome with the Add-section button. */
 .workOutlineToggle,
 .workOutlineAdd {
   display: inline-flex;
@@ -693,14 +789,14 @@
   background: rgb(15 23 42 / 40%);
 }
 
-/* Drawer default (<48rem): off-canvas to the inline start, slid in when open. Full-height panel over the
-   backdrop so the canvas is never left as a clipped strip beside a part-width drawer. */
+/* Drawer default (<48rem): a full-width off-canvas panel slid in from the inline start, over the backdrop,
+   so a phone gets the whole viewport for the outline rather than a clipped strip beside the canvas. */
 .workOutlinePanel {
   position: fixed;
   inset-block: 0;
   inset-inline-start: 0;
   z-index: 50;
-  inline-size: min(20rem, 85vw);
+  inline-size: 100vw;
   overflow-y: auto;
   padding: 1.5rem 1rem;
   padding-inline-start: max(1rem, env(safe-area-inset-left));
@@ -720,14 +816,22 @@
   }
 }
 
-/* Sidebar (>=48rem): the Outline is always visible as a sticky column; the toggle and drawer chrome fall
-   away. The grid gives it a fixed 15rem track beside the flexible canvas. */
+/* Tablet drawer (48rem to <80rem): still a drawer, but a fixed 20rem side panel rather than full-width. */
 @media (min-width: 48rem) {
-  .manualWorkWorkspace {
-    grid-template-columns: 15rem minmax(0, 1fr);
+  .workOutlinePanel {
+    inline-size: 20rem;
+  }
+}
+
+/* Sidebar (>=80rem, and only when the Outline has entries): the Outline is a sticky 14rem column beside the
+   canvas; the toggle and drawer chrome fall away and the canvas left-aligns beside it. An empty Outline
+   renders nothing and keeps a single-column canvas, so no empty track is ever reserved. */
+@media (min-width: 80rem) {
+  .manualWorkWorkspace[data-outline="populated"] {
+    grid-template-columns: 14rem minmax(0, 1fr);
   }
 
-  .manualWorkCanvas {
+  .manualWorkWorkspace[data-outline="populated"] .manualWorkCanvas {
     margin-inline: 0;
   }
 
@@ -808,12 +912,6 @@
   line-height: 1.3;
 }
 
-.workOutlineEmpty {
-  margin: 0 0 0.75rem;
-  color: var(--color-text-muted);
-  font-size: 0.875rem;
-}
-
 .workOutlineAdd {
   margin-block-start: 0.75rem;
   border-style: dashed;
@@ -825,38 +923,53 @@
   cursor: default;
 }
 
+/*
+ * The Work editor's persistent formatting toolbar (#720, #791): ONE sticky row attached to the top of the
+ * editor paper, never wrapping — it scrolls horizontally when the controls exceed the width so every target
+ * keeps its full 44px size. Its rounded top corners and paper background make it read as part of the sheet;
+ * a hairline separates it from the writing area. It is the only surface that renders this toolbar, so the
+ * bare-class styling is safe. Sticky to the app's scroll container, so it stays in reach down a long Work.
+ */
 .editorToolbar {
   position: sticky;
   inset-block-start: 0;
   z-index: 20;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 0.25rem;
-  margin-block-end: 0.75rem;
-  padding: 0.375rem;
-  border: 1px solid var(--color-border);
-  border-radius: 0.5rem;
-  background-color: var(--color-surface);
+  max-block-size: 56px;
+  padding: 0.375rem 0.5rem;
+  overflow-x: auto;
+  border-block-end: 1px solid var(--color-border);
+  border-start-start-radius: 0.75rem;
+  border-start-end-radius: 0.75rem;
+  background-color: var(--color-paper);
 }
 
-.editorToolbarGroup {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.125rem;
+/* Every control keeps its size; the row scrolls rather than shrinking or wrapping any target. */
+.editorToolbar > * {
+  flex-shrink: 0;
 }
 
-.editorToolbarDivider {
-  align-self: stretch;
-  inline-size: 1px;
-  margin-inline: 0.25rem;
-  background-color: var(--color-border);
+/* The current-style trigger shows the active block type as text, so it needs room for a label + chevron. */
+.editorToolbarStyle {
+  gap: 0.25rem;
+  padding-inline: 0.625rem;
+  white-space: nowrap;
+}
+
+/* Undo/Redo use aria-disabled (not the native attribute) so they stay focusable for uniform arrow roving;
+   dim them to read as unavailable without dropping out of the toolbar's tab-arrow order. */
+.editorToolbarItem[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: default;
 }
 
 /* The block-actions dropdown and its "Turn into" submenu: floating token surfaces matching the slash
    and formatting menus. Items are 44px-tall touch targets; the delete action reads as destructive. */
 .blockActionsMenu,
+.editorStyleMenu,
 .libraryMenu {
   z-index: 60;
   min-inline-size: 12rem;
@@ -871,6 +984,7 @@
 }
 
 .blockActionsMenuItem,
+.editorStyleMenuItem,
 .libraryMenuItem {
   display: flex;
   align-items: center;
@@ -885,11 +999,19 @@
 
 .blockActionsMenuItem[data-highlighted],
 .blockActionsMenuItem[data-state="open"],
+.editorStyleMenuItem[data-highlighted],
 .libraryMenuItem[data-highlighted],
 .libraryMenuItem[data-state="open"] {
   outline: none;
   background-color: var(--color-bg);
   color: var(--color-accent);
+}
+
+/* The style menu marks the block type the selection currently sits in, so the open menu shows the current
+   structure at a glance (the trigger already names it). */
+.editorStyleMenuItem[aria-current="true"] {
+  color: var(--color-accent);
+  font-weight: 600;
 }
 
 .blockActionsMenuItem[data-disabled],

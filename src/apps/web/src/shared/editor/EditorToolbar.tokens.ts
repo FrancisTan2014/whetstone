@@ -1,5 +1,7 @@
 export const editorToolbarClassNames = {
-  divider: "editorToolbarDivider",
-  group: "editorToolbarGroup",
-  root: "editorToolbar"
+  item: "editorToolbarItem",
+  menu: "editorStyleMenu",
+  menuItem: "editorStyleMenuItem",
+  root: "editorToolbar",
+  styleTrigger: "editorToolbarStyle"
 } as const;
