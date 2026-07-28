@@ -73,9 +73,9 @@
 //
 // TIMEOUT-EQUIVALENCE INVARIANT (so the gate measures what production ships): the worker's wall-clock
 // timeout is resolved from the SAME server-config owner the live import lane uses
-// (serverConfig `resolveStructuredPdfTimeoutMs`: PDF_TIMEOUT_MS override, else the 180000 ms production
+// (serverConfig `resolveStructuredPdfTimeoutMs`: PDF_TIMEOUT_MS override, else the 600000 ms production
 // default) — the harness never duplicates a longer default. Omitting `--timeout-ms` therefore kills a slow
-// range at exactly the 180000 ms production bound, so a PDF that finishes only AFTER production would have
+// range at exactly the 600000 ms production bound, so a PDF that finishes only AFTER production would have
 // rejected it is classified `timed-out` and counts against the 95% gate, never counted as usable. A
 // diagnostic `--timeout-ms` differing from the production bound is allowed but forces `corpusGatePass: false`
 // and is reported as non-gating (`run.timeoutOverridden: true`), so a longer diagnostic timeout can never
@@ -135,7 +135,7 @@ const DEFAULT_TESSERACT_BINARY = "tesseract";
 // config uses (resolveStructuredPdfMemoryMib / resolveStructuredPdfTimeoutMs). For memory: a positive-integer
 // PDF_STRUCTURED_MEMORY_MIB / --memory-mib override wins on every platform, otherwise the platform-aware
 // default applies (2,048 MiB POSIX, 6,144 MiB Windows). For the timeout: the live import lane resolves it
-// from PDF_TIMEOUT_MS (else the 180000 ms production default); the harness holds only the raw `--timeout-ms`
+// from PDF_TIMEOUT_MS (else the 600000 ms production default); the harness holds only the raw `--timeout-ms`
 // override here and resolves both once the workspace is loaded, so it bounds each conversion exactly as the
 // real import lane does and never duplicates a longer default. A `--timeout-ms` differing from the
 // production bound is a diagnostic that forces a non-gating run (see runCorpus).
@@ -674,7 +674,7 @@ async function loadTypeScriptDeps() {
       await import("../../src/apps/server/src/files/pdfStructuredRunnerResolution.js");
     const ocrResolution = await import("../../src/apps/server/src/files/pdfOcrRunnerResolution.js");
     // The single production owner of the per-child memory default (2,048 MiB POSIX, 6,144 MiB Windows) and
-    // the worker timeout default (180000 ms), plus their override precedence, so the harness resolves the
+    // the worker timeout default (600000 ms), plus their override precedence, so the harness resolves the
     // SAME ceiling and timeout the server does without duplicating those numbers here.
     const serverConfig = await import("../../src/apps/server/src/config/serverConfig.js");
     return {
@@ -740,7 +740,7 @@ async function main() {
   }
 
   // Resolve the worker timeout from the SINGLE production owner (serverConfig): the live import lane's bound
-  // is `resolveStructuredPdfTimeoutMs(PDF_TIMEOUT_MS)` (the 180000 ms production default unless the env
+  // is `resolveStructuredPdfTimeoutMs(PDF_TIMEOUT_MS)` (the 600000 ms production default unless the env
   // overrides it). Omitting `--timeout-ms` uses exactly that, so a gate run kills a slow range at the same
   // point production would. An explicit `--timeout-ms` is a diagnostic: it is honoured, but if it differs
   // from the production bound the run is marked non-gating (see runCorpus) so a longer timeout can never
@@ -987,7 +987,7 @@ async function runCorpus(python, contracts, domain, deps, args, bounds, ocr, fil
       doclingVersion: contracts.PINNED_DOCLING_VERSION,
       modelCommit: contracts.PINNED_MODEL_COMMIT,
       // The effective worker timeout (ms) this run bounded every conversion by — part of the fingerprint so
-      // a report is falsifiable against the production import lane's 180000 ms bound.
+      // a report is falsifiable against the production import lane's 600000 ms bound.
       workerTimeoutMs: args.timeoutMs
     }
   };

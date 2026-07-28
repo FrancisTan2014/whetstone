@@ -15,7 +15,17 @@ export const WINDOWS_STRUCTURED_PDF_MEMORY_MIB = 6144;
 // The single owner of the structured PDF worker's wall-clock timeout. Production kills a slow spawn here
 // (422) and the #779 corpus harness must gate on the SAME bound, so neither duplicates the number: both
 // resolve it through `resolveStructuredPdfTimeoutMs`. Overridable with PDF_TIMEOUT_MS (see below).
-export const DEFAULT_PDF_TIMEOUT_MS = 180_000;
+//
+// Calibrated for the slowest SUPPORTED single page, not just born-digital. A born-digital page converts in
+// seconds, but a scanned page that took the language-aware OCR pre-pass (#704/#745) carries a dense
+// OCR-recovered hidden text layer, so Docling's per-page layout + table analysis is materially slower on it.
+// The earlier born-digital-calibrated 180000 ms ceiling killed a legitimate smallest-scale one-page scan
+// mid-conversion (#789) even after OCR completed, so no Work published. 600000 ms admits that in-bound
+// scanned page while staying a HARD bound: a genuinely over-budget document is still terminated and typed
+// `timeout`, and it remains below the retired 15-minute harness reference the gate must never resurrect.
+// The exact budget is validated/tuned against the real toolchain by the skip-guarded slow-lane regression
+// and the #705 corpus harness; this constant is the single knob. Overridable with PDF_TIMEOUT_MS.
+export const DEFAULT_PDF_TIMEOUT_MS = 600_000;
 
 // Resolve the worker timeout (ms): an explicit positive-integer PDF_TIMEOUT_MS / --timeout-ms value wins;
 // absent, the production default applies. Rejects a non-positive or non-integer override so the worker

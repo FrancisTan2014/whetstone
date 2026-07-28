@@ -76,13 +76,15 @@ describe("readServerConfig structured PDF memory ceiling", () => {
 });
 
 describe("readServerConfig structured PDF timeout", () => {
-  it("defaults the worker timeout to the production 180000 ms bound", () => {
+  it("defaults the worker timeout to the production 600000 ms bound", () => {
     // The single owner both the live import lane and the #779 corpus harness consume, so a gate run kills a
-    // slow spawn at the exact point production does — never a longer duplicated default.
-    expect(DEFAULT_PDF_TIMEOUT_MS).toBe(180_000);
-    expect(readServerConfig({}).pdfTimeoutMs).toBe(180_000);
-    expect(resolveStructuredPdfTimeoutMs(undefined)).toBe(180_000);
-    // Well under the retired 15-minute harness default the gate must not use.
+    // slow spawn at the exact point production does — never a longer duplicated default. #789 recalibrated it
+    // from 180000 ms (born-digital only) so a smallest-scale scanned page's slower OCR-derived conversion is
+    // not killed mid-flight, while it stays a hard bound below the retired 15-minute harness reference.
+    expect(DEFAULT_PDF_TIMEOUT_MS).toBe(600_000);
+    expect(readServerConfig({}).pdfTimeoutMs).toBe(600_000);
+    expect(resolveStructuredPdfTimeoutMs(undefined)).toBe(600_000);
+    // Still a hard bound, strictly under the retired 15-minute harness default the gate must not use.
     expect(DEFAULT_PDF_TIMEOUT_MS).toBeLessThan(15 * 60 * 1000);
   });
 
