@@ -1,97 +1,25 @@
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import type { Editor } from "@tiptap/core";
-import {
-  Bold,
-  Code,
-  Heading1,
-  Heading2,
-  Heading3,
-  Italic,
-  List,
-  ListOrdered,
-  Pilcrow,
-  Quote,
-  Redo2,
-  SquareCode,
-  Undo2
-} from "lucide-react";
+import { Bold, ChevronDown, Code, Italic, List, ListOrdered, Redo2, Undo2 } from "lucide-react";
+import { useRef, useState } from "react";
 
-import { IconButton } from "../ui/Button.js";
+import { Button, IconButton } from "../ui/Button.js";
 import { runBlockCommandById } from "./blockCommands.js";
-import { editorToolbarClassNames } from "./EditorToolbar.tokens.js";
+import { blockStyleOptions, currentBlockStyle } from "./blockStyleMenu.js";
+import { editorToolbarClassNames as cx } from "./EditorToolbar.tokens.js";
 
-// The manual-Work editor's persistent formatting toolbar (#720). Unlike the authored surface's
-// selection-only bubble menu, the Library editor keeps every block and inline control on screen so a
-// learner curating a passage can format without discovering the contextual menus. Each control is a thin
+// The Work editor's persistent formatting toolbar (#720, #791). Unlike the authored surface's
+// selection-only bubble menu, the Work editor keeps formatting on screen so an administrator curating a
+// passage can format without discovering the contextual menus. It presents as ONE sticky row attached to
+// the editor surface: a current-style menu (Text / Heading 1-3 / Quote / Code block) followed by inline
+// marks, list wraps, and history — every control a >=44px target. The row never wraps or shrinks; below the
+// available width it scrolls horizontally and the focused control scrolls into view. Each control is a thin
 // seam over the SAME editor primitives the other surfaces use — block transforms go through the shared
 // `runBlockCommandById` catalog (so stable-id preservation is identical), inline marks and history through
-// Tiptap's own commands — never a bespoke transaction. The toolbar owns no state: it reflects the live
-// editor (active marks/blocks, whether undo/redo is possible) and mutates only through the editor.
+// Tiptap's own commands — never a bespoke transaction. The toolbar owns no editor state: it reflects the
+// live editor and mutates only through it.
 
 const iconProps = { "aria-hidden": true, size: 18, strokeWidth: 1.75 } as const;
-
-// A block-style control turns the current block into one document block type (paragraph, headings, lists,
-// quote, code block) and lights up when the selection already sits in that type, so the toolbar shows the
-// current structure at a glance. `isActive` reads the live editor; `id` is the shared block-command id.
-type BlockControl = Readonly<{
-  icon: React.JSX.Element;
-  id: string;
-  isActive: (editor: Editor) => boolean;
-  label: string;
-}>;
-
-const blockControls: readonly BlockControl[] = [
-  {
-    icon: <Pilcrow {...iconProps} />,
-    id: "paragraph",
-    isActive: (editor) => editor.isActive("paragraph"),
-    label: "Paragraph"
-  },
-  {
-    icon: <Heading1 {...iconProps} />,
-    id: "heading-1",
-    isActive: (editor) => editor.isActive("heading", { level: 1 }),
-    label: "Heading 1"
-  },
-  {
-    icon: <Heading2 {...iconProps} />,
-    id: "heading-2",
-    isActive: (editor) => editor.isActive("heading", { level: 2 }),
-    label: "Heading 2"
-  },
-  {
-    icon: <Heading3 {...iconProps} />,
-    id: "heading-3",
-    isActive: (editor) => editor.isActive("heading", { level: 3 }),
-    label: "Heading 3"
-  }
-];
-
-const listControls: readonly BlockControl[] = [
-  {
-    icon: <List {...iconProps} />,
-    id: "bullet-list",
-    isActive: (editor) => editor.isActive("bulletList"),
-    label: "Bulleted list"
-  },
-  {
-    icon: <ListOrdered {...iconProps} />,
-    id: "ordered-list",
-    isActive: (editor) => editor.isActive("orderedList"),
-    label: "Numbered list"
-  },
-  {
-    icon: <Quote {...iconProps} />,
-    id: "blockquote",
-    isActive: (editor) => editor.isActive("blockquote"),
-    label: "Quote"
-  },
-  {
-    icon: <SquareCode {...iconProps} />,
-    id: "code-block",
-    isActive: (editor) => editor.isActive("codeBlock"),
-    label: "Code block"
-  }
-];
 
 // An inline-mark control toggles a mark on the selection and lights up when the mark is active. `mark` is
 // the mark name for the live active check; `toggle` runs the mark's own Tiptap command through a focused
@@ -124,55 +52,200 @@ const markControls: readonly MarkControl[] = [
   }
 ];
 
+// The two list wraps kept as their own controls (Quote and Code block moved into the style menu, #791).
+type ListControl = Readonly<{
+  icon: React.JSX.Element;
+  id: string;
+  isActive: (editor: Editor) => boolean;
+  label: string;
+}>;
+
+const listControls: readonly ListControl[] = [
+  {
+    icon: <List {...iconProps} />,
+    id: "bullet-list",
+    isActive: (editor) => editor.isActive("bulletList"),
+    label: "Bulleted list"
+  },
+  {
+    icon: <ListOrdered {...iconProps} />,
+    id: "ordered-list",
+    isActive: (editor) => editor.isActive("orderedList"),
+    label: "Numbered list"
+  }
+];
+
+// The live toolbar controls, in DOM order, for the single-tab-stop arrow navigation (ARIA toolbar pattern).
+// Read from the DOM so the roving logic stays correct no matter how many controls render.
+function focusableItems(toolbar: HTMLElement | null): HTMLElement[] {
+  return Array.from(toolbar?.querySelectorAll<HTMLElement>("[data-toolbar-item]") ?? []);
+}
+
 export function EditorToolbar({ editor }: Readonly<{ editor: Editor }>): React.JSX.Element {
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  // The one control that is in the tab order (roving tabindex); every other control is reachable only by the
+  // toolbar's own arrow navigation, so the whole toolbar is a single Tab stop.
+  const [activeIndex, setActiveIndex] = useState(0);
+
+  const style = currentBlockStyle(editor);
+
+  const itemProps = (
+    index: number
+  ): Readonly<{
+    "data-toolbar-item": true;
+    onFocus: (event: React.FocusEvent<HTMLElement>) => void;
+    tabIndex: number;
+  }> => ({
+    "data-toolbar-item": true,
+    onFocus: (event) => {
+      setActiveIndex(index);
+      // Keep the focused control visible when the row has scrolled horizontally.
+      event.currentTarget.scrollIntoView({ block: "nearest", inline: "nearest" });
+    },
+    tabIndex: index === activeIndex ? 0 : -1
+  });
+
+  // Left/Right move focus between controls, Home/End jump to the ends, wrapping at the edges. Ignored while
+  // focus is inside an open menu (its content is portaled outside the toolbar, so `document.activeElement`
+  // is not a toolbar control), where Radix owns arrow/Escape behavior.
+  const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+    if (!["ArrowLeft", "ArrowRight", "End", "Home"].includes(event.key)) {
+      return;
+    }
+    const items = focusableItems(toolbarRef.current);
+    const current = items.findIndex((item) => item === document.activeElement);
+    if (current === -1) {
+      return;
+    }
+    event.preventDefault();
+    const last = items.length - 1;
+    const next =
+      event.key === "ArrowRight"
+        ? current === last
+          ? 0
+          : current + 1
+        : event.key === "ArrowLeft"
+          ? current === 0
+            ? last
+            : current - 1
+          : event.key === "Home"
+            ? 0
+            : last;
+    items[next]?.focus();
+  };
+
+  // Return focus to the editor when the style menu closes (Radix would otherwise pull it back to the
+  // trigger), so a chosen command lands the caret back in the document. Deferred past Radix's close churn.
+  const focusEditor = (event: Event): void => {
+    event.preventDefault();
+    queueMicrotask(() => {
+      /* v8 ignore next 3 -- the editor can only be destroyed mid-close if the surface unmounts between the
+         menu closing and this microtask, which the tests' synchronous flush cannot reproduce. */
+      if (editor.isDestroyed) {
+        return;
+      }
+      editor.commands.focus();
+    });
+  };
+
+  let index = 0;
+
   return (
-    <div aria-label="Formatting" className={editorToolbarClassNames.root} role="toolbar">
-      <div className={editorToolbarClassNames.group} role="group">
-        {[...blockControls, ...listControls].map((control) => (
-          <IconButton
-            aria-pressed={control.isActive(editor)}
-            icon={control.icon}
-            key={control.id}
-            label={control.label}
-            onClick={() => runBlockCommandById(editor, control.id)}
-            variant={control.isActive(editor) ? "secondary" : "ghost"}
-          />
-        ))}
-      </div>
+    <div
+      aria-label="Formatting"
+      aria-orientation="horizontal"
+      className={cx.root}
+      onKeyDown={onKeyDown}
+      ref={toolbarRef}
+      role="toolbar"
+    >
+      <DropdownMenu.Root modal={false}>
+        <DropdownMenu.Trigger asChild>
+          <Button
+            aria-label="Block style"
+            className={cx.styleTrigger}
+            variant="secondary"
+            {...itemProps(index++)}
+          >
+            <span>{style.label}</span>
+            <ChevronDown aria-hidden size={16} strokeWidth={1.75} />
+          </Button>
+        </DropdownMenu.Trigger>
+        <DropdownMenu.Portal>
+          <DropdownMenu.Content
+            align="start"
+            aria-label="Block style"
+            className={cx.menu}
+            onCloseAutoFocus={focusEditor}
+            side="bottom"
+            sideOffset={4}
+          >
+            {blockStyleOptions.map((option) => (
+              <DropdownMenu.Item
+                aria-current={option.id === style.id ? "true" : undefined}
+                className={cx.menuItem}
+                key={option.id}
+                onSelect={() => runBlockCommandById(editor, option.id)}
+              >
+                {option.label}
+              </DropdownMenu.Item>
+            ))}
+          </DropdownMenu.Content>
+        </DropdownMenu.Portal>
+      </DropdownMenu.Root>
 
-      <span aria-hidden className={editorToolbarClassNames.divider} />
-
-      <div className={editorToolbarClassNames.group} role="group">
-        {markControls.map((control) => (
-          <IconButton
-            aria-pressed={editor.isActive(control.mark)}
-            icon={control.icon}
-            key={control.mark}
-            label={control.label}
-            onClick={() => control.toggle(editor)}
-            variant={editor.isActive(control.mark) ? "secondary" : "ghost"}
-          />
-        ))}
-      </div>
-
-      <span aria-hidden className={editorToolbarClassNames.divider} />
-
-      <div className={editorToolbarClassNames.group} role="group">
+      {markControls.map((control) => (
         <IconButton
-          disabled={!editor.can().undo()}
-          icon={<Undo2 {...iconProps} />}
-          label="Undo"
-          onClick={() => editor.commands.undo()}
-          variant="ghost"
+          aria-pressed={editor.isActive(control.mark)}
+          className={cx.item}
+          icon={control.icon}
+          key={control.mark}
+          label={control.label}
+          onClick={() => control.toggle(editor)}
+          variant={editor.isActive(control.mark) ? "secondary" : "ghost"}
+          {...itemProps(index++)}
         />
+      ))}
+
+      {listControls.map((control) => (
         <IconButton
-          disabled={!editor.can().redo()}
-          icon={<Redo2 {...iconProps} />}
-          label="Redo"
-          onClick={() => editor.commands.redo()}
-          variant="ghost"
+          aria-pressed={control.isActive(editor)}
+          className={cx.item}
+          icon={control.icon}
+          key={control.id}
+          label={control.label}
+          onClick={() => runBlockCommandById(editor, control.id)}
+          variant={control.isActive(editor) ? "secondary" : "ghost"}
+          {...itemProps(index++)}
         />
-      </div>
+      ))}
+
+      <IconButton
+        aria-disabled={!editor.can().undo()}
+        className={cx.item}
+        icon={<Undo2 {...iconProps} />}
+        label="Undo"
+        onClick={() => {
+          if (editor.can().undo()) {
+            editor.commands.undo();
+          }
+        }}
+        variant="ghost"
+        {...itemProps(index++)}
+      />
+      <IconButton
+        aria-disabled={!editor.can().redo()}
+        className={cx.item}
+        icon={<Redo2 {...iconProps} />}
+        label="Redo"
+        onClick={() => {
+          if (editor.can().redo()) {
+            editor.commands.redo();
+          }
+        }}
+        variant="ghost"
+        {...itemProps(index++)}
+      />
     </div>
   );
 }

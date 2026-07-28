@@ -10,16 +10,18 @@ import type { DocumentNodeJSON } from "@whetstone/document";
 
 import { useMediaQuery } from "../../shared/ui/useMediaQuery.js";
 
-// The manual-Work editor's live Outline (#697): the section navigator derived ONLY from the persisted
-// heading blocks — never a stored or client-cached TOC copy. At 48rem+ it is a sticky sidebar always in
-// view beside the editor canvas; below 48rem it collapses to a single 44px control that opens a
-// full-height drawer with Escape/outside dismissal and focus restoration. Selecting an entry loads that
-// section, and the parent focuses its heading. The outline itself owns no save/navigation logic; it
-// reports selection and the add-section request and reflects the active section.
+// The shared Work editor's live Outline (#697, #791): the section navigator derived ONLY from the persisted
+// heading blocks — never a stored or client-cached TOC copy. At 80rem+ it is a sticky 14rem sidebar always
+// in view beside the editor canvas; below 80rem it collapses to a single 44px control that opens a drawer
+// (full-width below 48rem, a 20rem side panel above it) with Escape/outside dismissal and focus restoration.
+// When the Work has no headings the outline is empty and renders NOTHING — the parent shows an "Add section"
+// control above the canvas instead, so no empty sidebar track is reserved. Selecting an entry loads that
+// section and the parent focuses its heading. The outline owns no save/navigation logic; it reports
+// selection and the add-section request and reflects the active section.
 
-// The width at which the Outline is a persistent sidebar rather than a drawer (#697). Read in JS as well
+// The width at which the Outline is a persistent sidebar rather than a drawer (#791). Read in JS as well
 // as CSS so the drawer's open state and dismissal only apply while it is actually a drawer.
-const OUTLINE_SIDEBAR_QUERY = "(min-width: 48rem)";
+const OUTLINE_SIDEBAR_QUERY = "(min-width: 80rem)";
 
 // Project a Work's ordered sections into the shared hierarchical outline. Reuses the domain projection so
 // the editor Outline and the Reader TOC derive the SAME hierarchy from the same heading data: source
@@ -118,7 +120,7 @@ export function WorkOutline({
   entries: ReadonlyArray<HeadingOutlineEntry>;
   onAddSection: () => void;
   onSelect: (unitEntryId: string) => void;
-}>): React.JSX.Element {
+}>): React.JSX.Element | null {
   const isSidebar = useMediaQuery(OUTLINE_SIDEBAR_QUERY);
   const [openRequested, setOpenRequested] = useState(false);
   const openerRef = useRef<HTMLButtonElement>(null);
@@ -179,6 +181,13 @@ export function WorkOutline({
     }
   };
 
+  // An empty Outline (a Work with no headings) renders nothing at all, so the workspace reserves no sidebar
+  // track and no drawer toggle; the parent surfaces an "Add section" control above the canvas instead. Placed
+  // after every hook so the hook order stays stable across the populated/empty transition.
+  if (entries.length === 0) {
+    return null;
+  }
+
   return (
     <div className="workOutline">
       <button
@@ -205,31 +214,27 @@ export function WorkOutline({
         id={panelId}
       >
         <p className="workOutlineHeading">Outline</p>
-        {entries.length > 0 ? (
-          <ul className="workOutlineList">
-            {entries.map((entry) => (
-              <li
-                className="workOutlineNode"
-                data-depth={entry.depth}
-                key={entry.entryId}
-                style={{ "--outline-depth": entry.depth } as React.CSSProperties}
+        <ul className="workOutlineList">
+          {entries.map((entry) => (
+            <li
+              className="workOutlineNode"
+              data-depth={entry.depth}
+              key={entry.entryId}
+              style={{ "--outline-depth": entry.depth } as React.CSSProperties}
+            >
+              <button
+                aria-current={entry.targetUnitEntryId === activeUnitEntryId ? "true" : undefined}
+                className="workOutlineItem"
+                data-active-path={activePathEntryIds.has(entry.entryId) ? "true" : undefined}
+                onClick={() => select(entry.targetUnitEntryId)}
+                title={entry.label}
+                type="button"
               >
-                <button
-                  aria-current={entry.targetUnitEntryId === activeUnitEntryId ? "true" : undefined}
-                  className="workOutlineItem"
-                  data-active-path={activePathEntryIds.has(entry.entryId) ? "true" : undefined}
-                  onClick={() => select(entry.targetUnitEntryId)}
-                  title={entry.label}
-                  type="button"
-                >
-                  <span className="workOutlineLabel">{entry.label}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="workOutlineEmpty">Add a section to build your outline.</p>
-        )}
+                <span className="workOutlineLabel">{entry.label}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
         <button
           className="workOutlineAdd"
           disabled={addPending}

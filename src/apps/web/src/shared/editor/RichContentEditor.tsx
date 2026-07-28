@@ -67,7 +67,7 @@ const POINTER_GUTTER_QUERY = "(hover: hover) and (pointer: fine)";
 // compact/keyboard trigger) never open at once.
 type OpenMenu = { readonly pos: number; readonly source: "gutter" | "more" };
 
-export type RichContentEditorPresentation = "compact" | "full" | "workspace";
+export type RichContentEditorPresentation = "compact" | "full" | "work" | "workspace";
 
 export interface RichContentEditorProps {
   readonly ariaLabel?: string;
@@ -100,6 +100,16 @@ function snapshot(editor: Editor): DocumentNodeJSON {
 
 function isSaveShortcut(event: KeyboardEvent): boolean {
   return (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s";
+}
+
+// True when a pointer press landed on the editable surface's own padding rather than on any block inside
+// it — the wide left/right gutter and the tall empty area below the last line of the Work editor's centered
+// "paper" (#791). ProseMirror places no caret when that dead margin is clicked, which reads as a broken
+// text field; the Work surface instead treats such a press as "put me in the document" and focuses the end.
+// Any press that lands on a real block (its target is a descendant, not the content root itself) is left to
+// ProseMirror so ordinary caret placement is unchanged.
+function isBlankSurfacePress(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && target.classList.contains(editorClassNames.content);
 }
 
 // The document position just before the top-level block the selection sits in — the same value the
@@ -299,7 +309,22 @@ export function RichContentEditor({
   };
 
   return (
-    <div className={editorClassNames.root} data-presentation={presentation}>
+    <div
+      className={editorClassNames.root}
+      data-presentation={presentation}
+      onMouseDown={
+        presentation === "work" && editable
+          ? (event) => {
+              if (isBlankSurfacePress(event.target)) {
+                // Keep ProseMirror from collapsing the selection to the clicked margin, then land the
+                // caret at the document end so a press anywhere on the paper enters the text.
+                event.preventDefault();
+                editor.commands.focus("end");
+              }
+            }
+          : undefined
+      }
+    >
       {showToolbar && editable ? <EditorToolbar editor={editor} /> : null}
       <BubbleMenu
         appendTo={bubbleAppendTo}

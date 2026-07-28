@@ -1,4 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+
+import { ArrowLeft } from "lucide-react";
+import { Link } from "react-router-dom";
 
 import type { DocumentNodeJSON } from "@whetstone/document";
 
@@ -9,7 +12,6 @@ import {
   validateEditorDocument
 } from "../../shared/editor/index.js";
 import { Button } from "../../shared/ui/Button.js";
-import { PageFrame } from "../../shared/ui/PageFrame.js";
 import type { ManualWorkSectionDto } from "@whetstone/contracts";
 import {
   manualEditorSaveStatusClassNames,
@@ -105,9 +107,14 @@ export function useUnsavedGuard(active: boolean): void {
   }, [active]);
 }
 
-// The editor shell: a Library parent link, the work title, an optional leading action (e.g. "Open in
-// Reader" for a correction), the save status + Save action, and the workspace. Shared by the page-level
-// loading/error arms so every state uses the same calm frame.
+// The Work editor shell (#791): a dedicated composition workspace, not a standard focused page. Reader is
+// the immersive exception among reading surfaces; the Work editor is the immersive exception among editing
+// surfaces, so it does NOT use the standard PageFrame (whose widths cap at 42/64rem) and instead frames the
+// document in its own wide 88rem workspace. It still mirrors PageFrame's header semantics — a truthful
+// "Library" parent link with a leading ArrowLeft as a 44px target, one 28px/34px H1 work title, and a
+// single primary-action slot (the save status + Save, and an optional leading "Open in Reader") that sits
+// beside the title on desktop and wraps below it on a phone. Shared by the page-level loading/error arms so
+// every state uses the same calm frame.
 export function EditorFrame({
   children,
   primaryAction,
@@ -117,14 +124,35 @@ export function EditorFrame({
   primaryAction?: React.ReactNode;
   title?: string;
 }>): React.JSX.Element {
+  const headingId = useId();
+
   return (
-    <PageFrame
-      parentLink={{ label: "Library", to: "/library" }}
-      primaryAction={primaryAction}
-      title={title}
+    <section
+      aria-labelledby={headingId}
+      className="mx-auto w-full max-w-[88rem] px-4 pt-6 pb-6 md:px-6 md:pt-8 md:pb-8"
     >
-      {children}
-    </PageFrame>
+      <div className="flex flex-col gap-6">
+        <header className="flex flex-col gap-2">
+          <Link
+            className="inline-flex min-h-[44px] w-fit items-center gap-1 text-sm font-medium text-text-muted hover:text-text"
+            to="/library"
+          >
+            <ArrowLeft aria-hidden size={20} strokeWidth={1.75} />
+            Library
+          </Link>
+          <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+            <h1
+              className="text-[1.75rem] leading-[2.125rem] font-semibold text-text"
+              id={headingId}
+            >
+              {title}
+            </h1>
+            {primaryAction === undefined ? null : <div className="shrink-0">{primaryAction}</div>}
+          </div>
+        </header>
+        {children}
+      </div>
+    </section>
   );
 }
 
@@ -400,46 +428,66 @@ export function WorkContentEditor<W extends WorkEditorWork>({
   }, [api, bumpFocus, runSave]);
 
   const header = (
-    <div className="flex items-center gap-3">
+    <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
       {leadingAction}
-      <p
-        aria-live="polite"
-        className={`text-sm ${manualEditorSaveStatusClassNames[status]}`}
-        role={
-          status === "conflict" || status === "error" || status === "validation-error"
-            ? "alert"
-            : "status"
-        }
-      >
-        {manualEditorSaveStatusLabels[status]}
-      </p>
-      <Button
-        onClick={() => {
-          void runSave(draft);
-        }}
-        pending={status === "saving"}
-        size="sm"
-        variant="primary"
-      >
-        {status === "conflict" ? "Save again" : "Save"}
-      </Button>
+      <div className="flex flex-shrink-0 items-center gap-3">
+        <p
+          aria-live="polite"
+          className={`text-sm ${manualEditorSaveStatusClassNames[status]}`}
+          role={
+            status === "conflict" || status === "error" || status === "validation-error"
+              ? "alert"
+              : "status"
+          }
+        >
+          {manualEditorSaveStatusLabels[status]}
+        </p>
+        <Button
+          onClick={() => {
+            void runSave(draft);
+          }}
+          pending={status === "saving"}
+          size="sm"
+          variant="primary"
+        >
+          {status === "conflict" ? "Save again" : "Save"}
+        </Button>
+      </div>
     </div>
   );
 
+  // The Outline renders only when the Work has headings; an empty Outline reserves no sidebar track. So the
+  // workspace advertises its outline state (populated/empty) to the layout, and when empty the section
+  // navigation is a single 44px "Add section" control above the canvas rather than an empty sidebar.
+  const hasOutline = outlineEntries.length > 0;
+
   return (
     <EditorFrame primaryAction={header} title={work.title}>
-      <div className="manualWorkWorkspace">
-        <WorkOutline
-          activeUnitEntryId={activeUnitEntryId}
-          addPending={addPending}
-          entries={outlineEntries}
-          onAddSection={() => {
-            void addSection();
-          }}
-          onSelect={(unitEntryId) => {
-            void navigateTo(unitEntryId);
-          }}
-        />
+      <div className="manualWorkWorkspace" data-outline={hasOutline ? "populated" : "empty"}>
+        {hasOutline ? (
+          <WorkOutline
+            activeUnitEntryId={activeUnitEntryId}
+            addPending={addPending}
+            entries={outlineEntries}
+            onAddSection={() => {
+              void addSection();
+            }}
+            onSelect={(unitEntryId) => {
+              void navigateTo(unitEntryId);
+            }}
+          />
+        ) : (
+          <button
+            className="manualWorkAddSection"
+            disabled={addPending}
+            onClick={() => {
+              void addSection();
+            }}
+            type="button"
+          >
+            {addPending ? "Adding…" : "Add section"}
+          </button>
+        )}
         <div className="manualWorkCanvas">
           <RichContentEditor
             ariaLabel={`Edit ${work.title}`}
@@ -451,7 +499,7 @@ export function WorkContentEditor<W extends WorkEditorWork>({
             onSave={(document) => {
               void runSave(document);
             }}
-            presentation="full"
+            presentation="work"
             showToolbar
           />
         </div>
