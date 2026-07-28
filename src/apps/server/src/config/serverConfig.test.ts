@@ -2,9 +2,11 @@ import { MAX_STAGED_BYTES } from "@whetstone/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
+  DEFAULT_PDF_TIMEOUT_MS,
   defaultStructuredPdfMemoryMib,
   readServerConfig,
-  resolveStructuredPdfMemoryMib
+  resolveStructuredPdfMemoryMib,
+  resolveStructuredPdfTimeoutMs
 } from "./serverConfig.js";
 
 describe("readServerConfig PDF upload limit", () => {
@@ -69,6 +71,35 @@ describe("readServerConfig structured PDF memory ceiling", () => {
     );
     expect(() => resolveStructuredPdfMemoryMib("not-a-number", "linux")).toThrow(
       "PDF_STRUCTURED_MEMORY_MIB must be a positive integer number of MiB."
+    );
+  });
+});
+
+describe("readServerConfig structured PDF timeout", () => {
+  it("defaults the worker timeout to the production 180000 ms bound", () => {
+    // The single owner both the live import lane and the #779 corpus harness consume, so a gate run kills a
+    // slow spawn at the exact point production does — never a longer duplicated default.
+    expect(DEFAULT_PDF_TIMEOUT_MS).toBe(180_000);
+    expect(readServerConfig({}).pdfTimeoutMs).toBe(180_000);
+    expect(resolveStructuredPdfTimeoutMs(undefined)).toBe(180_000);
+    // Well under the retired 15-minute harness default the gate must not use.
+    expect(DEFAULT_PDF_TIMEOUT_MS).toBeLessThan(15 * 60 * 1000);
+  });
+
+  it("honors a valid PDF_TIMEOUT_MS override", () => {
+    expect(readServerConfig({ PDF_TIMEOUT_MS: "90000" }).pdfTimeoutMs).toBe(90000);
+    expect(resolveStructuredPdfTimeoutMs("90000")).toBe(90000);
+  });
+
+  it("rejects a non-positive or non-integer PDF_TIMEOUT_MS", () => {
+    expect(() => readServerConfig({ PDF_TIMEOUT_MS: "0" })).toThrow(
+      "PDF_TIMEOUT_MS must be a positive integer number of milliseconds."
+    );
+    expect(() => resolveStructuredPdfTimeoutMs("-5")).toThrow(
+      "PDF_TIMEOUT_MS must be a positive integer number of milliseconds."
+    );
+    expect(() => resolveStructuredPdfTimeoutMs("not-a-number")).toThrow(
+      "PDF_TIMEOUT_MS must be a positive integer number of milliseconds."
     );
   });
 });
