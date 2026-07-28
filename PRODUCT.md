@@ -351,9 +351,14 @@ owning source flow:
   any failure, and arms a navigation guard while there are unsaved changes. Every saved block is
   directly editable; raw Markdown entry, block inspection, and the old **Content overview** are not
   editing surfaces.
-- On desktop, the editor is a dedicated page with a persistent 15rem left **Outline** and a
-  42–48rem content canvas; mobile opens Outline in a drawer. The header provides Library return,
-  save state, and **Open in Reader**.
+- The shared Work editor is a dedicated composition workspace, not a standard focused page. After
+  the app navigation it may use up to 88rem: the document surface uses up to 60rem while its editable
+  text keeps a readable 46rem maximum measure. Library return, title, save state, explicit **Save**,
+  and the optional **Open in Reader** action form one document header; the formatting bar is attached
+  to the document, stays one sticky row, and scrolls horizontally rather than wrapping on narrow screens.
+- A populated **Outline** occupies a 14rem sticky column only from an 80rem viewport upward. An empty
+  Outline never reserves a column, and below that breakpoint section navigation opens over the document
+  from a 44px control so the writing surface keeps the available width.
 - Outline is a live navigator derived only from canonical heading nodes. Heading 1/2/3 controls
   structure, selection opens the corresponding section, and the active section is highlighted.
   Whetstone stores no second editable TOC and offers no outline drag/reorder in v0.
