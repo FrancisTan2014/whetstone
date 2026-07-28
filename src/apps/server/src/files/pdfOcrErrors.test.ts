@@ -8,7 +8,9 @@ import {
   ocrNativeTextFailure,
   ocrOutputValidationFailure,
   ocrRoutingMismatchFailure,
-  ocrStageWriteFailure
+  ocrStageWriteFailure,
+  ocrToolMissingFailure,
+  ocrToolUnresponsiveFailure
 } from "./pdfOcrErrors.js";
 
 describe("classifyOcrmypdfFailure", () => {
@@ -125,5 +127,28 @@ describe("named OCR failures carry an actionable remedy", () => {
     expect(failure.kind).toBe("routing_mismatch");
     expect(failure.what).toContain("probe says scanned, routing says native");
     expect(failure.remedy).toContain("Re-derive");
+  });
+
+  it("tool_missing offers the install/setup remedy", () => {
+    const failure = ocrToolMissingFailure();
+    expect(failure.kind).toBe("tool_missing");
+    expect(failure.remedy).toContain("setup:pdf");
+  });
+
+  it("tool_unresponsive is distinct from tool_missing: retryable, never the install remedy", () => {
+    // #788: a present-but-slow toolchain must not be told to reinstall.
+    for (const reason of ["timeout", "launch_failure", "version_probe_failed"] as const) {
+      const failure = ocrToolUnresponsiveFailure(reason, "detail-string");
+      expect(failure.kind).toBe("tool_unresponsive");
+      expect(failure.what).toContain("installed");
+      expect(failure.what).toContain("detail-string");
+      expect(failure.remedy).toContain("start the import again");
+      expect(failure.remedy).not.toContain("setup:pdf");
+    }
+  });
+
+  it("tool_unresponsive falls back to the raw reason when it is not a known one", () => {
+    const failure = ocrToolUnresponsiveFailure("weird_reason" as "timeout", "d");
+    expect(failure.what).toContain("weird_reason");
   });
 });

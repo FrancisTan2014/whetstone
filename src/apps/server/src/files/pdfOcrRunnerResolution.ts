@@ -174,7 +174,7 @@ export function createFixtureOcrTransformAdapter(
     probe,
     inspectToolchain: () =>
       Promise.resolve({
-        ocrmypdfAvailable: true,
+        status: "available",
         installedTraineddata: ["eng", "chi_sim", "chi_tra"]
       }),
     ocrPass,

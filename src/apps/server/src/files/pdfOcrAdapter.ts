@@ -27,6 +27,7 @@ import {
   ocrOutputValidationFailure,
   ocrRoutingMismatchFailure,
   ocrToolMissingFailure,
+  ocrToolUnresponsiveFailure,
   ocrUnsupportedInputFailure,
   type PdfOcrFailure
 } from "./pdfOcrErrors.js";
@@ -55,13 +56,19 @@ export interface PdfPageProbe {
 }
 
 // What the toolchain inspection reports so the adapter can fail fast with a NAMED tool/language error
-// before spawning: whether OCRmyPDF/Tesseract are present, and which Tesseract trained-data packs are
-// installed. Injected — the consumer knows the provisioned environment; the fixture/unavailable lanes
-// supply canned values with no subprocess.
-export type OcrToolchainAvailability = Readonly<{
-  ocrmypdfAvailable: boolean;
-  installedTraineddata: readonly string[];
-}>;
+// before spawning. A readiness-probe timeout or launch failure is NOT the same as an absent executable
+// (#788): collapsing both into "unavailable" made the UI instruct the user to install a tool that is
+// already installed. So the inspection is a discriminated outcome — `available` with the installed
+// Tesseract packs, `missing` when the executable genuinely cannot be found (ENOENT), or `unresponsive`
+// when a present OCRmyPDF failed its bounded readiness probe (a slow cold start / timeout, a launch
+// failure, or a non-zero `--version`). Injected — the consumer knows the provisioned environment; the
+// fixture/unavailable lanes supply canned values with no subprocess.
+export type OcrReadinessFailureReason = "timeout" | "launch_failure" | "version_probe_failed";
+
+export type OcrToolchainAvailability =
+  | Readonly<{ status: "available"; installedTraineddata: readonly string[] }>
+  | Readonly<{ status: "missing" }>
+  | Readonly<{ status: "unresponsive"; reason: OcrReadinessFailureReason; detail: string }>;
 
 export type InspectOcrToolchain = () => Promise<OcrToolchainAvailability>;
 
@@ -402,8 +409,12 @@ export function createPdfOcrAdapter(dependencies: PdfOcrAdapterDependencies): Pd
       }
 
       const toolchain = await dependencies.inspectToolchain();
-      if (!toolchain.ocrmypdfAvailable) {
+      if (toolchain.status === "missing") {
         return fail(ocrToolMissingFailure());
+      }
+      if (toolchain.status === "unresponsive") {
+        // Present-but-not-ready: never claim the tool is missing, and never offer the install remedy.
+        return fail(ocrToolUnresponsiveFailure(toolchain.reason, toolchain.detail));
       }
       const missingPacks = requiredTesseractTraineddata(request.language).filter(
         (pack) => !toolchain.installedTraineddata.includes(pack)
@@ -507,10 +518,14 @@ export function createFixturePdfOcrAdapter(config: FixturePdfOcrConfig): PdfOcrA
   return createPdfOcrAdapter({
     probe,
     inspectToolchain: () =>
-      Promise.resolve({
-        ocrmypdfAvailable: config.ocrmypdfAvailable ?? true,
-        installedTraineddata: config.installedTraineddata ?? ["eng", "chi_sim", "chi_tra"]
-      }),
+      Promise.resolve<OcrToolchainAvailability>(
+        (config.ocrmypdfAvailable ?? true)
+          ? {
+              status: "available",
+              installedTraineddata: config.installedTraineddata ?? ["eng", "chi_sim", "chi_tra"]
+            }
+          : { status: "missing" }
+      ),
     ocrPass,
     timeoutMs: config.timeoutMs ?? 60_000,
     outputStageRoot: config.outputStageRoot,
@@ -534,7 +549,7 @@ export function createUnavailablePdfOcrAdapter(
   /* v8 ignore stop */
   return createPdfOcrAdapter({
     probe: { probe: unreachable },
-    inspectToolchain: () => Promise.resolve({ ocrmypdfAvailable: false, installedTraineddata: [] }),
+    inspectToolchain: () => Promise.resolve<OcrToolchainAvailability>({ status: "missing" }),
     ocrPass: unreachable,
     timeoutMs: config.timeoutMs ?? 60_000,
     outputStageRoot: config.outputStageRoot
