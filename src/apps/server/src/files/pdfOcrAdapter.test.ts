@@ -351,7 +351,17 @@ describe("createPdfOcrAdapter — availability and validation failures", () => {
       timeoutMs: 1000,
       outputStageRoot
     });
-    expectFailure(await adapter.execute(baseRequest(source, scannedRouting())), "tool_unresponsive");
+    expectFailure(
+      await adapter.execute(baseRequest(source, scannedRouting())),
+      "tool_unresponsive"
+    );
+  });
+
+  it("fails a fixture configured with ocrmypdfAvailable:false as tool_missing", async () => {
+    const source = await stageSource(SOURCE_BYTES);
+    const outputStageRoot = await makeTempDir("whetstone-ocr-out-");
+    const adapter = createFixturePdfOcrAdapter({ outputStageRoot, ocrmypdfAvailable: false });
+    expectFailure(await adapter.execute(baseRequest(source, scannedRouting())), "tool_missing");
   });
 
   it("fails as language_missing when a required Tesseract pack is not installed", async () => {

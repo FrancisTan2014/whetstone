@@ -64,7 +64,10 @@ export function classifyProbeOutcome(error: ExecFileError | null, output: string
   if (error.code === "ENOENT") {
     return { outcome: "missing" };
   }
-  return { outcome: "launch_failure", detail: typeof error.code === "string" ? error.code : error.message };
+  return {
+    outcome: "launch_failure",
+    detail: typeof error.code === "string" ? error.code : error.message
+  };
 }
 
 // The default probe: spawn the tool with a bounded timeout, capture combined output, and never reject —
@@ -101,7 +104,11 @@ function unresponsiveFrom(
   probe: Exclude<OcrProbeResult, { outcome: "exit" | "missing" }>
 ): OcrToolchainAvailability {
   return probe.outcome === "timed_out"
-    ? { status: "unresponsive", reason: "timeout", detail: "the OCRmyPDF `--version` probe timed out" }
+    ? {
+        status: "unresponsive",
+        reason: "timeout",
+        detail: "the OCRmyPDF `--version` probe timed out"
+      }
     : { status: "unresponsive", reason: "launch_failure", detail: probe.detail };
 }
 
