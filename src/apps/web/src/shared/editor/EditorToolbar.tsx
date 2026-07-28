@@ -1,7 +1,7 @@
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import type { Editor } from "@tiptap/core";
 import { Bold, ChevronDown, Code, Italic, List, ListOrdered, Redo2, Undo2 } from "lucide-react";
-import { useRef, useState } from "react";
+import { useState } from "react";
 
 import { Button, IconButton } from "../ui/Button.js";
 import { runBlockCommandById } from "./blockCommands.js";
@@ -77,12 +77,11 @@ const listControls: readonly ListControl[] = [
 
 // The live toolbar controls, in DOM order, for the single-tab-stop arrow navigation (ARIA toolbar pattern).
 // Read from the DOM so the roving logic stays correct no matter how many controls render.
-function focusableItems(toolbar: HTMLElement | null): HTMLElement[] {
-  return Array.from(toolbar?.querySelectorAll<HTMLElement>("[data-toolbar-item]") ?? []);
+function focusableItems(toolbar: HTMLElement): HTMLElement[] {
+  return Array.from(toolbar.querySelectorAll<HTMLElement>("[data-toolbar-item]"));
 }
 
 export function EditorToolbar({ editor }: Readonly<{ editor: Editor }>): React.JSX.Element {
-  const toolbarRef = useRef<HTMLDivElement>(null);
   // The one control that is in the tab order (roving tabindex); every other control is reachable only by the
   // toolbar's own arrow navigation, so the whole toolbar is a single Tab stop.
   const [activeIndex, setActiveIndex] = useState(0);
@@ -112,7 +111,7 @@ export function EditorToolbar({ editor }: Readonly<{ editor: Editor }>): React.J
     if (!["ArrowLeft", "ArrowRight", "End", "Home"].includes(event.key)) {
       return;
     }
-    const items = focusableItems(toolbarRef.current);
+    const items = focusableItems(event.currentTarget);
     const current = items.findIndex((item) => item === document.activeElement);
     if (current === -1) {
       return;
@@ -148,6 +147,14 @@ export function EditorToolbar({ editor }: Readonly<{ editor: Editor }>): React.J
     });
   };
 
+  // Keep the editor focused when a formatting control is pressed: without this, the button steals focus on
+  // mousedown, and the first press right after the block-style menu closes is swallowed by Radix's dismiss
+  // guard before its click handler runs. Preventing the mousedown default keeps the caret and selection in
+  // the document so the command applies to the live selection on the very first press.
+  const keepEditorFocus = (event: React.MouseEvent<HTMLButtonElement>): void => {
+    event.preventDefault();
+  };
+
   let index = 0;
 
   return (
@@ -156,7 +163,6 @@ export function EditorToolbar({ editor }: Readonly<{ editor: Editor }>): React.J
       aria-orientation="horizontal"
       className={cx.root}
       onKeyDown={onKeyDown}
-      ref={toolbarRef}
       role="toolbar"
     >
       <DropdownMenu.Root modal={false}>
@@ -202,6 +208,7 @@ export function EditorToolbar({ editor }: Readonly<{ editor: Editor }>): React.J
           key={control.mark}
           label={control.label}
           onClick={() => control.toggle(editor)}
+          onMouseDown={keepEditorFocus}
           variant={editor.isActive(control.mark) ? "secondary" : "ghost"}
           {...itemProps(index++)}
         />
@@ -215,6 +222,7 @@ export function EditorToolbar({ editor }: Readonly<{ editor: Editor }>): React.J
           key={control.id}
           label={control.label}
           onClick={() => runBlockCommandById(editor, control.id)}
+          onMouseDown={keepEditorFocus}
           variant={control.isActive(editor) ? "secondary" : "ghost"}
           {...itemProps(index++)}
         />
@@ -230,6 +238,7 @@ export function EditorToolbar({ editor }: Readonly<{ editor: Editor }>): React.J
             editor.commands.undo();
           }
         }}
+        onMouseDown={keepEditorFocus}
         variant="ghost"
         {...itemProps(index++)}
       />
@@ -243,6 +252,7 @@ export function EditorToolbar({ editor }: Readonly<{ editor: Editor }>): React.J
             editor.commands.redo();
           }
         }}
+        onMouseDown={keepEditorFocus}
         variant="ghost"
         {...itemProps(index++)}
       />

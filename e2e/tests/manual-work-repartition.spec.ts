@@ -1,6 +1,7 @@
 import { type Page } from "@playwright/test";
 
 import { type SetupData } from "../stack";
+import { chooseBlockStyle } from "../select";
 import { expect, test } from "../fixtures";
 
 // The manual-Work heading repartition journey (#698): type a multi-heading "book" into ONE editor
@@ -94,7 +95,6 @@ test("repartition a typed multi-heading book, then merge a section while its not
   const editor = page.getByRole("textbox", { name: `Edit ${title}` });
   await expect(editor).toBeVisible();
   await expect(page.getByRole("status")).toHaveText("Saved");
-  const toolbar = page.getByRole("toolbar", { exact: true, name: "Formatting" });
   const outline = page.getByRole("navigation", { name: "Outline" });
 
   // Type a whole three-heading "book" into the single seeded section as ordinary paragraphs, then convert
@@ -115,11 +115,11 @@ test("repartition a typed multi-heading book, then merge a section while its not
   await page.keyboard.type("Gamma body.");
 
   await editor.getByText("Part One", { exact: true }).click();
-  await toolbar.getByRole("button", { name: "Heading 1" }).click();
+  await chooseBlockStyle(page, "Heading 1");
   await editor.getByText("Chapter One", { exact: true }).click();
-  await toolbar.getByRole("button", { name: "Heading 2" }).click();
+  await chooseBlockStyle(page, "Heading 2");
   await editor.getByText("Chapter Two", { exact: true }).click();
-  await toolbar.getByRole("button", { name: "Heading 2" }).click();
+  await chooseBlockStyle(page, "Heading 2");
   await expect(editor.locator("h1")).toContainText("Part One");
   await expect(editor.locator("h2")).toHaveCount(2);
 
@@ -181,13 +181,12 @@ test("repartition a typed multi-heading book, then merge a section while its not
   await page.goto(`${setup.baseURL}#/library/works/${encodeURIComponent(workEntryId)}/edit`);
   const editor2 = page.getByRole("textbox", { name: `Edit ${title}` });
   await expect(editor2).toBeVisible();
-  const toolbar2 = page.getByRole("toolbar", { exact: true, name: "Formatting" });
   const outline2 = page.getByRole("navigation", { name: "Outline" });
 
   await outline2.getByRole("button", { name: "Chapter One" }).click();
   await expect(editor2.locator("h2")).toContainText("Chapter One");
   await editor2.locator("h2").click();
-  await toolbar2.getByRole("button", { name: "Paragraph" }).click();
+  await chooseBlockStyle(page, "Text");
   await expect(editor2.locator("h2")).toHaveCount(0);
   await page.getByRole("button", { exact: true, name: "Save" }).click();
   await expect(page.getByRole("status")).toHaveText("Saved");

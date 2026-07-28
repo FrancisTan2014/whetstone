@@ -1,6 +1,7 @@
 import { type Page } from "@playwright/test";
 
 import { type SetupData } from "../stack";
+import { chooseBlockStyle } from "../select";
 import { expect, test } from "../fixtures";
 
 // The manual-Work editing journey (#720): create a manual Work, open its dedicated Library editor from
@@ -80,14 +81,15 @@ for (const theme of ["day", "night"] as const) {
       await expect(editor).toBeVisible();
       await expect(page.getByRole("status")).toHaveText("Saved");
 
-      // Enter text and format it into a bold Heading 1 via the persistent toolbar (block + mark controls).
-      // `exact` distinguishes the persistent "Formatting" toolbar from the selection "Text formatting" one.
+      // Enter text and format it into a bold Heading 1 via the persistent toolbar. The block style comes
+      // from the single "Block style" menu; the bold mark from its own control. `exact` distinguishes the
+      // persistent "Formatting" toolbar from the selection "Text formatting" one.
       await editor.click();
       await page.keyboard.type("Hello manual world");
       await page.keyboard.press("ControlOrMeta+a");
       const toolbar = page.getByRole("toolbar", { exact: true, name: "Formatting" });
       await expect(toolbar).toBeVisible();
-      await toolbar.getByRole("button", { name: "Heading 1" }).click();
+      await chooseBlockStyle(page, "Heading 1");
       await page.keyboard.press("ControlOrMeta+a");
       await toolbar.getByRole("button", { name: "Bold" }).click();
       await expect(editor.locator("h1")).toContainText("Hello manual world");

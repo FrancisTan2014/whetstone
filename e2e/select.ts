@@ -1,4 +1,18 @@
-import { type Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
+
+// Apply a block style (Text / Heading 1-3 / Quote / Code block) through the Work editor's persistent
+// "Formatting" toolbar. The single "Block style" menu replaced the former per-style buttons (#791): open
+// the menu from its trigger, then choose the style. The menu content is portaled, so the item is queried
+// at page scope, not inside the toolbar.
+export async function chooseBlockStyle(page: Page, style: string): Promise<void> {
+  const toolbar = page.getByRole("toolbar", { exact: true, name: "Formatting" });
+  await expect(toolbar).toBeVisible();
+  await toolbar.getByRole("button", { name: "Block style" }).click();
+  await page.getByRole("menuitem", { exact: true, name: style }).click();
+  // The menu closes asynchronously and, on close, returns focus to the editor (restoring the selection).
+  // Wait for it to be gone so a following selection/keystroke lands in the editor, not the closing menu.
+  await expect(page.getByRole("menu", { name: "Block style" })).toBeHidden();
+}
 
 // Select the first real word (>= 4 letters) inside the given reader block and raise `mouseup`, the
 // way a user dragging across text does, so the reader's selection handler opens the toolbar. Driven

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Editor, type Extensions } from "@tiptap/core";
 import { UndoRedo } from "@tiptap/extensions/undo-redo";
@@ -32,6 +32,19 @@ beforeAll(() => {
     configurable: true,
     value: () => {}
   });
+  // Radix reads pointer capture APIs jsdom lacks; stub them so menu interactions do not throw.
+  Object.defineProperty(HTMLElement.prototype, "hasPointerCapture", {
+    configurable: true,
+    value: () => false
+  });
+  Object.defineProperty(HTMLElement.prototype, "setPointerCapture", {
+    configurable: true,
+    value: () => {}
+  });
+  Object.defineProperty(HTMLElement.prototype, "releasePointerCapture", {
+    configurable: true,
+    value: () => {}
+  });
 });
 
 afterEach(() => {
@@ -46,6 +59,28 @@ function paragraph(text: string): DocumentNodeJSON {
     type: "doc"
   };
 }
+
+function heading(level: number, text: string): DocumentNodeJSON {
+  return {
+    content: [{ attrs: { level }, content: [{ text, type: "text" }], type: "heading" }],
+    type: "doc"
+  };
+}
+
+const blockquoteDocument: DocumentNodeJSON = {
+  content: [
+    {
+      content: [{ content: [{ text: "Cited", type: "text" }], type: "paragraph" }],
+      type: "blockquote"
+    }
+  ],
+  type: "doc"
+};
+
+const codeBlockDocument: DocumentNodeJSON = {
+  content: [{ content: [{ text: "const x = 1;", type: "text" }], type: "codeBlock" }],
+  type: "doc"
+};
 
 function topTypes(editor: Editor): string[] {
   return (editor.getJSON().content ?? []).map((node) => node.type ?? "");
@@ -122,22 +157,29 @@ function mountToolbar(seed: (editor: Editor) => void): {
   return { editor, toolbar, user };
 }
 
+function toolbarItems(toolbar: HTMLElement): HTMLElement[] {
+  return Array.from(toolbar.querySelectorAll<HTMLElement>("[data-toolbar-item]"));
+}
+
+async function openStyleMenu(
+  toolbar: HTMLElement,
+  user: ReturnType<typeof userEvent.setup>
+): Promise<HTMLElement> {
+  await user.click(within(toolbar).getByRole("button", { name: "Block style" }));
+  return screen.findByRole("menu", { name: "Block style" });
+}
+
 describe("EditorToolbar", () => {
-  it("renders every block, list, mark, and history control", async () => {
+  it("renders one style menu trigger plus the inline, list, and history controls", async () => {
     const { toolbar } = await mount(paragraph("Passage"));
 
+    expect(within(toolbar).getByRole("button", { name: "Block style" })).toBeDefined();
     for (const name of [
-      "Paragraph",
-      "Heading 1",
-      "Heading 2",
-      "Heading 3",
-      "Bulleted list",
-      "Numbered list",
-      "Quote",
-      "Code block",
       "Bold",
       "Italic",
       "Inline code",
+      "Bulleted list",
+      "Numbered list",
       "Undo",
       "Redo"
     ]) {
@@ -145,43 +187,65 @@ describe("EditorToolbar", () => {
     }
   });
 
-  it("turns the current block into a heading and reflects the active level", async () => {
+  it("names the current block type on the style trigger", async () => {
+    for (const [doc, label] of [
+      [paragraph("Body"), "Text"],
+      [heading(1, "Title"), "Heading 1"],
+      [heading(2, "Sub"), "Heading 2"],
+      [heading(3, "Minor"), "Heading 3"],
+      [blockquoteDocument, "Quote"],
+      [codeBlockDocument, "Code block"]
+    ] as const) {
+      const { toolbar } = await mount(doc);
+      expect(within(toolbar).getByRole("button", { name: "Block style" }).textContent).toContain(
+        label
+      );
+      cleanup();
+    }
+  });
+
+  it("opens the style menu with every block-style option", async () => {
+    const { toolbar, user } = await mount(paragraph("Passage"));
+    const menu = await openStyleMenu(toolbar, user);
+
+    for (const name of ["Text", "Heading 1", "Heading 2", "Heading 3", "Quote", "Code block"]) {
+      expect(within(menu).getByRole("menuitem", { name })).toBeDefined();
+    }
+  });
+
+  it("marks the active block type in the open style menu", async () => {
+    const { toolbar, user } = await mount(heading(1, "Title"));
+    const menu = await openStyleMenu(toolbar, user);
+
+    expect(
+      within(menu).getByRole("menuitem", { name: "Heading 1" }).getAttribute("aria-current")
+    ).toBe("true");
+    expect(
+      within(menu).getByRole("menuitem", { name: "Text" }).getAttribute("aria-current")
+    ).toBeNull();
+  });
+
+  it("turns the current block into a heading through the style menu", async () => {
     const { editor, toolbar, user } = await mount(paragraph("Passage"));
+    const menu = await openStyleMenu(toolbar, user);
 
-    const heading = within(toolbar).getByRole("button", { name: "Heading 2" });
-    expect(heading.getAttribute("aria-pressed")).toBe("false");
-
-    await user.click(heading);
+    await user.click(within(menu).getByRole("menuitem", { name: "Heading 2" }));
 
     expect(topTypes(editor)).toEqual(["heading"]);
     expect(editor.getJSON().content?.[0]?.attrs?.["level"]).toBe(2);
-    expect(editor.isActive("heading", { level: 2 })).toBe(true);
+    await waitFor(() =>
+      expect(within(toolbar).getByRole("button", { name: "Block style" }).textContent).toContain(
+        "Heading 2"
+      )
+    );
   });
 
-  it("shows a block control as pressed when the selection already sits in that block type", async () => {
-    const headingDocument: DocumentNodeJSON = {
-      content: [
-        { attrs: { level: 1 }, content: [{ text: "Title", type: "text" }], type: "heading" }
-      ],
-      type: "doc"
-    };
-    const { toolbar } = await mount(headingDocument);
+  it("turns a code block back into text through the style menu", async () => {
+    const { editor, toolbar, user } = await mount(codeBlockDocument);
+    const menu = await openStyleMenu(toolbar, user);
 
-    expect(
-      within(toolbar).getByRole("button", { name: "Heading 1" }).getAttribute("aria-pressed")
-    ).toBe("true");
-    expect(
-      within(toolbar).getByRole("button", { name: "Paragraph" }).getAttribute("aria-pressed")
-    ).toBe("false");
-  });
+    await user.click(within(menu).getByRole("menuitem", { name: "Text" }));
 
-  it("turns the current block into a code block and back to a paragraph", async () => {
-    const { editor, toolbar, user } = await mount(paragraph("Passage"));
-
-    await user.click(within(toolbar).getByRole("button", { name: "Code block" }));
-    expect(topTypes(editor)).toEqual(["codeBlock"]);
-
-    await user.click(within(toolbar).getByRole("button", { name: "Paragraph" }));
     expect(topTypes(editor)).toEqual(["paragraph"]);
   });
 
@@ -201,15 +265,7 @@ describe("EditorToolbar", () => {
     expect(topTypes(editor)).toEqual(["orderedList"]);
   });
 
-  it("wraps the current block in a quote", async () => {
-    const { editor, toolbar, user } = await mount(paragraph("Cited"));
-
-    await user.click(within(toolbar).getByRole("button", { name: "Quote" }));
-
-    expect(topTypes(editor)).toEqual(["blockquote"]);
-  });
-
-  it("toggles the bold mark on the selection", async () => {
+  it("toggles the bold mark on the selection and reflects it", async () => {
     const { editor, toolbar, user } = await mount(paragraph("Passage"));
     editor.commands.selectAll();
 
@@ -219,21 +275,6 @@ describe("EditorToolbar", () => {
     await user.click(bold);
 
     expect(editor.isActive("bold")).toBe(true);
-  });
-
-  it("shows a mark control as pressed when the selection already carries that mark", async () => {
-    const boldDocument: DocumentNodeJSON = {
-      content: [
-        {
-          content: [{ marks: [{ type: "bold" }], text: "Strong", type: "text" }],
-          type: "paragraph"
-        }
-      ],
-      type: "doc"
-    };
-    const { editor, toolbar } = await mount(boldDocument);
-    editor.commands.selectAll();
-
     await waitFor(() =>
       expect(
         within(toolbar).getByRole("button", { name: "Bold" }).getAttribute("aria-pressed")
@@ -259,15 +300,53 @@ describe("EditorToolbar", () => {
     expect(editor.isActive("code")).toBe(true);
   });
 
-  it("disables both history controls when there is nothing to undo or redo", async () => {
+  it("keeps the editor focused by claiming the mousedown on every formatting and history control", async () => {
     const { toolbar } = await mount(paragraph("Passage"));
 
-    expect(
-      (within(toolbar).getByRole("button", { name: "Undo" }) as HTMLButtonElement).disabled
-    ).toBe(true);
-    expect(
-      (within(toolbar).getByRole("button", { name: "Redo" }) as HTMLButtonElement).disabled
-    ).toBe(true);
+    // A toolbar press must not blur the editor: each formatting/history control claims its mousedown so the
+    // caret and selection stay in the document (and the first press right after the block-style menu closes
+    // is not swallowed). The Block style trigger is excluded — Radix owns its pointer behavior to open.
+    for (const name of [
+      "Bold",
+      "Italic",
+      "Inline code",
+      "Bulleted list",
+      "Numbered list",
+      "Undo",
+      "Redo"
+    ]) {
+      const control = within(toolbar).getByRole("button", { name });
+      const press = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+      control.dispatchEvent(press);
+      expect(press.defaultPrevented).toBe(true);
+    }
+  });
+
+  it("keeps the history controls focusable via aria-disabled when nothing can undo or redo", async () => {
+    const { toolbar } = await mount(paragraph("Passage"));
+
+    for (const name of ["Undo", "Redo"]) {
+      const control = within(toolbar).getByRole("button", { name }) as HTMLButtonElement;
+      expect(control.getAttribute("aria-disabled")).toBe("true");
+      // Not the native attribute, so it stays in the roving tab-arrow order.
+      expect(control.disabled).toBe(false);
+    }
+  });
+
+  it("does not run undo while nothing can be undone", async () => {
+    const { editor, toolbar, user } = await mount(paragraph("Passage"));
+
+    await user.click(within(toolbar).getByRole("button", { name: "Undo" }));
+
+    expect(editorText(editor)).toBe("Passage");
+  });
+
+  it("does not run redo while nothing can be redone", async () => {
+    const { editor, toolbar, user } = await mount(paragraph("Passage"));
+
+    await user.click(within(toolbar).getByRole("button", { name: "Redo" }));
+
+    expect(editorText(editor)).toBe("Passage");
   });
 
   it("reverts the last edit when undo is available", async () => {
@@ -276,8 +355,8 @@ describe("EditorToolbar", () => {
     });
     expect(editorText(editor)).toBe("Passage edited");
 
-    const undo = within(toolbar).getByRole("button", { name: "Undo" }) as HTMLButtonElement;
-    expect(undo.disabled).toBe(false);
+    const undo = within(toolbar).getByRole("button", { name: "Undo" });
+    expect(undo.getAttribute("aria-disabled")).toBe("false");
     await user.click(undo);
 
     expect(editorText(editor)).toBe("Passage");
@@ -290,10 +369,68 @@ describe("EditorToolbar", () => {
     });
     expect(editorText(editor)).toBe("Passage");
 
-    const redo = within(toolbar).getByRole("button", { name: "Redo" }) as HTMLButtonElement;
-    expect(redo.disabled).toBe(false);
+    const redo = within(toolbar).getByRole("button", { name: "Redo" });
+    expect(redo.getAttribute("aria-disabled")).toBe("false");
     await user.click(redo);
 
     expect(editorText(editor)).toBe("Passage edited");
+  });
+
+  it("is a single tab stop with a roving tabindex", async () => {
+    const { toolbar } = await mount(paragraph("Passage"));
+    const items = toolbarItems(toolbar);
+
+    expect(items).toHaveLength(8);
+    expect(items[0]!.getAttribute("tabindex")).toBe("0");
+    for (const item of items.slice(1)) {
+      expect(item.getAttribute("tabindex")).toBe("-1");
+    }
+  });
+
+  it("moves focus with the arrow, Home, and End keys, wrapping at the ends", async () => {
+    const { toolbar } = await mount(paragraph("Passage"));
+    const items = toolbarItems(toolbar);
+    const last = items.length - 1;
+
+    act(() => items[0]!.focus());
+
+    fireEvent.keyDown(items[0]!, { key: "ArrowRight" });
+    expect(document.activeElement).toBe(items[1]);
+    await waitFor(() => expect(items[1]!.getAttribute("tabindex")).toBe("0"));
+    expect(items[0]!.getAttribute("tabindex")).toBe("-1");
+
+    fireEvent.keyDown(items[1]!, { key: "ArrowLeft" });
+    expect(document.activeElement).toBe(items[0]);
+
+    fireEvent.keyDown(items[0]!, { key: "End" });
+    expect(document.activeElement).toBe(items[last]);
+
+    fireEvent.keyDown(items[last]!, { key: "Home" });
+    expect(document.activeElement).toBe(items[0]);
+
+    // Wrap: ArrowLeft from the first control lands on the last, ArrowRight from the last on the first.
+    fireEvent.keyDown(items[0]!, { key: "ArrowLeft" });
+    expect(document.activeElement).toBe(items[last]);
+
+    fireEvent.keyDown(items[last]!, { key: "ArrowRight" });
+    expect(document.activeElement).toBe(items[0]);
+  });
+
+  it("ignores non-navigation keys and keys pressed while focus is outside the toolbar", async () => {
+    const { toolbar } = await mount(paragraph("Passage"));
+    const items = toolbarItems(toolbar);
+
+    act(() => items[0]!.focus());
+    fireEvent.keyDown(items[0]!, { key: "a" });
+    expect(document.activeElement).toBe(items[0]);
+
+    // Focus a real control outside the toolbar: the handler finds no current item and no-ops (the open
+    // menu portals its content outside the toolbar, so arrow keys there are Radix's, not the roving list's).
+    const outside = window.document.createElement("button");
+    window.document.body.append(outside);
+    act(() => outside.focus());
+    fireEvent.keyDown(toolbar, { key: "ArrowRight" });
+    expect(toolbarItems(toolbar)[0]!.getAttribute("tabindex")).toBe("0");
+    outside.remove();
   });
 });

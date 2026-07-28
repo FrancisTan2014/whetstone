@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { strToU8, zipSync } from "fflate";
 
 import { type SetupData } from "../stack";
+import { chooseBlockStyle } from "../select";
 import { expect, test } from "../fixtures";
 
 // The imported-Work correction journey (#762): open a canonical imported Work (a per-test EPUB) in the
@@ -168,12 +169,11 @@ for (const theme of ["day", "night"] as const) {
       await expect(editor.getByRole("heading").first()).toContainText(marker);
 
       // Change a block's type: promote the body paragraph to a Heading 2 by clicking its line to place the
-      // caret (the proven, viewport-independent way to target a specific block in this editor) and toggling
-      // the persistent toolbar. This transactionally repartitions a new ReadingUnit at the promoted heading.
-      const toolbar = page.getByRole("toolbar", { exact: true, name: "Formatting" });
-      await expect(toolbar).toBeVisible();
+      // caret (the proven, viewport-independent way to target a specific block in this editor) and choosing
+      // the style from the persistent toolbar's "Block style" menu. This transactionally repartitions a new
+      // ReadingUnit at the promoted heading.
       await editor.getByText(promotedTitle, { exact: true }).click();
-      await toolbar.getByRole("button", { name: "Heading 2" }).click();
+      await chooseBlockStyle(page, "Heading 2");
       await expect(editor.getByRole("heading", { name: promotedTitle })).toBeVisible();
 
       // Save explicitly and wait for the confirmed state.

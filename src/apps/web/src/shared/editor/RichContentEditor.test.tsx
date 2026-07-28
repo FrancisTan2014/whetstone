@@ -175,7 +175,7 @@ async function renderReady({
   ariaLabel?: string;
   document?: DocumentNodeJSON;
   editable?: boolean;
-  presentation?: "compact" | "full" | "workspace";
+  presentation?: "compact" | "full" | "work" | "workspace";
   showToolbar?: boolean;
   withSave?: boolean;
 } = {}) {
@@ -822,5 +822,80 @@ describe("RichContentEditor extraction-evidence seam", () => {
     // The read-only surface still shows the passive cue but never the editing-time disclosure control.
     expect(cuedBlockTexts(textbox)).toEqual(["low"]);
     expect(screen.queryByRole("button", { name: "Review extraction" })).toBeNull();
+  });
+});
+
+describe("RichContentEditor work presentation", () => {
+  it("marks the surface with the work presentation so origin pages compose one workspace", async () => {
+    const { textbox } = await renderReady({ document: textDocument("Body"), presentation: "work" });
+
+    expect(textbox.closest("[data-presentation]")?.getAttribute("data-presentation")).toBe("work");
+  });
+
+  it("claims the blank paper margin press so the caret lands at the document end", async () => {
+    const { onChange, textbox, user } = await renderReady({
+      document: textDocument("Hello"),
+      presentation: "work"
+    });
+
+    // Pressing the editable root itself (the paper margin, class `richContentEditorContent`) is claimed:
+    // the handler focuses the caret at the document end. It deliberately does NOT preventDefault, so the
+    // browser's native focus of the contenteditable proceeds and the first later keystroke is not dropped.
+    // Typing then appending (not prepending) proves the press moved the caret to the end.
+    const press = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+    textbox.dispatchEvent(press);
+
+    await user.type(textbox, "!");
+    await waitFor(() => expect(documentText(lastDocument(onChange))).toBe("Hello!"));
+  });
+
+  it("ignores a press that lands on inner content rather than the blank margin", async () => {
+    const { onChange, textbox, user } = await renderReady({
+      document: textDocument("Hello"),
+      presentation: "work"
+    });
+
+    // A press on the paragraph element (not the content root) is a normal in-text click: the margin
+    // handler must not hijack it, so the caret is not forced to the end. Typing then prepends at the
+    // document start (the untouched initial selection), proving the press was left alone.
+    const paragraph = textbox.querySelector("p");
+    expect(paragraph).not.toBeNull();
+    const press = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+    (paragraph as HTMLElement).dispatchEvent(press);
+
+    await user.type(textbox, "!");
+    await waitFor(() => expect(documentText(lastDocument(onChange))).toBe("!Hello"));
+  });
+
+  it("ignores a press whose target is a text node, not an element", async () => {
+    const { onChange, textbox, user } = await renderReady({
+      document: textDocument("Hello"),
+      presentation: "work"
+    });
+
+    // A press reported against a raw text node is not an element surface: the guard rejects it and the
+    // caret is left at the document start, so typing prepends.
+    const textNode = textbox.querySelector("p")?.firstChild;
+    expect(textNode).not.toBeNull();
+    const press = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+    (textNode as ChildNode).dispatchEvent(press);
+
+    await user.type(textbox, "!");
+    await waitFor(() => expect(documentText(lastDocument(onChange))).toBe("!Hello"));
+  });
+
+  it("mounts no blank-margin focus handler on a read-only work surface", async () => {
+    const { textbox } = await renderReady({
+      document: textDocument("Hello"),
+      editable: false,
+      presentation: "work"
+    });
+
+    // Read-only work surfaces (a frozen import) are not editable, so the focus-on-press handler is never
+    // wired: the surface stays read-only and a margin press is a no-op.
+    expect(textbox.getAttribute("contenteditable")).toBe("false");
+    const press = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+    textbox.dispatchEvent(press);
+    expect(textbox.textContent).toBe("Hello");
   });
 });

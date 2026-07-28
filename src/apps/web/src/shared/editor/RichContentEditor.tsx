@@ -316,9 +316,11 @@ export function RichContentEditor({
         presentation === "work" && editable
           ? (event) => {
               if (isBlankSurfacePress(event.target)) {
-                // Keep ProseMirror from collapsing the selection to the clicked margin, then land the
-                // caret at the document end so a press anywhere on the paper enters the text.
-                event.preventDefault();
+                // A press on the paper's dead margin leaves ProseMirror without a caret, which reads as a
+                // broken text field. Land the caret at the document end so the press enters the text. We do
+                // NOT preventDefault: blocking the browser's native focus of the contenteditable drops the
+                // first subsequent keystroke in Chromium. Letting focus proceed and then moving the caret to
+                // the end keeps both the focus and the first character.
                 editor.commands.focus("end");
               }
             }

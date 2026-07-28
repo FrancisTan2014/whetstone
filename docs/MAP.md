@@ -1229,11 +1229,17 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `domain/headingOutline.buildHeadingOutline`) projects the active section's DRAFT headings into the
   persisted sections so heading edits appear immediately (#698), replaced on save by the
   server-reconciled canonical Outline (`deriveWorkOutline` remains the persisted-only projection) — no
-  stored TOC tree. The Outline is a sticky 15rem sidebar ≥48rem and a 44px-toggle drawer <48rem
-  (Escape/backdrop dismiss + focus restore). It loads the section list (`manualWorkApi.fetchManualWork`),
-  edits one section at a time in the shared `RichContentEditor` (`fetchManualWorkUnit`) with a
-  **persistent** `shared/editor/EditorToolbar` (block-type select incl. Heading 1/2/3, lists, quote, code
-  block, marks, undo/redo), navigates sections with save-before-switch and stale-revision conflict
+  stored TOC tree. Below the standard `PageFrame`, the editor is a Work-specific immersive frame (100%,
+  max 88rem, centered) — the editing analogue of Reader (#791). A **populated** Outline is a sticky 14rem
+  sidebar ≥80rem (1.5rem gap) and a 44px-toggle overlay drawer <80rem (20rem 48–79.999rem, full width
+  <48rem; Escape/backdrop dismiss + focus restore); an **empty** Outline renders nothing and reserves no
+  track — the parent shows a 44px "Add section" control above the canvas instead. It loads the section
+  list (`manualWorkApi.fetchManualWork`),
+  edits one section at a time in the shared `RichContentEditor` (`fetchManualWorkUnit`, `presentation="work"`:
+  one bordered paper surface, focus-within ring, blank-margin press focuses the caret at doc end) with a
+  **persistent** one-row sticky `shared/editor/EditorToolbar` (a single **Block style** menu — `blockStyleMenu.ts`
+  Text/Heading 1-3/Quote/Code block — plus marks, lists, undo/redo as 44px controls; roving-tabindex, no-wrap
+  horizontal scroll), navigates sections with save-before-switch and stale-revision conflict
   retention (`saveManualWorkContent(workEntryId, unitEntryId, document, revision)` → `PUT
   /api/manual-works/:id/units/:unitId/content`), and **Add section** appends a heading-seeded section
   (`addManualWorkSection` → `POST /api/manual-works/:id/units`) then focuses it. The revision is the
