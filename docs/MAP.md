@@ -1294,8 +1294,10 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   aggregate-only report (counts, ratios, tool fingerprints — never a file name, path, or extracted
   text); it skips cleanly without the built workspace or the Docling runtime. It runs on POSIX and
   Windows: it preflights the worker's `--check-memory-ceiling` capability probe, resolves the same
-  platform-aware ceiling as production through the server-config owner (`resolveStructuredPdfMemoryMib`,
-  no duplicated platform numbers), copies each in-bound source into the run temp root (no POSIX symlink),
+  platform-aware ceiling and the same worker timeout as production through the server-config owners
+  (`resolveStructuredPdfMemoryMib` / `resolveStructuredPdfTimeoutMs`, no duplicated numbers — a gate run
+  uses the production 180000 ms timeout, and a diagnostic `--timeout-ms` differing from it forces a
+  non-gating `corpusGatePass: false`), copies each in-bound source into the run temp root (no POSIX symlink),
   and reports peak memory through the worker's Job Object metrics sidecar on Windows / RSS sampling on
   POSIX. Flipping the supported
   lane and rewriting PRODUCT/setup wording stay maintainer steps gated on a measured passing run (the

@@ -8,8 +8,12 @@
 
 import { EventEmitter } from "node:events";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+import {
+  DEFAULT_PDF_TIMEOUT_MS,
+  resolveStructuredPdfTimeoutMs
+} from "../../src/apps/server/src/config/serverConfig.js";
 import {
   createBoundedStdout,
   EXIT,
@@ -109,7 +113,6 @@ describe("runWorker output cap", () => {
 
 describe("interpretWorkerRun", () => {
   const clean = { code: EXIT.OK, timedOut: false, overCap: false };
-
   it("returns null for a clean run so its stdout is parsed", () => {
     expect(interpretWorkerRun(clean, "probe")).toBeNull();
     expect(interpretWorkerRun(clean, "range")).toBeNull();
@@ -165,5 +168,102 @@ describe("interpretWorkerRun", () => {
     expect(interpretWorkerRun({ ...clean, code: EXIT.CONVERSION_FAILED }, "range").observation.kind).toBe(
       "conversion_failed"
     );
+  });
+});
+
+// Regression for #787: the gate-producing worker timeout must be the SAME bound the live import lane
+// enforces (serverConfig's 180000 ms), NOT the old 15-minute harness default. A PDF that only completes
+// after production would have killed it (between 180000 ms and 15 minutes) must be classified `timed-out`
+// and count against the 95% gate, never counted as a usable/gate-passing conversion.
+describe("worker timeout matches the production import lane, not a 15-minute harness default", () => {
+  const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
+
+  function fakeChild() {
+    const child = new EventEmitter();
+    child.pid = 4242;
+    child.stdout = new EventEmitter();
+    child.killed = false;
+    child.kill = () => {
+      child.killed = true;
+    };
+    return child;
+  }
+
+  const fakeIo = (child) => ({
+    spawn: () => child,
+    createSampler: () => ({ stop: async () => null })
+  });
+
+  it("resolves the gate timeout from the shared server-config owner (180000 ms), well under 15 minutes", () => {
+    // The harness no longer owns a timeout default: it consumes the single production owner, so omitting
+    // --timeout-ms / PDF_TIMEOUT_MS yields exactly the 180000 ms bound the server kills a slow spawn at.
+    expect(DEFAULT_PDF_TIMEOUT_MS).toBe(180_000);
+    expect(resolveStructuredPdfTimeoutMs(undefined)).toBe(180_000);
+    expect(DEFAULT_PDF_TIMEOUT_MS).toBeLessThan(FIFTEEN_MINUTES_MS);
+  });
+
+  it("kills a worker that finishes after 180000 ms but before 15 minutes, so it never counts as a gate success", async () => {
+    vi.useFakeTimers();
+    try {
+      const child = fakeChild();
+      const productionTimeoutMs = resolveStructuredPdfTimeoutMs(undefined);
+      const pending = runWorker(
+        "python",
+        ["--range", "x", "1", "1"],
+        productionTimeoutMs,
+        2048,
+        fakeIo(child)
+      );
+
+      // The worker would have completed only later (still before the old 15-minute default), but production
+      // kills it at 180000 ms. Advancing just past the production bound fires the timeout and kills the child.
+      await vi.advanceTimersByTimeAsync(productionTimeoutMs + 1);
+      expect(child.killed).toBe(true);
+      child.emit("close", null); // killed by signal -> null exit code
+
+      const run = await pending;
+      expect(run.timedOut).toBe(true);
+      // A timeout is classified against the 95% gate as `timeout`, never parsed as a usable conversion.
+      expect(interpretWorkerRun(run, "range").observation.kind).toBe("timeout");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("proves the old 15-minute default would NOT have fired at the same point (fail-before guard)", async () => {
+    vi.useFakeTimers();
+    try {
+      const child = fakeChild();
+      // The pre-fix harness default. At 180001 ms — the exact point production kills — this timer is still
+      // pending, so the same slow worker would run to a clean close and be wrongly counted as usable.
+      const pending = runWorker(
+        "python",
+        ["--range", "x", "1", "1"],
+        FIFTEEN_MINUTES_MS,
+        2048,
+        fakeIo(child)
+      );
+
+      await vi.advanceTimersByTimeAsync(resolveStructuredPdfTimeoutMs(undefined) + 1);
+      expect(child.killed).toBe(false);
+      child.emit("close", 0); // completes cleanly under the buggy default — a false gate success
+
+      const run = await pending;
+      expect(run.timedOut).toBe(false);
+      expect(interpretWorkerRun(run, "range")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects a non-positive or non-integer timeout override, so the worker never runs with a broken bound", () => {
+    expect(() => resolveStructuredPdfTimeoutMs("0")).toThrow(
+      "PDF_TIMEOUT_MS must be a positive integer number of milliseconds."
+    );
+    expect(() => resolveStructuredPdfTimeoutMs("not-a-number")).toThrow(
+      "PDF_TIMEOUT_MS must be a positive integer number of milliseconds."
+    );
+    // An explicit positive override is honoured (used only for unmistakably non-gating diagnostic runs).
+    expect(resolveStructuredPdfTimeoutMs("240000")).toBe(240_000);
   });
 });
