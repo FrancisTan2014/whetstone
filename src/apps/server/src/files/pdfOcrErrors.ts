@@ -14,6 +14,7 @@ const SETUP_REMEDY = "Run `pnpm setup:pdf` to provision the pinned OCRmyPDF/Tess
 
 export type PdfOcrFailureKind =
   | "tool_missing"
+  | "tool_unresponsive"
   | "language_missing"
   | "unsupported_input"
   | "routing_mismatch"
@@ -38,6 +39,29 @@ export function ocrToolMissingFailure(): PdfOcrFailure {
     kind: "tool_missing",
     what: "The PDF OCR toolchain (OCRmyPDF over Tesseract) is not installed or not on PATH.",
     remedy: SETUP_REMEDY
+  });
+}
+
+// The OCRmyPDF executable IS present, but its bounded readiness probe did not complete cleanly (#788):
+// the `--version` probe timed out (a slow Windows cold start), failed to launch, or exited non-zero.
+// This must NEVER be reported as `tool_missing` — the tool is installed, so the setup/install remedy is
+// wrong and misleading. It is a truthful, retryable failure: the same import can succeed on a later
+// attempt once the tool warms up, without any reinstall.
+const READINESS_REASON_DETAIL: Readonly<Record<string, string>> = {
+  timeout: "the OCRmyPDF readiness probe (`--version`) exceeded its time budget",
+  launch_failure: "the OCRmyPDF readiness probe could not be launched",
+  version_probe_failed: "OCRmyPDF is present but its `--version` readiness probe exited abnormally"
+};
+
+export function ocrToolUnresponsiveFailure(
+  reason: "timeout" | "launch_failure" | "version_probe_failed",
+  detail: string
+): PdfOcrFailure {
+  return Object.freeze({
+    kind: "tool_unresponsive",
+    what: `OCRmyPDF is installed but did not become ready in time: ${READINESS_REASON_DETAIL[reason] ?? reason} (${detail}).`,
+    remedy:
+      "This is usually a slow cold start, not a missing tool. Wait a moment and start the import again — no reinstall is needed."
   });
 }
 

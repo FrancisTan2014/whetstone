@@ -312,6 +312,48 @@ describe("createPdfOcrAdapter — availability and validation failures", () => {
     expectFailure(await adapter.execute(baseRequest(source, scannedRouting())), "tool_missing");
   });
 
+  it("fails as tool_unresponsive (never tool_missing) when a present toolchain times out its readiness probe", async () => {
+    // #788: a present OCRmyPDF whose bounded `--version` readiness probe timed out must be a distinct,
+    // retryable failure — not the install-a-missing-tool remedy. The probe/pass are never reached.
+    const source = await stageSource(SOURCE_BYTES);
+    const outputStageRoot = await makeTempDir("whetstone-ocr-out-");
+    const ocrPass = vi.fn();
+    const adapter = createPdfOcrAdapter({
+      probe: { probe: () => Promise.reject(new Error("unreached")) },
+      inspectToolchain: () =>
+        Promise.resolve({
+          status: "unresponsive",
+          reason: "timeout",
+          detail: "the OCRmyPDF `--version` probe timed out"
+        }),
+      ocrPass,
+      timeoutMs: 1000,
+      outputStageRoot
+    });
+    const outcome = await adapter.execute(baseRequest(source, scannedRouting()));
+    expectFailure(outcome, "tool_unresponsive");
+    if (outcome.ok) throw new Error("unreachable");
+    expect(outcome.failure.kind).not.toBe("tool_missing");
+    // The remedy must be the retryable cold-start guidance, not the install/setup instruction.
+    expect(outcome.failure.remedy).toContain("start the import again");
+    expect(outcome.failure.remedy).not.toContain("setup:pdf");
+    expect(ocrPass).not.toHaveBeenCalled();
+  });
+
+  it("maps a launch-failure readiness outcome to tool_unresponsive as well", async () => {
+    const source = await stageSource(SOURCE_BYTES);
+    const outputStageRoot = await makeTempDir("whetstone-ocr-out-");
+    const adapter = createPdfOcrAdapter({
+      probe: { probe: () => Promise.reject(new Error("unreached")) },
+      inspectToolchain: () =>
+        Promise.resolve({ status: "unresponsive", reason: "launch_failure", detail: "EACCES" }),
+      ocrPass: () => Promise.reject(new Error("unreached")),
+      timeoutMs: 1000,
+      outputStageRoot
+    });
+    expectFailure(await adapter.execute(baseRequest(source, scannedRouting())), "tool_unresponsive");
+  });
+
   it("fails as language_missing when a required Tesseract pack is not installed", async () => {
     const source = await stageSource(SOURCE_BYTES);
     const outputStageRoot = await makeTempDir("whetstone-ocr-out-");
@@ -564,7 +606,7 @@ describe("createPdfOcrAdapter — cancellation", () => {
     const adapter = createPdfOcrAdapter({
       probe,
       inspectToolchain: () =>
-        Promise.resolve({ ocrmypdfAvailable: true, installedTraineddata: ["eng"] }),
+        Promise.resolve({ status: "available", installedTraineddata: ["eng"] }),
       ocrPass,
       timeoutMs: 1000,
       outputStageRoot
@@ -598,7 +640,7 @@ describe("createPdfOcrAdapter — routing must match the fresh before-probe", ()
       // The immutable source is scanned (page 1 text-less), so it MUST be OCR'd.
       probe: fixedProbe([page(1, false)]),
       inspectToolchain: () =>
-        Promise.resolve({ ocrmypdfAvailable: true, installedTraineddata: ["eng"] }),
+        Promise.resolve({ status: "available", installedTraineddata: ["eng"] }),
       ocrPass,
       timeoutMs: 1000,
       outputStageRoot
@@ -626,7 +668,7 @@ describe("createPdfOcrAdapter — routing must match the fresh before-probe", ()
       // Pages 1 and 2 both lack native text; both must be OCR'd.
       probe: fixedProbe([page(1, false), page(2, false)]),
       inspectToolchain: () =>
-        Promise.resolve({ ocrmypdfAvailable: true, installedTraineddata: ["eng"] }),
+        Promise.resolve({ status: "available", installedTraineddata: ["eng"] }),
       ocrPass,
       timeoutMs: 1000,
       outputStageRoot
