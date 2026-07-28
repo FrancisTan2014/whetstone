@@ -12,6 +12,29 @@ export type ServerLogLevel = "fatal" | "error" | "warn" | "info" | "debug" | "tr
 export const POSIX_STRUCTURED_PDF_MEMORY_MIB = 2048;
 export const WINDOWS_STRUCTURED_PDF_MEMORY_MIB = 6144;
 
+// The single owner of the structured PDF worker's wall-clock timeout. Production kills a slow spawn here
+// (422) and the #779 corpus harness must gate on the SAME bound, so neither duplicates the number: both
+// resolve it through `resolveStructuredPdfTimeoutMs`. Overridable with PDF_TIMEOUT_MS (see below).
+export const DEFAULT_PDF_TIMEOUT_MS = 180_000;
+
+// Resolve the worker timeout (ms): an explicit positive-integer PDF_TIMEOUT_MS / --timeout-ms value wins;
+// absent, the production default applies. Rejects a non-positive or non-integer override so the worker
+// never runs with a broken timeout. The single owner production (this config) and the harness both consume,
+// so a gate-producing harness run uses the exact production bound instead of a duplicated 15-minute default.
+export function resolveStructuredPdfTimeoutMs(override: string | undefined): number {
+  if (override === undefined) {
+    return DEFAULT_PDF_TIMEOUT_MS;
+  }
+
+  const timeout = Number.parseInt(override, 10);
+
+  if (!Number.isInteger(timeout) || timeout < 1) {
+    throw new Error("PDF_TIMEOUT_MS must be a positive integer number of milliseconds.");
+  }
+
+  return timeout;
+}
+
 // The single, pure, platform-injectable owner of the per-child structured PDF memory default. Production
 // (this config) and the #779 corpus harness both consume it, so neither duplicates the platform numbers.
 export function defaultStructuredPdfMemoryMib(
@@ -101,7 +124,7 @@ const defaultServerConfig: ServerConfig = {
   // Docling's per-page layout + table analysis is slow; oversized/scanned books can run for many
   // minutes. Bound the spawn so a slow PDF is killed and rejected (422) instead of hanging the
   // ingest request. v0 targets born-digital, reasonably-sized PDFs (#403). Env-overridable.
-  pdfTimeoutMs: 180_000,
+  pdfTimeoutMs: DEFAULT_PDF_TIMEOUT_MS,
   // Nominal POSIX baseline; the real per-child ceiling is resolved platform-aware in readServerConfig
   // (POSIX 2 GiB, Windows 6 GiB — see resolveStructuredPdfMemoryMib). Env-overridable
   // (PDF_STRUCTURED_MEMORY_MIB) on every platform.
@@ -134,7 +157,7 @@ export function readServerConfig(
   const logLevel = parseLogLevel(env.LOG_LEVEL);
   const epubUploadLimitBytes = parseEpubUploadLimit(env.EPUB_UPLOAD_LIMIT_BYTES);
   const pdfUploadLimitBytes = parsePdfUploadLimit(env.PDF_UPLOAD_LIMIT_BYTES);
-  const pdfTimeoutMs = parsePdfTimeout(env.PDF_TIMEOUT_MS);
+  const pdfTimeoutMs = resolveStructuredPdfTimeoutMs(env.PDF_TIMEOUT_MS);
   const pdfStructuredMemoryMib = resolveStructuredPdfMemoryMib(
     env.PDF_STRUCTURED_MEMORY_MIB,
     platform
@@ -226,20 +249,6 @@ function parsePdfUploadLimit(rawLimit: string | undefined): number {
   }
 
   return limit;
-}
-
-function parsePdfTimeout(rawTimeout: string | undefined): number {
-  if (rawTimeout === undefined) {
-    return defaultServerConfig.pdfTimeoutMs;
-  }
-
-  const timeout = Number.parseInt(rawTimeout, 10);
-
-  if (!Number.isInteger(timeout) || timeout < 1) {
-    throw new Error("PDF_TIMEOUT_MS must be a positive integer number of milliseconds.");
-  }
-
-  return timeout;
 }
 
 // A permissive boolean env flag: `1`/`true`/`yes`/`on` (case-insensitive) enable it, anything else

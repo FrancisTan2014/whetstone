@@ -70,6 +70,16 @@
 // aggregate is over a prefix, not the real denominator. A limited run always reports `run.limited: true`
 // and `corpusGatePass: false` and exits non-zero, so it can never be mistaken for #705 corpus evidence.
 // Omit --limit for a gate-producing run.
+//
+// TIMEOUT-EQUIVALENCE INVARIANT (so the gate measures what production ships): the worker's wall-clock
+// timeout is resolved from the SAME server-config owner the live import lane uses
+// (serverConfig `resolveStructuredPdfTimeoutMs`: PDF_TIMEOUT_MS override, else the 180000 ms production
+// default) — the harness never duplicates a longer default. Omitting `--timeout-ms` therefore kills a slow
+// range at exactly the 180000 ms production bound, so a PDF that finishes only AFTER production would have
+// rejected it is classified `timed-out` and counts against the 95% gate, never counted as usable. A
+// diagnostic `--timeout-ms` differing from the production bound is allowed but forces `corpusGatePass: false`
+// and is reported as non-gating (`run.timeoutOverridden: true`), so a longer diagnostic timeout can never
+// manufacture a pass. The effective timeout is published in the aggregate report and the tooling fingerprint.
 
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -109,7 +119,6 @@ export const EXIT = {
 };
 
 const DEFAULT_RANGE_SIZE = 50;
-const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000;
 const MEMORY_SAMPLE_MS = 100;
 const LOW_CONFIDENCE_THRESHOLD = 0.75; // Mirrors domain PDF_EXTRACTION_CONFIDENCE_THRESHOLD.
 
@@ -122,18 +131,20 @@ const WORK_LANGUAGES = new Set(["en", "zh-CN", "zh-TW"]);
 const DEFAULT_OCR_BINARY = "ocrmypdf";
 const DEFAULT_TESSERACT_BINARY = "tesseract";
 
-// Resolve the per-child memory ceiling through the SAME production owner the server config uses
-// (resolveStructuredPdfMemoryMib): a positive-integer PDF_STRUCTURED_MEMORY_MIB / --memory-mib override
-// wins on every platform, otherwise the platform-aware default applies (2,048 MiB POSIX, 6,144 MiB
-// Windows). The harness never duplicates those platform numbers — it holds only the raw override here and
-// hands it to the imported resolver once the workspace is loaded, so it bounds each conversion exactly as
-// the real import lane does.
+// Resolve the per-child memory ceiling and the worker timeout through the SAME production owners the server
+// config uses (resolveStructuredPdfMemoryMib / resolveStructuredPdfTimeoutMs). For memory: a positive-integer
+// PDF_STRUCTURED_MEMORY_MIB / --memory-mib override wins on every platform, otherwise the platform-aware
+// default applies (2,048 MiB POSIX, 6,144 MiB Windows). For the timeout: the live import lane resolves it
+// from PDF_TIMEOUT_MS (else the 180000 ms production default); the harness holds only the raw `--timeout-ms`
+// override here and resolves both once the workspace is loaded, so it bounds each conversion exactly as the
+// real import lane does and never duplicates a longer default. A `--timeout-ms` differing from the
+// production bound is a diagnostic that forces a non-gating run (see runCorpus).
 function parseArgs(argv) {
   const args = {
     corpus: process.env.WHETSTONE_PDF_CORPUS ?? null,
     extra: [],
     rangeSize: DEFAULT_RANGE_SIZE,
-    timeoutMs: DEFAULT_TIMEOUT_MS,
+    timeoutMsOverride: undefined,
     limit: Infinity,
     memoryMibOverride: process.env.PDF_STRUCTURED_MEMORY_MIB,
     ocrLanguage: process.env.WHETSTONE_PDF_OCR_LANGUAGE ?? DEFAULT_OCR_LANGUAGE,
@@ -147,8 +158,7 @@ function parseArgs(argv) {
     else if (flag === "--extra") args.extra.push(argv[(i += 1)]);
     else if (flag === "--range-size")
       args.rangeSize = Math.max(1, Number.parseInt(argv[(i += 1)], 10) || DEFAULT_RANGE_SIZE);
-    else if (flag === "--timeout-ms")
-      args.timeoutMs = Math.max(1000, Number.parseInt(argv[(i += 1)], 10) || DEFAULT_TIMEOUT_MS);
+    else if (flag === "--timeout-ms") args.timeoutMsOverride = argv[(i += 1)];
     else if (flag === "--limit") args.limit = Math.max(1, Number.parseInt(argv[(i += 1)], 10) || 1);
     else if (flag === "--memory-mib") args.memoryMibOverride = argv[(i += 1)];
     else if (flag === "--ocr-language") args.ocrLanguage = argv[(i += 1)] ?? args.ocrLanguage;
@@ -664,8 +674,8 @@ async function loadTypeScriptDeps() {
       await import("../../src/apps/server/src/files/pdfStructuredRunnerResolution.js");
     const ocrResolution = await import("../../src/apps/server/src/files/pdfOcrRunnerResolution.js");
     // The single production owner of the per-child memory default (2,048 MiB POSIX, 6,144 MiB Windows) and
-    // override precedence, so the harness resolves the SAME ceiling the server does without duplicating the
-    // platform numbers here.
+    // the worker timeout default (180000 ms), plus their override precedence, so the harness resolves the
+    // SAME ceiling and timeout the server does without duplicating those numbers here.
     const serverConfig = await import("../../src/apps/server/src/config/serverConfig.js");
     return {
       contracts,
@@ -677,7 +687,8 @@ async function loadTypeScriptDeps() {
       ocrPassRequired: ocrPolicy.ocrPassRequired,
       resolveStructuredPdfRunner: structuredResolution.resolveStructuredPdfRunner,
       resolvePdfOcrAdapter: ocrResolution.resolvePdfOcrAdapter,
-      resolveStructuredPdfMemoryMib: serverConfig.resolveStructuredPdfMemoryMib
+      resolveStructuredPdfMemoryMib: serverConfig.resolveStructuredPdfMemoryMib,
+      resolveStructuredPdfTimeoutMs: serverConfig.resolveStructuredPdfTimeoutMs
     };
   } catch (cause) {
     return { error: cause instanceof Error ? cause.message : String(cause) };
@@ -724,6 +735,25 @@ async function main() {
   } catch (cause) {
     process.stderr.write(
       `error: invalid memory ceiling: ${cause instanceof Error ? cause.message : cause}\n`
+    );
+    return 2;
+  }
+
+  // Resolve the worker timeout from the SINGLE production owner (serverConfig): the live import lane's bound
+  // is `resolveStructuredPdfTimeoutMs(PDF_TIMEOUT_MS)` (the 180000 ms production default unless the env
+  // overrides it). Omitting `--timeout-ms` uses exactly that, so a gate run kills a slow range at the same
+  // point production would. An explicit `--timeout-ms` is a diagnostic: it is honoured, but if it differs
+  // from the production bound the run is marked non-gating (see runCorpus) so a longer timeout can never
+  // manufacture a pass. The resolver rejects a non-positive / non-integer override (an operator error).
+  try {
+    args.productionTimeoutMs = deps.resolveStructuredPdfTimeoutMs(process.env.PDF_TIMEOUT_MS);
+    args.timeoutMs =
+      args.timeoutMsOverride === undefined
+        ? args.productionTimeoutMs
+        : deps.resolveStructuredPdfTimeoutMs(args.timeoutMsOverride);
+  } catch (cause) {
+    process.stderr.write(
+      `error: invalid worker timeout: ${cause instanceof Error ? cause.message : cause}\n`
     );
     return 2;
   }
@@ -924,27 +954,53 @@ async function runCorpus(python, contracts, domain, deps, args, bounds, ocr, fil
   const processed = cases.length;
   const limited = processed < deduplicated;
 
+  // A diagnostic `--timeout-ms` differing from the production import-lane bound makes the run non-gating:
+  // the aggregate was measured against a timeout the shipped product does not use, so it can never be #705
+  // evidence — just as a `--limit` prefix cannot. An override EQUAL to the production bound is harmless and
+  // stays gating. Both the effective timeout and the production bound are disclosed so the override is
+  // unmistakable in the report.
+  const timeoutOverridden = args.timeoutMs !== args.productionTimeoutMs;
+
   // AGGREGATE-ONLY report: histograms, ratios, the gate verdict, timing percentiles, peak memory, and
   // pinned tool fingerprints — never a per-file row (no caseId/class/page/time per PDF), so the output
   // can be pasted as the #705/#779 acceptance evidence while the corpus stays private.
   const report = domain.summarizeCorpus(cases);
   // The authoritative corpus gate: the rubric ratio only counts as #705 evidence when EVERY deduplicated
-  // file was processed. A limited run is never a pass, no matter how good the prefix looks.
-  const corpusGatePass = report.gatePass && !limited;
+  // file was processed AND the worker timeout matched the production import lane. A limited run or a
+  // non-production diagnostic timeout is never a pass, no matter how good the prefix or the numbers look.
+  const corpusGatePass = report.gatePass && !limited && !timeoutOverridden;
   const output = {
     gateRatioTarget: domain.PDF_USABILITY_GATE_RATIO,
     corpusGatePass,
-    run: { discovered, deduplicated, processed, limited },
+    run: {
+      discovered,
+      deduplicated,
+      processed,
+      limited,
+      timeoutMs: args.timeoutMs,
+      productionTimeoutMs: args.productionTimeoutMs,
+      timeoutOverridden
+    },
     report,
     tooling: {
       doclingCoreVersion: contracts.PINNED_DOCLING_CORE_VERSION,
       doclingVersion: contracts.PINNED_DOCLING_VERSION,
-      modelCommit: contracts.PINNED_MODEL_COMMIT
+      modelCommit: contracts.PINNED_MODEL_COMMIT,
+      // The effective worker timeout (ms) this run bounded every conversion by — part of the fingerprint so
+      // a report is falsifiable against the production import lane's 180000 ms bound.
+      workerTimeoutMs: args.timeoutMs
     }
   };
   const serialized = JSON.stringify(output, null, 2);
   if (args.out) writeFileSync(args.out, serialized + "\n");
   else process.stdout.write(serialized + "\n");
+  if (timeoutOverridden) {
+    process.stderr.write(
+      `warning: diagnostic --timeout-ms ${args.timeoutMs} differs from the production import-lane timeout ` +
+        `${args.productionTimeoutMs} ms. This is NOT corpus evidence; corpusGatePass is false and the exit ` +
+        "code is non-zero. Omit --timeout-ms for a gate-producing run.\n"
+    );
+  }
   if (limited) {
     process.stderr.write(
       `warning: limited run — processed ${processed} of ${deduplicated} deduplicated PDFs (--limit). ` +
