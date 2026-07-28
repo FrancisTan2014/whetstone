@@ -1296,7 +1296,7 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   Windows: it preflights the worker's `--check-memory-ceiling` capability probe, resolves the same
   platform-aware ceiling and the same worker timeout as production through the server-config owners
   (`resolveStructuredPdfMemoryMib` / `resolveStructuredPdfTimeoutMs`, no duplicated numbers — a gate run
-  uses the production 180000 ms timeout, and a diagnostic `--timeout-ms` differing from it forces a
+  uses the production 600000 ms timeout, and a diagnostic `--timeout-ms` differing from it forces a
   non-gating `corpusGatePass: false`), copies each in-bound source into the run temp root (no POSIX symlink),
   and reports peak memory through the worker's Job Object metrics sidecar on Windows / RSS sampling on
   POSIX. Flipping the supported
