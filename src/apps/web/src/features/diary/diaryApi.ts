@@ -74,3 +74,17 @@ export async function deleteDiaryEntry(id: string): Promise<void> {
     throw new Error(`Request to ${path} failed with status ${response.status}.`);
   }
 }
+
+// Read one diary Entry full-state (#801): the editor opens this for a voice entry so the source-audit row
+// has the retained transcript, detected language, and whether a recording exists — parsed at the boundary
+// so a drifted shape is caught here, not at render time.
+export async function fetchDiaryEntry(id: string): Promise<DiaryEntryDto> {
+  return parseDiaryEntryDto(await requestJson(apiUrl(`/diary/entries/${encodeURIComponent(id)}`)));
+}
+
+// The owned-entry audio URL a native `<audio>` element streams from (#801). It resolves through the same
+// host base as every API call, so the browser (or a native shell) points the player at the right origin;
+// the server never exposes the recording's filesystem path.
+export function diaryEntryAudioUrl(id: string): string {
+  return apiUrl(`/diary/entries/${encodeURIComponent(id)}/audio`);
+}

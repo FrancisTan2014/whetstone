@@ -3,7 +3,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DiaryEntryDto } from "@whetstone/contracts";
 import { createTextDocument } from "@whetstone/document";
 
-import { deleteDiaryEntry, fetchTimeline, submitDiaryCapture, updateDiaryEntry } from "./diaryApi";
+import {
+  deleteDiaryEntry,
+  diaryEntryAudioUrl,
+  fetchDiaryEntry,
+  fetchTimeline,
+  submitDiaryCapture,
+  updateDiaryEntry
+} from "./diaryApi";
 
 const bodyDoc = createTextDocument("today I read a book");
 
@@ -11,11 +18,13 @@ const entry: DiaryEntryDto = {
   bodyDoc,
   bodyText: "today I read a book",
   createdAt: "2026-06-30T20:38:00.000Z",
+  hasAudio: false,
   id: "diary-1",
   inputMode: "typed",
   language: null,
   occurredAt: "2026-06-30T20:38:00.000Z",
   processingStatus: null,
+  transcript: null,
   updatedAt: "2026-06-30T20:38:00.000Z"
 };
 
@@ -103,6 +112,32 @@ describe("diaryApi", () => {
 
     await expect(deleteDiaryEntry("diary-1")).resolves.toBeUndefined();
     expect(fetchMock).toHaveBeenCalledWith("/api/diary/entries/diary-1", { method: "DELETE" });
+  });
+
+  it("fetches one diary entry full-state and parses it (#801)", async () => {
+    const voice: DiaryEntryDto = {
+      ...entry,
+      hasAudio: true,
+      id: "voice-1",
+      inputMode: "voice",
+      language: "en",
+      processingStatus: "ready",
+      transcript: "  today I walked  "
+    };
+    const fetchMock = stubFetch({ body: voice, ok: true });
+
+    await expect(fetchDiaryEntry("voice-1")).resolves.toEqual(voice);
+    expect(fetchMock).toHaveBeenCalledWith("/api/diary/entries/voice-1", undefined);
+  });
+
+  it("throws when fetching one entry fails", async () => {
+    stubFetch({ ok: false, status: 404 });
+
+    await expect(fetchDiaryEntry("voice-1")).rejects.toThrow("failed with status 404");
+  });
+
+  it("builds the owned-entry audio URL through the host base, encoding the id (#801)", () => {
+    expect(diaryEntryAudioUrl("voice 1/2")).toBe("/api/diary/entries/voice%201%2F2/audio");
   });
 
   it("throws when a request fails", async () => {

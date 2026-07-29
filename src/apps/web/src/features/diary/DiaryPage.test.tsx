@@ -8,6 +8,8 @@ vi.mock("./diaryApi", () => ({
   submitDiaryCapture: vi.fn(),
   deleteDiaryEntry: vi.fn(),
   fetchTimeline: vi.fn(),
+  fetchDiaryEntry: vi.fn(),
+  diaryEntryAudioUrl: (id: string) => `/api/diary/entries/${encodeURIComponent(id)}/audio`,
   updateDiaryEntry: vi.fn()
 }));
 
@@ -61,7 +63,13 @@ import {
   loadPersistedTimeZone,
   resolveBrowserTimeZone
 } from "../../shared/preferences/preferencesApi";
-import { submitDiaryCapture, deleteDiaryEntry, fetchTimeline, updateDiaryEntry } from "./diaryApi";
+import {
+  submitDiaryCapture,
+  deleteDiaryEntry,
+  fetchDiaryEntry,
+  fetchTimeline,
+  updateDiaryEntry
+} from "./diaryApi";
 import { DiaryPage } from "./DiaryPage";
 import { clearDiarySession } from "./diarySessionStore";
 import type { CaptureVoiceDependencies, VoiceRecording } from "../capture/CaptureCard";
@@ -70,6 +78,7 @@ const mockedTimeline = vi.mocked(fetchTimeline);
 const mockedSubmit = vi.mocked(submitDiaryCapture);
 const mockedUpdate = vi.mocked(updateDiaryEntry);
 const mockedDelete = vi.mocked(deleteDiaryEntry);
+const mockedEntry = vi.mocked(fetchDiaryEntry);
 const mockedVoiceSubmit = vi.mocked(submitVoiceCapture);
 const mockedVoiceActive = vi.mocked(fetchActiveVoiceCaptures);
 const mockedZone = vi.mocked(loadPersistedTimeZone);
@@ -84,11 +93,18 @@ const MONTH = localDayKey(new Date(), BROWSER_ZONE).slice(0, 7);
 const d = (day: number): string => `${MONTH}-${String(day).padStart(2, "0")}`;
 
 // A diary timeline row (#571): a discriminated `kind: "diary"` DTO carrying the rich body + its plaintext.
-function tEntry(id: string, occurredAt: string, text: string): TimelineEntryDto {
+// `inputMode` (#801) tells the editor whether to mount the voice source row; typed by default.
+function tEntry(
+  id: string,
+  occurredAt: string,
+  text: string,
+  inputMode: DiaryEntryDto["inputMode"] = "typed"
+): TimelineEntryDto {
   return {
     bodyDoc: createTextDocument(text),
     bodyText: text,
     entryId: id,
+    inputMode,
     kind: "diary",
     language: null,
     occurredAt
@@ -111,18 +127,26 @@ function tDay(date: string, entries: TimelineEntryDto[]): TimelineDayDto {
   return { date, entries };
 }
 
-function entryDto(id: string, dayKey: string, text: string): DiaryEntryDto {
+function entryDto(
+  id: string,
+  dayKey: string,
+  text: string,
+  overrides: Partial<DiaryEntryDto> = {}
+): DiaryEntryDto {
   const occurredAt = `${dayKey}T12:00:00.000Z`;
   return {
     bodyDoc: createTextDocument(text),
     bodyText: text,
     createdAt: occurredAt,
+    hasAudio: false,
     id,
     inputMode: "typed",
     language: null,
     occurredAt,
     processingStatus: null,
-    updatedAt: occurredAt
+    transcript: null,
+    updatedAt: occurredAt,
+    ...overrides
   };
 }
 
@@ -203,6 +227,7 @@ beforeEach(() => {
   clearDiarySession();
   mockedTimeline.mockResolvedValue({ days: [] });
   mockedVoiceActive.mockResolvedValue([]);
+  mockedEntry.mockResolvedValue(entryDto("voice-1", d(12), "the recorded note"));
   mockedResolveZone.mockReturnValue(BROWSER_ZONE);
   mockedZone.mockResolvedValue(BROWSER_ZONE);
   vi.stubGlobal("IntersectionObserver", StubObserver);
@@ -402,6 +427,7 @@ describe("DiaryPage timeline", () => {
             bodyDoc: richDoc,
             bodyText: "A good day I felt grateful",
             entryId: "diary-rich",
+            inputMode: "typed",
             kind: "diary",
             language: null,
             occurredAt: `${d(30)}T08:00:00.000Z`
@@ -678,6 +704,222 @@ describe("DiaryPage rich edit and delete (#571)", () => {
     // A sibling entry still falls on the day, so the day section stays (no empty state).
     expect(screen.getByText("sibling text")).toBeDefined();
     expect(screen.queryByText(/No entries yet/)).toBeNull();
+  });
+});
+
+describe("DiaryPage voice source audit (#801)", () => {
+  beforeEach(() => {
+    mockedTimeline.mockReset();
+    mockedTimeline.mockResolvedValue({
+      days: [
+        tDay(d(12), [tEntry("voice-1", `${d(12)}T12:00:00.000Z`, "the recorded note", "voice")])
+      ]
+    });
+  });
+
+  async function openVoiceEditor(): Promise<void> {
+    await renderReady(makeCapture().capture);
+    await userEvent.click(screen.getByRole("button", { name: "Edit" }));
+  }
+
+  it("mounts the voice source with the recording, transcript, and detected language when editing a voice entry", async () => {
+    mockedEntry.mockResolvedValue(
+      entryDto("voice-1", d(12), "the recorded note", {
+        hasAudio: true,
+        inputMode: "voice",
+        language: "en",
+        transcript: "the raw spoken words"
+      })
+    );
+
+    await openVoiceEditor();
+
+    const source = await screen.findByRole("region", { name: "Voice source" });
+    // The recording plays through the native player pointed at the entry's audio endpoint.
+    const player = within(source).getByLabelText("Original recording") as HTMLAudioElement;
+    expect(player.getAttribute("src")).toBe("/api/diary/entries/voice-1/audio");
+    // The detected language is surfaced as a human label, not the raw code.
+    expect(within(source).getByText("English")).toBeTruthy();
+    // The verbatim transcript is present but collapsed (read-only disclosure), and it is not the editor.
+    const transcript = within(source).getByLabelText("Original transcript", { selector: "p" });
+    expect(transcript.textContent).toBe("the raw spoken words");
+    expect(mockedEntry).toHaveBeenCalledWith("voice-1");
+  });
+
+  it("reports the recording as unavailable and shows no language chip when the audio is gone", async () => {
+    mockedEntry.mockResolvedValue(
+      entryDto("voice-1", d(12), "the recorded note", {
+        hasAudio: false,
+        inputMode: "voice",
+        language: null,
+        transcript: "the raw spoken words"
+      })
+    );
+
+    await openVoiceEditor();
+
+    const source = await screen.findByRole("region", { name: "Voice source" });
+    expect(within(source).getByText("Recording unavailable")).toBeTruthy();
+    // No player is mounted for a missing recording, so it never requests audio that would 404.
+    expect(within(source).queryByLabelText("Original recording")).toBeNull();
+    // An absent detected language shows nothing rather than an empty placeholder.
+    expect(within(source).queryByText("English")).toBeNull();
+    expect(within(source).queryByText("中文")).toBeNull();
+    // The transcript is still auditable even without the recording.
+    expect(
+      within(source).getByLabelText("Original transcript", { selector: "p" }).textContent
+    ).toBe("the raw spoken words");
+  });
+
+  it("falls back to Recording unavailable when the player fails to load the audio", async () => {
+    mockedEntry.mockResolvedValue(
+      entryDto("voice-1", d(12), "the recorded note", {
+        hasAudio: true,
+        inputMode: "voice",
+        language: "en",
+        transcript: "the raw spoken words"
+      })
+    );
+
+    await openVoiceEditor();
+
+    const source = await screen.findByRole("region", { name: "Voice source" });
+    const player = within(source).getByLabelText("Original recording");
+    fireEvent.error(player);
+
+    expect(await within(source).findByText("Recording unavailable")).toBeTruthy();
+    expect(within(source).queryByLabelText("Original recording")).toBeNull();
+  });
+
+  it("omits the transcript disclosure when the voice entry retained no transcript", async () => {
+    mockedEntry.mockResolvedValue(
+      entryDto("voice-1", d(12), "the recorded note", {
+        hasAudio: true,
+        inputMode: "voice",
+        language: "zh",
+        transcript: null
+      })
+    );
+
+    await openVoiceEditor();
+
+    const source = await screen.findByRole("region", { name: "Voice source" });
+    // The Chinese detected language is labelled, and no empty transcript disclosure appears.
+    expect(within(source).getByText("中文")).toBeTruthy();
+    expect(within(source).queryByText("Original transcript")).toBeNull();
+  });
+
+  it("surfaces a non-blocking notice when the voice source cannot be loaded, keeping the body editable", async () => {
+    mockedEntry.mockRejectedValue(new Error("offline"));
+
+    await openVoiceEditor();
+
+    expect(await screen.findByText(/couldn't load the voice source/i)).toBeTruthy();
+    // The editor is still available so the learner can correct the body regardless.
+    expect(screen.getByLabelText("Edit entry")).toBeTruthy();
+  });
+
+  it("shows an unmapped detected language code verbatim rather than guessing a label", async () => {
+    mockedEntry.mockResolvedValue(
+      entryDto("voice-1", d(12), "the recorded note", {
+        hasAudio: true,
+        inputMode: "voice",
+        language: "fr",
+        transcript: null
+      })
+    );
+
+    await openVoiceEditor();
+
+    const source = await screen.findByRole("region", { name: "Voice source" });
+    expect(within(source).getByText("fr")).toBeTruthy();
+  });
+
+  it("does not surface a stale source after the editor closes before the fetch settles", async () => {
+    let resolveEntry!: (entry: DiaryEntryDto) => void;
+    mockedEntry.mockReturnValue(
+      new Promise<DiaryEntryDto>((resolve) => {
+        resolveEntry = resolve;
+      })
+    );
+
+    await openVoiceEditor();
+    // Close the editor (unmounting the source row) before its fetch settles.
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    // Resolving after unmount must not surface the row or throw an update-on-unmounted warning.
+    await act(async () => {
+      resolveEntry(
+        entryDto("voice-1", d(12), "late", {
+          hasAudio: true,
+          inputMode: "voice",
+          language: "en",
+          transcript: "late"
+        })
+      );
+    });
+    expect(screen.queryByRole("region", { name: "Voice source" })).toBeNull();
+  });
+
+  it("surfaces no error after the editor closes before a failing fetch settles", async () => {
+    let rejectEntry!: (reason: unknown) => void;
+    mockedEntry.mockReturnValue(
+      new Promise<DiaryEntryDto>((_resolve, reject) => {
+        rejectEntry = reject;
+      })
+    );
+
+    await openVoiceEditor();
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    await act(async () => {
+      rejectEntry(new Error("late"));
+    });
+    expect(screen.queryByText(/couldn't load the voice source/i)).toBeNull();
+  });
+
+  it("shows no voice source row for a typed entry", async () => {
+    mockedTimeline.mockReset();
+    mockedTimeline.mockResolvedValue({
+      days: [tDay(d(12), [tEntry("typed-1", `${d(12)}T12:00:00.000Z`, "a typed note", "typed")])]
+    });
+
+    await renderReady(makeCapture().capture);
+    await userEvent.click(screen.getByRole("button", { name: "Edit" }));
+
+    expect(screen.queryByRole("region", { name: "Voice source" })).toBeNull();
+    // A typed entry never fetches a voice source.
+    expect(mockedEntry).not.toHaveBeenCalled();
+  });
+
+  it("edits the body of a voice entry, leaving the retained source unchanged", async () => {
+    mockedEntry.mockResolvedValue(
+      entryDto("voice-1", d(12), "the recorded note", {
+        hasAudio: true,
+        inputMode: "voice",
+        language: "en",
+        transcript: "the raw spoken words"
+      })
+    );
+    mockedUpdate.mockResolvedValue(
+      entryDto("voice-1", d(12), "the corrected note", {
+        hasAudio: true,
+        inputMode: "voice",
+        language: "en",
+        transcript: "the raw spoken words"
+      })
+    );
+
+    await openVoiceEditor();
+    await screen.findByRole("region", { name: "Voice source" });
+    const editor = screen.getByLabelText("Edit entry");
+    await userEvent.clear(editor);
+    await userEvent.type(editor, "the corrected note");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await screen.findByText("the corrected note");
+    // Only the rich body is persisted; the audit correction never touches the retained transcript/audio.
+    expect(mockedUpdate).toHaveBeenCalledWith("voice-1", createTextDocument("the corrected note"));
   });
 });
 

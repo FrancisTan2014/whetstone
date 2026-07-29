@@ -124,11 +124,13 @@ function diaryEntry(text: string, overrides: Partial<DiaryEntryDto> = {}): Diary
     bodyDoc: createTextDocument(text),
     bodyText: text,
     createdAt: "2026-07-06T09:30:00.000Z",
+    hasAudio: false,
     id: "entry-1",
     inputMode: "typed",
     language: "en",
     occurredAt: "2026-07-06T09:30:00.000Z",
     processingStatus: null,
+    transcript: null,
     updatedAt: "2026-07-06T09:30:00.000Z",
     ...overrides
   };

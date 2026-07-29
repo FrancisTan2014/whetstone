@@ -19,6 +19,7 @@ const snapshot: DiaryTimelineSnapshot = {
       bodyText: "a remembered thought",
       date: "2026-06-28",
       entryId: "r28",
+      inputMode: "typed",
       kind: "diary",
       language: null,
       occurredAt: "2026-06-28T08:00:00.000Z"
