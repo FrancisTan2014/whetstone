@@ -2,14 +2,17 @@ import { execFile } from "node:child_process";
 
 import type { InspectOcrToolchain, OcrToolchainAvailability } from "./pdfOcrAdapter.js";
 
-// The runtime inspection of the OCR toolchain (#745): whether OCRmyPDF can run and which Tesseract
-// trained-data packs are installed, so the bounded adapter can fail with a NAMED tool/language error
-// before it ever spawns a pass. The subprocess boundary lives here; the parsing that turns tool output
-// into the availability shape is pure and unit-tested, so the only untested lines are the spawn itself.
+// The runtime inspection of the OCR toolchain (#745): which Tesseract trained-data packs are installed,
+// so the bounded adapter can fail with a NAMED `language_missing` error before it ever spawns a pass.
+// The subprocess boundary lives here; the parsing that turns tool output into the availability shape is
+// pure and unit-tested, so the only untested lines are the spawn itself.
 //
-// A present-but-slow OCRmyPDF must not be misreported as missing (#788): the readiness probe classifies
-// its outcome — a clean exit (with code), a genuinely missing executable (ENOENT), a timed-out probe, or
-// a launch failure — so the inspector can tell "not installed" apart from "installed but not ready yet".
+// It does NOT probe `ocrmypdf --version` (#797). OCRmyPDF version/pin readiness is owned by
+// `pnpm setup:pdf` / setup doctor, and whether the executable can actually run is decided by the
+// authoritative bounded OCR pass itself (which classifies a missing executable, a timeout, a crash, and
+// cancellation). A per-import diagnostic `--version` probe on OCRmyPDF's slow Python cold start could
+// exceed its own budget and reject an import whose real OCR operation would have succeeded, so it is
+// removed rather than merely given a longer timeout.
 
 // The classified outcome of a bounded tool probe. `exit` carries the process exit code and combined
 // stdout+stderr; the other variants are the ways a probe can fail to yield an exit code, kept distinct so
@@ -89,33 +92,21 @@ export function createDefaultOcrToolProbe(timeoutMs: number): OcrToolProbe {
 }
 
 export type OcrToolchainInspectorDependencies = Readonly<{
-  ocrmypdfBinary: string;
   tesseractBinary: string;
-  // The bounded readiness-probe ceiling; defaults to 15s. Injected so a test can prove a present but
-  // slow executable is classified as unresponsive without waiting the full production budget.
+  // The bounded readiness-probe ceiling; defaults to 15s. Injected so a test can prove the pack listing
+  // is bounded without waiting the full production budget.
   timeoutMs?: number;
   // Injected for tests; defaults to a real, bounded spawn.
   probe?: OcrToolProbe;
 }>;
 
-// Map a non-`exit` OCRmyPDF readiness probe to the matching unresponsive reason. A missing executable is
-// handled by the caller; everything here means OCRmyPDF is present but did not report readiness cleanly.
-function unresponsiveFrom(
-  probe: Exclude<OcrProbeResult, { outcome: "exit" | "missing" }>
-): OcrToolchainAvailability {
-  return probe.outcome === "timed_out"
-    ? {
-        status: "unresponsive",
-        reason: "timeout",
-        detail: "the OCRmyPDF `--version` probe timed out"
-      }
-    : { status: "unresponsive", reason: "launch_failure", detail: probe.detail };
-}
-
-// Build the live toolchain inspector the production adapter injects. OCRmyPDF is checked first; only a
-// clean `--version` exit of 0 means it can run, so its installed Tesseract packs are then listed. A
-// missing executable, a timed-out/failed launch, or a non-zero `--version` are returned as distinct
-// outcomes (#788) rather than a blanket "unavailable", so a slow cold start is never reported as absent.
+// Build the live toolchain inspector the production adapter injects. It probes ONLY `tesseract
+// --list-langs` to report the installed trained-data packs, so the adapter can reject `language_missing`
+// before spawning. It does NOT probe `ocrmypdf --version` (#797): OCRmyPDF's installed/pinned readiness
+// is owned by setup, and whether the executable can run is decided by the authoritative bounded pass, so
+// a slow OCRmyPDF cold start can never reject a runnable import here. A Tesseract probe that does not exit
+// cleanly (missing, timed out, launch failure, or a non-zero exit) yields an empty pack list rather than a
+// claim that the toolchain is absent — the actual pass remains the source of truth for tool presence.
 export function createOcrToolchainInspector(
   dependencies: OcrToolchainInspectorDependencies
 ): InspectOcrToolchain {
@@ -123,21 +114,6 @@ export function createOcrToolchainInspector(
     dependencies.probe ??
     createDefaultOcrToolProbe(dependencies.timeoutMs ?? TOOLCHAIN_PROBE_TIMEOUT_MS);
   return async (): Promise<OcrToolchainAvailability> => {
-    const ocrmypdf = await probe(dependencies.ocrmypdfBinary, ["--version"]);
-    if (ocrmypdf.outcome === "missing") {
-      return { status: "missing" };
-    }
-    if (ocrmypdf.outcome !== "exit") {
-      return unresponsiveFrom(ocrmypdf);
-    }
-    if (ocrmypdf.code !== 0) {
-      // OCRmyPDF launched but its version probe exited abnormally: present, but not confirmed ready.
-      return {
-        status: "unresponsive",
-        reason: "version_probe_failed",
-        detail: `ocrmypdf --version exited ${ocrmypdf.code}`
-      };
-    }
     const langs = await probe(dependencies.tesseractBinary, ["--list-langs"]);
     return {
       status: "available",
