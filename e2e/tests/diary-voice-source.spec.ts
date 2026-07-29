@@ -33,12 +33,14 @@ test.describe("diary voice source audit (#801)", () => {
     const { baseURL } = setup;
 
     // Submit a real WAV clip straight to the endpoint (Playwright has no microphone): the audio is saved
-    // and a queued capture created, then the worker transcribes it. The fixture speech lane returns a
-    // transcript for genuine WAV bytes, so the capture reaches `ready` and a diary entry is created.
+    // and a queued capture created, then the worker transcribes it. The upload declares the recording's
+    // real container type (as a browser's MediaRecorder would), which the server retains so the audio
+    // endpoint serves it back (#801). The fixture speech lane returns a transcript for genuine WAV bytes,
+    // so the capture reaches `ready` and a diary entry is created.
     const submitUrl = new URL("api/diary/voice-captures", baseURL).toString();
     const accepted = await page.request.post(submitUrl, {
       data: voiceClipFixture.buffer,
-      headers: { "content-type": "application/octet-stream" }
+      headers: { "content-type": voiceClipFixture.mimeType }
     });
     expect(accepted.status()).toBe(202);
     const { id } = (await accepted.json()) as { id: string };
@@ -56,6 +58,13 @@ test.describe("diary voice source audit (#801)", () => {
         { timeout: 15_000 }
       )
       .toBe("ready");
+
+    // The audio endpoint serves the recording under its retained container type, not a generic stream, so
+    // the browser can decode it (#801 acceptance: uses the recorded content type).
+    const audioUrl = new URL(`api/diary/entries/${id}/audio`, baseURL).toString();
+    const audioResponse = await page.request.get(audioUrl);
+    expect(audioResponse.status()).toBe(200);
+    expect(audioResponse.headers()["content-type"]).toBe(voiceClipFixture.mimeType);
 
     // Open the Diary timeline; the ready voice entry renders as an ordinary entry (its body is the note).
     await page.goto(`${baseURL}#/diary`);

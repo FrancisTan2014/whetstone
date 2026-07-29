@@ -5,10 +5,47 @@ import { captureLanguageSchema } from "./captureContracts.js";
 // (No submit query schema: a voice capture no longer carries a manual capture language — Whisper
 // auto-detects the language during transcription, #647.)
 
-// The content type for raw recorded-audio uploads: a voice clip's bytes travel as an octet-stream
-// request body (not multipart), so the server registers a matching body parser once and the client
-// sets this as the upload's `content-type`.
+// The generic fallback content type for recorded-audio uploads: a voice clip's bytes travel as a raw
+// binary request body (not multipart). The server registers a matching body parser once, and the client
+// falls back to this when the recording carries no container type of its own. It is also what the audio
+// endpoint serves when no safe recorded type was retained.
 export const audioContentType = "application/octet-stream";
+
+// The safe recorded-audio media types a voice capture may be served back as (#801). A browser's
+// MediaRecorder stamps its clip with a container MIME type (e.g. `audio/webm;codecs=opus`), and the audio
+// endpoint must echo that container so the native <audio> element decodes and seeks it. Only a type on
+// this allowlist is ever reflected into a response, so an arbitrary client-supplied header can never be
+// turned into a served content type — an unrecognized value falls back to the generic octet-stream. The
+// list is the set of containers MediaRecorder realistically emits across browsers.
+export const recordedAudioContentTypes = [
+  "audio/webm",
+  "audio/ogg",
+  "audio/mp4",
+  "audio/mpeg",
+  "audio/aac",
+  "audio/flac",
+  "audio/wav",
+  "audio/x-wav",
+  "audio/wave"
+] as const;
+
+const recordedAudioContentTypeSet: ReadonlySet<string> = new Set(recordedAudioContentTypes);
+
+// Normalize a declared (request) or retained (stored) content type to a safe recorded-audio media type,
+// or null when it is not a recognized audio container. Matching is on the lowercased essence — the part
+// before any `;` parameters — so `audio/webm;codecs=opus` and `AUDIO/WEBM` both resolve to `audio/webm`;
+// dropping parameters keeps the served header a fixed, safe token. Anything outside the allowlist —
+// octet-stream, a non-audio type, an empty value, or undefined/null — returns null so the caller can fall
+// back to `audioContentType` and no untrusted string is ever reflected into a response header.
+export function parseRecordedAudioContentType(header: string | null | undefined): string | null {
+  if (header === null || header === undefined) {
+    return null;
+  }
+  const semicolon = header.indexOf(";");
+  const base = semicolon === -1 ? header : header.slice(0, semicolon);
+  const essence = base.trim().toLowerCase();
+  return recordedAudioContentTypeSet.has(essence) ? essence : null;
+}
 
 // Shared, Zod-validated shapes for the asynchronous Tap-and-Talk voice capture (#565). A voice clip is
 // saved and durable BEFORE speech-to-text runs: submitting returns a pending capture id + status

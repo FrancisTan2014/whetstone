@@ -242,18 +242,24 @@ export async function getDiaryEntryForUser(
   return row === undefined ? null : toDiaryEntryDto(row as DiaryReadRow);
 }
 
-// The server-side path of a voice entry's retained recording, for the owned-entry audio endpoint (#801).
-// Scoped to the owner AND to voice entries, so a typed entry, an unknown/forged id, or another user's
-// entry returns null (→ 404, never streamed). A voice entry whose recording is gone (`raw_audio_path`
-// null) also returns null, so the endpoint reports `Recording unavailable` rather than streaming nothing.
-// The path never crosses the API — only this internal query and the audio store touch it.
-export async function getVoiceEntryAudioPath(
+// A voice entry's retained recording for the owned-entry audio endpoint (#801): the server-side file path
+// AND the safe container content type to serve it as. Scoped to the owner AND to voice entries, so a typed
+// entry, an unknown/forged id, or another user's entry returns null (→ 404, never streamed). A voice entry
+// whose recording is gone (`raw_audio_path` null) also returns null, so the endpoint reports `Recording
+// unavailable` rather than streaming nothing. Neither the path nor the raw stored type crosses the API —
+// only this internal query, the audio store, and the endpoint's allowlist re-validation touch them.
+export type VoiceEntryAudio = Readonly<{ audioPath: string; contentType: string | null }>;
+
+export async function getVoiceEntryAudio(
   db: DbClient,
   id: string,
   userId: string
-): Promise<string | null> {
+): Promise<VoiceEntryAudio | null> {
   const [row] = await db
-    .select({ rawAudioPath: diaryEntries.rawAudioPath })
+    .select({
+      rawAudioContentType: diaryEntries.rawAudioContentType,
+      rawAudioPath: diaryEntries.rawAudioPath
+    })
     .from(diaryEntries)
     .innerJoin(personalEntries, eq(personalEntries.entryId, diaryEntries.entryId))
     .where(
@@ -265,5 +271,9 @@ export async function getVoiceEntryAudioPath(
     )
     .limit(1);
 
-  return row?.rawAudioPath ?? null;
+  const audioPath = row?.rawAudioPath ?? null;
+  if (audioPath === null) {
+    return null;
+  }
+  return { audioPath, contentType: row?.rawAudioContentType ?? null };
 }

@@ -1,6 +1,7 @@
 import {
   audioContentType,
   createDiaryEntryRequestSchema,
+  parseRecordedAudioContentType,
   timelineQuerySchema,
   updateDiaryEntryRequestSchema
 } from "@whetstone/contracts";
@@ -12,7 +13,7 @@ import {
   updateDiaryEntry,
   type DiaryDependencies
 } from "./diaryCommands.js";
-import { getDiaryEntryForUser, getVoiceEntryAudioPath, listTimelinePage } from "./diaryQueries.js";
+import { getDiaryEntryForUser, getVoiceEntryAudio, listTimelinePage } from "./diaryQueries.js";
 import type { VoiceCaptureAudioStore } from "./voiceCaptureAudioStore.js";
 import { parseAudioRange } from "./voiceCaptureAudioStore.js";
 import { getLearnerTimeZone } from "../preferences/preferencesQueries.js";
@@ -72,9 +73,13 @@ export function registerDiaryRoutes(
       return reply.code(400).send(invalidRequest);
     }
 
+    // The recording's declared container type is validated once here against the safe allowlist (null when
+    // unrecognized), so only a known audio type is ever retained and later served back for playback (#801).
+    const recordedContentType = parseRecordedAudioContentType(request.headers["content-type"]);
     const accepted = await submitVoiceCapture(
       dependencies,
       body,
+      recordedContentType,
       request.server.currentUser.getCurrentUserId(),
       dependencies.now()
     );
@@ -202,25 +207,29 @@ export function registerDiaryRoutes(
   // Stream a voice entry's retained recording so the learner can audit the body against it (#801). The
   // stored server-side path never crosses the API — it is resolved by an owner+voice-scoped query and
   // opened only within the voice-capture root, so a typed/unknown entry, another user's entry, or a
-  // recording gone from disk is 404 (never a stream or a leaked path). Serves the recorded content type,
-  // advertises `Accept-Ranges: bytes`, and honours a single-range `Range` header with a 206 partial (416
-  // when unsatisfiable) so the native player can seek.
+  // recording gone from disk is 404 (never a stream or a leaked path). Serves the recording's retained
+  // container type (re-validated against the safe allowlist, falling back to the generic octet-stream for
+  // a legacy/unknown type), advertises `Accept-Ranges: bytes`, and honours a single-range `Range` header
+  // with a 206 partial (416 when unsatisfiable) so the native player can seek.
   server.get<{ Params: EntryParams }>("/api/diary/entries/:id/audio", async (request, reply) => {
-    const storedPath = await getVoiceEntryAudioPath(
+    const audio = await getVoiceEntryAudio(
       dependencies.db,
       request.params.id,
       request.server.currentUser.getCurrentUserId()
     );
-    if (storedPath === null) {
+    if (audio === null) {
       return reply.code(404).send(notFound);
     }
-    const opened = await dependencies.audioStore.open(storedPath);
+    const opened = await dependencies.audioStore.open(audio.audioPath);
     if (opened === null) {
       return reply.code(404).send(notFound);
     }
 
     reply.header("accept-ranges", "bytes");
-    reply.header("content-type", audioContentType);
+    reply.header(
+      "content-type",
+      parseRecordedAudioContentType(audio.contentType) ?? audioContentType
+    );
 
     const parsed = parseAudioRange(request.headers.range, opened.size);
     if (parsed.kind === "unsatisfiable") {

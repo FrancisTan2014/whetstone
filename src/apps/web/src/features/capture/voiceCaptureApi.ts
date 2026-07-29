@@ -23,14 +23,17 @@ async function requestJson(path: string, init?: RequestInit): Promise<unknown> {
   return response.json();
 }
 
-// Save a recorded clip: POST the raw audio bytes (octet-stream); the server files a pending diary capture
-// and returns its id + `queued` status immediately, so the user can record again without waiting for STT.
-// No capture language is sent — the worker auto-detects the language during transcription (#647).
+// Save a recorded clip: POST the raw audio bytes with the recording's own container type (e.g.
+// `audio/webm`) so the server can retain it and the audio endpoint serves the recording back for playback
+// (#801). A clip with no type of its own (some environments produce a typeless Blob) falls back to the
+// generic octet-stream, which the server also accepts. The server files a pending diary capture and
+// returns its id + `queued` status immediately, so the user can record again without waiting for STT. No
+// capture language is sent — the worker auto-detects the language during transcription (#647).
 export async function submitVoiceCapture(audio: Blob): Promise<VoiceCaptureAcceptedDto> {
   return parseVoiceCaptureAcceptedDto(
     await requestJson(apiUrl("/diary/voice-captures"), {
       body: audio,
-      headers: { "content-type": audioContentType },
+      headers: { "content-type": audio.type || audioContentType },
       method: "POST"
     })
   );

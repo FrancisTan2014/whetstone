@@ -104,6 +104,14 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
     done(null, body)
   );
 
+  // A recorded clip may instead arrive stamped with its real container type (e.g. `audio/webm`) from the
+  // browser's MediaRecorder, so the audio endpoint can serve that type back for playback (#801). Parse any
+  // `audio/*` body as raw bytes too; the capture route validates the declared type against the safe
+  // recorded-audio allowlist before persisting it.
+  server.addContentTypeParser(/^audio\//, { parseAs: "buffer" }, (_request, body, done) =>
+    done(null, body)
+  );
+
   // Born-digital PDF uploads (#702) stream straight into the import feature's staging/hash boundary, so
   // the whole file is never buffered in memory (GUIDELINES: no route buffers an entire source merely to
   // hash or persist it). This passthrough parser hands the route the raw request stream instead of a

@@ -3,9 +3,11 @@ import { describe, expect, it } from "vitest";
 import {
   isRetryableVoiceCaptureFailure,
   makeVoiceCaptureFailure,
+  parseRecordedAudioContentType,
   parseVoiceCaptureAcceptedDto,
   parseVoiceCaptureListDto,
   parseVoiceCaptureStatusDto,
+  recordedAudioContentTypes,
   voiceCaptureFailureCodes
 } from "./voiceCaptureContracts.js";
 
@@ -159,5 +161,28 @@ describe("parseVoiceCaptureListDto", () => {
 
   it("rejects unknown fields", () => {
     expect(() => parseVoiceCaptureListDto({ captures: [], extra: true })).toThrow();
+  });
+});
+
+describe("parseRecordedAudioContentType", () => {
+  it("accepts every allowlisted recorded container as its own essence", () => {
+    for (const type of recordedAudioContentTypes) {
+      expect(parseRecordedAudioContentType(type)).toBe(type);
+    }
+  });
+
+  it("normalizes to the lowercased essence, dropping codecs and casing (audio/webm;codecs=opus)", () => {
+    expect(parseRecordedAudioContentType("audio/webm;codecs=opus")).toBe("audio/webm");
+    expect(parseRecordedAudioContentType("AUDIO/WEBM")).toBe("audio/webm");
+    expect(parseRecordedAudioContentType("audio/ogg; codecs=opus")).toBe("audio/ogg");
+  });
+
+  it("rejects non-audio, octet-stream, empty, and absent values so nothing untrusted is reflected", () => {
+    expect(parseRecordedAudioContentType("application/octet-stream")).toBeNull();
+    expect(parseRecordedAudioContentType("text/html")).toBeNull();
+    expect(parseRecordedAudioContentType("audio/basic")).toBeNull();
+    expect(parseRecordedAudioContentType("")).toBeNull();
+    expect(parseRecordedAudioContentType(undefined)).toBeNull();
+    expect(parseRecordedAudioContentType(null)).toBeNull();
   });
 });

@@ -40,13 +40,23 @@ afterEach(() => {
 describe("submitVoiceCapture", () => {
   it("posts the audio bytes and parses the acceptance (no language query — Whisper auto-detects)", async () => {
     const fetchMock = stubFetch({ body: { id: "cap-1", status: "queued" }, ok: true, status: 202 });
-    const audio = new Blob(["clip"]);
+    const audio = new Blob(["clip"], { type: "audio/webm" });
 
     expect(await submitVoiceCapture(audio)).toEqual({ id: "cap-1", status: "queued" });
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toContain("/diary/voice-captures");
     expect(url).not.toContain("language");
     expect(init).toEqual(expect.objectContaining({ body: audio, method: "POST" }));
+    // The recording's own container type travels so the server can serve it back for playback (#801).
+    expect(init.headers).toEqual({ "content-type": "audio/webm" });
+  });
+
+  it("falls back to octet-stream when the recorded clip carries no container type", async () => {
+    const fetchMock = stubFetch({ body: { id: "cap-1", status: "queued" }, ok: true, status: 202 });
+    // A typeless Blob (some capture environments) still uploads, tagged with the generic fallback.
+    await submitVoiceCapture(new Blob(["clip"]));
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(init.headers).toEqual({ "content-type": "application/octet-stream" });
   });
 
   it("throws on a non-ok response", async () => {

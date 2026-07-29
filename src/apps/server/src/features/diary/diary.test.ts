@@ -44,6 +44,7 @@ async function seedDiaryEntry(
     language?: string | null;
     occurredAt: string;
     processingStatus?: "queued" | "transcribing" | "tidying" | "ready" | "failed" | null;
+    rawAudioContentType?: string | null;
     rawAudioPath?: string | null;
     rawTranscript?: string | null;
     userId: string;
@@ -69,6 +70,7 @@ async function seedDiaryEntry(
       inputMode: row.inputMode ?? "typed",
       language: row.language ?? null,
       processingStatus: status,
+      rawAudioContentType: row.rawAudioContentType ?? null,
       rawAudioPath:
         row.rawAudioPath !== undefined
           ? row.rawAudioPath
@@ -648,6 +650,7 @@ async function seedReadyVoiceEntry(
     id: string;
     language?: string | null;
     occurredAt?: string;
+    rawAudioContentType?: string | null;
     rawAudioPath?: string | null;
     transcript?: string;
     userId?: string;
@@ -665,6 +668,7 @@ async function seedReadyVoiceEntry(
     language: row.language ?? "en",
     occurredAt: row.occurredAt ?? "2026-06-30T09:00:00.000Z",
     processingStatus: "ready",
+    rawAudioContentType: row.rawAudioContentType ?? null,
     rawAudioPath: row.rawAudioPath !== undefined ? row.rawAudioPath : audioPath,
     rawTranscript: row.transcript ?? "This is my recorded diary note for today.",
     userId: row.userId ?? DEFAULT_USER_ID
@@ -750,7 +754,26 @@ describe("GET /api/diary/entries/:id (#801)", () => {
 });
 
 describe("GET /api/diary/entries/:id/audio (#801)", () => {
-  it("streams the whole recording with the recorded content type and Accept-Ranges", async () => {
+  it("serves the retained recorded container type so the browser decodes it (audio/webm)", async () => {
+    await seedReadyVoiceEntry({
+      bytes: "0123456789",
+      id: "voice-webm",
+      rawAudioContentType: "audio/webm"
+    });
+
+    const response = await context.server.inject({
+      method: "GET",
+      url: "/api/diary/entries/voice-webm/audio"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["content-type"]).toBe("audio/webm");
+    expect(response.rawPayload.toString()).toBe("0123456789");
+  });
+
+  it("falls back to octet-stream when the recording retained no recognized container type", async () => {
+    // A pre-#801 recording (or an upload whose declared type was not on the safe allowlist) has no
+    // retained content type, so the endpoint serves the generic fallback rather than reflecting a guess.
     await seedReadyVoiceEntry({ bytes: "0123456789", id: "voice-a" });
 
     const response = await context.server.inject({

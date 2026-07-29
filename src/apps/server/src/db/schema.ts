@@ -871,6 +871,8 @@ export const personalEntries = pgTable(
 // document (`body_doc`, edited through the shared rich editor), with `body_text` the readable plaintext
 // projection (`documentReadableText(body_doc)`, block-boundary spaces) kept for preview/search. Ownership + chronology live in `personal_entries`;
 // this table holds the diary-specific facets. `input_mode` is how it was captured; `raw_audio_path`,
+// `raw_audio_content_type` (the recording's safe container MIME type, e.g. `audio/webm`, so the audio
+// endpoint serves it back for playback #801),
 // `raw_transcript` (verbatim STT/typed text before tidy), and `tidied_text` preserve the voice pipeline's
 // intermediate representations; `language` is the detected/selected language. `processing_status` is NULL
 // for a synchronous typed capture that is ready on write; only the queued voice path carries a status,
@@ -886,6 +888,7 @@ export const diaryEntries = pgTable("diary_entries", {
   language: text("language"),
   inputMode: text("input_mode", { enum: ["typed", "voice"] as const }).notNull(),
   rawAudioPath: text("raw_audio_path"),
+  rawAudioContentType: text("raw_audio_content_type"),
   rawTranscript: text("raw_transcript"),
   tidiedText: text("tidied_text"),
   processingStatus: text("processing_status", {
