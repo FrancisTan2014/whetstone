@@ -1,8 +1,10 @@
 import { execFile } from "node:child_process";
 
-// The OS-process boundary for the local Whisper adapter: run a configured binary with arguments and
-// return its stdout. Injected into the adapter so the transcript-mapping logic stays testable against
-// a fake, while this thin runner is itself exercised end-to-end against a real child process.
+// The OS-process boundary shared by every local speech adapter: run a configured binary with arguments
+// and return its stdout. Injected into an adapter so the transcript-mapping logic stays testable against
+// a fake, while this thin runner is itself exercised end-to-end against a real child process. It is
+// provider-neutral - the legacy Whisper adapter and the provider-neutral LocalSpeechInput both drive
+// their configured executable through it.
 export type CommandRunner = (binaryPath: string, args: ReadonlyArray<string>) => Promise<string>;
 
 // Word-timestamp JSON for a long utterance can be sizeable; allow a generous stdout buffer.

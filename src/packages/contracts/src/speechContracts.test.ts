@@ -28,6 +28,14 @@ describe("parseTranscription", () => {
     expect(() => parseTranscription({ transcript: "hi", words: [] })).toThrow();
   });
 
+  it("accepts a valid transcript with empty word evidence (a provider with no aligner, #799)", () => {
+    expect(parseTranscription({ language: null, transcript: "help yourself", words: [] })).toEqual({
+      language: null,
+      transcript: "help yourself",
+      words: []
+    });
+  });
+
   it("rejects a non-integer word offset", () => {
     expect(() =>
       parseTranscription({

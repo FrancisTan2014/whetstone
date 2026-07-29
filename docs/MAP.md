@@ -427,14 +427,22 @@ can navigate them from another package.
   boot health probe). This replaces the two former hand-rolled Ollama `fetch` clients and the hardcoded
   base URL; a later cloud model is a provider/base-URL swap behind the same `LlmModel` type.
 - Voice input (STT) seam: `src/speech/` — `speechInput.ts` (the `SpeechInput`
-  interface: `transcribe({ path }) -> { transcript, words[], language }`), `fakeSpeechInput.ts` (deterministic, for
-  the mic-less `pnpm validate` gate), `whisperSpeechInput.ts` (a local OSS Whisper adapter — builds the
-  offline CLI args always with `--language auto` (Whisper auto-detects, no forced-language override, #647); validates
-  the word-timestamped JSON at the boundary and reads the detected `language`; maps to a `Transcription`),
-  `whisperProcess.ts` (the injected execFile runner) and `speechConfig.ts` (env-driven, absent-config-
-  safe `resolveSpeechInput` that stays on the fake until a Whisper binary+model are configured).
-  `speechHealth.ts` (`checkSpeechHealth`, wired in `index.ts`) logs a
-  boot warning when STT is on the fake, pointing at `pnpm setup:voice`. Transcript shapes in
+  interface: `transcribe({ path }) -> { transcript, words[], language }`; transcript-first — `words` is
+  optional timing evidence, empty when a provider has no aligner, #799), `fakeSpeechInput.ts`
+  (deterministic, for the mic-less `pnpm validate` gate), `localSpeechInput.ts` (the **provider-neutral
+  local adapter and stable boundary** (#799): config is only `{ binaryPath, modelIdentifier }`; builds
+  the neutral protocol args `--model <id> --output json <audio>` (no forced language, no engine-specific
+  flag), exposes the `--contract-version` readiness protocol, leniently validates transcript-first JSON
+  at the boundary and maps to a `Transcription`), `whisperSpeechInput.ts` (the **legacy** OSS Whisper
+  adapter kept working only as a migration fallback — builds the offline CLI args always with
+  `--language auto` (#647); it does not implement the new protocol), `speechProcess.ts` (the injected,
+  provider-neutral execFile runner shared by both adapters) and `speechConfig.ts` (env-driven,
+  absent-config-safe `readSpeechConfig` + `resolveSpeechInput`: the `LOCAL_ASR_BINARY`+`LOCAL_ASR_MODEL`
+  pair is authoritative, a partial new pair is an explicit config error, the legacy
+  `WHISPER_BINARY`+`WHISPER_MODEL_PATH` pair is a fallback only when neither new key is present, and a
+  mixed config is flagged; stays on the fake until a provider is configured). `speechHealth.ts`
+  (`checkSpeechHealth`, wired in `index.ts`) logs a boot warning when STT is on the fake, pointing at
+  `pnpm setup:voice`, and a migration hint for the legacy/mixed states. Transcript shapes in
   `@whetstone/contracts` (`speechContracts.ts`). Audio never leaves the machine; setup in
   `docs/SPEECH.md`.
 - Diary (rich Entry + logical Timeline): `src/features/diary/` (#246 origin, #571 rich-Entry rework) — the
