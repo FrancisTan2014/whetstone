@@ -8,18 +8,20 @@ The server's local speech adapter (`localSpeechInput.ts`, #799) invokes the conf
    match) plus, for `pnpm setup:doctor`, the provider name, the pinned model revision, and the resource
    requirements. Because it loads nothing, doctor stays cheap.
 
-2. **Transcription** — `whetstone-qwen --model <id> --output json <audio>` decodes the saved capture and
-   runs CPU float32 Qwen3-ASR with automatic language detection, emitting the transcript-first JSON
-   contract. No language is forced and no aligner runs, so `segments` is always empty: the transcript is
-   the payload and word timing is optional evidence this provider does not produce.
+2. **Transcription** — `whetstone-qwen --model <id> --output json <audio>` decodes the saved capture to a
+   16 kHz mono waveform (PyAV, content-sniffed) and hands that waveform to CPU float32 Qwen3-ASR with
+   automatic language detection, emitting the transcript-first JSON contract. No language is forced and
+   no aligner runs, so `segments` is always empty: the transcript is the payload and word timing is
+   optional evidence this provider does not produce.
 
    ```json
-   {"text": "你好世界", "language": "zh", "segments": []}
+   {"text": "你好世界", "language": "Chinese", "segments": []}
    ```
 
-Model loading and audio decoding are the un-fakeable native/inference boundary (`_default_transcriber`),
-excluded from unit coverage; the argument contract, the JSON shaping, and the cheap probe are what the
-tests pin against a fake transcriber so no real model or network is needed.
+Loading the model and the native PyAV decode are the un-fakeable inference boundary (`_default_transcriber`
+/ `whetstone_qwen.audio`), excluded from unit coverage; the argument contract, the JSON shaping, the cheap
+probe, and the decode→engine routing (`_transcribe_capture`) are what the tests pin against a fake engine
+and a fake decode, so no real model or network is needed.
 """
 from __future__ import annotations
 
@@ -91,26 +93,52 @@ def build_contract(result: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _language_or_none(language: Any) -> Any:
+    """Normalize a provider language field to a non-empty string or None.
+
+    Qwen reports a canonical language name (e.g. `"Chinese"`, or `"Chinese,English"` for mixed audio) and
+    an EMPTY string for silent/unknown audio. The neutral contract carries `language` only when the
+    provider actually detected one, so an empty/whitespace value collapses to None rather than an empty
+    string the server would otherwise store verbatim.
+    """
+    if isinstance(language, str):
+        stripped = language.strip()
+        return stripped or None
+    return None
+
+
+def _transcribe_capture(engine: Any, decode: Callable[[str], Any], audio_path: str) -> Dict[str, Any]:
+    """Decode the saved capture to a waveform and hand THAT waveform — never the raw path — to Qwen.
+
+    `decode(audio_path)` returns `(waveform, sample_rate)` from PyAV's bundled ffmpeg, and that decoded
+    audio is what `engine.transcribe` consumes. Passing the decoded `(waveform, sr)` (not the file path)
+    is the whole point: it keeps decoding inside PyAV, so a browser WebM/Opus capture saved under a
+    `.audio` suffix transcribes on a clean host instead of failing when Qwen re-opens the path with a
+    codec that needs a system ffmpeg. `transcribe` returns one `ASRTranscription` per input audio; we
+    pass a single clip and read the first result's `text`/`language`.
+    """
+    waveform, sample_rate = decode(audio_path)
+    result = engine.transcribe([(waveform, sample_rate)])[0]
+    return {"text": getattr(result, "text", ""), "language": _language_or_none(getattr(result, "language", None))}
+
+
 def _default_transcriber(model: str) -> Callable[[str], Dict[str, Any]]:  # pragma: no cover - inference boundary
     """Build the real CPU float32 Qwen3-ASR transcriber, loaded at the pinned revision.
 
-    Decoding is content-sniffed via PyAV (no system FFmpeg, extension-independent), and inference runs
-    on CPU in float32 with automatic language detection. This is the un-fakeable native boundary; the
-    tested logic drives `main` with a fake transcriber instead.
+    The capture is decoded to a 16 kHz mono float32 waveform by PyAV (`decode_waveform`, content-sniffed,
+    no system FFmpeg) and that waveform is handed to Qwen — the model never re-opens the file path, so a
+    `.audio` WebM/Opus capture transcribes on a clean host. Inference runs on CPU in float32 with
+    automatic language detection. This is the un-fakeable native boundary; the tested logic drives
+    `_transcribe_capture` / `main` with a fake engine and a fake decode instead.
     """
-    from qwen_asr import QwenASR  # type: ignore
+    from qwen_asr import Qwen3ASRModel  # type: ignore
 
-    from .audio import open_audio
+    from .audio import decode_waveform
 
-    engine = QwenASR.from_pretrained(model, revision=MODEL_REVISION, device="cpu")
+    engine = Qwen3ASRModel.from_pretrained(model, revision=MODEL_REVISION, torch_dtype="float32")
 
     def transcribe(audio_path: str) -> Dict[str, Any]:
-        # Fail loud if the capture is missing / unreadable before handing it to the model.
-        open_audio(audio_path).close()
-        output = engine.transcribe(audio_path)
-        if isinstance(output, dict):
-            return output
-        return {"text": output}
+        return _transcribe_capture(engine, decode_waveform, audio_path)
 
     return transcribe
 

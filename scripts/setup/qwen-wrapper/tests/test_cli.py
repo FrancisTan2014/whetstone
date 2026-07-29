@@ -21,6 +21,7 @@ from whetstone_qwen.cli import (
     contract_version_report,
     main,
     parse_args,
+    _transcribe_capture,
 )
 
 WRAPPER_ROOT = Path(__file__).resolve().parent.parent
@@ -87,6 +88,70 @@ class MainTranscribeTests(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             main(["--model", "m", "--output", "json", "/tmp/capture.audio"], transcriber_factory=factory)
         self.assertEqual(seen["audio"], "/tmp/capture.audio")
+
+
+class TranscribeCaptureRoutingTests(unittest.TestCase):
+    """The reviewer's acceptance path: the PyAV-decoded WAVEFORM (not the file path) is what reaches
+    Qwen, and Qwen's ASRTranscription result maps into the transcript-first dict. Uses a fake engine and
+    a fake decode so no real model or PyAV is needed — but it fails under the old code, which handed the
+    raw path straight to `engine.transcribe`."""
+
+    def test_routes_the_decoded_waveform_not_the_path_into_the_engine(self):
+        # A sentinel standing in for the decoded (waveform, sample_rate) — content-agnostic on purpose.
+        decoded_waveform = object()
+        seen = {}
+
+        def fake_decode(path):
+            seen["decoded_path"] = path
+            return (decoded_waveform, 16000)
+
+        class FakeEngine:
+            def transcribe(self, audio):
+                seen["engine_audio"] = audio
+
+                class _Result:
+                    text = "你好世界"
+                    language = "Chinese"
+
+                return [_Result()]
+
+        result = _transcribe_capture(FakeEngine(), fake_decode, "/tmp/capture.audio")
+
+        # decode saw the capture path...
+        self.assertEqual(seen["decoded_path"], "/tmp/capture.audio")
+        # ...and the ENGINE received the decoded (waveform, sr) — never the raw path. This is the
+        # regression: under `engine.transcribe(audio_path)` the engine would have been handed the string.
+        self.assertEqual(seen["engine_audio"], [(decoded_waveform, 16000)])
+        self.assertNotIn("/tmp/capture.audio", repr(seen["engine_audio"]))
+        self.assertEqual(result, {"text": "你好世界", "language": "Chinese"})
+
+    def test_maps_a_mixed_language_result(self):
+        class _Result:
+            text = "hello 世界"
+            language = "Chinese,English"
+
+        result = _transcribe_capture(
+            _StubEngine([_Result()]), lambda _p: (object(), 16000), "/tmp/a.audio"
+        )
+        self.assertEqual(result, {"text": "hello 世界", "language": "Chinese,English"})
+
+    def test_empty_language_from_silent_audio_becomes_none(self):
+        class _Result:
+            text = ""
+            language = "   "
+
+        result = _transcribe_capture(
+            _StubEngine([_Result()]), lambda _p: (object(), 16000), "/tmp/a.audio"
+        )
+        self.assertEqual(result, {"text": "", "language": None})
+
+
+class _StubEngine:
+    def __init__(self, results):
+        self._results = results
+
+    def transcribe(self, audio):  # noqa: ARG002 - audio unused; routing asserted elsewhere
+        return self._results
 
 
 class ContractVersionProbeTests(unittest.TestCase):
