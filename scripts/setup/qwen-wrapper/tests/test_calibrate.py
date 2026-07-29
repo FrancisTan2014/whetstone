@@ -6,6 +6,8 @@ path — is pinned here.
 """
 import io
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -142,6 +144,67 @@ class MainTests(unittest.TestCase):
                     ["--binary", "bin", "--model", "model", "--manifest", manifest], runner=runner
                 )
         self.assertEqual(code, 1)
+
+
+class DefaultRunnerTests(unittest.TestCase):
+    def test_extracts_transcript_and_resources_from_the_spawned_child(self):
+        original = calibrate._spawn_child
+        calibrate._spawn_child = lambda argv: ('{"text": "hi there"}', 1.5, 42)
+        try:
+            measurement = calibrate._default_runner("bin", "model", "a.audio")
+        finally:
+            calibrate._spawn_child = original
+        self.assertEqual(measurement.transcript, "hi there")
+        self.assertEqual(measurement.duration_s, 1.5)
+        self.assertEqual(measurement.peak_rss_bytes, 42)
+
+
+# Allocate `MiB` (from argv[1]) of touched, resident memory, then print a transcript JSON. Touching each
+# page forces it into the resident set so the OS-reported peak RSS reflects the allocation on every host.
+_ALLOC_SCRIPT = (
+    "import json,sys\n"
+    "n=int(sys.argv[1])*1024*1024\n"
+    "buf=bytearray(n)\n"
+    "for i in range(0,n,4096):\n"
+    "    buf[i]=1\n"
+    "sys.stdout.write(json.dumps({'text':'ok'}))\n"
+)
+
+
+def _alloc_child(mib):
+    return [sys.executable, "-c", _ALLOC_SCRIPT, str(mib)]
+
+
+class SpawnChildRealProcessTests(unittest.TestCase):
+    """Cover the un-fakeable OS boundary on the running host: it must spawn a real child, capture its
+    output, and measure THAT child's own peak RSS — not a cumulative all-children figure."""
+
+    def test_reports_each_childs_own_peak_rss_never_a_cumulative_total(self):
+        threshold = 150 * 1024 * 1024
+        big_first = calibrate._spawn_child(_alloc_child(200))
+        small = calibrate._spawn_child(_alloc_child(8))
+        big_after_small = calibrate._spawn_child(_alloc_child(200))
+
+        # The big child's 200 MiB shows up as its own peak...
+        self.assertEqual(json.loads(big_first[0])["text"], "ok")
+        self.assertGreater(big_first[1], 0.0)
+        self.assertGreaterEqual(big_first[2], threshold)
+        # ...a later small child is NOT inflated by the earlier big child's peak...
+        self.assertLess(small[2], big_first[2])
+        # ...and a big child AFTER a small one is still fully reported, not under-reported by subtracting a
+        # cumulative maximum (the previous bug would have credited it only the delta above the running max).
+        self.assertGreaterEqual(big_after_small[2], threshold)
+
+    def test_raises_when_the_spawned_child_exits_nonzero(self):
+        with self.assertRaises(subprocess.CalledProcessError):
+            calibrate._spawn_child([sys.executable, "-c", "import sys;sys.exit(3)"])
+
+
+class PosixPeakRssTests(unittest.TestCase):
+    def test_kilobytes_are_scaled_to_bytes_off_macos(self):
+        # Linux reports ru_maxrss in KiB; normalize to bytes. macOS already reports bytes.
+        expected = 2048 if sys.platform == "darwin" else 2048 * 1024
+        self.assertEqual(calibrate._posix_peak_rss_bytes(2048), expected)
 
 
 if __name__ == "__main__":

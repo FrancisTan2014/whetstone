@@ -12,15 +12,17 @@ machine and are **never printed** — only the aggregate numbers are emitted. Th
 the gate and paste the result into a PR without exposing any private diary content. The clip manifest and
 all referenced audio/reference files are read from local paths only; nothing is copied or uploaded.
 
-The subprocess spawn + peak-RSS measurement is the un-fakeable OS boundary (`_default_runner`); the
-manifest parsing, scoring, aggregation, and gate are pure and unit-tested with a fake runner.
+The subprocess spawn + peak-RSS measurement is the un-fakeable OS boundary (`_default_runner` /
+`_spawn_child`); the manifest parsing, scoring, aggregation, and gate are pure and unit-tested with a
+fake runner. `_spawn_child` is covered by a real-subprocess test on the running host.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from . import metrics
 
@@ -138,26 +140,104 @@ def build_report(records: Sequence[RunnerResult], thresholds: Dict[str, float]) 
     return summary
 
 
-def _default_runner(binary: str, model: str, audio: str) -> TranscriptMeasurement:  # pragma: no cover - OS boundary
-    """Spawn the executable fresh (cold) on one clip and measure wall time + peak child RSS (POSIX)."""
-    import resource
+def _posix_peak_rss_bytes(ru_maxrss: int) -> int:
+    """Normalize a POSIX `rusage.ru_maxrss` to bytes: it is bytes on macOS, kilobytes elsewhere (Linux)."""
+    return int(ru_maxrss) if sys.platform == "darwin" else int(ru_maxrss) * 1024
+
+
+def _posix_spawn_child(argv: Sequence[str]) -> Tuple[str, int]:  # pragma: no cover - exercised on POSIX hosts only
+    """POSIX: spawn `argv`, reap it with `os.wait4`, and return (stdout, this-child peak RSS bytes).
+
+    `os.wait4` returns the rusage of *this specific child* (`ru_maxrss` is that child's own peak resident
+    set), so it never conflates one clip's memory with an earlier clip's — unlike `RUSAGE_CHILDREN`, which
+    is a cumulative maximum across all children.
+    """
     import subprocess
+    import threading
+
+    proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    captured: Dict[str, str] = {}
+
+    def _drain(stream: Any, key: str) -> None:
+        captured[key] = stream.read()
+
+    threads = [
+        threading.Thread(target=_drain, args=(proc.stdout, "out")),
+        threading.Thread(target=_drain, args=(proc.stderr, "err")),
+    ]
+    for thread in threads:
+        thread.start()
+    _pid, status, usage = os.wait4(proc.pid, 0)
+    for thread in threads:
+        thread.join()
+    proc.stdout.close()
+    proc.stderr.close()
+    # We reaped the child ourselves; tell Popen so it does not try to wait again or warn on cleanup.
+    proc.returncode = os.waitstatus_to_returncode(status)
+    if proc.returncode:
+        raise subprocess.CalledProcessError(proc.returncode, list(argv), output=captured["out"], stderr=captured["err"])
+    return captured["out"], _posix_peak_rss_bytes(usage.ru_maxrss)
+
+
+def _windows_spawn_child(argv: Sequence[str]) -> Tuple[str, int]:  # pragma: no cover - exercised on Windows hosts only
+    """Windows: spawn `argv` and read *this child's* `PeakWorkingSetSize` via `GetProcessMemoryInfo`.
+
+    The process handle stays valid (and its final memory counters queryable) after the child exits, as
+    long as we query before Popen releases it — so this reports the one child's own peak, not a total.
+    """
+    import ctypes
+    import subprocess
+    from ctypes import wintypes
+
+    class _ProcessMemoryCounters(ctypes.Structure):
+        _fields_ = [
+            ("cb", wintypes.DWORD),
+            ("PageFaultCount", wintypes.DWORD),
+            ("PeakWorkingSetSize", ctypes.c_size_t),
+            ("WorkingSetSize", ctypes.c_size_t),
+            ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+            ("PagefileUsage", ctypes.c_size_t),
+            ("PeakPagefileUsage", ctypes.c_size_t),
+        ]
+
+    proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    stdout, stderr = proc.communicate()
+    counters = _ProcessMemoryCounters()
+    counters.cb = ctypes.sizeof(counters)
+    psapi = ctypes.WinDLL("psapi", use_last_error=True)
+    ok = psapi.GetProcessMemoryInfo(wintypes.HANDLE(int(proc._handle)), ctypes.byref(counters), counters.cb)
+    if not ok:
+        raise ctypes.WinError(ctypes.get_last_error())
+    if proc.returncode:
+        raise subprocess.CalledProcessError(proc.returncode, list(argv), output=stdout, stderr=stderr)
+    return stdout, int(counters.PeakWorkingSetSize)
+
+
+def _spawn_child(argv: Sequence[str]) -> Tuple[str, float, int]:
+    """Spawn `argv` fresh (cold), wait for it, and return (stdout, wall duration_s, this-child peak RSS bytes).
+
+    Peak RSS is measured directly for the one spawned child on the running host — POSIX via the child's own
+    `rusage`, Windows via `PeakWorkingSetSize` — so a later clip is never credited another clip's memory.
+    Raises `CalledProcessError` if the child exits non-zero (fail loud, never a silent fallback).
+    """
     import time
 
-    before = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
     started = time.monotonic()
-    completed = subprocess.run(
-        [binary, "--model", model, "--output", "json", audio],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
+    if os.name == "nt":
+        stdout, peak_rss_bytes = _windows_spawn_child(argv)
+    else:
+        stdout, peak_rss_bytes = _posix_spawn_child(argv)
     duration = time.monotonic() - started
-    after = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
-    # ru_maxrss is kilobytes on Linux and bytes on macOS; normalize the delta to bytes on Linux.
-    delta = max(after - before, 0)
-    peak_rss_bytes = delta * 1024 if sys.platform.startswith("linux") else delta
-    transcript = json.loads(completed.stdout).get("text", "")
+    return stdout, duration, peak_rss_bytes
+
+
+def _default_runner(binary: str, model: str, audio: str) -> TranscriptMeasurement:
+    """Spawn the executable fresh (cold) on one clip and measure wall time + this child's own peak RSS."""
+    stdout, duration, peak_rss_bytes = _spawn_child([binary, "--model", model, "--output", "json", audio])
+    transcript = json.loads(stdout).get("text", "")
     return TranscriptMeasurement(transcript=transcript, duration_s=duration, peak_rss_bytes=peak_rss_bytes)
 
 
