@@ -1,13 +1,16 @@
-// Optional setup step (first consumer of the #346 framework): enable local Whisper STT with one
-// command — `pnpm setup:voice`. It installs faster-whisper + the `whetstone-whisper` console-script
-// wrapper, pre-fetches the model, and writes WHISPER_BINARY / WHISPER_MODEL_PATH to the root `.env`
-// (which the server dev/start already load). Whisper always auto-detects the spoken language, so there
-// is no WHISPER_LANGUAGE (#647). Excluded from the base `pnpm setup` (heavy/network); every failure mode
-// returns an actionable { what, remedy }, never a raw crash.
+// Optional setup step (#800): make CPU-local Qwen3-ASR-1.7B the bundled voice default with one command —
+// `pnpm setup:voice`. It provisions a Whetstone-owned, isolated Python virtual environment under ignored
+// `.data/`, pins the runtime (`qwen-asr`, a CPU PyTorch, the `whetstone-qwen` console-script wrapper) and
+// the pinned `Qwen/Qwen3-ASR-1.7B` model snapshot, then writes the provider-neutral `LOCAL_ASR_BINARY` /
+// `LOCAL_ASR_MODEL` pair to the root `.env` and removes the legacy `WHISPER_*` entries. It never installs
+// into the user's global Python. Diary consumes only the local speech contract (#799), so this step owns
+// one reproducible inference runtime and nothing about the model leaks into the app. Excluded from the
+// base `pnpm setup` (heavy/network); every failure mode returns an actionable { what, remedy }, never a
+// raw crash.
 
 import { fileURLToPath } from "node:url";
 
-import { envPath, parseEnvVars, readEnv, upsertEnvVars } from "../env-file.mjs";
+import { envPath, parseEnvVars, readEnv, removeEnvVars, upsertEnvVars } from "../env-file.mjs";
 import { installSystemTool } from "../installSystemTool.mjs";
 import { error, isOk, missing, ok, withOutputTail } from "../step.mjs";
 
@@ -15,42 +18,75 @@ import { error, isOk, missing, ok, withOutputTail } from "../step.mjs";
 // the shared env-file owner (#382) but voice's tests and any voice consumer import them from here.
 export { parseEnvVars, upsertEnvVars };
 
-const DEFAULT_MODEL = "small";
-const WRAPPER_DIR = fileURLToPath(new URL("../whisper-wrapper", import.meta.url));
+const GIB = 1024 ** 3;
+
+const QWEN_WRAPPER_DIR = fileURLToPath(new URL("../qwen-wrapper", import.meta.url));
 const SAMPLE_AUDIO = fileURLToPath(new URL("./voice-sample.wav", import.meta.url));
 
 // The executable contract version this Whetstone build requires from a local speech launcher. Both the
-// bundled `whetstone-whisper` wrapper and any provider-neutral `LOCAL_ASR_BINARY` print it via the cheap
-// `--contract-version` probe (no model/audio load); readiness requires an EXACT match. This is
-// deliberately separate from the wrapper's pip package version — a pre-#647 wrapper that forwards
-// `--language auto` literally can share a package version with the current one, so only an
-// executable-contract probe (not file presence) can tell them apart (#780). Keep this in lockstep with
-// `CONTRACT_VERSION` in scripts/setup/whisper-wrapper/whetstone_whisper/cli.py and
+// bundled `whetstone-qwen` wrapper and any provider-neutral `LOCAL_ASR_BINARY` print it via the cheap
+// `--contract-version` probe (no model/audio load); readiness requires an EXACT match. Keep in lockstep
+// with `CONTRACT_VERSION` in scripts/setup/qwen-wrapper/whetstone_qwen/cli.py and
 // `LOCAL_SPEECH_CONTRACT_VERSION` in src/apps/server/src/speech/localSpeechInput.ts.
 const SUPPORTED_SPEECH_CONTRACT_VERSION = "1";
 
-// The provider-neutral local ASR pair (#799). doctor/setup must resolve it the SAME way the runtime does
-// (`readSpeechConfig` in src/apps/server/src/speech/speechConfig.ts) so the doctor verdict never
-// disagrees with what the server does at boot. This is a self-contained mirror (node-builtins only): the
-// step registry imports this file during `pnpm setup` on a fresh clone *before* the server/contracts
-// packages exist, so it cannot import the resolver. Keep the rules — new pair authoritative, partial =
-// error, legacy honoured only when no new key is present, mixed reported — in lockstep; voice.test.mjs
-// pins the new-only, partial, legacy, and mixed cases.
+// The bundled provider's pinned identity. The default only moves with MEASURED real-speech fidelity, so
+// the model revision is an IMMUTABLE commit (never a mutable tag) and the runtime is fully pinned. Keep
+// the revision in lockstep with MODEL_REVISION in qwen-wrapper/whetstone_qwen/cli.py.
+const QWEN_MODEL_REPO = "Qwen/Qwen3-ASR-1.7B";
+const QWEN_MODEL_REVISION = "7278e1e70fe206f11671096ffdd38061171dd6e5";
+const QWEN_ASR_VERSION = "0.0.6";
+// CPU PyTorch, installed from the CPU wheel index so no CUDA build is ever pulled. This is the one pin
+// that must be verified against the reference host; a drift here changes inference numerics, so it feeds
+// the runtime version marker below (a change forces an environment repair).
+const TORCH_VERSION = "2.5.1";
+const TORCH_CPU_INDEX_URL = "https://download.pytorch.org/whl/cpu";
+
+// The managed runtime lives under ignored local data (never the user's global Python). A version marker
+// file inside the venv records the exact pin set; setup repairs (recreates) the environment whenever the
+// marker is absent or does not match, so a stale/incomplete venv is never trusted. Any pin change below
+// changes the marker and forces that repair.
+const VOICE_DATA_DIR = ".data/voice";
+const VENV_DIR = `${VOICE_DATA_DIR}/qwen-venv`;
+const VENV_MARKER = ".whetstone-voice-runtime";
+const VOICE_RUNTIME_VERSION = `${QWEN_MODEL_REPO}@${QWEN_MODEL_REVISION}+torch${TORCH_VERSION}+qwen-asr${QWEN_ASR_VERSION}`;
+
+// The resource floor preflighted BEFORE any multi-GiB download/load, matching the wrapper's advertised
+// requirements. Insufficient resources fail with the exact requirement and remedy — never a silent
+// fallback to a less accurate model.
+const REQUIRED_DISK_GIB = 12;
+const REQUIRED_MEMORY_GIB = 12;
+
+// Inline Python one-liners run through the VENV interpreter: probe the pinned model snapshot from cache
+// only (`local_files_only=True`, exits non-zero when it is not already present at the exact revision),
+// and download it at the exact revision otherwise.
+const MODEL_PROBE =
+  `from huggingface_hub import snapshot_download;` +
+  `snapshot_download('${QWEN_MODEL_REPO}',revision='${QWEN_MODEL_REVISION}',local_files_only=True)`;
+const MODEL_DOWNLOAD =
+  `from huggingface_hub import snapshot_download;` +
+  `snapshot_download('${QWEN_MODEL_REPO}',revision='${QWEN_MODEL_REVISION}')`;
+
 const PARTIAL_LOCAL_WHAT =
   "Local speech is partially configured: exactly one of LOCAL_ASR_BINARY / LOCAL_ASR_MODEL is set.";
 const PARTIAL_LOCAL_REMEDY =
   "Set both LOCAL_ASR_BINARY (the local speech executable) and LOCAL_ASR_MODEL (its model identifier), " +
-  "or unset both to fall back. See docs/SPEECH.md, or run: pnpm setup:voice";
+  "or unset both and run `pnpm setup:voice` for the bundled Qwen3-ASR provider. See docs/SPEECH.md.";
 const LOCAL_MISSING_REMEDY =
   "Point LOCAL_ASR_BINARY at the local speech executable (and LOCAL_ASR_MODEL at its model identifier), " +
-  "or unset both and run `pnpm setup:voice` for the bundled Whisper provider. See docs/SPEECH.md.";
-const LOCAL_PROVISION_REMEDY =
-  "Ensure LOCAL_ASR_BINARY points at a ready provider that answers `--contract-version` with " +
-  `${SUPPORTED_SPEECH_CONTRACT_VERSION} (see docs/SPEECH.md), or unset LOCAL_ASR_BINARY + ` +
-  "LOCAL_ASR_MODEL to install the bundled Whisper provider.";
+  "or unset both and run `pnpm setup:voice` for the bundled Qwen3-ASR provider. See docs/SPEECH.md.";
+const NOT_INSTALLED_REMEDY = "Run `pnpm setup:voice` to install the bundled Qwen3-ASR provider.";
 const MIXED_CONFIG_HINT =
   "[setup] Local speech uses LOCAL_ASR_BINARY + LOCAL_ASR_MODEL (authoritative); legacy WHISPER_* is " +
   "also set and ignored — remove it to finish the migration.";
+const WHISPER_MIGRATION_HINT =
+  "[setup] Legacy WHISPER_* is still configured; the bundled default is now Qwen3-ASR. Run " +
+  "`pnpm setup:voice` to migrate to LOCAL_ASR_* (see docs/SPEECH.md).";
+
+const PYTHON_DOCS = "https://www.python.org/downloads";
+const PYTHON_REMEDY =
+  "Install Python 3 (https://www.python.org/downloads, or `winget install Python.Python.3` / " +
+  "`brew install python`), then re-run `pnpm setup:voice`.";
 
 /**
  * @param {string | undefined} value
@@ -61,13 +97,17 @@ function trimmedOrUndefined(value) {
 }
 
 /**
- * Mirror of the runtime `readSpeechConfig` resolution (see the block comment above), reduced to the
- * discriminated verdict the setup step acts on:
+ * Mirror of the runtime `readSpeechConfig` resolution (src/apps/server/src/speech/speechConfig.ts),
+ * reduced to the discriminated verdict the setup step acts on:
  * - `local`         — the complete provider-neutral pair is authoritative; `legacyAlsoPresent` flags a
  *                     mixed config (leftover WHISPER_* ignored) so the migration stays visible.
  * - `partial-local` — exactly one new key: an explicit configuration error, never a silent fallback.
  * - `whisper`       — no new key, but the complete legacy pair is present (the migration fallback).
  * - `none`          — nothing configured; the runtime falls back to the deterministic fake.
+ *
+ * Self-contained (node-builtins only): the step registry imports this file during `pnpm setup` on a
+ * fresh clone before the server/contracts packages exist, so it cannot import the resolver. Keep the
+ * rules in lockstep; voice.test.mjs pins the new-only, partial, legacy, and mixed cases.
  *
  * @param {Record<string, string>} env  The parsed `.env` map (from `readEnv`).
  * @returns {{ kind: "local", binaryPath: string, modelIdentifier: string, legacyAlsoPresent: boolean }
@@ -98,80 +138,156 @@ export function resolveVoiceConfig(env) {
   return { kind: "none" };
 }
 
-// The readiness message + remedy for a configured LOCAL_ASR provider that fails the contract probe.
-// Provider-neutral: it names LOCAL_ASR_BINARY and the exact contract version to emit and offers the
-// bundled fallback — it never assumes the executable is Whisper or tells the operator to reinstall a
-// wrapper it does not own.
+/** @param {import("../step.mjs").SetupContext} ctx @returns {string} */
+function venvDir(ctx) {
+  return `${ctx.root}/${VENV_DIR}`;
+}
+
+/**
+ * The managed venv's Python interpreter and installed `whetstone-qwen` launcher. A venv puts console
+ * scripts under `Scripts\*.exe` on Windows and `bin/*` elsewhere; the paths are therefore deterministic,
+ * so no locate step is needed to find the launcher after install.
+ *
+ * @param {import("../step.mjs").SetupContext} ctx
+ * @returns {string}
+ */
+function venvPython(ctx) {
+  return ctx.platform === "win32"
+    ? `${venvDir(ctx)}/Scripts/python.exe`
+    : `${venvDir(ctx)}/bin/python`;
+}
+
+/** @param {import("../step.mjs").SetupContext} ctx @returns {string} */
+function managedLauncher(ctx) {
+  return ctx.platform === "win32"
+    ? `${venvDir(ctx)}/Scripts/whetstone-qwen.exe`
+    : `${venvDir(ctx)}/bin/whetstone-qwen`;
+}
+
+/** @param {import("../step.mjs").SetupContext} ctx @returns {string} */
+function markerPath(ctx) {
+  return `${venvDir(ctx)}/${VENV_MARKER}`;
+}
+
+/**
+ * The readiness message + remedy for a configured LOCAL_ASR provider that fails the contract probe.
+ * Provider-neutral: it names LOCAL_ASR_BINARY and the exact contract version to emit and offers the
+ * bundled fallback — it never assumes the executable is a specific engine.
+ *
+ * @param {string} reason
+ * @returns {{ what: string, remedy: string }}
+ */
 function incompatibleLocalProvider(reason) {
   return {
     what: `The configured local speech provider (LOCAL_ASR_BINARY) is incompatible: ${reason}.`,
     remedy:
       `The executable must answer \`--contract-version\` with ${SUPPORTED_SPEECH_CONTRACT_VERSION} ` +
       "(see docs/SPEECH.md). Point LOCAL_ASR_BINARY at a compatible provider, or unset LOCAL_ASR_BINARY " +
-      "+ LOCAL_ASR_MODEL and run `pnpm setup:voice` for the bundled Whisper provider."
+      "+ LOCAL_ASR_MODEL and run `pnpm setup:voice` for the bundled Qwen3-ASR provider."
   };
 }
 
 /**
- * The provider-neutral readiness verdict for the LOCAL_ASR pair, or `null` when the legacy/bundled
- * Whisper path owns readiness (kinds `whisper`/`none`). A complete new pair is **authoritative**: its own
- * executable is probed (not Whisper's) and it needs no Python/faster-whisper prerequisite; a mixed config
- * logs a migration hint while still reporting ready; a partial pair is an explicit configuration error.
- * This matches the runtime resolution so `pnpm setup:doctor` never disagrees with what boot does.
+ * Log the managed provider's descriptor (provider name, pinned revision, resource requirements) from the
+ * cheap contract probe, so `pnpm setup:doctor` reports what is installed without loading the model. A
+ * custom LOCAL_ASR binary may not carry these extra fields; then nothing is logged (best-effort).
+ *
+ * @param {import("../step.mjs").SetupContext} ctx
+ * @param {unknown} descriptor  The parsed `--contract-version` payload (always a JSON object here).
+ * @returns {void}
+ */
+function logProviderDescriptor(ctx, descriptor) {
+  // `probeSpeechContract` only returns a descriptor when the probe output parsed to a JSON object, so
+  // `descriptor` is a record here; the fields inside it are still validated before being logged.
+  const record = /** @type {Record<string, unknown>} */ (descriptor);
+  const provider = record.provider;
+  const revision = record.revision;
+  if (typeof provider !== "string" || typeof revision !== "string") {
+    return;
+  }
+  const requirements = record.requirements;
+  let needs = "";
+  if (typeof requirements === "object" && requirements !== null) {
+    const req = /** @type {Record<string, unknown>} */ (requirements);
+    if (typeof req.diskGiB === "number" && typeof req.memoryGiB === "number") {
+      needs = ` (needs ${req.diskGiB} GiB free disk, ${req.memoryGiB} GiB available memory)`;
+    }
+  }
+  ctx.log(`[setup] local speech provider: ${provider} @ ${revision}${needs}`);
+}
+
+/**
+ * The provider-neutral readiness verdict for the resolved voice config, shared by `check` and any
+ * consumer. A complete new pair is **authoritative**: its own executable is probed (not a specific
+ * engine) and it needs no global Python prerequisite; a mixed config logs a migration hint while still
+ * reporting ready; a partial pair is an explicit configuration error; a legacy-only Whisper config still
+ * works via the #799 fallback but is nudged toward the Qwen default; and nothing configured means the
+ * bundled provider is not installed yet. Matches the runtime resolution so `pnpm setup:doctor` never
+ * disagrees with what boot does.
  *
  * @param {import("../step.mjs").SetupContext} ctx
  * @param {ReturnType<typeof resolveVoiceConfig>} config
- * @returns {import("../step.mjs").StepResult | null}
+ * @returns {import("../step.mjs").StepResult}
  */
-function localProviderReadiness(ctx, config) {
+export function voiceReadiness(ctx, config) {
   if (config.kind === "partial-local") {
     return error(PARTIAL_LOCAL_WHAT, PARTIAL_LOCAL_REMEDY);
   }
-  if (config.kind !== "local") {
-    return null;
+  if (config.kind === "none") {
+    return missing(
+      "The bundled local speech provider (Qwen3-ASR) is not installed.",
+      NOT_INSTALLED_REMEDY
+    );
   }
+  if (config.kind === "whisper") {
+    // The legacy pair still transcribes via the #799 whisper fallback, but the bundled default is now
+    // Qwen. Probe the configured launcher's contract as usual; when it is ready, report ready and nudge
+    // the migration, otherwise point at `pnpm setup:voice` to install the bundled provider.
+    if (!ctx.fs.exists(config.binaryPath)) {
+      return missing(
+        `The configured legacy Whisper launcher is missing (${config.binaryPath}).`,
+        NOT_INSTALLED_REMEDY
+      );
+    }
+    const contract = probeSpeechContract(ctx, config.binaryPath);
+    if (!contract.ok) {
+      const { what } = incompatibleLocalProvider(contract.reason);
+      return missing(what, NOT_INSTALLED_REMEDY);
+    }
+    ctx.log(WHISPER_MIGRATION_HINT);
+    return ok();
+  }
+  // kind === "local"
   if (!ctx.fs.exists(config.binaryPath)) {
     return missing(
       `The configured local speech executable is missing (${config.binaryPath}).`,
       LOCAL_MISSING_REMEDY
     );
   }
-  // File presence is not readiness (#780): probe the configured executable's own contract, exactly like
-  // the legacy Whisper launcher, and require the supported version before trusting it to transcribe.
   const contract = probeSpeechContract(ctx, config.binaryPath);
   if (!contract.ok) {
     const { what, remedy } = incompatibleLocalProvider(contract.reason);
     return missing(what, remedy);
   }
+  logProviderDescriptor(ctx, contract.descriptor);
   if (config.legacyAlsoPresent) {
-    // The new pair wins; the leftover WHISPER_* is ignored. Surface it so the migration stays visible,
-    // matching the boot health report's mixed-config hint (speechHealth.ts).
     ctx.log(MIXED_CONFIG_HINT);
   }
   return ok();
 }
 
-const PYTHON_DOCS = "https://www.python.org/downloads";
-const PYTHON_REMEDY =
-  "Install Python 3 (https://www.python.org/downloads, or `winget install Python.Python.3` / " +
-  "`brew install python`), then re-run `pnpm setup:voice`.";
-
 /**
- * Validate wrapper stdout against the **same strict contract the runtime adapter enforces** —
- * `parseWhisperOutput` in `src/apps/server/src/speech/whisperSpeechInput.ts`: a string `text`, an
- * array `segments`, each segment an object with a `words` array, each word an object with a string
- * `word` and numeric `start`/`end` where `end` is not before `start`. Setup must not report ready
- * for output the server would reject at transcribe time (e.g. `{"text":"","segments":[{}]}`).
- *
- * This mirror is intentionally self-contained (node-builtins only): the step registry imports this
- * file during `pnpm setup` on a fresh clone *before* dependencies exist, so it cannot import the
- * server/contracts packages. Keep it in lockstep with `parseWhisperOutput`; the regression tests in
- * voice.test.mjs pin the malformed-segment/word cases.
+ * Validate a local speech launcher's transcription output against the **#799 transcript-first contract**
+ * the runtime adapter enforces (`parseLocalSpeechOutput` in src/apps/server/src/speech/localSpeechInput.ts):
+ * a JSON object with a string `text`, an array `segments` (empty is valid — this provider emits no word
+ * timing), and a `language` that is a string or null. Setup must not report ready for output the server
+ * would reject at transcribe time. Self-contained (node-builtins only) for the fresh-clone import
+ * constraint; keep in lockstep with the adapter's parser.
  *
  * @param {string} stdout
  * @returns {{ ok: true } | { ok: false, reason: string }}
  */
-export function validateWhisperContract(stdout) {
+export function validateLocalSpeechContract(stdout) {
   const isRecord = (value) =>
     typeof value === "object" && value !== null && !Array.isArray(value);
   const fail = (reason) => ({ ok: false, reason });
@@ -191,47 +307,24 @@ export function validateWhisperContract(stdout) {
   if (!Array.isArray(parsed.segments)) {
     return fail('missing array "segments"');
   }
-  for (const segment of parsed.segments) {
-    if (!isRecord(segment)) {
-      return fail("a segment was not an object");
-    }
-    if (!Array.isArray(segment.words)) {
-      return fail('a segment is missing a "words" array');
-    }
-    for (const word of segment.words) {
-      if (!isRecord(word)) {
-        return fail("a word was not an object");
-      }
-      if (typeof word.word !== "string") {
-        return fail('a word is missing a string "word"');
-      }
-      if (typeof word.start !== "number") {
-        return fail('a word is missing a numeric "start"');
-      }
-      if (typeof word.end !== "number") {
-        return fail('a word is missing a numeric "end"');
-      }
-      if (word.end < word.start) {
-        return fail("a word ends before it starts");
-      }
-    }
+  if (parsed.language !== null && typeof parsed.language !== "string") {
+    return fail('"language" must be a string or null');
   }
   return { ok: true };
 }
 
 /**
  * Execute a local speech launcher's cheap machine-readable contract probe (`--contract-version`) and
- * require the EXACT supported contract version. Provider-neutral: both the bundled `whetstone-whisper`
- * wrapper and any `LOCAL_ASR_BINARY` share this probe. This is what turns "the launcher file exists" into
- * "the launcher proves the contract Whetstone will invoke" (#780): a wrapper installed before the
- * `--language auto` -> detection fix predates the probe and either lacks the flag (nonzero exit) or
- * reports a different version, and a nonzero exit, non-JSON/malformed output, or a version mismatch is
- * treated as **incompatible — never ready**. Only the structured reason is returned; the raw
- * stderr/traceback is intentionally dropped so doctor never surfaces a stack trace.
+ * require the EXACT supported contract version. Provider-neutral: both the bundled `whetstone-qwen`
+ * wrapper and any `LOCAL_ASR_BINARY` share this probe. File presence is not readiness (#780): a nonzero
+ * exit, non-JSON/malformed output, or a version mismatch is **incompatible — never ready**. On success the
+ * parsed descriptor is returned alongside `ok` so doctor can report the provider/revision/requirements
+ * without a second spawn. Only the structured reason is surfaced on failure; the raw stderr/traceback is
+ * intentionally dropped so doctor never shows a stack trace.
  *
  * @param {import("../step.mjs").SetupContext} ctx
- * @param {string} binaryPath  The configured launcher (WHISPER_BINARY or LOCAL_ASR_BINARY).
- * @returns {{ ok: true } | { ok: false, reason: string }}
+ * @param {string} binaryPath  The configured launcher (LOCAL_ASR_BINARY or a legacy WHISPER_BINARY).
+ * @returns {{ ok: true, descriptor: unknown } | { ok: false, reason: string }}
  */
 export function probeSpeechContract(ctx, binaryPath) {
   const isRecord = (value) =>
@@ -259,19 +352,7 @@ export function probeSpeechContract(ctx, binaryPath) {
       reason: `it reports contract version ${version}, but this Whetstone requires ${SUPPORTED_SPEECH_CONTRACT_VERSION}`
     };
   }
-  return { ok: true };
-}
-
-// The shared readiness message + remedy for an incompatible/stale wrapper: doctor names it and points at
-// `pnpm setup:voice` (which repairs the bundled wrapper without redownloading the speech stack), and a
-// custom WHISPER_BINARY is told the exact contract version to emit rather than being silently trusted.
-function incompatibleWrapper(reason) {
-  return {
-    what: `The installed whetstone-whisper wrapper is incompatible: ${reason}. A wrapper installed before the language fix forwards "--language auto" to Whisper literally, which fails transcription.`,
-    remedy:
-      "Run `pnpm setup:voice` to repair the bundled wrapper (it upgrades the wrapper in place without " +
-      `redownloading the speech model). A custom WHISPER_BINARY must emit \`--contract-version\` as ${SUPPORTED_SPEECH_CONTRACT_VERSION} — see docs/SPEECH.md.`
-  };
+  return { ok: true, descriptor: parsed };
 }
 
 /**
@@ -290,17 +371,14 @@ function resolvePython(ctx) {
 }
 
 /**
- * Readiness probe + install spec for the Python 3 system prerequisite, driven through the shared
- * consent-gated `installSystemTool` seam. On win32/darwin it offers a native install after an
- * explicit Y (or `--yes`); everywhere else — and on decline / no package manager — it falls back to
- * the instruct-only `PYTHON_REMEDY`. `check` here is non-mutating (never installs).
+ * Non-mutating readiness probe for the Python 3 system prerequisite (needed to build the isolated venv).
  *
  * @param {import("../step.mjs").SetupContext} ctx
  * @returns {import("../step.mjs").StepResult}
  */
 function pythonCheck(ctx) {
   return resolvePython(ctx) === null
-    ? missing("Python 3 was not found (required for local Whisper STT).", PYTHON_REMEDY)
+    ? missing("Python 3 was not found (required to build the local Qwen3-ASR runtime).", PYTHON_REMEDY)
     : ok();
 }
 
@@ -317,199 +395,205 @@ const PYTHON_SPEC = {
   }
 };
 
+/**
+ * Preflight the resource floor before any multi-GiB download/load. Returns an actionable error naming the
+ * exact requirement + remedy when disk or memory is short, or null when both are sufficient. The volume
+ * probed is the one that will hold the venv (`.data/voice` once it exists, else the repo root, which is
+ * the same volume). Never silently falls back to a less accurate model.
+ *
+ * @param {import("../step.mjs").SetupContext} ctx
+ * @returns {import("../step.mjs").StepResult | null}
+ */
+function checkResources(ctx) {
+  const dataDir = `${ctx.root}/${VOICE_DATA_DIR}`;
+  const probePath = ctx.fs.exists(dataDir) ? dataDir : ctx.root;
+  const { diskFreeBytes, memoryAvailableBytes } = ctx.resources(probePath);
+  const gib = (bytes) => (bytes / GIB).toFixed(1);
+  if (diskFreeBytes < REQUIRED_DISK_GIB * GIB) {
+    return error(
+      `Not enough free disk to install the Qwen3-ASR runtime: ${REQUIRED_DISK_GIB} GiB required, ` +
+        `${gib(diskFreeBytes)} GiB free.`,
+      `Free at least ${REQUIRED_DISK_GIB} GiB on the volume holding this repository, then re-run ` +
+        "`pnpm setup:voice`."
+    );
+  }
+  if (memoryAvailableBytes < REQUIRED_MEMORY_GIB * GIB) {
+    return error(
+      `Not enough available memory to run the Qwen3-ASR model: ${REQUIRED_MEMORY_GIB} GiB required, ` +
+        `${gib(memoryAvailableBytes)} GiB available.`,
+      `Close other applications to free at least ${REQUIRED_MEMORY_GIB} GiB of memory, then re-run ` +
+        "`pnpm setup:voice`."
+    );
+  }
+  return null;
+}
+
+/**
+ * Ensure the managed venv exists with the exact pinned runtime, repairing it when the version marker is
+ * absent or stale. When (re)building it: create the venv with `--clear` (wiping any incomplete prior
+ * attempt), install the CPU PyTorch pin from the CPU wheel index, install the `whetstone-qwen` wrapper
+ * (which pulls `qwen-asr`/`av`/`numpy`), fetch the pinned model snapshot if not already cached, then write
+ * the marker. A healthy, matching venv is a no-op (idempotent). Returns an actionable error on any failed
+ * step, or ok().
+ *
+ * @param {import("../step.mjs").SetupContext} ctx
+ * @param {string} python  A resolved global Python used only to bootstrap the venv.
+ * @returns {import("../step.mjs").StepResult}
+ */
+function ensureRuntime(ctx, python) {
+  const venvPy = venvPython(ctx);
+  const marker = markerPath(ctx);
+  const healthy =
+    ctx.fs.exists(venvPy) &&
+    ctx.fs.exists(marker) &&
+    ctx.fs.readText(marker).trim() === VOICE_RUNTIME_VERSION;
+  if (healthy) {
+    return ok();
+  }
+
+  const created = ctx.exec(python, ["-m", "venv", "--clear", venvDir(ctx)]);
+  if (created.code !== 0) {
+    return error(
+      "Creating the isolated Qwen3-ASR virtual environment failed.",
+      withOutputTail(
+        "Ensure Python 3 includes the `venv` module (`python -m ensurepip --upgrade`), then re-run `pnpm setup:voice`.",
+        created
+      )
+    );
+  }
+
+  const torch = ctx.exec(venvPy, [
+    "-m",
+    "pip",
+    "install",
+    `torch==${TORCH_VERSION}`,
+    "--index-url",
+    TORCH_CPU_INDEX_URL
+  ]);
+  if (torch.code !== 0) {
+    return error(
+      `Installing the pinned CPU PyTorch (torch==${TORCH_VERSION}) into the voice runtime failed.`,
+      withOutputTail("Check your network/proxy, then re-run `pnpm setup:voice`.", torch)
+    );
+  }
+
+  const wrapper = ctx.exec(venvPy, ["-m", "pip", "install", QWEN_WRAPPER_DIR]);
+  if (wrapper.code !== 0) {
+    return error(
+      `Installing the whetstone-qwen provider (qwen-asr==${QWEN_ASR_VERSION}) into the voice runtime failed.`,
+      withOutputTail("Check your network/proxy, then re-run `pnpm setup:voice`.", wrapper)
+    );
+  }
+
+  if (ctx.exec(venvPy, ["-c", MODEL_PROBE]).code !== 0) {
+    const download = ctx.exec(venvPy, ["-c", MODEL_DOWNLOAD]);
+    if (download.code !== 0) {
+      return error(
+        `Downloading the pinned model snapshot (${QWEN_MODEL_REPO}@${QWEN_MODEL_REVISION}) failed.`,
+        withOutputTail("Check connectivity and free disk, then re-run `pnpm setup:voice`.", download)
+      );
+    }
+  }
+
+  ctx.fs.writeText(marker, `${VOICE_RUNTIME_VERSION}\n`);
+  return ok();
+}
+
 /** @type {import("../step.mjs").Step} */
 export const voiceStep = {
   id: "voice",
-  title: "Voice input (local Whisper STT)",
+  title: "Voice input (local Qwen3-ASR STT)",
   optional: true,
   capability: "voice",
   check(ctx) {
-    // The provider-neutral local ASR pair is authoritative and provider-agnostic — resolve config first
-    // and, when a LOCAL_ASR provider is configured, probe ITS contract (no Python/faster-whisper
-    // prerequisite; a mixed config is flagged; a partial pair is a configuration error). Only fall
-    // through to the legacy bundled-Whisper readiness when no new key is present, so a complete
-    // LOCAL_ASR_* is never misreported as "Whisper is not wired".
-    const localReady = localProviderReadiness(ctx, resolveVoiceConfig(readEnv(ctx)));
-    if (localReady !== null) {
-      return localReady;
-    }
-    const python = resolvePython(ctx);
-    if (python === null) {
-      return missing("Python 3 was not found (required for local Whisper STT).", PYTHON_REMEDY);
-    }
-    if (ctx.exec(python, ["-c", "import faster_whisper"]).code !== 0) {
-      return missing(
-        "faster-whisper is not installed.",
-        "Run `pnpm setup:voice` to install it and wire up Whisper."
-      );
-    }
-    const env = readEnv(ctx);
-    if (env.WHISPER_BINARY === undefined || env.WHISPER_MODEL_PATH === undefined) {
-      return missing(
-        "Local speech is not wired into .env (LOCAL_ASR_BINARY + LOCAL_ASR_MODEL, or legacy WHISPER_BINARY / WHISPER_MODEL_PATH).",
-        "Run `pnpm setup:voice`."
-      );
-    }
-    if (!ctx.fs.exists(env.WHISPER_BINARY)) {
-      return missing(
-        `The whetstone-whisper launcher is missing (${env.WHISPER_BINARY}).`,
-        "Run `pnpm setup:voice` to reinstall it."
-      );
-    }
-    // File presence is not readiness: run the cheap contract probe through the launcher and require the
-    // exact supported contract version, so a stale pre-#647 wrapper is reported incompatible (never
-    // ready) and `pnpm setup:voice` repairs it instead of skipping provisioning (#780).
-    const contract = probeSpeechContract(ctx, env.WHISPER_BINARY);
-    if (!contract.ok) {
-      const { what, remedy } = incompatibleWrapper(contract.reason);
-      return missing(what, remedy);
-    }
-    return ok();
+    return voiceReadiness(ctx, resolveVoiceConfig(readEnv(ctx)));
   },
   provision(ctx) {
-    // A configured (or half-configured) provider-neutral LOCAL_ASR provider owns readiness: this bundled
-    // installer only provisions the legacy Whisper fallback and must never clobber the operator's chosen
-    // provider or leave a partial pair (which the runtime treats as a hard boot error). Report the local
-    // verdict instead of installing a different engine over it.
     const config = resolveVoiceConfig(readEnv(ctx));
     if (config.kind === "partial-local") {
       return error(PARTIAL_LOCAL_WHAT, PARTIAL_LOCAL_REMEDY);
     }
-    if (config.kind === "local") {
+    // A CUSTOM provider-neutral LOCAL_ASR provider (a binary other than the managed venv launcher) owns
+    // readiness: this bundled installer must never clobber the operator's chosen provider. Only the
+    // bundled managed launcher (or an unconfigured/legacy state we migrate) is (re)provisioned here.
+    if (config.kind === "local" && config.binaryPath !== managedLauncher(ctx)) {
       return error(
-        `A local speech provider is configured via LOCAL_ASR_BINARY (${config.binaryPath}); \`pnpm setup:voice\` provisions only the bundled Whisper fallback and will not modify it.`,
-        LOCAL_PROVISION_REMEDY
+        `A custom local speech provider is configured via LOCAL_ASR_BINARY (${config.binaryPath}); ` +
+          "`pnpm setup:voice` manages only the bundled Qwen3-ASR runtime and will not modify it.",
+        "Unset LOCAL_ASR_BINARY + LOCAL_ASR_MODEL to let `pnpm setup:voice` install the bundled " +
+          "provider, or keep your provider and ensure it answers `--contract-version`. See docs/SPEECH.md."
       );
     }
-    // Consent-gated: offer to install Python 3 after an explicit Y (or `--yes`); on decline, no
-    // package manager, or a non-interactive run, fall back to the instruct-only remedy unchanged.
+
+    // Consent-gated: offer to install Python 3 after an explicit Y (or `--yes`); on decline, no package
+    // manager, or a non-interactive run, fall back to the instruct-only remedy unchanged.
     const pythonReady = installSystemTool(ctx, PYTHON_SPEC);
     if (!isOk(pythonReady)) {
       return pythonReady;
     }
-    // installSystemTool's authoritative `check` (pythonCheck) just passed, so a Python interpreter is
-    // guaranteed to resolve here (its "installed but still off PATH" case already returns `missing`).
-    // Capture which command — `python` vs `python3` — for the pip invocations below.
+    // pythonCheck just passed, so a Python interpreter resolves here (its "installed but off PATH" case
+    // already returns missing). Capture which command — `python` vs `python3` — to bootstrap the venv.
     const python = resolvePython(ctx);
-    // Only install faster-whisper when its own probe fails: on a stale-wrapper repair the speech stack is
-    // already healthy, so re-running `pip install faster-whisper` (and any model redownload) is wasted
-    // work — the wrapper is the only thing that needs replacing (#780).
-    if (ctx.exec(python, ["-c", "import faster_whisper"]).code !== 0) {
-      const pip = ctx.exec(python, ["-m", "pip", "install", "faster-whisper"]);
-      if (pip.code !== 0) {
-        return error(
-          "`pip install faster-whisper` failed.",
-          withOutputTail(
-            "Ensure pip is available (`python -m ensurepip --upgrade`) and check your network/proxy, then re-run `pnpm setup:voice`.",
-            pip
-          )
-        );
-      }
+
+    // Preflight disk + memory BEFORE the heavy download/load, so an under-provisioned host fails fast with
+    // the exact requirement rather than part-way through a multi-GiB install.
+    const resourceGap = checkResources(ctx);
+    if (resourceGap !== null) {
+      return resourceGap;
     }
 
-    // Always (re)install the bundled wrapper, even when an older installed package shares its version:
-    // `--force-reinstall` replaces a same-version stale wrapper (the #780 repair), and `--no-deps` keeps
-    // this from reinstalling the already-healthy faster-whisper.
-    const wrapper = ctx.exec(python, [
-      "-m",
-      "pip",
-      "install",
-      "--upgrade",
-      "--force-reinstall",
-      "--no-deps",
-      WRAPPER_DIR
-    ]);
-    if (wrapper.code !== 0) {
-      return error(
-        "Installing the whetstone-whisper wrapper failed.",
-        withOutputTail("Re-run `pnpm setup:voice` and inspect the pip error above.", wrapper)
-      );
+    const runtime = ensureRuntime(ctx, python);
+    if (!isOk(runtime)) {
+      return runtime;
     }
 
-    const located = ctx.exec(python, ["-m", "whetstone_whisper.locate"]);
-    const launcher = located.stdout.trim();
-    if (located.code !== 0 || launcher.length === 0) {
-      // locate.py reports the interpreter's per-user Scripts dir on stderr when it cannot resolve
-      // the launcher. Microsoft Store Python installs the console script there but never adds it to
-      // PATH (#424), so name that exact directory instead of a generic "put it on PATH".
-      const userScriptsDir = located.stderr.trim();
-      const remedy =
-        userScriptsDir.length > 0
-          ? `Microsoft Store Python installed it into "${userScriptsDir}" but does not add that to PATH — ` +
-            `add that directory to PATH, or install Python 3 from ${PYTHON_DOCS} with "Add to PATH", ` +
-            "then re-run `pnpm setup:voice`."
-          : `Install Python 3 from ${PYTHON_DOCS} with "Add to PATH" (so pip's console scripts are ` +
-            "resolvable), then re-run `pnpm setup:voice`.";
-      return error(
-        "The whetstone-whisper launcher could not be located after installation.",
-        remedy
-      );
-    }
-
-    const model = ctx.env.WHISPER_MODEL ?? DEFAULT_MODEL;
-    const fetched = ctx.exec(python, ["-m", "whetstone_whisper.fetch", model]);
-    if (fetched.code !== 0) {
-      return error(
-        `Downloading the Whisper model "${model}" failed.`,
-        withOutputTail(
-          "Retry, pick a smaller model (`WHISPER_MODEL=base.en pnpm run setup -- --voice`), or check connectivity.",
-          fetched
-        )
-      );
-    }
-
+    // Write the provider-neutral pair and retire the legacy WHISPER_* entries, so the runtime resolves the
+    // bundled Qwen provider and no stale key is left to be honoured or reported as a mixed config.
     const path = envPath(ctx);
     const content = ctx.fs.exists(path) ? ctx.fs.readText(path) : "";
-    ctx.fs.writeText(
-      path,
-      upsertEnvVars(content, {
-        WHISPER_BINARY: launcher,
-        WHISPER_MODEL_PATH: model
-      })
-    );
+    const withLocal = upsertEnvVars(content, {
+      LOCAL_ASR_BINARY: managedLauncher(ctx),
+      LOCAL_ASR_MODEL: QWEN_MODEL_REPO
+    });
+    ctx.fs.writeText(path, removeEnvVars(withLocal, ["WHISPER_BINARY", "WHISPER_MODEL_PATH"]));
     return ok();
   },
   verify(ctx) {
     const env = readEnv(ctx);
-    if (env.WHISPER_BINARY === undefined || env.WHISPER_MODEL_PATH === undefined) {
+    if (env.LOCAL_ASR_BINARY === undefined || env.LOCAL_ASR_MODEL === undefined) {
       return error(
-        "Whisper is not wired into .env after provisioning.",
+        "Local speech is not wired into .env after provisioning (LOCAL_ASR_BINARY + LOCAL_ASR_MODEL).",
         "Re-run `pnpm setup:voice`."
       );
     }
-    // Post-provision verification requires BOTH the cheap contract probe and the sample-audio inference
-    // (#780): the probe proves the freshly installed launcher speaks the exact contract, and the sample
-    // proves `--language auto` reaches the model and produces on-contract output before a saved capture
+    // Post-provision verification requires BOTH the cheap contract probe and one real sample inference
+    // (#780/#800): the probe proves the freshly installed launcher speaks the exact contract, and the
+    // sample proves CPU inference reaches the model and produces on-contract output before a saved capture
     // is retried.
-    const contract = probeSpeechContract(ctx, env.WHISPER_BINARY);
+    const contract = probeSpeechContract(ctx, env.LOCAL_ASR_BINARY);
     if (!contract.ok) {
-      const { what, remedy } = incompatibleWrapper(contract.reason);
+      const { what, remedy } = incompatibleLocalProvider(contract.reason);
       return error(what, remedy);
     }
-    const result = ctx.exec(env.WHISPER_BINARY, [
+    logProviderDescriptor(ctx, contract.descriptor);
+    const result = ctx.exec(env.LOCAL_ASR_BINARY, [
       "--model",
-      env.WHISPER_MODEL_PATH,
-      "--language",
-      "auto",
+      env.LOCAL_ASR_MODEL,
       "--output",
       "json",
-      "--word-timestamps",
       SAMPLE_AUDIO
     ]);
     if (result.code !== 0) {
       return error(
-        "The whetstone-whisper wrapper failed on the sample audio.",
-        withOutputTail(
-          "See docs/SPEECH.md and check the model; then re-run `pnpm setup:voice`.",
-          result
-        )
+        "The bundled Qwen3-ASR provider failed on the sample audio.",
+        withOutputTail("See docs/SPEECH.md and check the runtime; then re-run `pnpm setup:voice`.", result)
       );
     }
-    const shape = validateWhisperContract(result.stdout);
+    const shape = validateLocalSpeechContract(result.stdout);
     if (!shape.ok) {
       return error(
-        `The wrapper emitted off-contract output: ${shape.reason}.`,
-        withOutputTail("See docs/SPEECH.md and check the model.", result)
+        `The provider emitted off-contract output: ${shape.reason}.`,
+        withOutputTail("See docs/SPEECH.md and check the runtime.", result)
       );
     }
     return ok();

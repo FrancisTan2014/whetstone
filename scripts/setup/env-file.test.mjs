@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createFakeContext } from "./testSupport.mjs";
-import { envPath, parseEnvVars, readEnv, upsertEnvVars } from "./env-file.mjs";
+import { envPath, parseEnvVars, readEnv, removeEnvVars, upsertEnvVars } from "./env-file.mjs";
 
 describe("parseEnvVars", () => {
   it("reads active KEY=value lines and ignores comments", () => {
@@ -29,6 +29,24 @@ describe("upsertEnvVars", () => {
   it("skips undefined values", () => {
     const out = upsertEnvVars("", { EXPLAIN_MODEL: "qwen2.5", COACH_CONVERSE_TIER: undefined });
     expect(out).toBe("EXPLAIN_MODEL=qwen2.5\n");
+  });
+});
+
+describe("removeEnvVars", () => {
+  it("leaves empty content empty", () => {
+    expect(removeEnvVars("", ["WHISPER_BINARY"])).toBe("");
+  });
+
+  it("drops active and commented lines for the given keys, keeping the rest", () => {
+    const out = removeEnvVars(
+      "WHISPER_BINARY=/bin/w\n# WHISPER_MODEL=small\nHOST=127.0.0.1\n",
+      ["WHISPER_BINARY", "WHISPER_MODEL"]
+    );
+    expect(out).toBe("HOST=127.0.0.1\n");
+  });
+
+  it("terminates the result with a newline when the input does not", () => {
+    expect(removeEnvVars("HOST=127.0.0.1", ["WHISPER_BINARY"])).toBe("HOST=127.0.0.1\n");
   });
 });
 

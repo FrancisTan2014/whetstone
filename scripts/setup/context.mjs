@@ -4,7 +4,8 @@
 // from coverage for the same reason as `src/**/index.ts`: it is a boundary of un-fakeable Node I/O.
 
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, readFileSync, readSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, readFileSync, readSync, statfsSync, writeFileSync } from "node:fs";
+import { freemem } from "node:os";
 
 import { makeConfirm } from "./confirm.mjs";
 import { resolveCommand } from "./platform.mjs";
@@ -132,6 +133,18 @@ export function createContext(root, options = {}) {
       prompt: promptLine
     }),
     refreshPath: () => refreshProcessPath(platform),
+    resources: (path) => {
+      // Free disk on the volume that will hold the venv/model, plus OS-available memory — the numbers
+      // the voice step preflights before a multi-GiB download/load (#800). `statfsSync` reports the
+      // filesystem holding `path`; `bavail` is the blocks available to an unprivileged process, so the
+      // free bytes reflect what setup can actually use. A boundary of un-fakeable Node I/O (excluded
+      // from coverage like the rest of this context), so the tested step drives it through a fake.
+      const stats = statfsSync(path);
+      return {
+        diskFreeBytes: stats.bavail * stats.bsize,
+        memoryAvailableBytes: freemem()
+      };
+    },
     log: (message) => console.log(message)
   };
 }

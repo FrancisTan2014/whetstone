@@ -13,6 +13,8 @@ export function createFakeContext(overrides = {}) {
   const copies = [];
   /** @type {string[]} */
   const confirmCalls = [];
+  /** @type {string[]} */
+  const resourceCalls = [];
   // How many times a step asked to refresh the process PATH after an install (see `installSystemTool`
   // on win32). An optional `overrides.onRefreshPath` lets a test model the freshly-installed tool
   // becoming resolvable (e.g. flip an exec probe from ENOENT to found).
@@ -71,9 +73,28 @@ export function createFakeContext(overrides = {}) {
         overrides.onRefreshPath();
       }
     },
+    // Fake resource preflight: default to effectively-unlimited so a test that does not care about the
+    // #800 disk/memory floor is never gated; a test proving the preflight overrides `resources` with a
+    // constrained reading.
+    resources: (path) => {
+      resourceCalls.push(path);
+      if (typeof overrides.resources === "function") {
+        return overrides.resources(path);
+      }
+      return overrides.resources ?? { diskFreeBytes: Infinity, memoryAvailableBytes: Infinity };
+    },
     log: (message) => logs.push(message)
   };
-  return { ctx, logs, execCalls, copies, files, confirmCalls, refreshPathCalls: () => refreshPathCalls };
+  return {
+    ctx,
+    logs,
+    execCalls,
+    copies,
+    files,
+    confirmCalls,
+    resourceCalls,
+    refreshPathCalls: () => refreshPathCalls
+  };
 }
 
 /**

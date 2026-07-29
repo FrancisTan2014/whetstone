@@ -55,6 +55,33 @@ export function upsertEnvVars(content, vars) {
 }
 
 /**
+ * Remove `.env` lines that assign any of the given keys (active `KEY=` or commented `# KEY=`), leaving
+ * every other line untouched. Used to retire a superseded configuration — e.g. the voice step drops the
+ * legacy `WHISPER_*` pair once it has written the provider-neutral `LOCAL_ASR_*` pair (#800), so a stale
+ * key can never be silently honoured or reported as a mixed config. Always returns newline-terminated
+ * content (empty input stays empty).
+ *
+ * @param {string} content
+ * @param {string[]} keys
+ * @returns {string}
+ */
+export function removeEnvVars(content, keys) {
+  const removed = new Set(keys);
+  if (content.length === 0) {
+    return content;
+  }
+  const kept = content.split("\n").filter((line) => {
+    const match = /^\s*#?\s*([A-Z_][A-Z0-9_]*)\s*=/.exec(line);
+    return !(match && removed.has(match[1]));
+  });
+  let out = kept.join("\n");
+  if (!out.endsWith("\n")) {
+    out += "\n";
+  }
+  return out;
+}
+
+/**
  * The root `.env` path for the repository the setup context runs in.
  *
  * @param {import("./step.mjs").SetupContext} ctx
