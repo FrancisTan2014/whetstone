@@ -39,7 +39,16 @@
  * @property {() => void} refreshPath  Re-read the persisted (registry) PATH into this process so a
  *                                just-installed tool resolves for subsequent child spawns. Win32-only
  *                                effect (a no-op elsewhere, where installers update new shells' PATH).
+ * @property {(path: string) => SetupResources} resources  Free disk on the volume holding `path` and
+ *                                OS-available memory, for a step to preflight a heavy download/load
+ *                                before starting it (the voice runtime, #800).
  * @property {(message: string) => void} log  Progress logger.
+ */
+
+/**
+ * @typedef {object} SetupResources
+ * @property {number} diskFreeBytes         Bytes free on the volume that will hold the artifact.
+ * @property {number} memoryAvailableBytes  Bytes of currently-available system memory.
  */
 
 /**

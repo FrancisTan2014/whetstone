@@ -1,242 +1,120 @@
-import { spawnSync } from "node:child_process";
-
 import { describe, expect, it } from "vitest";
 
 import { createFakeContext } from "../testSupport.mjs";
 import {
-  upsertEnvVars,
-  validateWhisperContract,
   parseEnvVars,
   probeSpeechContract,
   resolveVoiceConfig,
+  upsertEnvVars,
+  validateLocalSpeechContract,
+  voiceReadiness,
   voiceStep
 } from "./voice.mjs";
 
+const GIB = 1024 ** 3;
+const ROOT = "/repo";
 const ENV_PATH = "/repo/.env";
-const LAUNCHER = "/bin/whetstone-whisper";
-// A distinct provider-neutral LOCAL_ASR executable path, used to prove the local branch probes ITS
-// binary (not WHISPER_BINARY) in new-only and mixed configs.
-const LOCAL_BINARY = "/bin/local-asr";
-// The compatible contract probe payload the current whetstone-whisper launcher emits for
-// `--contract-version` (mirrors CONTRACT_VERSION in whisper-wrapper/whetstone_whisper/cli.py).
-const CONTRACT_STDOUT = '{"contractVersion":"1"}';
+const VENV = "/repo/.data/voice/qwen-venv";
+const VENV_PY = `${VENV}/bin/python`;
+const LAUNCHER = `${VENV}/bin/whetstone-qwen`;
+const MARKER = `${VENV}/.whetstone-voice-runtime`;
+const DATA_DIR = "/repo/.data/voice";
+const MODEL = "Qwen/Qwen3-ASR-1.7B";
+const REVISION = "7278e1e70fe206f11671096ffdd38061171dd6e5";
+const RUNTIME_VERSION = `${MODEL}@${REVISION}+torch2.5.1+qwen-asr0.0.6`;
+// A distinct custom provider-neutral LOCAL_ASR executable path, used to prove the local branch probes ITS
+// binary (not a bundled one) and that provisioning refuses to clobber a custom provider.
+const CUSTOM_BINARY = "/bin/custom-asr";
 
-// A default handler where every external call succeeds; individual tests override one branch.
-function happyExec(command, args) {
-  const joined = args.join(" ");
-  // The launcher's cheap contract probe reports the supported version, so readiness passes.
-  if (command === LAUNCHER && args[0] === "--contract-version") {
-    return { code: 0, stdout: CONTRACT_STDOUT, stderr: "" };
-  }
-  if (args[0] === "--version") return { code: 0, stdout: "Python 3.11", stderr: "" };
-  if (joined === "-c import faster_whisper") return { code: 0, stdout: "", stderr: "" };
-  if (joined.includes("pip install faster-whisper")) return { code: 0, stdout: "", stderr: "" };
-  if (joined.includes("pip install") && joined.includes("whisper-wrapper")) {
-    return { code: 0, stdout: "", stderr: "" };
-  }
-  if (joined.includes("whetstone_whisper.locate")) {
-    return { code: 0, stdout: `${LAUNCHER}\n`, stderr: "" };
-  }
-  if (joined.includes("whetstone_whisper.fetch")) return { code: 0, stdout: "", stderr: "" };
-  return { code: 0, stdout: "", stderr: "" };
+// The managed provider's cheap `--contract-version` descriptor (mirrors qwen-wrapper cli.py).
+const PROBE_STDOUT = JSON.stringify({
+  contractVersion: "1",
+  provider: "qwen3-asr-1.7b",
+  revision: REVISION,
+  requirements: { diskGiB: 12, memoryGiB: 12 }
+});
+// A valid #799 transcript-first sample-inference payload (empty timing).
+const SAMPLE_STDOUT = JSON.stringify({ text: "你好", language: "zh", segments: [] });
+
+/**
+ * Build an exec handler where every provisioning + probe call succeeds; a `fails` set flips one named
+ * call to a nonzero exit, and `stdout` overrides a call's captured output. Named calls:
+ *   pyversion | venv | torch | wrapper | modelprobe | modeldownload | contract | sample
+ */
+function execFor({ fails = new Set(), stdout = {}, python = "python" } = {}) {
+  const name = (command, args) => {
+    const joined = args.join(" ");
+    if (args[0] === "--version") return "pyversion";
+    if (args.includes("venv")) return "venv";
+    if (joined.includes("pip install") && joined.includes("torch==")) return "torch";
+    if (joined.includes("pip install") && joined.includes("qwen-wrapper")) return "wrapper";
+    if (args[0] === "-c" && args[1].includes("local_files_only")) return "modelprobe";
+    if (args[0] === "-c") return "modeldownload";
+    if (args[0] === "--contract-version") return "contract";
+    if (args.includes("--output")) return "sample";
+    return "other";
+  };
+  return (command, args) => {
+    // A `python3`-only host: the first `python --version` probe fails so resolvePython falls through.
+    if (args[0] === "--version" && python === "python3" && command === "python") {
+      return { code: 1, stdout: "", stderr: "" };
+    }
+    if (args[0] === "--version" && python === "none") {
+      return { code: 1, stdout: "", stderr: "" };
+    }
+    const key = name(command, args);
+    const defaults = { contract: PROBE_STDOUT, sample: SAMPLE_STDOUT };
+    return {
+      code: fails.has(key) ? 1 : 0,
+      stdout: stdout[key] ?? defaults[key] ?? "",
+      stderr: ""
+    };
+  };
 }
 
-describe("parseEnvVars", () => {
-  it("reads active KEY=value lines and ignores comments", () => {
-    const vars = parseEnvVars("# WHISPER_BINARY=\nWHISPER_MODEL_PATH=small\nHOST=127.0.0.1\n");
-    expect(vars).toEqual({ WHISPER_MODEL_PATH: "small", HOST: "127.0.0.1" });
-  });
-});
-
-describe("upsertEnvVars", () => {
-  it("uncomments a template line in place", () => {
-    const out = upsertEnvVars("# WHISPER_BINARY=\n", { WHISPER_BINARY: "/bin/w" });
-    expect(out).toBe("WHISPER_BINARY=/bin/w\n");
-  });
-
-  it("replaces an existing active value", () => {
-    const out = upsertEnvVars("WHISPER_MODEL_PATH=old\n", { WHISPER_MODEL_PATH: "small" });
-    expect(out).toBe("WHISPER_MODEL_PATH=small\n");
-  });
-
-  it("appends a key that is not present and terminates with a newline", () => {
-    const out = upsertEnvVars("HOST=127.0.0.1", { WHISPER_BINARY: "/bin/w" });
-    expect(out).toBe("HOST=127.0.0.1\nWHISPER_BINARY=/bin/w\n");
-  });
-
-  it("skips undefined values", () => {
-    const out = upsertEnvVars("", { WHISPER_BINARY: "/bin/w", WHISPER_MODEL_PATH: undefined });
-    expect(out).toBe("WHISPER_BINARY=/bin/w\n");
-  });
-});
-
-describe("validateWhisperContract", () => {
-  const validWord = '{"word":"Help","start":0,"end":0.4}';
-  const valid = `{"text":"Help","segments":[{"words":[${validWord}]}]}`;
-
-  it("accepts the strict docs/SPEECH.md shape", () => {
-    expect(validateWhisperContract(valid)).toEqual({ ok: true });
-    expect(validateWhisperContract('{"text":"","segments":[]}')).toEqual({ ok: true });
-  });
-
-  it("rejects invalid JSON and non-objects", () => {
-    expect(validateWhisperContract("not json").ok).toBe(false);
-    expect(validateWhisperContract("42").ok).toBe(false);
-    expect(validateWhisperContract("[]").ok).toBe(false);
-  });
-
-  it("rejects a missing text or segments", () => {
-    expect(validateWhisperContract('{"segments":[]}').ok).toBe(false);
-    expect(validateWhisperContract('{"text":"hi"}').ok).toBe(false);
-  });
-
-  it("rejects a segment that is present but malformed (no words array)", () => {
-    // The runtime parseWhisperOutput requires each segment to carry a words array; setup must not
-    // report ready for this output the server would reject.
-    const result = validateWhisperContract('{"text":"","segments":[{}]}');
-    expect(result).toMatchObject({ ok: false });
-    expect(result.reason).toContain('"words"');
-  });
-
-  it("rejects a non-object segment", () => {
-    expect(validateWhisperContract('{"text":"","segments":[1]}').ok).toBe(false);
-  });
-
-  it("rejects malformed words (non-object, missing word/start/end, or end before start)", () => {
-    const cases = [
-      '{"text":"","segments":[{"words":[1]}]}',
-      '{"text":"","segments":[{"words":[{"start":0,"end":1}]}]}',
-      '{"text":"","segments":[{"words":[{"word":"a","end":1}]}]}',
-      '{"text":"","segments":[{"words":[{"word":"a","start":0}]}]}',
-      '{"text":"","segments":[{"words":[{"word":"a","start":"0","end":1}]}]}',
-      '{"text":"","segments":[{"words":[{"word":"a","start":1,"end":0.5}]}]}'
-    ];
-    for (const stdout of cases) {
-      expect(validateWhisperContract(stdout).ok).toBe(false);
-    }
-  });
-});
-
-describe("voiceStep.check", () => {
-  it("reports missing when Python is absent, without crashing", () => {
-    const { ctx } = createFakeContext({ execHandler: () => ({ code: 1, stdout: "", stderr: "" }) });
-    const result = voiceStep.check(ctx);
-    expect(result.status).toBe("missing");
-    expect(result.remedy).toContain("Python 3");
-  });
-
-  it("reports missing when faster-whisper is not importable", () => {
-    const { ctx } = createFakeContext({
-      execHandler: (command, args) =>
-        args.join(" ") === "-c import faster_whisper"
-          ? { code: 1, stdout: "", stderr: "" }
-          : { code: 0, stdout: "", stderr: "" }
-    });
-    expect(voiceStep.check(ctx).what).toContain("faster-whisper");
-  });
-
-  it("reports missing when WHISPER_* is not in .env", () => {
-    const { ctx } = createFakeContext({ execHandler: happyExec });
-    expect(voiceStep.check(ctx).what).toContain(".env");
-  });
-
-  it("reports missing when the launcher file is gone", () => {
-    const { ctx } = createFakeContext({
-      execHandler: happyExec,
-      fileContents: { [ENV_PATH]: "WHISPER_BINARY=/gone\nWHISPER_MODEL_PATH=small\n" }
-    });
-    expect(voiceStep.check(ctx).what).toContain("launcher is missing");
-  });
-
-  it("is ok when faster-whisper, the launcher, and .env are all present", () => {
-    const { ctx } = createFakeContext({
-      execHandler: happyExec,
-      files: [LAUNCHER],
-      fileContents: { [ENV_PATH]: `WHISPER_BINARY=${LAUNCHER}\nWHISPER_MODEL_PATH=small\n` }
-    });
-    expect(voiceStep.check(ctx)).toEqual({ status: "ok" });
-  });
-
-  // The core #780 regression: a launcher file exists but the contract probe fails, so readiness must
-  // report the wrapper incompatible (naming it + pointing at `pnpm setup:voice`), never "ready".
-  const wiredLauncher = {
-    files: [LAUNCHER],
-    fileContents: { [ENV_PATH]: `WHISPER_BINARY=${LAUNCHER}\nWHISPER_MODEL_PATH=small\n` }
-  };
-  const probeExec = (stdout, code = 0) => (command, args) =>
-    command === LAUNCHER && args[0] === "--contract-version"
-      ? { code, stdout, stderr: "boom stderr that must not leak" }
-      : happyExec(command, args);
-
-  it("reports the stale wrapper incompatible when the contract probe exits nonzero (no traceback)", () => {
-    const { ctx } = createFakeContext({ ...wiredLauncher, execHandler: probeExec("", 2) });
-    const result = voiceStep.check(ctx);
-    expect(result.status).toBe("missing");
-    expect(result.what).toContain("incompatible");
-    expect(result.remedy).toContain("pnpm setup:voice");
-    // Doctor must not surface a traceback: the launcher's stderr never reaches the operator message.
-    expect(`${result.what}${result.remedy}`).not.toContain("boom stderr");
-  });
-
-  it("reports incompatible when the probe emits malformed JSON", () => {
-    const { ctx } = createFakeContext({ ...wiredLauncher, execHandler: probeExec("not json") });
-    expect(voiceStep.check(ctx).what).toContain("incompatible");
-  });
-
-  it("reports incompatible when the probe reports a mismatched contract version", () => {
-    const { ctx } = createFakeContext({
-      ...wiredLauncher,
-      execHandler: probeExec('{"contractVersion":"0"}')
-    });
-    const result = voiceStep.check(ctx);
-    expect(result.status).toBe("missing");
-    expect(result.what).toContain("incompatible");
+describe("parseEnvVars / upsertEnvVars (re-exported)", () => {
+  it("parses active lines and upserts values", () => {
+    expect(parseEnvVars("# A=\nB=2\n")).toEqual({ B: "2" });
+    expect(upsertEnvVars("# LOCAL_ASR_MODEL=\n", { LOCAL_ASR_MODEL: MODEL })).toBe(
+      `LOCAL_ASR_MODEL=${MODEL}\n`
+    );
   });
 });
 
 describe("resolveVoiceConfig (#799)", () => {
-  it("makes the complete LOCAL_ASR pair authoritative (no legacy present)", () => {
-    expect(resolveVoiceConfig({ LOCAL_ASR_BINARY: LOCAL_BINARY, LOCAL_ASR_MODEL: "qwen" })).toEqual({
+  it("treats a complete LOCAL_ASR pair as authoritative local", () => {
+    expect(resolveVoiceConfig({ LOCAL_ASR_BINARY: LAUNCHER, LOCAL_ASR_MODEL: MODEL })).toEqual({
       kind: "local",
-      binaryPath: LOCAL_BINARY,
-      modelIdentifier: "qwen",
+      binaryPath: LAUNCHER,
+      modelIdentifier: MODEL,
       legacyAlsoPresent: false
     });
   });
 
-  it("flags a mixed config: the new pair wins and legacy WHISPER_* is recorded as also-present", () => {
+  it("flags a mixed config when legacy WHISPER_* is also present", () => {
     expect(
       resolveVoiceConfig({
-        LOCAL_ASR_BINARY: LOCAL_BINARY,
-        LOCAL_ASR_MODEL: "qwen",
-        WHISPER_BINARY: LAUNCHER,
-        WHISPER_MODEL_PATH: "small"
-      })
-    ).toMatchObject({ kind: "local", legacyAlsoPresent: true });
+        LOCAL_ASR_BINARY: LAUNCHER,
+        LOCAL_ASR_MODEL: MODEL,
+        WHISPER_BINARY: "/bin/w"
+      }).legacyAlsoPresent
+    ).toBe(true);
   });
 
-  it("treats exactly one new key as a partial (error) config, never a silent fallback", () => {
-    expect(resolveVoiceConfig({ LOCAL_ASR_BINARY: LOCAL_BINARY })).toEqual({ kind: "partial-local" });
-    expect(resolveVoiceConfig({ LOCAL_ASR_MODEL: "qwen" })).toEqual({ kind: "partial-local" });
-    // A partial new pair is an error even when a complete legacy pair is also present.
-    expect(
-      resolveVoiceConfig({
-        LOCAL_ASR_BINARY: LOCAL_BINARY,
-        WHISPER_BINARY: LAUNCHER,
-        WHISPER_MODEL_PATH: "small"
-      })
-    ).toEqual({ kind: "partial-local" });
+  it("reports a partial pair (exactly one new key) as a configuration error", () => {
+    expect(resolveVoiceConfig({ LOCAL_ASR_BINARY: LAUNCHER })).toEqual({ kind: "partial-local" });
+    expect(resolveVoiceConfig({ LOCAL_ASR_MODEL: MODEL })).toEqual({ kind: "partial-local" });
   });
 
-  it("honours the complete legacy pair only when no new key is present", () => {
-    expect(resolveVoiceConfig({ WHISPER_BINARY: LAUNCHER, WHISPER_MODEL_PATH: "small" })).toEqual({
+  it("falls back to the legacy whisper pair only when no new key is present", () => {
+    expect(resolveVoiceConfig({ WHISPER_BINARY: "/bin/w", WHISPER_MODEL_PATH: "small" })).toEqual({
       kind: "whisper",
-      binaryPath: LAUNCHER,
+      binaryPath: "/bin/w",
       modelPath: "small"
     });
   });
 
-  it("treats blank/whitespace values as unset (none), so the runtime falls back to the fake", () => {
+  it("treats blank/whitespace values as unset", () => {
     expect(resolveVoiceConfig({ LOCAL_ASR_BINARY: "  ", LOCAL_ASR_MODEL: "" })).toEqual({
       kind: "none"
     });
@@ -244,426 +122,415 @@ describe("resolveVoiceConfig (#799)", () => {
   });
 });
 
-describe("voiceStep.check with a LOCAL_ASR provider (#799)", () => {
-  // The local branch is provider-neutral: it probes the configured LOCAL_ASR_BINARY and needs no
-  // Python/faster-whisper. This handler answers the contract probe for the LOCAL binary only.
-  const localProbe =
-    (stdout = CONTRACT_STDOUT, code = 0) =>
-    (command, args) =>
-      command === LOCAL_BINARY && args[0] === "--contract-version"
-        ? { code, stdout, stderr: "traceback that must not leak" }
-        : { code: 0, stdout: "", stderr: "" };
-  const newOnlyEnv = `LOCAL_ASR_BINARY=${LOCAL_BINARY}\nLOCAL_ASR_MODEL=qwen\n`;
-
-  it("recognizes a complete LOCAL_ASR pair as ready by probing its own executable", () => {
-    const { ctx, execCalls } = createFakeContext({
-      files: [LOCAL_BINARY],
-      fileContents: { [ENV_PATH]: newOnlyEnv },
-      execHandler: localProbe()
+describe("validateLocalSpeechContract (#799 transcript-first)", () => {
+  it("accepts a transcript with empty segments and a null/string language", () => {
+    expect(validateLocalSpeechContract(SAMPLE_STDOUT)).toEqual({ ok: true });
+    expect(validateLocalSpeechContract('{"text":"","language":null,"segments":[]}')).toEqual({
+      ok: true
     });
-    expect(voiceStep.check(ctx)).toEqual({ status: "ok" });
-    // It probes the LOCAL_ASR executable — never Whisper — and never runs a faster-whisper import.
-    expect(execCalls).toContainEqual([LOCAL_BINARY, "--contract-version"]);
-    expect(execCalls.some((call) => call.join(" ").includes("faster_whisper"))).toBe(false);
   });
 
-  it("does not log a migration hint for a new-only config", () => {
-    const { ctx, logs } = createFakeContext({
-      files: [LOCAL_BINARY],
-      fileContents: { [ENV_PATH]: newOnlyEnv },
-      execHandler: localProbe()
-    });
-    voiceStep.check(ctx);
-    expect(logs.some((line) => line.includes("finish the migration"))).toBe(false);
+  it("rejects non-JSON and non-object output", () => {
+    expect(validateLocalSpeechContract("not json").ok).toBe(false);
+    expect(validateLocalSpeechContract("[]").ok).toBe(false);
   });
 
-  it("reports a mixed config ready, probes the LOCAL binary (not Whisper), and logs the migration hint", () => {
-    const { ctx, logs, execCalls } = createFakeContext({
-      files: [LOCAL_BINARY, LAUNCHER],
-      fileContents: {
-        [ENV_PATH]: `${newOnlyEnv}WHISPER_BINARY=${LAUNCHER}\nWHISPER_MODEL_PATH=small\n`
-      },
-      execHandler: localProbe()
-    });
-    expect(voiceStep.check(ctx)).toEqual({ status: "ok" });
-    // The authoritative provider is the LOCAL one — Whisper's launcher is never probed.
-    expect(execCalls).toContainEqual([LOCAL_BINARY, "--contract-version"]);
-    expect(execCalls).not.toContainEqual([LAUNCHER, "--contract-version"]);
-    expect(logs.some((line) => line.includes("finish the migration"))).toBe(true);
+  it("rejects a missing string text or a non-array segments", () => {
+    expect(validateLocalSpeechContract('{"segments":[]}').ok).toBe(false);
+    expect(validateLocalSpeechContract('{"text":"hi"}').ok).toBe(false);
   });
 
-  it("reports missing when the configured LOCAL_ASR executable file is absent", () => {
-    const { ctx } = createFakeContext({
-      fileContents: { [ENV_PATH]: newOnlyEnv },
-      execHandler: localProbe()
-    });
-    const result = voiceStep.check(ctx);
-    expect(result.status).toBe("missing");
-    expect(result.what).toContain("local speech executable is missing");
-  });
-
-  it("reports the local provider incompatible when its contract probe fails (no traceback leak)", () => {
-    const { ctx } = createFakeContext({
-      files: [LOCAL_BINARY],
-      fileContents: { [ENV_PATH]: newOnlyEnv },
-      execHandler: localProbe("", 2)
-    });
-    const result = voiceStep.check(ctx);
-    expect(result.status).toBe("missing");
-    expect(result.what).toContain("incompatible");
-    expect(result.what).toContain("LOCAL_ASR_BINARY");
-    expect(`${result.what}${result.remedy}`).not.toContain("traceback");
-  });
-
-  it("reports a partial LOCAL_ASR pair as an explicit configuration error with the exact remedy", () => {
-    const { ctx } = createFakeContext({
-      fileContents: { [ENV_PATH]: `LOCAL_ASR_BINARY=${LOCAL_BINARY}\n` },
-      execHandler: localProbe()
-    });
-    const result = voiceStep.check(ctx);
-    expect(result.status).toBe("error");
-    expect(result.what).toContain("partially configured");
-    expect(result.remedy).toContain("LOCAL_ASR_BINARY");
-    expect(result.remedy).toContain("LOCAL_ASR_MODEL");
-  });
-});
-
-describe("voiceStep.provision with a LOCAL_ASR provider (#799)", () => {
-  it("refuses to install the bundled Whisper fallback over a configured local provider", () => {
-    const { ctx, execCalls } = createFakeContext({
-      fileContents: { [ENV_PATH]: `LOCAL_ASR_BINARY=${LOCAL_BINARY}\nLOCAL_ASR_MODEL=qwen\n` }
-    });
-    const result = voiceStep.provision(ctx);
-    expect(result.status).toBe("error");
-    expect(result.what).toContain("LOCAL_ASR_BINARY");
-    // It never installs faster-whisper or the wrapper over the operator's chosen provider.
-    expect(execCalls.some((call) => call.join(" ").includes("pip install"))).toBe(false);
-  });
-
-  it("reports a partial LOCAL_ASR pair as a configuration error instead of provisioning Whisper", () => {
-    const { ctx, execCalls } = createFakeContext({
-      fileContents: { [ENV_PATH]: "LOCAL_ASR_MODEL=qwen\n" }
-    });
-    const result = voiceStep.provision(ctx);
-    expect(result.status).toBe("error");
-    expect(result.what).toContain("partially configured");
-    expect(execCalls.some((call) => call.join(" ").includes("pip install"))).toBe(false);
+  it("rejects a language that is neither a string nor null", () => {
+    const result = validateLocalSpeechContract('{"text":"hi","language":42,"segments":[]}');
+    expect(result).toEqual({ ok: false, reason: '"language" must be a string or null' });
   });
 });
 
 describe("probeSpeechContract", () => {
-  const run = (stdout, code = 0) => {
-    const { ctx } = createFakeContext({
-      execHandler: () => ({ code, stdout, stderr: "" })
-    });
-    return probeSpeechContract(ctx, LAUNCHER);
-  };
+  const probe = (execResult) =>
+    probeSpeechContract(createFakeContext({ defaultExec: execResult }).ctx, LAUNCHER);
 
-  it("is ok only for the exact supported contract version", () => {
-    expect(run(CONTRACT_STDOUT)).toEqual({ ok: true });
+  it("returns ok with the parsed descriptor on a matching version", () => {
+    const result = probe({ code: 0, stdout: PROBE_STDOUT, stderr: "" });
+    expect(result.ok).toBe(true);
+    expect(result.descriptor).toMatchObject({ provider: "qwen3-asr-1.7b", revision: REVISION });
   });
 
-  it("rejects a nonzero exit, malformed output, a missing version, and a mismatch", () => {
-    expect(run("", 1).ok).toBe(false);
-    expect(run("not json").ok).toBe(false);
-    expect(run('{"other":"1"}').ok).toBe(false);
-    expect(run("42").ok).toBe(false);
-    expect(run('{"contractVersion":2}').ok).toBe(false);
-    expect(run('{"contractVersion":"9"}').ok).toBe(false);
+  it("is incompatible on a nonzero exit", () => {
+    expect(probe({ code: 1, stdout: "", stderr: "boom" }).ok).toBe(false);
+  });
+
+  it("is incompatible on non-JSON probe output", () => {
+    expect(probe({ code: 0, stdout: "nope", stderr: "" }).ok).toBe(false);
+  });
+
+  it("is incompatible when contractVersion is missing or not a string", () => {
+    expect(probe({ code: 0, stdout: "{}", stderr: "" }).ok).toBe(false);
+    expect(probe({ code: 0, stdout: '{"contractVersion":1}', stderr: "" }).ok).toBe(false);
+  });
+
+  it("is incompatible when the probe emits valid JSON that is not an object", () => {
+    const result = probe({ code: 0, stdout: "42", stderr: "" });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('missing a string "contractVersion"');
+  });
+
+  it("is incompatible on a version mismatch", () => {
+    const result = probe({ code: 0, stdout: '{"contractVersion":"2"}', stderr: "" });
+    expect(result).toEqual({
+      ok: false,
+      reason: "it reports contract version 2, but this Whetstone requires 1"
+    });
+  });
+});
+
+describe("voiceReadiness", () => {
+  const context = (overrides) => createFakeContext({ root: ROOT, ...overrides });
+
+  it("errors on a partial LOCAL_ASR pair", () => {
+    const result = voiceReadiness(context().ctx, { kind: "partial-local" });
+    expect(result.status).toBe("error");
+    expect(result.what).toContain("partially configured");
+  });
+
+  it("reports the bundled provider not installed when nothing is configured", () => {
+    const result = voiceReadiness(context().ctx, { kind: "none" });
+    expect(result.status).toBe("missing");
+    expect(result.remedy).toContain("pnpm setup:voice");
+  });
+
+  describe("legacy whisper config", () => {
+    it("is missing when the whisper launcher file is absent", () => {
+      const result = voiceReadiness(context().ctx, {
+        kind: "whisper",
+        binaryPath: "/bin/w",
+        modelPath: "small"
+      });
+      expect(result.status).toBe("missing");
+      expect(result.what).toContain("legacy Whisper launcher is missing");
+    });
+
+    it("is missing when the whisper launcher fails the contract probe", () => {
+      const { ctx } = context({
+        files: ["/bin/w"],
+        defaultExec: { code: 1, stdout: "", stderr: "" }
+      });
+      const result = voiceReadiness(ctx, { kind: "whisper", binaryPath: "/bin/w", modelPath: "small" });
+      expect(result.status).toBe("missing");
+      expect(result.remedy).toContain("pnpm setup:voice");
+    });
+
+    it("is ready but nudges migration when the whisper launcher is compatible", () => {
+      const { ctx, logs } = context({
+        files: ["/bin/w"],
+        defaultExec: { code: 0, stdout: '{"contractVersion":"1"}', stderr: "" }
+      });
+      const result = voiceReadiness(ctx, { kind: "whisper", binaryPath: "/bin/w", modelPath: "small" });
+      expect(result.status).toBe("ok");
+      expect(logs.some((line) => line.includes("Legacy WHISPER_* is still configured"))).toBe(true);
+    });
+  });
+
+  describe("local provider", () => {
+    it("is missing when the configured executable file is absent", () => {
+      const result = voiceReadiness(context().ctx, {
+        kind: "local",
+        binaryPath: CUSTOM_BINARY,
+        modelIdentifier: MODEL,
+        legacyAlsoPresent: false
+      });
+      expect(result.status).toBe("missing");
+      expect(result.what).toContain("configured local speech executable is missing");
+    });
+
+    it("is missing (incompatible) when the executable fails the contract probe", () => {
+      const { ctx } = context({
+        files: [CUSTOM_BINARY],
+        defaultExec: { code: 1, stdout: "", stderr: "" }
+      });
+      const result = voiceReadiness(ctx, {
+        kind: "local",
+        binaryPath: CUSTOM_BINARY,
+        modelIdentifier: MODEL,
+        legacyAlsoPresent: false
+      });
+      expect(result.status).toBe("missing");
+      expect(result.what).toContain("incompatible");
+    });
+
+    it("is ready and logs the managed provider descriptor with requirements", () => {
+      const { ctx, logs } = context({
+        files: [LAUNCHER],
+        defaultExec: { code: 0, stdout: PROBE_STDOUT, stderr: "" }
+      });
+      const result = voiceReadiness(ctx, {
+        kind: "local",
+        binaryPath: LAUNCHER,
+        modelIdentifier: MODEL,
+        legacyAlsoPresent: false
+      });
+      expect(result.status).toBe("ok");
+      expect(logs.some((line) => line.includes(`qwen3-asr-1.7b @ ${REVISION}`))).toBe(true);
+      expect(logs.some((line) => line.includes("12 GiB free disk, 12 GiB available memory"))).toBe(
+        true
+      );
+    });
+
+    it("logs the mixed-config hint when legacy WHISPER_* is also present", () => {
+      const { ctx, logs } = context({
+        files: [LAUNCHER],
+        defaultExec: { code: 0, stdout: PROBE_STDOUT, stderr: "" }
+      });
+      voiceReadiness(ctx, {
+        kind: "local",
+        binaryPath: LAUNCHER,
+        modelIdentifier: MODEL,
+        legacyAlsoPresent: true
+      });
+      expect(logs.some((line) => line.includes("legacy WHISPER_* is"))).toBe(true);
+    });
+
+    it("logs no requirements when the descriptor omits them, and nothing when provider is absent", () => {
+      const withoutRequirements = context({
+        files: [LAUNCHER],
+        defaultExec: {
+          code: 0,
+          stdout: JSON.stringify({ contractVersion: "1", provider: "x", revision: "y" }),
+          stderr: ""
+        }
+      });
+      voiceReadiness(withoutRequirements.ctx, {
+        kind: "local",
+        binaryPath: LAUNCHER,
+        modelIdentifier: MODEL,
+        legacyAlsoPresent: false
+      });
+      expect(withoutRequirements.logs.some((line) => line.includes("x @ y"))).toBe(true);
+      expect(withoutRequirements.logs.some((line) => line.includes("needs"))).toBe(false);
+
+      const nonNumericRequirements = context({
+        files: [LAUNCHER],
+        defaultExec: {
+          code: 0,
+          stdout: JSON.stringify({
+            contractVersion: "1",
+            provider: "x",
+            revision: "y",
+            requirements: { diskGiB: "12", memoryGiB: 12 }
+          }),
+          stderr: ""
+        }
+      });
+      voiceReadiness(nonNumericRequirements.ctx, {
+        kind: "local",
+        binaryPath: LAUNCHER,
+        modelIdentifier: MODEL,
+        legacyAlsoPresent: false
+      });
+      expect(nonNumericRequirements.logs.some((line) => line.includes("needs"))).toBe(false);
+
+      const noProvider = context({
+        files: [LAUNCHER],
+        defaultExec: { code: 0, stdout: '{"contractVersion":"1"}', stderr: "" }
+      });
+      voiceReadiness(noProvider.ctx, {
+        kind: "local",
+        binaryPath: LAUNCHER,
+        modelIdentifier: MODEL,
+        legacyAlsoPresent: false
+      });
+      expect(noProvider.logs.some((line) => line.includes("local speech provider:"))).toBe(false);
+    });
+  });
+});
+
+describe("voiceStep.check", () => {
+  it("delegates to voiceReadiness over the resolved .env config", () => {
+    const { ctx } = createFakeContext({
+      root: ROOT,
+      fileContents: { [ENV_PATH]: `LOCAL_ASR_BINARY=${LAUNCHER}\nLOCAL_ASR_MODEL=${MODEL}\n` },
+      files: [LAUNCHER],
+      defaultExec: { code: 0, stdout: PROBE_STDOUT, stderr: "" }
+    });
+    expect(voiceStep.check(ctx).status).toBe("ok");
+  });
+
+  it("reports the bundled provider not installed on an empty .env", () => {
+    const { ctx } = createFakeContext({ root: ROOT });
+    expect(voiceStep.check(ctx).status).toBe("missing");
   });
 });
 
 describe("voiceStep.provision", () => {
-  it("reports missing (never crashes) when Python is absent", () => {
-    const { ctx } = createFakeContext({ execHandler: () => ({ code: 1, stdout: "", stderr: "" }) });
-    expect(voiceStep.provision(ctx).status).toBe("missing");
-  });
-
-  it("installs Python via winget after consent, then provisions Whisper", () => {
-    let pythonPresent = false;
-    const { ctx, confirmCalls, execCalls } = createFakeContext({
-      platform: "win32",
+  const base = (overrides = {}) =>
+    createFakeContext({
+      root: ROOT,
       confirm: true,
-      execHandler: (command, args) => {
-        if ((command === "python" || command === "python3") && args[0] === "--version") {
-          return { code: command === "python" && pythonPresent ? 0 : 1, stdout: "", stderr: "" };
-        }
-        if (command === "winget" && args[0] === "--version") return { code: 0, stdout: "", stderr: "" };
-        if (command === "winget" && args[0] === "install") {
-          pythonPresent = true;
-          return { code: 0, stdout: "", stderr: "" };
-        }
-        return happyExec(command, args);
-      }
+      execHandler: execFor(overrides.exec ?? {}),
+      ...overrides.ctx
     });
-    expect(voiceStep.provision(ctx)).toEqual({ status: "ok" });
-    expect(confirmCalls).toContain("Install Python 3 now? [Y/n]");
-    expect(execCalls).toContainEqual(["winget", "install", "Python.Python.3"]);
-  });
 
-  it("falls back to the instruct-only Python remedy when consent is declined", () => {
-    const { ctx, confirmCalls } = createFakeContext({
-      platform: "win32",
-      confirm: false,
-      execHandler: (command, args) =>
-        command === "winget" && args[0] === "--version"
-          ? { code: 0, stdout: "", stderr: "" }
-          : { code: 1, stdout: "", stderr: "" }
+  it("errors on a partial LOCAL_ASR pair without touching the runtime", () => {
+    const { ctx, execCalls } = base({
+      ctx: { fileContents: { [ENV_PATH]: `LOCAL_ASR_BINARY=${LAUNCHER}\n` } }
     });
     const result = voiceStep.provision(ctx);
-    expect(result.status).toBe("missing");
-    expect(result.remedy).toContain("Python 3");
-    expect(confirmCalls).toEqual(["Install Python 3 now? [Y/n]"]);
+    expect(result.status).toBe("error");
+    expect(result.what).toContain("partially configured");
+    expect(execCalls.length).toBe(0);
   });
 
-  it("falls back to the instruct-only Python remedy when no package manager is available", () => {
-    const { ctx, confirmCalls } = createFakeContext({
-      platform: "win32",
-      confirm: true,
-      execHandler: () => ({ code: 1, stdout: "", stderr: "" })
-    });
-    expect(voiceStep.provision(ctx).status).toBe("missing");
-    expect(confirmCalls).toEqual([]); // never asked — nothing to install with
-  });
-
-  it("reports missing when Python is still off PATH after a reported install", () => {
-    const { ctx } = createFakeContext({
-      platform: "darwin",
-      confirm: true,
-      execHandler: (command, args) => {
-        if (command === "brew" && args[0] === "--version") return { code: 0, stdout: "", stderr: "" };
-        if (command === "brew" && args[0] === "install") return { code: 0, stdout: "", stderr: "" };
-        return { code: 1, stdout: "", stderr: "" }; // python never resolves on this shell
-      }
-    });
-    const result = voiceStep.provision(ctx);
-    expect(result.status).toBe("missing");
-    expect(result.remedy).toContain("Python 3");
-  });
-
-  it("maps a failing `pip install faster-whisper` to an actionable error", () => {
-    const { ctx } = createFakeContext({
-      execHandler: (command, args) => {
-        const joined = args.join(" ");
-        // faster-whisper is not importable, so provisioning attempts the install (which then fails).
-        if (joined === "-c import faster_whisper") return { code: 1, stdout: "", stderr: "" };
-        if (joined.includes("pip install faster-whisper")) {
-          return { code: 1, stdout: "", stderr: "no network" };
-        }
-        return happyExec(command, args);
+  it("refuses to clobber a custom LOCAL_ASR provider", () => {
+    const { ctx } = base({
+      ctx: {
+        fileContents: { [ENV_PATH]: `LOCAL_ASR_BINARY=${CUSTOM_BINARY}\nLOCAL_ASR_MODEL=${MODEL}\n` }
       }
     });
     const result = voiceStep.provision(ctx);
     expect(result.status).toBe("error");
-    expect(result.remedy).toContain("ensurepip");
-    expect(result.remedy).toContain("no network");
+    expect(result.what).toContain("custom local speech provider");
   });
 
-  it("reinstalls only the wrapper (force-reinstall, --no-deps) when faster-whisper is already healthy (#780)", () => {
-    // The stale-wrapper repair path: faster-whisper imports fine, so its install is skipped and the
-    // wrapper is force-reinstalled in place — replacing a same-version stale wrapper without touching
-    // the healthy speech stack.
-    const { ctx, execCalls } = createFakeContext({
-      execHandler: happyExec,
-      fileContents: { [ENV_PATH]: "# WHISPER_BINARY=\n# WHISPER_MODEL_PATH=\n" }
-    });
-    expect(voiceStep.provision(ctx)).toEqual({ status: "ok" });
-    // faster-whisper is never (re)installed.
-    expect(execCalls.some((call) => call.join(" ").includes("pip install faster-whisper"))).toBe(
-      false
-    );
-    // The wrapper install forces a reinstall and skips deps so faster-whisper is left untouched.
-    const wrapperInstall = execCalls.find(
-      (call) => call.join(" ").includes("pip") && call.join(" ").includes("whisper-wrapper")
-    );
-    expect(wrapperInstall).toContain("--force-reinstall");
-    expect(wrapperInstall).toContain("--no-deps");
-  });
-
-  it("installs faster-whisper when its import probe fails", () => {
-    const { ctx, execCalls } = createFakeContext({
-      execHandler: (command, args) =>
-        args.join(" ") === "-c import faster_whisper"
-          ? { code: 1, stdout: "", stderr: "" }
-          : happyExec(command, args),
-      fileContents: { [ENV_PATH]: "# WHISPER_BINARY=\n# WHISPER_MODEL_PATH=\n" }
-    });
-    expect(voiceStep.provision(ctx)).toEqual({ status: "ok" });
-    expect(execCalls.some((call) => call.join(" ").includes("pip install faster-whisper"))).toBe(
-      true
-    );
-  });
-
-  it("maps a failing wrapper install to an error", () => {
-    const { ctx } = createFakeContext({
-      execHandler: (command, args) =>
-        args.join(" ").includes("whisper-wrapper")
-          ? { code: 1, stdout: "", stderr: "build failed" }
-          : happyExec(command, args)
-    });
-    expect(voiceStep.provision(ctx).what).toContain("whetstone-whisper wrapper");
-  });
-
-  it("errors with a python.org remedy when the launcher is nowhere and no user-site dir is reported", () => {
-    const { ctx } = createFakeContext({
-      execHandler: (command, args) =>
-        args.join(" ").includes("whetstone_whisper.locate")
-          ? { code: 0, stdout: "\n", stderr: "" }
-          : happyExec(command, args)
-    });
+  it("falls back to the Python remedy when no interpreter and no package manager exist", () => {
+    const { ctx } = base({ exec: {}, ctx: { execHandler: execFor({ python: "none" }) } });
     const result = voiceStep.provision(ctx);
-    expect(result.what).toContain("could not be located");
-    expect(result.remedy).toContain("https://www.python.org/downloads");
-    expect(result.remedy).toContain("Add to PATH");
+    expect(result.status).toBe("missing");
+    expect(result.remedy).toContain("Install Python 3");
   });
 
-  it("names the Microsoft Store Python user-site Scripts dir in the remedy when locate reports one", () => {
-    const userScriptsDir =
-      "C:\\Users\\me\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python313\\Scripts";
-    const { ctx } = createFakeContext({
-      execHandler: (command, args) =>
-        args.join(" ").includes("whetstone_whisper.locate")
-          ? { code: 0, stdout: "", stderr: `${userScriptsDir}\n` }
-          : happyExec(command, args)
+  it("fails fast when free disk is below the floor, before any download", () => {
+    const { ctx, execCalls } = base({
+      ctx: { resources: () => ({ diskFreeBytes: 5 * GIB, memoryAvailableBytes: 64 * GIB }) }
     });
     const result = voiceStep.provision(ctx);
     expect(result.status).toBe("error");
-    expect(result.what).toContain("could not be located");
-    expect(result.remedy).toContain(userScriptsDir);
-    expect(result.remedy).toContain("Microsoft Store Python");
+    expect(result.what).toContain("Not enough free disk");
+    // No venv creation was attempted — the preflight ran before the heavy work.
+    expect(execCalls.some((call) => call.includes("venv"))).toBe(false);
   });
 
-  it("maps a model-download failure to an actionable error", () => {
-    const { ctx } = createFakeContext({
-      env: { WHISPER_MODEL: "small" },
-      execHandler: (command, args) =>
-        args.join(" ").includes("whetstone_whisper.fetch")
-          ? { code: 1, stdout: "", stderr: "connection reset" }
-          : happyExec(command, args)
+  it("fails fast when available memory is below the floor", () => {
+    const { ctx } = base({
+      ctx: {
+        files: [DATA_DIR],
+        resources: () => ({ diskFreeBytes: 64 * GIB, memoryAvailableBytes: 4 * GIB })
+      }
     });
     const result = voiceStep.provision(ctx);
-    expect(result.what).toContain('model "small"');
-    expect(result.remedy).toContain("smaller model");
+    expect(result.status).toBe("error");
+    expect(result.what).toContain("Not enough available memory");
   });
 
-  it("writes the resolved Whisper wiring into .env on success (no language override)", () => {
-    const { ctx, files } = createFakeContext({
-      execHandler: happyExec,
-      fileContents: { [ENV_PATH]: "# WHISPER_BINARY=\n# WHISPER_MODEL_PATH=\n" }
+  it("surfaces a venv creation failure", () => {
+    const { ctx } = base({ exec: { fails: new Set(["venv"]) } });
+    const result = voiceStep.provision(ctx);
+    expect(result.status).toBe("error");
+    expect(result.what).toContain("virtual environment failed");
+  });
+
+  it("surfaces a torch install failure", () => {
+    const { ctx } = base({ exec: { fails: new Set(["torch"]) } });
+    expect(voiceStep.provision(ctx).what).toContain("CPU PyTorch");
+  });
+
+  it("surfaces a wrapper install failure", () => {
+    const { ctx } = base({ exec: { fails: new Set(["wrapper"]) } });
+    expect(voiceStep.provision(ctx).what).toContain("whetstone-qwen provider");
+  });
+
+  it("downloads the model when it is not cached, and surfaces a download failure", () => {
+    const { ctx } = base({ exec: { fails: new Set(["modelprobe", "modeldownload"]) } });
+    expect(voiceStep.provision(ctx).what).toContain("model snapshot");
+  });
+
+  it("provisions cleanly from an empty .env: writes LOCAL_ASR_*, removes WHISPER_*, downloads once", () => {
+    // The model probe fails so the download path (idempotent fetch) is exercised.
+    const { ctx, files, execCalls } = base({
+      exec: { fails: new Set(["modelprobe"]) },
+      ctx: {
+        fileContents: {
+          [ENV_PATH]: `WHISPER_BINARY=/old/w\nWHISPER_MODEL_PATH=small\nHOST=127.0.0.1\n`
+        }
+      }
     });
-    expect(voiceStep.provision(ctx)).toEqual({ status: "ok" });
-    const env = files.get(ENV_PATH);
-    expect(env).toContain(`WHISPER_BINARY=${LAUNCHER}`);
-    expect(env).toContain("WHISPER_MODEL_PATH=small");
-    // Whisper always auto-detects the language (#647): no WHISPER_LANGUAGE is written.
-    expect(env).not.toContain("WHISPER_LANGUAGE");
+    const result = voiceStep.provision(ctx);
+    expect(result.status).toBe("ok");
+    const written = files.get(ENV_PATH);
+    expect(written).toContain(`LOCAL_ASR_BINARY=${LAUNCHER}`);
+    expect(written).toContain(`LOCAL_ASR_MODEL=${MODEL}`);
+    expect(written).not.toContain("WHISPER_BINARY");
+    expect(written).not.toContain("WHISPER_MODEL_PATH");
+    expect(written).toContain("HOST=127.0.0.1");
+    // The version marker was written after a successful build.
+    expect(files.get(MARKER)).toBe(`${RUNTIME_VERSION}\n`);
+    // The model download ran because the cache probe failed.
+    expect(execCalls.some((call) => call.join(" ").includes("local_files_only"))).toBe(true);
   });
 
-  it("scaffolds .env from scratch when it does not exist", () => {
-    const { ctx, files } = createFakeContext({ execHandler: happyExec });
-    expect(voiceStep.provision(ctx)).toEqual({ status: "ok" });
-    expect(files.get(ENV_PATH)).toContain(`WHISPER_BINARY=${LAUNCHER}`);
+  it("is a no-op on the runtime when the venv marker already matches (idempotent repair)", () => {
+    const { ctx, execCalls } = base({
+      ctx: {
+        files: [VENV_PY, DATA_DIR],
+        fileContents: { [MARKER]: `${RUNTIME_VERSION}\n` }
+      }
+    });
+    const result = voiceStep.provision(ctx);
+    expect(result.status).toBe("ok");
+    // A healthy venv is not recreated and no pip install runs.
+    expect(execCalls.some((call) => call.includes("venv"))).toBe(false);
+    expect(execCalls.some((call) => call.join(" ").includes("pip install"))).toBe(false);
+  });
+
+  it("bootstraps the venv with python3 when python is unavailable", () => {
+    const { ctx } = base({ ctx: { execHandler: execFor({ python: "python3" }) } });
+    const result = voiceStep.provision(ctx);
+    expect(result.status).toBe("ok");
+  });
+
+  it("writes Windows Scripts paths on win32", () => {
+    const winLauncher = `${VENV}/Scripts/whetstone-qwen.exe`;
+    const { ctx, files } = base({ ctx: { platform: "win32", execHandler: execFor({}) } });
+    const result = voiceStep.provision(ctx);
+    expect(result.status).toBe("ok");
+    expect(files.get(ENV_PATH)).toContain(`LOCAL_ASR_BINARY=${winLauncher}`);
   });
 });
 
 describe("voiceStep.verify", () => {
-  const wired = { [ENV_PATH]: `WHISPER_BINARY=${LAUNCHER}\nWHISPER_MODEL_PATH=small\n` };
-  // Verify runs two launcher calls: the cheap `--contract-version` probe, then the sample inference.
-  // A helper that answers the probe with the supported version and routes the sample call to `onSample`.
-  const launcherExec = (onSample) => (command, args) => {
-    if (command !== LAUNCHER) return { code: 0, stdout: "", stderr: "" };
-    if (args[0] === "--contract-version") return { code: 0, stdout: CONTRACT_STDOUT, stderr: "" };
-    return onSample();
-  };
-
-  it("errors when .env is not wired after provisioning", () => {
-    const { ctx } = createFakeContext();
-    expect(voiceStep.verify(ctx).what).toContain("not wired");
-  });
-
-  it("errors when the freshly installed wrapper still fails the contract probe (#780)", () => {
-    const { ctx } = createFakeContext({
-      fileContents: wired,
-      execHandler: (command, args) =>
-        command === LAUNCHER && args[0] === "--contract-version"
-          ? { code: 2, stdout: "", stderr: "" }
-          : { code: 0, stdout: "", stderr: "" }
+  const base = (overrides = {}) =>
+    createFakeContext({
+      root: ROOT,
+      fileContents: { [ENV_PATH]: `LOCAL_ASR_BINARY=${LAUNCHER}\nLOCAL_ASR_MODEL=${MODEL}\n` },
+      execHandler: execFor(overrides.exec ?? {}),
+      ...overrides.ctx
     });
+
+  it("errors when the pair is not wired into .env after provisioning", () => {
+    const { ctx } = createFakeContext({ root: ROOT });
     const result = voiceStep.verify(ctx);
     expect(result.status).toBe("error");
-    expect(result.what).toContain("incompatible");
+    expect(result.what).toContain("not wired into .env");
   });
 
-  it("errors when the wrapper exits non-zero on the sample", () => {
-    const { ctx } = createFakeContext({
-      fileContents: wired,
-      execHandler: launcherExec(() => ({ code: 1, stdout: "", stderr: "boom" }))
-    });
-    expect(voiceStep.verify(ctx).what).toContain("failed on the sample");
+  it("errors when the installed launcher fails the contract probe", () => {
+    const { ctx } = base({ exec: { fails: new Set(["contract"]) } });
+    expect(voiceStep.verify(ctx).what).toContain("incompatible");
   });
 
-  it("errors when the wrapper emits output the runtime adapter would reject (segment without words)", () => {
-    const { ctx } = createFakeContext({
-      fileContents: wired,
-      execHandler: launcherExec(() => ({
-        code: 0,
-        stdout: '{"text":"","segments":[{}]}',
-        stderr: ""
-      }))
-    });
-    expect(voiceStep.verify(ctx).what).toContain("off-contract");
+  it("errors when the sample inference fails", () => {
+    const { ctx } = base({ exec: { fails: new Set(["sample"]) } });
+    expect(voiceStep.verify(ctx).what).toContain("failed on the sample audio");
   });
 
-  it("is ok when the wrapper passes the probe AND emits valid strict contract JSON", () => {
-    const { ctx } = createFakeContext({
-      fileContents: wired,
-      execHandler: launcherExec(() => ({
-        code: 0,
-        stdout: '{"text":"Help","segments":[{"words":[{"word":"Help","start":0,"end":0.4}]}]}',
-        stderr: ""
-      }))
-    });
-    expect(voiceStep.verify(ctx)).toEqual({ status: "ok" });
+  it("errors when the sample output is off-contract", () => {
+    const { ctx } = base({ exec: { stdout: { sample: '{"text":"hi"}' } } });
+    expect(voiceStep.verify(ctx).what).toContain("off-contract output");
   });
-});
 
-// Fixture launchers executed as REAL subprocesses, so the contract probe (the heart of readiness) is
-// proven at the process boundary and cannot pass merely because a mocked exec returned the right string
-// (#780). Node-based (CI has Node, not Python); the real cli.py launcher is exercised end-to-end by the
-// Python wrapper tests (whisper-wrapper/tests/test_cli.py). `node -e <script> <args>` runs each fixture
-// as its own process, with the probe flag reaching it as process.argv.
-const CURRENT_LAUNCHER =
-  'const a=process.argv.slice(1);' +
-  'if(a.includes("--contract-version")){process.stdout.write(JSON.stringify({contractVersion:"1"}));process.exit(0)}' +
-  "process.exit(1);";
-// The stale pre-#647 launcher: it predates the probe, so it rejects the unknown flag with a nonzero exit
-// (and would forward the literal "auto" on a real transcribe call).
-const STALE_LAUNCHER =
-  'const a=process.argv.slice(1);' +
-  'if(a.includes("--contract-version")){process.stderr.write("unrecognized: --contract-version");process.exit(2)}' +
-  'process.stdout.write(JSON.stringify({text:"",language:"auto",segments:[]}));process.exit(0);';
-
-function launcherProcessCtx(script) {
-  return {
-    exec(_command, args) {
-      const result = spawnSync(process.execPath, ["-e", script, "--", ...args], {
-        encoding: "utf8"
-      });
-      return {
-        code: result.status ?? 1,
-        stdout: result.stdout ?? "",
-        stderr: result.stderr ?? ""
-      };
-    }
-  };
-}
-
-describe("probeSpeechContract against real launcher processes (#780)", () => {
-  it("passes the current launcher and rejects the stale one, each executed as its own process", () => {
-    expect(probeSpeechContract(launcherProcessCtx(CURRENT_LAUNCHER), "whetstone-whisper")).toEqual({
-      ok: true
-    });
-    const stale = probeSpeechContract(launcherProcessCtx(STALE_LAUNCHER), "whetstone-whisper");
-    expect(stale.ok).toBe(false);
+  it("passes when the probe and a real sample inference are on-contract, logging the descriptor", () => {
+    const { ctx, logs } = base();
+    const result = voiceStep.verify(ctx);
+    expect(result.status).toBe("ok");
+    expect(logs.some((line) => line.includes("local speech provider:"))).toBe(true);
   });
 });

@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "whetstone-qwen"
+version = "0.1.0"
+description = "Local CPU Qwen3-ASR provider for whetstone: honours the docs/SPEECH.md provider-neutral local speech contract."
+requires-python = ">=3.9"
+# The runtime pins live in scripts/setup/steps/voice.mjs, which installs them into the Whetstone-owned
+# virtual environment (never the user's global Python). They are duplicated here only as a floor so a
+# manual `pip install .` still pulls a working set; setup is the authority for the exact CPU-verified
+# versions and the pinned model revision.
+dependencies = [
+  "qwen-asr==0.0.6",
+  # PyAV bundles ffmpeg libraries in its wheels, so the browser's WebM/Opus capture decodes without a
+  # system FFmpeg install and independent of the saved file's extension (content sniffing).
+  "av>=13,<15",
+  "numpy>=1.24",
+]
+
+# pip generates a native launcher executable for this entry point inside the venv
+# (`.../bin/whetstone-qwen` or `...\Scripts\whetstone-qwen.exe`), which the server's execFile (no shell)
+# runs directly as LOCAL_ASR_BINARY. A `.py`/`.cmd` cannot be execFile-d.
+[project.scripts]
+whetstone-qwen = "whetstone_qwen.cli:main"
+
+[tool.setuptools]
+packages = ["whetstone_qwen"]

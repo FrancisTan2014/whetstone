@@ -17,6 +17,7 @@
     "setup:coach": "node scripts/setup.mjs --coach",
     "setup:pdf": "node scripts/setup.mjs --pdf",
     "setup:all": "node scripts/setup.mjs --all",
+    "calibrate:voice": "node scripts/voice/calibrate.mjs",
     "typecheck": "tsc -b --pretty false",
     "lint": "pnpm lint:eslint && pnpm format:check",
     "lint:eslint": "eslint . --max-warnings 0",

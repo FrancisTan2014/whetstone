@@ -99,36 +99,79 @@ The fastest way to enable voice is the setup framework's voice step:
 pnpm setup:voice
 ```
 
-It installs `faster-whisper`, installs the bundled **`whetstone-whisper`** console-script wrapper
-(`scripts/setup/whisper-wrapper/`), pre-fetches the model (`WHISPER_MODEL`, default multilingual
-`small`; `base.en` for English-only), verifies the wrapper against a sample, and writes
-`WHISPER_BINARY` / `WHISPER_MODEL_PATH` to the root `.env` (the legacy fallback pair, which the seam
-still honours). `pnpm setup:doctor` reports voice readiness; each failure prints an actionable remedy
-and the step is re-runnable. When a `LOCAL_ASR_*` provider is configured, doctor recognizes it as
-authoritative and runs the contract probe against **that** executable (not Whisper), reports a mixed
-config's migration hint, and flags a partial pair as a configuration error. This is optional and
-excluded from the base `pnpm setup` — the `pnpm validate` gate never needs a model.
+It provisions the **calibrated Qwen3-ASR-1.7B provider** — the default local voice — running **CPU-only
+and fully offline** in a **Whetstone-owned, isolated Python virtual environment** under the ignored
+`.data/voice/qwen-venv` (created with `python -m venv`; pins install into it, **never** the global
+Python). The step:
+
+- Installs the pinned runtime into the venv: a verified **CPU** build of `torch` (from the PyTorch CPU
+  wheel index), `qwen-asr==0.0.6`, and `av` (decodes browser WebM audio with a bundled ffmpeg, so no
+  system ffmpeg is required), plus the bundled **`whetstone-qwen`** console-script wrapper
+  (`scripts/setup/qwen-wrapper/`, emits the #799 JSON contract below).
+- Pre-fetches the model `Qwen/Qwen3-ASR-1.7B` pinned to revision
+  `7278e1e70fe206f11671096ffdd38061171dd6e5` into the venv's local cache.
+- Records the exact runtime it built in a `.whetstone-voice-runtime` marker inside the venv, so a later
+  run **repairs** (rebuilds) an incomplete or version-mismatched environment instead of trusting it.
+- **Runs a resource preflight before any heavy download or model load** (via `ctx.resources`): it
+  requires **12 GiB free disk** and **12 GiB available memory** and fails with the exact requirement and
+  remedy — never a silent fallback to a smaller/other provider.
+- Writes the provider-neutral pair to the root `.env`: `LOCAL_ASR_BINARY` (the venv's managed
+  `whetstone-qwen` launcher) + `LOCAL_ASR_MODEL` (`Qwen/Qwen3-ASR-1.7B`), and **removes the legacy
+  `WHISPER_*` pair** so a stale key can never be honoured or reported as a mixed config.
+- Verifies by running the readiness contract probe (which reports the provider, pinned revision, and
+  resource requirements) and one **real sample inference** through the wrapper.
+
+Its Python 3 prerequisite is installed through the consent-gated `installSystemTool` helper (winget/brew
+after a Y, else instruct-only). `pnpm setup:doctor` reports voice readiness; each failure prints an
+actionable remedy and the step is re-runnable. This is optional and excluded from the base `pnpm setup`
+— the `pnpm validate` gate never needs a model. If you point `LOCAL_ASR_BINARY` at your own executable
+instead, it must answer the `--contract-version` probe and honour the run protocol above.
 
 The wrapper is a pip package with a `console_scripts` entry point, so pip generates a native launcher
-executable on every OS that the server's `execFile` runs directly (a `.py`/`.cmd` cannot be
-`execFile`-d). It honours the arguments below and emits the JSON contract.
+executable inside the venv that the server's `execFile` runs directly (a `.py`/`.cmd` cannot be
+`execFile`-d). It honours the protocol arguments above and emits the JSON contract.
 
 ### Readiness contract probe
 
-`whetstone-whisper` also answers a machine-readable readiness probe so setup can detect a **stale**
-wrapper — an older build that no longer honours this contract (e.g. a pre-#647 launcher that forwards
-`--language auto` literally, which Whisper rejects). Invoked as:
+`whetstone-qwen` answers the machine-readable readiness probe so setup can prove the provider speaks the
+exact protocol and detect a **stale** or incomplete build. Invoked as:
 
 ```
-<WHISPER_BINARY> --contract-version
+<LOCAL_ASR_BINARY> --contract-version
 ```
 
-it must print the compact JSON `{"contractVersion":"1"}` on stdout, exit `0`, and **load no model**.
-`pnpm setup:doctor` and `pnpm setup:voice` run this probe as their readiness check instead of only
-checking that the launcher file exists, and require the version to match exactly. A launcher that
-errors, prints anything else, or reports a different version fails readiness with an explicit remedy;
-`pnpm setup:voice` then force-reinstalls only the wrapper to repair it. If you point `WHISPER_BINARY`
-at your own executable, it must answer this probe to be accepted as ready.
+it prints compact JSON on stdout, exits `0`, and **loads no model**. Beyond the required
+`contractVersion`, the Qwen wrapper reports its identity and resource needs, e.g.:
+
+```json
+{
+  "contractVersion": "1",
+  "provider": "qwen3-asr-1.7b",
+  "revision": "7278e1e70fe206f11671096ffdd38061171dd6e5",
+  "requirements": { "diskGiB": 12, "memoryGiB": 12 }
+}
+```
+
+`pnpm setup:voice` and `pnpm setup:doctor` run this probe as their readiness check (requiring the
+version to match exactly) and log the reported provider, revision, and requirements. A launcher that
+errors, prints anything else, or reports a different version fails readiness with an explicit remedy, and
+`pnpm setup:voice` rebuilds the runtime to repair it.
+
+## Calibration (`pnpm calibrate:voice`)
+
+Accuracy is measured with a **provider-neutral** calibration harness so the local default can be
+justified with numbers and re-checked when the pins change:
+
+```
+pnpm calibrate:voice [manifest.json]
+```
+
+The thin Node launcher reads the configured `LOCAL_ASR_*` provider from `.env`, resolves the venv's
+Python, and runs `whetstone_qwen.calibrate` over a **local manifest** (default
+`.data/voice/calibration/manifest.json`, or a path passed as the first argument). It reports **aggregate
+metrics only** — normalized **Chinese CER** and **English WER**, cold-start duration, and peak RSS — and
+**never prints the private audio, reference text, or transcript**. Because the manifest and audio live
+under ignored `.data/`, calibration corpora never enter the repository.
 
 
 ## Legacy Whisper runtime + model (manual)
