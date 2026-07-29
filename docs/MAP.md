@@ -473,13 +473,16 @@ can navigate them from another package.
   returned. The tidy seam is wired in `index.ts` via `createDiaryTidy(createOllamaModel(...))`. Shapes in
   `@whetstone/contracts` (`diaryContracts.ts`).
 - Voice source audit (#801): a **ready voice** diary entry is auditable against its retained recording in
-  the editor — no schema change (all data already on `diary_entries`). `DiaryEntryDto` gains `hasAudio`
-  (`raw_audio_path != null`, path never leaked) + `transcript` (the verbatim `raw_transcript`);
-  `TimelineDiaryEntryDto` gains `inputMode` so the editor mounts the audit row for a voice row without
-  re-fetching typed rows. `diaryQueries.ts`: `getDiaryEntryForUser` (owner-scoped full-state DTO) +
-  `getVoiceEntryAudioPath` (owner **and** voice-scoped → the stored path, else null). `diaryRoutes.ts`
-  adds `GET /api/diary/entries/:id` (full-state, 404) and `GET /api/diary/entries/:id/audio` (streams the
-  recording with `Accept-Ranges`/`Range`→206/416, `content-type` = `audioContentType`; typed/unknown/other-
+  the editor — migration `0080_voice_audio_content_type.sql` adds nullable `diary_entries.raw_audio_content_type`
+  (persists the validated recorded container type; the rest of the data already lived on `diary_entries`).
+  `DiaryEntryDto` gains `hasAudio` (`raw_audio_path != null`, path never leaked) + `transcript` (the verbatim
+  `raw_transcript`); `TimelineDiaryEntryDto` gains `inputMode` so the editor mounts the audit row for a voice
+  row without re-fetching typed rows. `diaryQueries.ts`: `getDiaryEntryForUser` (owner-scoped full-state DTO) +
+  `getVoiceEntryAudio` (owner **and** voice-scoped → `{ audioPath, contentType }` from the stored path +
+  `raw_audio_content_type`, else null). `diaryRoutes.ts` adds `GET /api/diary/entries/:id` (full-state, 404)
+  and `GET /api/diary/entries/:id/audio` (streams the recording with `Accept-Ranges`/`Range`→206/416,
+  `content-type` = the stored recorded container type re-validated through `parseRecordedAudioContentType`,
+  falling back to the generic `audioContentType` octet-stream only when unrecognized; typed/unknown/other-
   user/missing-file → 404). `voiceCaptureAudioStore.ts` is the read boundary: pure `parseAudioRange` +
   `createVoiceCaptureAudioStore(root).open(path)` (resolves within the voice-capture root, stats, bounded
   stream) — an `audioStore` dep on the diary routes, built in `index.ts` (which also carries the env-gated
