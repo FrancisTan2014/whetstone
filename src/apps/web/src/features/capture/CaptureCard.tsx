@@ -39,11 +39,16 @@ function readyVoiceEntry(ready: VoiceCaptureStatusDto, text: string): DiaryEntry
     bodyDoc: createTextDocument(text),
     bodyText: text,
     createdAt: ready.occurredAt,
+    // A ready voice capture always retained its recording, and its body is derived from the transcript;
+    // these are optimistic values for the just-captured entry (the editor refetches the authoritative
+    // transcript/audio via `fetchDiaryEntry` when the learner opens it to audit, #801).
+    hasAudio: true,
     id: ready.id,
     inputMode: "voice",
     language: ready.language,
     occurredAt: ready.occurredAt,
     processingStatus: "ready",
+    transcript: text,
     updatedAt: ready.occurredAt
   };
 }

@@ -181,6 +181,8 @@ export {
   parseVoiceCaptureListDto,
   parseVoiceCaptureStatusDto,
   audioContentType,
+  parseRecordedAudioContentType,
+  recordedAudioContentTypes,
   isRetryableVoiceCaptureFailure,
   makeVoiceCaptureFailure,
   voiceCaptureAcceptedDtoSchema,

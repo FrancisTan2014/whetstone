@@ -143,6 +143,9 @@ async function buildRouteContext(): Promise<RouteContext> {
   deletedAudioPaths = [];
   let sequence = 0;
   const diary: DiaryRouteDependencies = {
+    // The audio-read boundary is unused on the voice-capture command paths exercised here; a null-open
+    // stub satisfies the dependency without touching disk (the audio endpoint is covered in diary.test.ts).
+    audioStore: { open: () => Promise.resolve(null) },
     createId: () => `vc-${(sequence += 1)}`,
     db,
     deleteAudio: (path) => {
@@ -155,11 +158,14 @@ async function buildRouteContext(): Promise<RouteContext> {
   return { db, server: createServer({ diary, logger: false }) };
 }
 
-async function submit(body = "clip-bytes"): Promise<VoiceCaptureAcceptedDto> {
+async function submit(
+  body = "clip-bytes",
+  contentType = "application/octet-stream"
+): Promise<VoiceCaptureAcceptedDto> {
   const response = await route.server.inject({
     method: "POST",
     url: `/api/diary/voice-captures`,
-    headers: { "content-type": "application/octet-stream" },
+    headers: { "content-type": contentType },
     payload: Buffer.from(body)
   });
   expect(response.statusCode).toBe(202);
@@ -510,6 +516,21 @@ describe("voice capture routes", () => {
       text: null,
       failure: null
     });
+  });
+
+  it("retains the recording's safe container type from an audio/* upload, normalized to its essence (#801)", async () => {
+    // A real browser recording arrives stamped with its MediaRecorder container type + codecs; the
+    // audio/* content-type parser accepts the bytes and the route persists the allowlisted essence so the
+    // audio endpoint can later serve `audio/webm` back for playback.
+    const accepted = await submit("webm-bytes", "audio/webm;codecs=opus");
+    const stored = await readRow(route.db, accepted.id);
+    expect(stored?.rawAudioContentType).toBe("audio/webm");
+  });
+
+  it("retains no content type for a generic octet-stream upload (served as the fallback later)", async () => {
+    const accepted = await submit("clip", "application/octet-stream");
+    const stored = await readRow(route.db, accepted.id);
+    expect(stored?.rawAudioContentType).toBeNull();
   });
 
   it("rejects an empty audio body", async () => {

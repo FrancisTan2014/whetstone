@@ -472,6 +472,24 @@ can navigate them from another package.
   `PATCH`/`DELETE /api/diary/entries/:id` (all Zod-validated, current-user scoped). No proposal card is
   returned. The tidy seam is wired in `index.ts` via `createDiaryTidy(createOllamaModel(...))`. Shapes in
   `@whetstone/contracts` (`diaryContracts.ts`).
+- Voice source audit (#801): a **ready voice** diary entry is auditable against its retained recording in
+  the editor — migration `0080_voice_audio_content_type.sql` adds nullable `diary_entries.raw_audio_content_type`
+  (persists the validated recorded container type; the rest of the data already lived on `diary_entries`).
+  `DiaryEntryDto` gains `hasAudio` (`raw_audio_path != null`, path never leaked) + `transcript` (the verbatim
+  `raw_transcript`); `TimelineDiaryEntryDto` gains `inputMode` so the editor mounts the audit row for a voice
+  row without re-fetching typed rows. `diaryQueries.ts`: `getDiaryEntryForUser` (owner-scoped full-state DTO) +
+  `getVoiceEntryAudio` (owner **and** voice-scoped → `{ audioPath, contentType }` from the stored path +
+  `raw_audio_content_type`, else null). `diaryRoutes.ts` adds `GET /api/diary/entries/:id` (full-state, 404)
+  and `GET /api/diary/entries/:id/audio` (streams the recording with `Accept-Ranges`/`Range`→206/416,
+  `content-type` = the stored recorded container type re-validated through `parseRecordedAudioContentType`,
+  falling back to the generic `audioContentType` octet-stream only when unrecognized; typed/unknown/other-
+  user/missing-file → 404). `voiceCaptureAudioStore.ts` is the read boundary: pure `parseAudioRange` +
+  `createVoiceCaptureAudioStore(root).open(path)` (resolves within the voice-capture root, stats, bounded
+  stream) — an `audioStore` dep on the diary routes, built in `index.ts` (which also carries the env-gated
+  E2E fixture speech). Web: `diaryApi.ts` `fetchDiaryEntry`/`diaryEntryAudioUrl`; `VoiceSourceRow.tsx` (a
+  native `<audio controls>`, a collapsed read-only "Original transcript" `<details>`, the detected-language
+  chip, and a truthful `Recording unavailable` state) mounted above the editor by `DiaryPage`'s `EditForm`
+  for `inputMode === "voice"`.
 - Async Tap-and-Talk voice capture: `src/features/diary/` (#565) — moves the durable boundary BEFORE
   speech-to-text (**save-first**). `voiceCaptureCommands.ts` (`submitVoiceCapture` saves the raw audio via
   the server file boundary, then in one transaction inserts the `entries` (`diary_entry`) + `personal_entries`

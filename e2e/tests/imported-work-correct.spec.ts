@@ -159,14 +159,23 @@ for (const theme of ["day", "night"] as const) {
       // does not.
       await expect(page.getByRole("link", { name: "Open in Reader" })).toBeVisible();
 
-      // Correct an existing stored block: prepend a marker to the very first (heading) block. Assert it
-      // landed before moving on, so the block-type change below acts on a settled document (the editor mounts
-      // and focuses asynchronously, which otherwise races the first keystrokes under parallel load).
-      await editor.click();
-      await expect(editor).toBeFocused();
-      await page.keyboard.press("ControlOrMeta+Home");
-      await page.keyboard.type(`${marker} `);
-      await expect(editor.getByRole("heading").first()).toContainText(marker);
+      // Correct an existing stored block: prepend a marker to the very first (heading) block. The editor
+      // mounts and focuses asynchronously, and ProseMirror can report the DOM node focused before its view is
+      // ready to apply a selection+input transaction, so the very first keystrokes are occasionally dropped
+      // outright (more likely once a longer suite has shifted run timing). Target the heading's own text to
+      // place the caret inside it, then retry the caret-place + prepend idempotently until the marker has
+      // actually landed, so the block-type change below acts on a settled document.
+      const firstHeading = editor.getByRole("heading").first();
+      await expect(firstHeading).toHaveText("Chapter One");
+      await expect(async () => {
+        if (((await firstHeading.textContent()) ?? "") === "Chapter One") {
+          await firstHeading.click();
+          await expect(editor).toBeFocused();
+          await page.keyboard.press("ControlOrMeta+Home");
+          await page.keyboard.type(`${marker} `);
+        }
+        await expect(firstHeading).toContainText(marker);
+      }).toPass({ timeout: 15_000 });
 
       // Change a block's type: promote the body paragraph to a Heading 2 by clicking its line to place the
       // caret (the proven, viewport-independent way to target a specific block in this editor) and choosing

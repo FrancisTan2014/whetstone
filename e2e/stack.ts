@@ -103,7 +103,14 @@ async function startServer(port: number, sourceFilesDir: string): Promise<ChildP
     // input-derived stand-in for a real OCR pass so a scanned/mixed English upload publishes. Off in
     // production, where the real bounded adapter or a visible failure applies.
     PDF_IMPORT_FIXTURE_OCR: "1",
-    SOURCE_FILES_DIR: sourceFilesDir
+    SOURCE_FILES_DIR: sourceFilesDir,
+    // Transcribe the actual uploaded bytes through the deterministic fixture speech lane (#801): CI ships
+    // no Whisper/STT provider, so this env-gated dev/E2E adapter returns a canned transcript ONLY for real
+    // WAV (RIFF/WAVE) bytes — an honest, input-derived stand-in so a voice capture reaches `ready` and its
+    // retained recording/transcript can be audited. Non-WAV bytes still transcribe to empty (the setup-
+    // required failure path stays intact). Off in production, where the real provider or a visible failure
+    // applies.
+    VOICE_CAPTURE_FIXTURE_TRANSCRIPT: "1"
   };
   // Ephemeral in-memory PGlite: DATABASE_DIR must be unset so each run starts clean.
   delete env.DATABASE_DIR;

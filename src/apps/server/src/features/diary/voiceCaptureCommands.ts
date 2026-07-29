@@ -80,13 +80,16 @@ function toVoiceCaptureStatusDto(row: VoiceCaptureRow): VoiceCaptureStatusDto {
 // a pending diary Entry immediately (`processing_status = "queued"`) with an empty placeholder body and
 // `language = null`, BEFORE any transcription — then return promptly with the capture id + status so the
 // user can record again without waiting for STT. No capture language is chosen: the worker fills the
-// detected language when transcription runs (#647). Three rows are written in one transaction (owning
-// Entry + the shared `personal_entries` chronology facet + the `diary_entries` facet) so a capture never
-// exists without its identity; the server owns the id and the timestamps so the client cannot forge or
-// backdate a capture.
+// detected language when transcription runs (#647). `recordedContentType` is the recording's safe
+// container MIME type (already validated against the allowlist at the route boundary, or null when the
+// upload declared no recognized audio type), retained so the audio endpoint can serve the recording back
+// for playback (#801). Three rows are written in one transaction (owning Entry + the shared
+// `personal_entries` chronology facet + the `diary_entries` facet) so a capture never exists without its
+// identity; the server owns the id and the timestamps so the client cannot forge or backdate a capture.
 export async function submitVoiceCapture(
   dependencies: VoiceCaptureDependencies,
   audio: Buffer,
+  recordedContentType: string | null,
   userId: string,
   now: Date
 ): Promise<VoiceCaptureAcceptedDto> {
@@ -107,6 +110,7 @@ export async function submitVoiceCapture(
       inputMode: "voice",
       language: null,
       processingStatus: "queued",
+      rawAudioContentType: recordedContentType,
       rawAudioPath,
       rawTranscript: null,
       tidiedText: null

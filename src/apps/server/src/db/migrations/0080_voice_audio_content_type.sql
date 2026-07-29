@@ -1,0 +1,1 @@
+ALTER TABLE "diary_entries" ADD COLUMN "raw_audio_content_type" text;

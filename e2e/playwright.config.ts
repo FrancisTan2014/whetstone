@@ -19,5 +19,15 @@ export default defineConfig({
     headless: true,
     trace: "off"
   },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }]
+  projects: [
+    {
+      name: "chromium",
+      use: {
+        ...devices["Desktop Chrome"],
+        // The voice-source audit spec (#801) drives the native <audio> player programmatically; without a
+        // user gesture Chromium blocks play() and never fires timeupdate, so allow gesture-free playback.
+        launchOptions: { args: ["--autoplay-policy=no-user-gesture-required"] }
+      }
+    }
+  ]
 });

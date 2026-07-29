@@ -15,6 +15,7 @@ import {
 import { CaptureCard, type CaptureVoiceDependencies } from "../capture/CaptureCard.js";
 import { PmDocument } from "../reader/PmDocument.js";
 import { deleteDiaryEntry, fetchTimeline, updateDiaryEntry } from "./diaryApi.js";
+import { VoiceSourceRow } from "./VoiceSourceRow.js";
 import {
   diaryScrollTop,
   diaryTimelineSnapshot,
@@ -35,6 +36,7 @@ export type FlatEntry = Readonly<{
   bodyText: string;
   date: string;
   entryId: string;
+  inputMode: DiaryEntryDto["inputMode"];
   kind: "diary";
   language: string | null;
   occurredAt: string;
@@ -54,6 +56,7 @@ function flatten(days: ReadonlyArray<TimelineDayDto>): ReadonlyArray<FlatEntry> 
               bodyText: entry.bodyText,
               date: day.date,
               entryId: entry.entryId,
+              inputMode: entry.inputMode,
               kind: "diary" as const,
               language: entry.language,
               occurredAt: entry.occurredAt
@@ -70,6 +73,7 @@ function toFlat(entry: DiaryEntryDto, timeZone: string): FlatEntry {
     bodyText: entry.bodyText,
     date: localDayKey(new Date(entry.occurredAt), timeZone),
     entryId: entry.id,
+    inputMode: entry.inputMode,
     kind: "diary",
     language: entry.language,
     occurredAt: entry.occurredAt
@@ -388,7 +392,9 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
                     >
                       {editingId === entry.entryId ? (
                         <EditForm
+                          entryId={entry.entryId}
                           initial={entry.bodyDoc}
+                          inputMode={entry.inputMode}
                           onCancel={() => setEditingId(null)}
                           onSave={(bodyDoc) => void saveEdit(entry.entryId, bodyDoc)}
                         />
@@ -449,13 +455,19 @@ function Shell({ children }: Readonly<{ children: React.ReactNode }>): React.JSX
 
 // Editing a diary body uses the shared rich editor (#571): the durable ProseMirror/Tiptap document is
 // edited in place, and Save persists the new document. `draft` mirrors the editor's live document so the
-// explicit Save button (and the editor's own Save affordance) persist the latest content.
+// explicit Save button (and the editor's own Save affordance) persist the latest content. A voice entry
+// (#801) also mounts a read-only `VoiceSourceRow` above the editor so the learner can audit the body
+// against the retained recording and transcript; typed entries have no source to audit and show none.
 function EditForm({
+  entryId,
   initial,
+  inputMode,
   onCancel,
   onSave
 }: Readonly<{
+  entryId: string;
   initial: DocumentNodeJSON;
+  inputMode: DiaryEntryDto["inputMode"];
   onCancel: () => void;
   onSave: (bodyDoc: DocumentNodeJSON) => void;
 }>): React.JSX.Element {
@@ -463,6 +475,7 @@ function EditForm({
 
   return (
     <div className="flex flex-col gap-2">
+      {inputMode === "voice" ? <VoiceSourceRow entryId={entryId} key={entryId} /> : null}
       <RichContentEditor
         ariaLabel="Edit entry"
         document={initial}

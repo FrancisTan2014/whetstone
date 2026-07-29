@@ -92,16 +92,35 @@ describe("parseDiaryEntryDto", () => {
     bodyDoc,
     bodyText: "I went to the park.",
     createdAt: "2026-06-30T20:38:00.000Z",
+    hasAudio: false,
     id: "diary-1",
     inputMode: "typed" as const,
     language: null,
     occurredAt: "2026-06-30T20:38:00.000Z",
     processingStatus: null,
+    transcript: null,
     updatedAt: "2026-06-30T20:38:00.000Z"
   };
 
   it("accepts a synchronous typed entry (null processing status)", () => {
     expect(parseDiaryEntryDto(base)).toEqual(base);
+  });
+
+  it("accepts a ready voice entry carrying its retained transcript and audio flag (#801)", () => {
+    const dto = {
+      ...base,
+      hasAudio: true,
+      id: "diary-9",
+      inputMode: "voice" as const,
+      language: "en",
+      processingStatus: "ready" as const,
+      transcript: "  today I read a book  "
+    };
+    expect(parseDiaryEntryDto(dto)).toEqual(dto);
+  });
+
+  it("rejects a non-boolean hasAudio", () => {
+    expect(() => parseDiaryEntryDto({ ...base, hasAudio: "yes" })).toThrow();
   });
 
   it("accepts a queued voice entry with a processing status and language", () => {
@@ -145,11 +164,25 @@ describe("parseTimelineEntryDto", () => {
       bodyDoc,
       bodyText: "I went to the park.",
       entryId: "diary-1",
+      inputMode: "typed" as const,
       kind: "diary" as const,
       language: null,
       occurredAt: "2026-06-30T20:38:00.000Z"
     };
     expect(parseTimelineEntryDto(dto)).toEqual(dto);
+  });
+
+  it("rejects a diary timeline row missing inputMode (#801)", () => {
+    expect(() =>
+      parseTimelineEntryDto({
+        bodyDoc,
+        bodyText: "x",
+        entryId: "diary-1",
+        kind: "diary",
+        language: null,
+        occurredAt: "2026-06-30T20:38:00.000Z"
+      })
+    ).toThrow();
   });
 
   it("accepts a note entry with its capture source and prompt count", () => {
@@ -211,6 +244,7 @@ describe("parseTimelineDto", () => {
               bodyDoc,
               bodyText: "I went to the park.",
               entryId: "diary-1",
+              inputMode: "typed" as const,
               kind: "diary" as const,
               language: null,
               occurredAt: "2026-06-30T20:38:00.000Z"
