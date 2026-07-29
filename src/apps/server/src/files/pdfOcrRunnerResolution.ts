@@ -216,7 +216,6 @@ export function resolvePdfOcrAdapter(resolution: PdfOcrAdapterResolution): PdfOc
   return createPdfOcrAdapter({
     probe: resolution.probe,
     inspectToolchain: createOcrToolchainInspector({
-      ocrmypdfBinary: resolution.ocrBinary,
       tesseractBinary: resolution.tesseractBinary
     }),
     ocrPass: createOcrmypdfPass(resolution.ocrBinary),

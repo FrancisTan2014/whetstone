@@ -75,7 +75,7 @@ describe("classifyProbeOutcome", () => {
 });
 
 // A probe seam that returns canned outcomes per binary and records the binaries it was asked to run, so a
-// test can prove Tesseract is only consulted after OCRmyPDF reports it can run.
+// test can prove the inspector only consults Tesseract and never probes OCRmyPDF's `--version` (#797).
 function recordingProbe(
   results: Readonly<Record<string, OcrProbeResult>>
 ): OcrToolProbe & { calls: string[] } {
@@ -89,110 +89,55 @@ function recordingProbe(
 }
 
 describe("createOcrToolchainInspector", () => {
-  it("reports the installed packs when OCRmyPDF runs and Tesseract lists languages", async () => {
+  it("reports the installed packs from Tesseract, without ever probing OCRmyPDF's --version (#797)", async () => {
     const probe = recordingProbe({
-      ocrmypdf: { outcome: "exit", code: 0, output: "16.10.4" },
       tesseract: {
         outcome: "exit",
         code: 0,
         output: "List of available languages (2):\neng\nosd\n"
       }
     });
-    const inspect = createOcrToolchainInspector({
-      ocrmypdfBinary: "ocrmypdf",
-      tesseractBinary: "tesseract",
-      probe
-    });
+    const inspect = createOcrToolchainInspector({ tesseractBinary: "tesseract", probe });
     expect(await inspect()).toEqual({
       status: "available",
       installedTraineddata: ["eng", "osd"]
     });
-    expect(probe.calls).toEqual(["ocrmypdf", "tesseract"]);
+    // Only Tesseract is consulted: the redundant per-import `ocrmypdf --version` gate is gone.
+    expect(probe.calls).toEqual(["tesseract"]);
+    expect(probe.calls).not.toContain("ocrmypdf");
   });
 
-  it("reports OCRmyPDF available but no packs when the language list itself fails", async () => {
+  it("reports available with no packs when the Tesseract language list itself fails", async () => {
     const probe = recordingProbe({
-      ocrmypdf: { outcome: "exit", code: 0, output: "16.10.4" },
       tesseract: { outcome: "exit", code: 1, output: "boom" }
     });
-    const inspect = createOcrToolchainInspector({
-      ocrmypdfBinary: "ocrmypdf",
-      tesseractBinary: "tesseract",
-      probe
-    });
+    const inspect = createOcrToolchainInspector({ tesseractBinary: "tesseract", probe });
     expect(await inspect()).toEqual({ status: "available", installedTraineddata: [] });
   });
 
-  it("reports missing (never unresponsive) when the OCRmyPDF executable is genuinely absent", async () => {
-    const probe = recordingProbe({ ocrmypdf: { outcome: "missing" } });
-    const inspect = createOcrToolchainInspector({
-      ocrmypdfBinary: "ocrmypdf",
-      tesseractBinary: "tesseract",
-      probe
-    });
-    expect(await inspect()).toEqual({ status: "missing" });
-    // Tesseract is never consulted once OCRmyPDF cannot run.
-    expect(probe.calls).toEqual(["ocrmypdf"]);
-  });
-
-  it("reports a distinct timeout readiness failure — NOT missing — for a present but slow OCRmyPDF", async () => {
-    // The bug (#788): a present OCRmyPDF whose `--version` probe is killed on the bounded timeout was
-    // collapsed into "unavailable" and surfaced as tool_missing. It must be its own outcome.
-    const probe = recordingProbe({ ocrmypdf: { outcome: "timed_out" } });
-    const inspect = createOcrToolchainInspector({
-      ocrmypdfBinary: "ocrmypdf",
-      tesseractBinary: "tesseract",
-      probe
-    });
-    expect(await inspect()).toEqual({
-      status: "unresponsive",
-      reason: "timeout",
-      detail: "the OCRmyPDF `--version` probe timed out"
-    });
-    expect(probe.calls).toEqual(["ocrmypdf"]);
-  });
-
-  it("reports a launch failure as unresponsive, carrying the errno detail", async () => {
-    const probe = recordingProbe({
-      ocrmypdf: { outcome: "launch_failure", detail: "EACCES" }
-    });
-    const inspect = createOcrToolchainInspector({
-      ocrmypdfBinary: "ocrmypdf",
-      tesseractBinary: "tesseract",
-      probe
-    });
-    expect(await inspect()).toEqual({
-      status: "unresponsive",
-      reason: "launch_failure",
-      detail: "EACCES"
-    });
-  });
-
-  it("reports a non-zero --version exit as unresponsive (present, but not confirmed ready)", async () => {
-    const probe = recordingProbe({
-      ocrmypdf: { outcome: "exit", code: 3, output: "startup error" }
-    });
-    const inspect = createOcrToolchainInspector({
-      ocrmypdfBinary: "ocrmypdf",
-      tesseractBinary: "tesseract",
-      probe
-    });
-    expect(await inspect()).toEqual({
-      status: "unresponsive",
-      reason: "version_probe_failed",
-      detail: "ocrmypdf --version exited 3"
-    });
-    expect(probe.calls).toEqual(["ocrmypdf"]);
+  it("reports available with no packs (never a tool-presence claim) when the Tesseract probe does not exit cleanly", async () => {
+    // A missing, timed-out, or launch-failing Tesseract probe yields an empty pack list — never a claim
+    // that the whole toolchain is absent. The actual bounded OCR pass remains the source of truth for
+    // whether OCRmyPDF can run, so a slow diagnostic never rejects a runnable import (#797).
+    for (const outcome of [
+      { outcome: "missing" },
+      { outcome: "timed_out" },
+      { outcome: "launch_failure", detail: "EACCES" }
+    ] as const) {
+      const probe = recordingProbe({ tesseract: outcome });
+      const inspect = createOcrToolchainInspector({ tesseractBinary: "tesseract", probe });
+      expect(await inspect()).toEqual({ status: "available", installedTraineddata: [] });
+      expect(probe.calls).toEqual(["tesseract"]);
+    }
   });
 });
 
 describe("createOcrToolchainInspector — real bounded spawn", () => {
-  it("classifies a genuinely missing binary as status: missing", async () => {
+  it("reports available with no packs for a genuinely missing Tesseract binary, never probing OCRmyPDF", async () => {
     const inspect = createOcrToolchainInspector({
-      ocrmypdfBinary: "whetstone-no-such-ocr-binary",
       tesseractBinary: "whetstone-no-such-tesseract-binary"
     });
-    expect(await inspect()).toEqual({ status: "missing" });
+    expect(await inspect()).toEqual({ status: "available", installedTraineddata: [] });
   });
 });
 

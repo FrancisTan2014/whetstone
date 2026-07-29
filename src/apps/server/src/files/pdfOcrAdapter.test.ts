@@ -21,6 +21,7 @@ import {
   type PdfOcrRequest,
   type PdfPageProbe
 } from "./pdfOcrAdapter.js";
+import { createOcrToolchainInspector } from "./pdfOcrToolchain.js";
 import {
   issueStagedFileHandle,
   type ProbeOutcome,
@@ -312,49 +313,69 @@ describe("createPdfOcrAdapter — availability and validation failures", () => {
     expectFailure(await adapter.execute(baseRequest(source, scannedRouting())), "tool_missing");
   });
 
-  it("fails as tool_unresponsive (never tool_missing) when a present toolchain times out its readiness probe", async () => {
-    // #788: a present OCRmyPDF whose bounded `--version` readiness probe timed out must be a distinct,
-    // retryable failure — not the install-a-missing-tool remedy. The probe/pass are never reached.
+  it("never runs a per-import `ocrmypdf --version` gate; the real inspector only lists Tesseract packs and the actual OCR pass runs (#797)", async () => {
+    // The bug: a per-import `ocrmypdf --version` readiness probe could exceed its own 15s budget on a slow
+    // OCRmyPDF cold start and reject the import as unresponsive, so the authoritative bounded OCR pass —
+    // which would have succeeded — never ran. This wires the REAL toolchain inspector (via a recording
+    // tool-probe seam) into the adapter and proves runtime never probes OCRmyPDF's `--version`, checks the
+    // Tesseract language packs, and then does invoke the actual OCR pass, which is the source of truth.
     const source = await stageSource(SOURCE_BYTES);
     const outputStageRoot = await makeTempDir("whetstone-ocr-out-");
-    const ocrPass = vi.fn();
-    const adapter = createPdfOcrAdapter({
-      probe: { probe: () => Promise.reject(new Error("unreached")) },
-      inspectToolchain: () =>
-        Promise.resolve({
-          status: "unresponsive",
-          reason: "timeout",
-          detail: "the OCRmyPDF `--version` probe timed out"
-        }),
-      ocrPass,
-      timeoutMs: 1000,
-      outputStageRoot
-    });
-    const outcome = await adapter.execute(baseRequest(source, scannedRouting()));
-    expectFailure(outcome, "tool_unresponsive");
-    if (outcome.ok) throw new Error("unreachable");
-    expect(outcome.failure.kind).not.toBe("tool_missing");
-    // The remedy must be the retryable cold-start guidance, not the install/setup instruction.
-    expect(outcome.failure.remedy).toContain("start the import again");
-    expect(outcome.failure.remedy).not.toContain("setup:pdf");
-    expect(ocrPass).not.toHaveBeenCalled();
-  });
 
-  it("maps a launch-failure readiness outcome to tool_unresponsive as well", async () => {
-    const source = await stageSource(SOURCE_BYTES);
-    const outputStageRoot = await makeTempDir("whetstone-ocr-out-");
+    // Records every tool invocation the inspector performs. A version gate would spawn `ocrmypdf --version`
+    // here; it must not. The only sanctioned diagnostic is `tesseract --list-langs` for the pack check.
+    const probedCommands: string[] = [];
+    const inspectToolchain = createOcrToolchainInspector({
+      tesseractBinary: "tesseract",
+      probe: (binary, args) => {
+        probedCommands.push(`${binary} ${args.join(" ")}`);
+        return Promise.resolve({
+          outcome: "exit",
+          code: 0,
+          output: "List of available languages (1):\neng\n"
+        });
+      }
+    });
+
+    // The authoritative bounded OCR pass: a deterministic success that records that it actually ran — the
+    // operation the redundant diagnostic gate was pre-empting.
+    let actualOcrPassCalls = 0;
+    const ocrPass = createOcrmypdfPass("synthetic-ocrmypdf", async () => {
+      actualOcrPassCalls += 1;
+      return { status: "ok" };
+    });
+
     const adapter = createPdfOcrAdapter({
-      probe: { probe: () => Promise.reject(new Error("unreached")) },
-      inspectToolchain: () =>
-        Promise.resolve({ status: "unresponsive", reason: "launch_failure", detail: "EACCES" }),
-      ocrPass: () => Promise.reject(new Error("unreached")),
+      probe: {
+        probe: () =>
+          Promise.resolve<ProbeOutcome>({
+            status: "ok",
+            pageCount: 1,
+            pages: [page(1, false)]
+          })
+      },
+      inspectToolchain,
+      // Write the output bytes only when the actual pass reports success, so ownership transfer is real.
+      ocrPass: async (params) => {
+        const result = await ocrPass(params);
+        if (result.status === "ok") {
+          await writeFile(params.outputPath, SOURCE_BYTES);
+        }
+        return result;
+      },
       timeoutMs: 1000,
       outputStageRoot
     });
-    expectFailure(
-      await adapter.execute(baseRequest(source, scannedRouting())),
-      "tool_unresponsive"
-    );
+
+    const outcome = await adapter.execute(baseRequest(source, scannedRouting()));
+
+    expect(outcome.ok).toBe(true);
+    // The actual bounded OCR operation ran — it was never pre-empted by a diagnostic gate.
+    expect(actualOcrPassCalls).toBe(1);
+    // Runtime consulted ONLY `tesseract --list-langs`; it never probed OCRmyPDF's `--version`.
+    expect(probedCommands).toEqual(["tesseract --list-langs"]);
+    expect(probedCommands.some((command) => command.includes("--version"))).toBe(false);
+    expect(probedCommands.some((command) => command.includes("ocrmypdf"))).toBe(false);
   });
 
   it("fails a fixture configured with ocrmypdfAvailable:false as tool_missing", async () => {
