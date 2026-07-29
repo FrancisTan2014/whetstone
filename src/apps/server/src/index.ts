@@ -189,9 +189,7 @@ const resolveOfflineGloss = createOfflineGloss({
 // explicit misconfiguration, not a silent fake fallback, so boot fails fast with the exact remedy.
 const speechConfigResult = readSpeechConfig();
 if (!speechConfigResult.ok) {
-  throw new Error(
-    `${speechConfigResult.error.message} ${speechConfigResult.error.remedy}`
-  );
+  throw new Error(`${speechConfigResult.error.message} ${speechConfigResult.error.remedy}`);
 }
 const speechConfig = speechConfigResult.config;
 const speech = resolveSpeechInput({

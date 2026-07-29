@@ -47,10 +47,11 @@ describe("readSpeechConfig", () => {
   });
 
   it("uses the complete legacy WHISPER_* pair as a fallback only when no new key is present", () => {
-    expect(
-      okConfig({ WHISPER_BINARY: "whisper-cli", WHISPER_MODEL_PATH: "/m/base.bin" })
-    ).toEqual({
-      provider: { kind: "whisper", whisper: { binaryPath: "whisper-cli", modelPath: "/m/base.bin" } },
+    expect(okConfig({ WHISPER_BINARY: "whisper-cli", WHISPER_MODEL_PATH: "/m/base.bin" })).toEqual({
+      provider: {
+        kind: "whisper",
+        whisper: { binaryPath: "whisper-cli", modelPath: "/m/base.bin" }
+      },
       legacyAlsoPresent: false
     });
   });

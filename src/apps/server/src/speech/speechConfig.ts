@@ -58,7 +58,10 @@ export function readSpeechConfig(env: NodeJS.ProcessEnv = process.env): SpeechCo
     return {
       ok: true,
       config: {
-        provider: { kind: "local", local: { binaryPath: localBinary, modelIdentifier: localModel } },
+        provider: {
+          kind: "local",
+          local: { binaryPath: localBinary, modelIdentifier: localModel }
+        },
         legacyAlsoPresent: anyLegacy
       }
     };
