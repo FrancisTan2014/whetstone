@@ -65,17 +65,24 @@ export type UpdateDiaryEntryRequest = z.infer<typeof updateDiaryEntryRequestSche
 // shared personal-entry chronology facet. `processingStatus` is null for a synchronous typed capture that
 // is ready on write; only the queued voice path carries a status. A `failed` voice capture never reaches
 // the Timeline (its empty body is withheld), so a diary Entry surfaces no failure detail here — failure
-// categories are exposed by the voice-capture status DTO instead.
+// categories are exposed by the voice-capture status DTO instead. `transcript` is the verbatim,
+// retained ASR text a voice capture was derived from — the read-only source evidence the learner audits
+// the editable body against (#801); it is null for a typed entry (whose canonical body IS the raw input)
+// and for any voice entry with no retained transcript. `hasAudio` reports whether a retained recording
+// exists to stream from the owned-entry audio endpoint, WITHOUT leaking its server-side path — false for
+// typed entries and for a voice entry whose recording is gone (`Recording unavailable`).
 export const diaryEntryDtoSchema = z
   .object({
     bodyDoc: documentJsonSchema,
     bodyText: z.string(),
     createdAt: z.string(),
+    hasAudio: z.boolean(),
     id: z.string(),
     inputMode: captureInputModeSchema,
     language: z.string().nullable(),
     occurredAt: z.string(),
     processingStatus: diaryProcessingStatusSchema.nullable(),
+    transcript: z.string().nullable(),
     updatedAt: z.string()
   })
   .strict();
@@ -85,11 +92,15 @@ export type DiaryEntryDto = z.infer<typeof diaryEntryDtoSchema>;
 // One entry in the logical Timeline, discriminated by `kind`. A `diary` row IS a diary Entry (carrying
 // its rich body) and a `note` row IS a note Entry — every kind resolves to a real Entry type, so no
 // Timeline-only identity exists. The Diary listing is the `kind === "diary"` filter over this result.
+// `inputMode` lets the editor mount the voice source-audit row only for a voice entry (#801) without
+// re-fetching every typed row; the retained transcript and audio bytes are deliberately NOT inlined here
+// (a list payload must stay lean and never carry audio), only fetched per entry when the editor opens.
 export const timelineDiaryEntryDtoSchema = z
   .object({
     bodyDoc: documentJsonSchema,
     bodyText: z.string(),
     entryId: z.string(),
+    inputMode: captureInputModeSchema,
     kind: z.literal("diary"),
     language: z.string().nullable(),
     occurredAt: z.string()

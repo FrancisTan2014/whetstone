@@ -68,11 +68,13 @@ export async function createDiaryEntry(
     bodyDoc,
     bodyText,
     createdAt: iso,
+    hasAudio: false,
     id: entryId,
     inputMode: "typed",
     language: null,
     occurredAt: iso,
     processingStatus: null,
+    transcript: null,
     updatedAt: iso
   };
 }
@@ -98,7 +100,9 @@ export async function updateDiaryEntry(
         inputMode: diaryEntries.inputMode,
         language: diaryEntries.language,
         occurredAt: personalEntries.occurredAt,
-        processingStatus: diaryEntries.processingStatus
+        processingStatus: diaryEntries.processingStatus,
+        rawAudioPath: diaryEntries.rawAudioPath,
+        rawTranscript: diaryEntries.rawTranscript
       })
       .from(diaryEntries)
       .innerJoin(personalEntries, eq(personalEntries.entryId, diaryEntries.entryId))
@@ -122,11 +126,13 @@ export async function updateDiaryEntry(
         bodyDoc,
         bodyText,
         createdAt: owned.createdAt.toISOString(),
+        hasAudio: owned.rawAudioPath !== null,
         id,
         inputMode: owned.inputMode,
         language: nextLanguage,
         occurredAt: owned.occurredAt.toISOString(),
         processingStatus: owned.processingStatus,
+        transcript: owned.rawTranscript,
         updatedAt: now.toISOString()
       },
       status: "updated"

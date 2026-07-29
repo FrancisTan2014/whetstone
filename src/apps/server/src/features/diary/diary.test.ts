@@ -1,8 +1,12 @@
 import { PGlite } from "@electric-sql/pglite";
 import { eq } from "drizzle-orm";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { CaptureInputMode, DiaryEntryDto, TimelineDto } from "@whetstone/contracts";
+import { audioContentType } from "@whetstone/contracts";
 import {
   createTextDocument,
   documentReadableText,
@@ -27,6 +31,7 @@ import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
 import { fingerprintNoteMaterial } from "../notes/noteMaterialFingerprint.js";
 import type { DiaryRouteDependencies } from "./diaryRoutes.js";
 import { listDiaryEntriesForUser } from "./diaryQueries.js";
+import { createVoiceCaptureAudioStore } from "./voiceCaptureAudioStore.js";
 
 // Seed a diary Entry (its three facets) directly, bypassing the capture command — used to plant another
 // user's entry or an in-flight/failed voice capture (a `processing_status` other than null/ready).
@@ -36,8 +41,11 @@ async function seedDiaryEntry(
     bodyText: string;
     id: string;
     inputMode?: CaptureInputMode;
+    language?: string | null;
     occurredAt: string;
     processingStatus?: "queued" | "transcribing" | "tidying" | "ready" | "failed" | null;
+    rawAudioPath?: string | null;
+    rawTranscript?: string | null;
     userId: string;
   }>
 ): Promise<void> {
@@ -59,10 +67,15 @@ async function seedDiaryEntry(
       entryId: row.id,
       failureReason: null,
       inputMode: row.inputMode ?? "typed",
-      language: null,
+      language: row.language ?? null,
       processingStatus: status,
-      rawAudioPath: status === null ? null : "voice-captures/seed.audio",
-      rawTranscript: row.bodyText,
+      rawAudioPath:
+        row.rawAudioPath !== undefined
+          ? row.rawAudioPath
+          : status === null
+            ? null
+            : "voice-captures/seed.audio",
+      rawTranscript: row.rawTranscript !== undefined ? row.rawTranscript : row.bodyText,
       tidiedText: null
     });
   });
@@ -143,6 +156,7 @@ async function seedMemoryNote(
 }
 
 type TestContext = Readonly<{
+  audioDir: string;
   db: DbClient;
   server: ReturnType<typeof createServer>;
   setNow: (iso: string) => void;
@@ -155,9 +169,11 @@ async function buildContext(): Promise<TestContext> {
   await runMigrations(pglite);
   const db = createDbClient(pglite);
 
+  const audioDir = await mkdtemp(join(tmpdir(), "whetstone-diary-audio-"));
   let now = new Date("2026-06-30T20:38:00.000Z");
   let sequence = 0;
   const diary: DiaryRouteDependencies = {
+    audioStore: createVoiceCaptureAudioStore(audioDir),
     createId: () => `diary-${(sequence += 1)}`,
     db,
     deleteAudio: () => Promise.resolve(),
@@ -166,6 +182,7 @@ async function buildContext(): Promise<TestContext> {
   };
 
   return {
+    audioDir,
     db,
     server: createServer({ diary, logger: false }),
     setNow: (iso) => {
@@ -200,6 +217,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await context.server.close();
+  await rm(context.audioDir, { recursive: true, force: true });
 });
 
 describe("POST /api/diary/entries", () => {
@@ -618,5 +636,209 @@ describe("DELETE /api/diary/entries/:id", () => {
     expect(response.statusCode).toBe(404);
     const survivors = await listDiaryEntriesForUser(context.db, "someone-else");
     expect(survivors.map((entry) => entry.id)).toEqual(["other-user-delete"]);
+  });
+});
+
+// A ready voice entry pointing at a real recording under the test's audio root, so the audio endpoint can
+// stream it. The stored path is absolute (mirroring how the server saves recordings), confined to the
+// injected audio store's root.
+async function seedReadyVoiceEntry(
+  row: Readonly<{
+    bytes?: string;
+    id: string;
+    language?: string | null;
+    occurredAt?: string;
+    rawAudioPath?: string | null;
+    transcript?: string;
+    userId?: string;
+    withFile?: boolean;
+  }>
+): Promise<string> {
+  const audioPath = join(context.audioDir, `${row.id}.audio`);
+  if (row.withFile !== false && (row.rawAudioPath === undefined || row.rawAudioPath !== null)) {
+    await writeFile(row.rawAudioPath ?? audioPath, Buffer.from(row.bytes ?? "0123456789"));
+  }
+  await seedDiaryEntry(context.db, {
+    bodyText: row.transcript ?? "This is my recorded diary note for today.",
+    id: row.id,
+    inputMode: "voice",
+    language: row.language ?? "en",
+    occurredAt: row.occurredAt ?? "2026-06-30T09:00:00.000Z",
+    processingStatus: "ready",
+    rawAudioPath: row.rawAudioPath !== undefined ? row.rawAudioPath : audioPath,
+    rawTranscript: row.transcript ?? "This is my recorded diary note for today.",
+    userId: row.userId ?? DEFAULT_USER_ID
+  });
+  return audioPath;
+}
+
+describe("GET /api/diary/entries/:id (#801)", () => {
+  it("returns a typed entry with no retained source (transcript null, hasAudio false)", async () => {
+    const created = await createEntry("a typed thought");
+
+    const response = await context.server.inject({
+      method: "GET",
+      url: `/api/diary/entries/${created.id}`
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      hasAudio: false,
+      id: created.id,
+      inputMode: "typed",
+      transcript: null
+    });
+  });
+
+  it("returns a ready voice entry carrying its verbatim transcript, language, and audio flag", async () => {
+    await seedReadyVoiceEntry({
+      id: "voice-1",
+      language: "en",
+      transcript: "  today I walked by the river  "
+    });
+
+    const response = await context.server.inject({
+      method: "GET",
+      url: "/api/diary/entries/voice-1"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      hasAudio: true,
+      id: "voice-1",
+      inputMode: "voice",
+      language: "en",
+      // Verbatim: the retained transcript keeps its original whitespace, unlike the tidied body.
+      transcript: "  today I walked by the river  "
+    });
+  });
+
+  it("returns hasAudio false for a voice entry whose recording is gone", async () => {
+    await seedReadyVoiceEntry({ id: "voice-noaudio", rawAudioPath: null });
+
+    const response = await context.server.inject({
+      method: "GET",
+      url: "/api/diary/entries/voice-noaudio"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ hasAudio: false, transcript: expect.any(String) });
+  });
+
+  it("returns 404 for an unknown id", async () => {
+    const response = await context.server.inject({
+      method: "GET",
+      url: "/api/diary/entries/does-not-exist"
+    });
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({ error: "not_found" });
+  });
+
+  it("returns 404 for another user's entry", async () => {
+    await seedDiaryEntry(context.db, {
+      bodyText: "not yours",
+      id: "other-read",
+      occurredAt: "2026-06-30T00:00:00.000Z",
+      userId: "someone-else"
+    });
+    const response = await context.server.inject({
+      method: "GET",
+      url: "/api/diary/entries/other-read"
+    });
+    expect(response.statusCode).toBe(404);
+  });
+});
+
+describe("GET /api/diary/entries/:id/audio (#801)", () => {
+  it("streams the whole recording with the recorded content type and Accept-Ranges", async () => {
+    await seedReadyVoiceEntry({ bytes: "0123456789", id: "voice-a" });
+
+    const response = await context.server.inject({
+      method: "GET",
+      url: "/api/diary/entries/voice-a/audio"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["content-type"]).toBe(audioContentType);
+    expect(response.headers["accept-ranges"]).toBe("bytes");
+    expect(response.headers["content-length"]).toBe("10");
+    expect(response.rawPayload.toString()).toBe("0123456789");
+  });
+
+  it("serves a partial 206 for a Range request so the player can seek", async () => {
+    await seedReadyVoiceEntry({ bytes: "0123456789", id: "voice-b" });
+
+    const response = await context.server.inject({
+      headers: { range: "bytes=2-5" },
+      method: "GET",
+      url: "/api/diary/entries/voice-b/audio"
+    });
+
+    expect(response.statusCode).toBe(206);
+    expect(response.headers["content-range"]).toBe("bytes 2-5/10");
+    expect(response.headers["content-length"]).toBe("4");
+    expect(response.rawPayload.toString()).toBe("2345");
+  });
+
+  it("answers 416 for an unsatisfiable range", async () => {
+    await seedReadyVoiceEntry({ bytes: "0123456789", id: "voice-c" });
+
+    const response = await context.server.inject({
+      headers: { range: "bytes=100-200" },
+      method: "GET",
+      url: "/api/diary/entries/voice-c/audio"
+    });
+
+    expect(response.statusCode).toBe(416);
+    expect(response.headers["content-range"]).toBe("bytes */10");
+  });
+
+  it("returns 404 for a typed entry (no source recording)", async () => {
+    const created = await createEntry("a typed thought");
+    const response = await context.server.inject({
+      method: "GET",
+      url: `/api/diary/entries/${created.id}/audio`
+    });
+    expect(response.statusCode).toBe(404);
+  });
+
+  it("returns 404 for an unknown id", async () => {
+    const response = await context.server.inject({
+      method: "GET",
+      url: "/api/diary/entries/nope/audio"
+    });
+    expect(response.statusCode).toBe(404);
+  });
+
+  it("returns 404 for another user's voice entry", async () => {
+    await seedReadyVoiceEntry({ id: "voice-other", userId: "someone-else" });
+    const response = await context.server.inject({
+      method: "GET",
+      url: "/api/diary/entries/voice-other/audio"
+    });
+    expect(response.statusCode).toBe(404);
+  });
+
+  it("returns 404 for a voice entry with no retained recording", async () => {
+    await seedReadyVoiceEntry({ id: "voice-gone", rawAudioPath: null });
+    const response = await context.server.inject({
+      method: "GET",
+      url: "/api/diary/entries/voice-gone/audio"
+    });
+    expect(response.statusCode).toBe(404);
+  });
+
+  it("returns 404 when the recording is missing from disk", async () => {
+    // A row that points at a path with no file behind it (the clip was lost): the store cannot open it.
+    await seedReadyVoiceEntry({
+      id: "voice-missing",
+      rawAudioPath: join(context.audioDir, "vanished.audio"),
+      withFile: false
+    });
+    const response = await context.server.inject({
+      method: "GET",
+      url: "/api/diary/entries/voice-missing/audio"
+    });
+    expect(response.statusCode).toBe(404);
   });
 });

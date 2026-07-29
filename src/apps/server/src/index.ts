@@ -37,6 +37,7 @@ import { createOllamaModel, probeOllamaModel } from "./llm/llmModel.js";
 import { readDiaryTidyConfig } from "./llm/aiUtilityConfig.js";
 import { checkAiUtilityHealth } from "./llm/aiUtilityHealth.js";
 import { resolveDiaryTidy } from "./features/diary/diaryTidy.js";
+import { createVoiceCaptureAudioStore } from "./features/diary/voiceCaptureAudioStore.js";
 import { backfillNoteMaterialFingerprints } from "./features/notes/noteMaterialFingerprintBackfill.js";
 import { backfillNoteNearMatchKeys } from "./features/notes/noteNearMatchBackfill.js";
 import { expireCardCreationAttempts } from "./features/notesReview/cardCreationAttemptStore.js";
@@ -192,17 +193,46 @@ if (!speechConfigResult.ok) {
   throw new Error(`${speechConfigResult.error.message} ${speechConfigResult.error.remedy}`);
 }
 const speechConfig = speechConfigResult.config;
+// The deterministic headless fake (no model, no mic) the gate and CI run on. Off, it transcribes to empty
+// so a submitted clip fails as `voice_setup_required` (the honest "speech not set up" path). Under the
+// env-gated E2E flag (VOICE_CAPTURE_FIXTURE_TRANSCRIPT=1) it becomes a function of the audio: a real WAV
+// clip (RIFF…WAVE) yields a fixed English transcript so the browser suite can produce a READY voice entry
+// to audit against its retained recording (#801), while any non-WAV bytes still transcribe to empty — so
+// the failure spec's garbage clip stays `voice_setup_required`. Never enabled in production.
+const voiceCaptureFixtureTranscript = process.env.VOICE_CAPTURE_FIXTURE_TRANSCRIPT === "1";
+const isWavClip = (path: string): boolean => {
+  try {
+    const header = readFileSync(path);
+    return (
+      header.length >= 12 &&
+      header.toString("ascii", 0, 4) === "RIFF" &&
+      header.toString("ascii", 8, 12) === "WAVE"
+    );
+  } catch {
+    return false;
+  }
+};
+const fakeSpeech = voiceCaptureFixtureTranscript
+  ? createFakeSpeechInput((audio) =>
+      isWavClip(audio.path)
+        ? { language: "en", transcript: "This is my recorded diary note for today.", words: [] }
+        : { transcript: "", words: [] }
+    )
+  : createFakeSpeechInput({ transcript: "", words: [] });
 const speech = resolveSpeechInput({
   config: speechConfig,
   createLocal: (config) => createLocalSpeechInput({ config }),
   createWhisper: (config) => createWhisperSpeechInput({ config }),
-  fake: createFakeSpeechInput({ transcript: "", words: [] })
+  fake: fakeSpeech
 });
 
 // Durable store for recorded Tap-and-Talk clips (#565): an async voice capture must survive a restart
 // until the worker transcribes it, so its audio is written under the server-owned sources dir.
 const voiceCaptureAudioDir = join(config.sourceFilesDir, "voice-captures");
 mkdirSync(voiceCaptureAudioDir, { recursive: true });
+// The read side of that store (#801): stream a retained recording back to the owned-entry audio endpoint
+// with range support, resolved within this same root so a stored path can never escape it.
+const voiceCaptureAudioStore = createVoiceCaptureAudioStore(voiceCaptureAudioDir);
 const saveVoiceCaptureAudio = (audio: Buffer): Promise<string> => {
   const path = join(voiceCaptureAudioDir, `${randomUUID()}.audio`);
   writeFileSync(path, audio);
@@ -321,6 +351,7 @@ const server = createServer({
   // A diary capture journals only (#571): it saves the Entry immediately with no tidy or proposal step in
   // the path. The async Tap-and-Talk voice worker (below) owns the tidy pass. Local + private, like v0.
   diary: {
+    audioStore: voiceCaptureAudioStore,
     createId: () => randomUUID(),
     db,
     deleteAudio: deleteVoiceCaptureAudio,

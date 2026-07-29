@@ -39,6 +39,7 @@ async function loadPersonalTimelineEntries(
       bodyDoc: diaryEntries.bodyDoc,
       bodyText: diaryEntries.bodyText,
       entryId: diaryEntries.entryId,
+      inputMode: diaryEntries.inputMode,
       language: diaryEntries.language,
       occurredAt: personalEntries.occurredAt
     })
@@ -105,6 +106,7 @@ async function loadPersonalTimelineEntries(
     bodyDoc: row.bodyDoc as DocumentNodeJSON,
     bodyText: row.bodyText,
     entryId: row.entryId,
+    inputMode: row.inputMode,
     kind: "diary",
     language: row.language,
     occurredAt: row.occurredAt.toISOString()
@@ -156,6 +158,54 @@ export async function listTimelinePage(
   return filtered.slice(0, limitDays).map((day) => ({ date: day.date, entries: [...day.entries] }));
 }
 
+// Project a full-state diary read row into its DTO. `transcript`/`hasAudio` expose the retained voice
+// source (#801): the verbatim ASR text and whether a recording is still on disk to stream — derived from
+// the private `raw_transcript`/`raw_audio_path` columns, so the server-side audio path never crosses the
+// API. A typed entry keeps both as null/false (its canonical body IS the raw input).
+type DiaryReadRow = Readonly<{
+  bodyDoc: unknown;
+  bodyText: string;
+  createdAt: Date;
+  entryId: string;
+  inputMode: "typed" | "voice";
+  language: string | null;
+  occurredAt: Date;
+  processingStatus: DiaryEntryDto["processingStatus"];
+  rawAudioPath: string | null;
+  rawTranscript: string | null;
+  updatedAt: Date;
+}>;
+
+function toDiaryEntryDto(row: DiaryReadRow): DiaryEntryDto {
+  return {
+    bodyDoc: row.bodyDoc as DocumentNodeJSON,
+    bodyText: row.bodyText,
+    createdAt: row.createdAt.toISOString(),
+    hasAudio: row.rawAudioPath !== null,
+    id: row.entryId,
+    inputMode: row.inputMode,
+    language: row.language,
+    occurredAt: row.occurredAt.toISOString(),
+    processingStatus: row.processingStatus,
+    transcript: row.rawTranscript,
+    updatedAt: row.updatedAt.toISOString()
+  };
+}
+
+const diaryReadColumns = {
+  bodyDoc: diaryEntries.bodyDoc,
+  bodyText: diaryEntries.bodyText,
+  createdAt: personalEntries.createdAt,
+  entryId: diaryEntries.entryId,
+  inputMode: diaryEntries.inputMode,
+  language: diaryEntries.language,
+  occurredAt: personalEntries.occurredAt,
+  processingStatus: diaryEntries.processingStatus,
+  rawAudioPath: diaryEntries.rawAudioPath,
+  rawTranscript: diaryEntries.rawTranscript,
+  updatedAt: personalEntries.updatedAt
+} as const;
+
 // Every diary Entry the user owns, newest first — the full-state read facet the write-side commands
 // project after a write. Includes in-flight/failed voice captures (unlike the Timeline) so a caller can
 // inspect the full diary state; scoped to the owner via `personal_entries`.
@@ -164,31 +214,56 @@ export async function listDiaryEntriesForUser(
   userId: string
 ): Promise<ReadonlyArray<DiaryEntryDto>> {
   const rows = await db
-    .select({
-      bodyDoc: diaryEntries.bodyDoc,
-      bodyText: diaryEntries.bodyText,
-      createdAt: personalEntries.createdAt,
-      entryId: diaryEntries.entryId,
-      inputMode: diaryEntries.inputMode,
-      language: diaryEntries.language,
-      occurredAt: personalEntries.occurredAt,
-      processingStatus: diaryEntries.processingStatus,
-      updatedAt: personalEntries.updatedAt
-    })
+    .select(diaryReadColumns)
     .from(diaryEntries)
     .innerJoin(personalEntries, eq(personalEntries.entryId, diaryEntries.entryId))
     .where(eq(personalEntries.userId, userId))
     .orderBy(desc(personalEntries.occurredAt), asc(diaryEntries.entryId));
 
-  return rows.map((row) => ({
-    bodyDoc: row.bodyDoc as DocumentNodeJSON,
-    bodyText: row.bodyText,
-    createdAt: row.createdAt.toISOString(),
-    id: row.entryId,
-    inputMode: row.inputMode,
-    language: row.language,
-    occurredAt: row.occurredAt.toISOString(),
-    processingStatus: row.processingStatus,
-    updatedAt: row.updatedAt.toISOString()
-  }));
+  return (rows as ReadonlyArray<DiaryReadRow>).map(toDiaryEntryDto);
+}
+
+// One diary Entry the user owns, full-state (#801): the read the editor opens to audit a voice entry —
+// it carries the retained `transcript` and `hasAudio` so the source-audit row can render without a second
+// round-trip. Scoped to the owner via `personal_entries`; a forged id, another user's entry, or a
+// non-diary personal Entry (a note shares `personal_entries` but has no `diary_entries` row) returns null.
+export async function getDiaryEntryForUser(
+  db: DbClient,
+  id: string,
+  userId: string
+): Promise<DiaryEntryDto | null> {
+  const [row] = await db
+    .select(diaryReadColumns)
+    .from(diaryEntries)
+    .innerJoin(personalEntries, eq(personalEntries.entryId, diaryEntries.entryId))
+    .where(and(eq(diaryEntries.entryId, id), eq(personalEntries.userId, userId)))
+    .limit(1);
+
+  return row === undefined ? null : toDiaryEntryDto(row as DiaryReadRow);
+}
+
+// The server-side path of a voice entry's retained recording, for the owned-entry audio endpoint (#801).
+// Scoped to the owner AND to voice entries, so a typed entry, an unknown/forged id, or another user's
+// entry returns null (→ 404, never streamed). A voice entry whose recording is gone (`raw_audio_path`
+// null) also returns null, so the endpoint reports `Recording unavailable` rather than streaming nothing.
+// The path never crosses the API — only this internal query and the audio store touch it.
+export async function getVoiceEntryAudioPath(
+  db: DbClient,
+  id: string,
+  userId: string
+): Promise<string | null> {
+  const [row] = await db
+    .select({ rawAudioPath: diaryEntries.rawAudioPath })
+    .from(diaryEntries)
+    .innerJoin(personalEntries, eq(personalEntries.entryId, diaryEntries.entryId))
+    .where(
+      and(
+        eq(diaryEntries.entryId, id),
+        eq(personalEntries.userId, userId),
+        eq(diaryEntries.inputMode, "voice")
+      )
+    )
+    .limit(1);
+
+  return row?.rawAudioPath ?? null;
 }

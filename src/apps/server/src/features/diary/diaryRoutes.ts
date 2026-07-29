@@ -1,4 +1,5 @@
 import {
+  audioContentType,
   createDiaryEntryRequestSchema,
   timelineQuerySchema,
   updateDiaryEntryRequestSchema
@@ -11,7 +12,9 @@ import {
   updateDiaryEntry,
   type DiaryDependencies
 } from "./diaryCommands.js";
-import { listTimelinePage } from "./diaryQueries.js";
+import { getDiaryEntryForUser, getVoiceEntryAudioPath, listTimelinePage } from "./diaryQueries.js";
+import type { VoiceCaptureAudioStore } from "./voiceCaptureAudioStore.js";
+import { parseAudioRange } from "./voiceCaptureAudioStore.js";
 import { getLearnerTimeZone } from "../preferences/preferencesQueries.js";
 import {
   getVoiceCaptureStatus,
@@ -32,7 +35,11 @@ const DEFAULT_TIMELINE_DAYS = 7;
 
 type EntryParams = Readonly<{ id: string }>;
 
-export type DiaryRouteDependencies = DiaryDependencies & VoiceCaptureDependencies;
+// The audio store is a diary-owned boundary (the retained-recording reader), so it rides on the diary
+// route dependencies rather than a global server change (#801).
+export type DiaryRouteDependencies = DiaryDependencies &
+  VoiceCaptureDependencies &
+  Readonly<{ audioStore: VoiceCaptureAudioStore }>;
 
 export function registerDiaryRoutes(
   server: FastifyInstance,
@@ -174,6 +181,60 @@ export function registerDiaryRoutes(
     );
 
     return { days };
+  });
+
+  // Read one owned diary Entry, full-state (#801): the editor opens this when auditing a voice entry so the
+  // source-audit row has the retained transcript, the detected language, and whether a recording exists —
+  // in one round-trip, without inlining audio bytes. Owner-scoped: a forged id, another user's entry, or a
+  // non-diary personal Entry is 404.
+  server.get<{ Params: EntryParams }>("/api/diary/entries/:id", async (request, reply) => {
+    const entry = await getDiaryEntryForUser(
+      dependencies.db,
+      request.params.id,
+      request.server.currentUser.getCurrentUserId()
+    );
+    if (entry === null) {
+      return reply.code(404).send(notFound);
+    }
+    return reply.code(200).send(entry);
+  });
+
+  // Stream a voice entry's retained recording so the learner can audit the body against it (#801). The
+  // stored server-side path never crosses the API — it is resolved by an owner+voice-scoped query and
+  // opened only within the voice-capture root, so a typed/unknown entry, another user's entry, or a
+  // recording gone from disk is 404 (never a stream or a leaked path). Serves the recorded content type,
+  // advertises `Accept-Ranges: bytes`, and honours a single-range `Range` header with a 206 partial (416
+  // when unsatisfiable) so the native player can seek.
+  server.get<{ Params: EntryParams }>("/api/diary/entries/:id/audio", async (request, reply) => {
+    const storedPath = await getVoiceEntryAudioPath(
+      dependencies.db,
+      request.params.id,
+      request.server.currentUser.getCurrentUserId()
+    );
+    if (storedPath === null) {
+      return reply.code(404).send(notFound);
+    }
+    const opened = await dependencies.audioStore.open(storedPath);
+    if (opened === null) {
+      return reply.code(404).send(notFound);
+    }
+
+    reply.header("accept-ranges", "bytes");
+    reply.header("content-type", audioContentType);
+
+    const parsed = parseAudioRange(request.headers.range, opened.size);
+    if (parsed.kind === "unsatisfiable") {
+      reply.header("content-range", `bytes */${opened.size}`);
+      return reply.code(416).send();
+    }
+    if (parsed.kind === "range") {
+      const { end, start } = parsed.range;
+      reply.header("content-range", `bytes ${start}-${end}/${opened.size}`);
+      reply.header("content-length", String(end - start + 1));
+      return reply.code(206).send(opened.read(parsed.range));
+    }
+    reply.header("content-length", String(opened.size));
+    return reply.code(200).send(opened.read(null));
   });
 
   server.patch<{ Params: EntryParams }>("/api/diary/entries/:id", async (request, reply) => {

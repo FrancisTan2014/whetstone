@@ -143,6 +143,9 @@ async function buildRouteContext(): Promise<RouteContext> {
   deletedAudioPaths = [];
   let sequence = 0;
   const diary: DiaryRouteDependencies = {
+    // The audio-read boundary is unused on the voice-capture command paths exercised here; a null-open
+    // stub satisfies the dependency without touching disk (the audio endpoint is covered in diary.test.ts).
+    audioStore: { open: () => Promise.resolve(null) },
     createId: () => `vc-${(sequence += 1)}`,
     db,
     deleteAudio: (path) => {
