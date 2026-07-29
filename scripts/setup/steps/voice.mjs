@@ -19,13 +19,137 @@ const DEFAULT_MODEL = "small";
 const WRAPPER_DIR = fileURLToPath(new URL("../whisper-wrapper", import.meta.url));
 const SAMPLE_AUDIO = fileURLToPath(new URL("./voice-sample.wav", import.meta.url));
 
-// The executable contract version this Whetstone build requires from the whetstone-whisper launcher.
-// The bundled wrapper prints it via the cheap `--contract-version` probe (no model/audio load); readiness
-// requires an EXACT match. This is deliberately separate from the wrapper's pip package version — a
-// pre-#647 wrapper that forwards `--language auto` literally can share a package version with the current
-// one, so only an executable-contract probe (not file presence) can tell them apart (#780). Keep this in
-// lockstep with `CONTRACT_VERSION` in scripts/setup/whisper-wrapper/whetstone_whisper/cli.py.
-const SUPPORTED_WHISPER_CONTRACT_VERSION = "1";
+// The executable contract version this Whetstone build requires from a local speech launcher. Both the
+// bundled `whetstone-whisper` wrapper and any provider-neutral `LOCAL_ASR_BINARY` print it via the cheap
+// `--contract-version` probe (no model/audio load); readiness requires an EXACT match. This is
+// deliberately separate from the wrapper's pip package version — a pre-#647 wrapper that forwards
+// `--language auto` literally can share a package version with the current one, so only an
+// executable-contract probe (not file presence) can tell them apart (#780). Keep this in lockstep with
+// `CONTRACT_VERSION` in scripts/setup/whisper-wrapper/whetstone_whisper/cli.py and
+// `LOCAL_SPEECH_CONTRACT_VERSION` in src/apps/server/src/speech/localSpeechInput.ts.
+const SUPPORTED_SPEECH_CONTRACT_VERSION = "1";
+
+// The provider-neutral local ASR pair (#799). doctor/setup must resolve it the SAME way the runtime does
+// (`readSpeechConfig` in src/apps/server/src/speech/speechConfig.ts) so the doctor verdict never
+// disagrees with what the server does at boot. This is a self-contained mirror (node-builtins only): the
+// step registry imports this file during `pnpm setup` on a fresh clone *before* the server/contracts
+// packages exist, so it cannot import the resolver. Keep the rules — new pair authoritative, partial =
+// error, legacy honoured only when no new key is present, mixed reported — in lockstep; voice.test.mjs
+// pins the new-only, partial, legacy, and mixed cases.
+const PARTIAL_LOCAL_WHAT =
+  "Local speech is partially configured: exactly one of LOCAL_ASR_BINARY / LOCAL_ASR_MODEL is set.";
+const PARTIAL_LOCAL_REMEDY =
+  "Set both LOCAL_ASR_BINARY (the local speech executable) and LOCAL_ASR_MODEL (its model identifier), " +
+  "or unset both to fall back. See docs/SPEECH.md, or run: pnpm setup:voice";
+const LOCAL_MISSING_REMEDY =
+  "Point LOCAL_ASR_BINARY at the local speech executable (and LOCAL_ASR_MODEL at its model identifier), " +
+  "or unset both and run `pnpm setup:voice` for the bundled Whisper provider. See docs/SPEECH.md.";
+const LOCAL_PROVISION_REMEDY =
+  "Ensure LOCAL_ASR_BINARY points at a ready provider that answers `--contract-version` with " +
+  `${SUPPORTED_SPEECH_CONTRACT_VERSION} (see docs/SPEECH.md), or unset LOCAL_ASR_BINARY + ` +
+  "LOCAL_ASR_MODEL to install the bundled Whisper provider.";
+const MIXED_CONFIG_HINT =
+  "[setup] Local speech uses LOCAL_ASR_BINARY + LOCAL_ASR_MODEL (authoritative); legacy WHISPER_* is " +
+  "also set and ignored — remove it to finish the migration.";
+
+/**
+ * @param {string | undefined} value
+ * @returns {string | undefined}
+ */
+function trimmedOrUndefined(value) {
+  return value === undefined || value.trim().length === 0 ? undefined : value;
+}
+
+/**
+ * Mirror of the runtime `readSpeechConfig` resolution (see the block comment above), reduced to the
+ * discriminated verdict the setup step acts on:
+ * - `local`         — the complete provider-neutral pair is authoritative; `legacyAlsoPresent` flags a
+ *                     mixed config (leftover WHISPER_* ignored) so the migration stays visible.
+ * - `partial-local` — exactly one new key: an explicit configuration error, never a silent fallback.
+ * - `whisper`       — no new key, but the complete legacy pair is present (the migration fallback).
+ * - `none`          — nothing configured; the runtime falls back to the deterministic fake.
+ *
+ * @param {Record<string, string>} env  The parsed `.env` map (from `readEnv`).
+ * @returns {{ kind: "local", binaryPath: string, modelIdentifier: string, legacyAlsoPresent: boolean }
+ *   | { kind: "partial-local" }
+ *   | { kind: "whisper", binaryPath: string, modelPath: string }
+ *   | { kind: "none" }}
+ */
+export function resolveVoiceConfig(env) {
+  const localBinary = trimmedOrUndefined(env.LOCAL_ASR_BINARY);
+  const localModel = trimmedOrUndefined(env.LOCAL_ASR_MODEL);
+  const whisperBinary = trimmedOrUndefined(env.WHISPER_BINARY);
+  const whisperModel = trimmedOrUndefined(env.WHISPER_MODEL_PATH);
+
+  if (localBinary !== undefined && localModel !== undefined) {
+    return {
+      kind: "local",
+      binaryPath: localBinary,
+      modelIdentifier: localModel,
+      legacyAlsoPresent: whisperBinary !== undefined || whisperModel !== undefined
+    };
+  }
+  if (localBinary !== undefined || localModel !== undefined) {
+    return { kind: "partial-local" };
+  }
+  if (whisperBinary !== undefined && whisperModel !== undefined) {
+    return { kind: "whisper", binaryPath: whisperBinary, modelPath: whisperModel };
+  }
+  return { kind: "none" };
+}
+
+// The readiness message + remedy for a configured LOCAL_ASR provider that fails the contract probe.
+// Provider-neutral: it names LOCAL_ASR_BINARY and the exact contract version to emit and offers the
+// bundled fallback — it never assumes the executable is Whisper or tells the operator to reinstall a
+// wrapper it does not own.
+function incompatibleLocalProvider(reason) {
+  return {
+    what: `The configured local speech provider (LOCAL_ASR_BINARY) is incompatible: ${reason}.`,
+    remedy:
+      `The executable must answer \`--contract-version\` with ${SUPPORTED_SPEECH_CONTRACT_VERSION} ` +
+      "(see docs/SPEECH.md). Point LOCAL_ASR_BINARY at a compatible provider, or unset LOCAL_ASR_BINARY " +
+      "+ LOCAL_ASR_MODEL and run `pnpm setup:voice` for the bundled Whisper provider."
+  };
+}
+
+/**
+ * The provider-neutral readiness verdict for the LOCAL_ASR pair, or `null` when the legacy/bundled
+ * Whisper path owns readiness (kinds `whisper`/`none`). A complete new pair is **authoritative**: its own
+ * executable is probed (not Whisper's) and it needs no Python/faster-whisper prerequisite; a mixed config
+ * logs a migration hint while still reporting ready; a partial pair is an explicit configuration error.
+ * This matches the runtime resolution so `pnpm setup:doctor` never disagrees with what boot does.
+ *
+ * @param {import("../step.mjs").SetupContext} ctx
+ * @param {ReturnType<typeof resolveVoiceConfig>} config
+ * @returns {import("../step.mjs").StepResult | null}
+ */
+function localProviderReadiness(ctx, config) {
+  if (config.kind === "partial-local") {
+    return error(PARTIAL_LOCAL_WHAT, PARTIAL_LOCAL_REMEDY);
+  }
+  if (config.kind !== "local") {
+    return null;
+  }
+  if (!ctx.fs.exists(config.binaryPath)) {
+    return missing(
+      `The configured local speech executable is missing (${config.binaryPath}).`,
+      LOCAL_MISSING_REMEDY
+    );
+  }
+  // File presence is not readiness (#780): probe the configured executable's own contract, exactly like
+  // the legacy Whisper launcher, and require the supported version before trusting it to transcribe.
+  const contract = probeSpeechContract(ctx, config.binaryPath);
+  if (!contract.ok) {
+    const { what, remedy } = incompatibleLocalProvider(contract.reason);
+    return missing(what, remedy);
+  }
+  if (config.legacyAlsoPresent) {
+    // The new pair wins; the leftover WHISPER_* is ignored. Surface it so the migration stays visible,
+    // matching the boot health report's mixed-config hint (speechHealth.ts).
+    ctx.log(MIXED_CONFIG_HINT);
+  }
+  return ok();
+}
 
 const PYTHON_DOCS = "https://www.python.org/downloads";
 const PYTHON_REMEDY =
@@ -96,19 +220,20 @@ export function validateWhisperContract(stdout) {
 }
 
 /**
- * Execute the wrapper's cheap machine-readable contract probe (`--contract-version`) through the
- * configured launcher and require the EXACT supported contract version. This is what turns "the launcher
- * file exists" into "the launcher proves the contract Whetstone will invoke" (#780): a wrapper installed
- * before the `--language auto` -> detection fix predates the probe and either lacks the flag (nonzero
- * exit) or reports a different version, and a nonzero exit, non-JSON/malformed output, or a version
- * mismatch is treated as **incompatible — never ready**. Only the structured reason is returned; the raw
+ * Execute a local speech launcher's cheap machine-readable contract probe (`--contract-version`) and
+ * require the EXACT supported contract version. Provider-neutral: both the bundled `whetstone-whisper`
+ * wrapper and any `LOCAL_ASR_BINARY` share this probe. This is what turns "the launcher file exists" into
+ * "the launcher proves the contract Whetstone will invoke" (#780): a wrapper installed before the
+ * `--language auto` -> detection fix predates the probe and either lacks the flag (nonzero exit) or
+ * reports a different version, and a nonzero exit, non-JSON/malformed output, or a version mismatch is
+ * treated as **incompatible — never ready**. Only the structured reason is returned; the raw
  * stderr/traceback is intentionally dropped so doctor never surfaces a stack trace.
  *
  * @param {import("../step.mjs").SetupContext} ctx
- * @param {string} binaryPath  The configured WHISPER_BINARY launcher.
+ * @param {string} binaryPath  The configured launcher (WHISPER_BINARY or LOCAL_ASR_BINARY).
  * @returns {{ ok: true } | { ok: false, reason: string }}
  */
-export function probeWhisperContract(ctx, binaryPath) {
+export function probeSpeechContract(ctx, binaryPath) {
   const isRecord = (value) =>
     typeof value === "object" && value !== null && !Array.isArray(value);
   const result = ctx.exec(binaryPath, ["--contract-version"]);
@@ -128,10 +253,10 @@ export function probeWhisperContract(ctx, binaryPath) {
   if (typeof version !== "string") {
     return { ok: false, reason: 'its probe output is missing a string "contractVersion"' };
   }
-  if (version !== SUPPORTED_WHISPER_CONTRACT_VERSION) {
+  if (version !== SUPPORTED_SPEECH_CONTRACT_VERSION) {
     return {
       ok: false,
-      reason: `it reports contract version ${version}, but this Whetstone requires ${SUPPORTED_WHISPER_CONTRACT_VERSION}`
+      reason: `it reports contract version ${version}, but this Whetstone requires ${SUPPORTED_SPEECH_CONTRACT_VERSION}`
     };
   }
   return { ok: true };
@@ -145,7 +270,7 @@ function incompatibleWrapper(reason) {
     what: `The installed whetstone-whisper wrapper is incompatible: ${reason}. A wrapper installed before the language fix forwards "--language auto" to Whisper literally, which fails transcription.`,
     remedy:
       "Run `pnpm setup:voice` to repair the bundled wrapper (it upgrades the wrapper in place without " +
-      `redownloading the speech model). A custom WHISPER_BINARY must emit \`--contract-version\` as ${SUPPORTED_WHISPER_CONTRACT_VERSION} — see docs/SPEECH.md.`
+      `redownloading the speech model). A custom WHISPER_BINARY must emit \`--contract-version\` as ${SUPPORTED_SPEECH_CONTRACT_VERSION} — see docs/SPEECH.md.`
   };
 }
 
@@ -199,6 +324,15 @@ export const voiceStep = {
   optional: true,
   capability: "voice",
   check(ctx) {
+    // The provider-neutral local ASR pair is authoritative and provider-agnostic — resolve config first
+    // and, when a LOCAL_ASR provider is configured, probe ITS contract (no Python/faster-whisper
+    // prerequisite; a mixed config is flagged; a partial pair is a configuration error). Only fall
+    // through to the legacy bundled-Whisper readiness when no new key is present, so a complete
+    // LOCAL_ASR_* is never misreported as "Whisper is not wired".
+    const localReady = localProviderReadiness(ctx, resolveVoiceConfig(readEnv(ctx)));
+    if (localReady !== null) {
+      return localReady;
+    }
     const python = resolvePython(ctx);
     if (python === null) {
       return missing("Python 3 was not found (required for local Whisper STT).", PYTHON_REMEDY);
@@ -212,7 +346,7 @@ export const voiceStep = {
     const env = readEnv(ctx);
     if (env.WHISPER_BINARY === undefined || env.WHISPER_MODEL_PATH === undefined) {
       return missing(
-        "Whisper is not wired into .env (WHISPER_BINARY / WHISPER_MODEL_PATH).",
+        "Local speech is not wired into .env (LOCAL_ASR_BINARY + LOCAL_ASR_MODEL, or legacy WHISPER_BINARY / WHISPER_MODEL_PATH).",
         "Run `pnpm setup:voice`."
       );
     }
@@ -225,7 +359,7 @@ export const voiceStep = {
     // File presence is not readiness: run the cheap contract probe through the launcher and require the
     // exact supported contract version, so a stale pre-#647 wrapper is reported incompatible (never
     // ready) and `pnpm setup:voice` repairs it instead of skipping provisioning (#780).
-    const contract = probeWhisperContract(ctx, env.WHISPER_BINARY);
+    const contract = probeSpeechContract(ctx, env.WHISPER_BINARY);
     if (!contract.ok) {
       const { what, remedy } = incompatibleWrapper(contract.reason);
       return missing(what, remedy);
@@ -233,6 +367,20 @@ export const voiceStep = {
     return ok();
   },
   provision(ctx) {
+    // A configured (or half-configured) provider-neutral LOCAL_ASR provider owns readiness: this bundled
+    // installer only provisions the legacy Whisper fallback and must never clobber the operator's chosen
+    // provider or leave a partial pair (which the runtime treats as a hard boot error). Report the local
+    // verdict instead of installing a different engine over it.
+    const config = resolveVoiceConfig(readEnv(ctx));
+    if (config.kind === "partial-local") {
+      return error(PARTIAL_LOCAL_WHAT, PARTIAL_LOCAL_REMEDY);
+    }
+    if (config.kind === "local") {
+      return error(
+        `A local speech provider is configured via LOCAL_ASR_BINARY (${config.binaryPath}); \`pnpm setup:voice\` provisions only the bundled Whisper fallback and will not modify it.`,
+        LOCAL_PROVISION_REMEDY
+      );
+    }
     // Consent-gated: offer to install Python 3 after an explicit Y (or `--yes`); on decline, no
     // package manager, or a non-interactive run, fall back to the instruct-only remedy unchanged.
     const pythonReady = installSystemTool(ctx, PYTHON_SPEC);
@@ -333,7 +481,7 @@ export const voiceStep = {
     // (#780): the probe proves the freshly installed launcher speaks the exact contract, and the sample
     // proves `--language auto` reaches the model and produces on-contract output before a saved capture
     // is retried.
-    const contract = probeWhisperContract(ctx, env.WHISPER_BINARY);
+    const contract = probeSpeechContract(ctx, env.WHISPER_BINARY);
     if (!contract.ok) {
       const { what, remedy } = incompatibleWrapper(contract.reason);
       return error(what, remedy);

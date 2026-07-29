@@ -104,8 +104,10 @@ It installs `faster-whisper`, installs the bundled **`whetstone-whisper`** conso
 `small`; `base.en` for English-only), verifies the wrapper against a sample, and writes
 `WHISPER_BINARY` / `WHISPER_MODEL_PATH` to the root `.env` (the legacy fallback pair, which the seam
 still honours). `pnpm setup:doctor` reports voice readiness; each failure prints an actionable remedy
-and the step is re-runnable. This is optional and excluded from the base `pnpm setup` — the `pnpm
-validate` gate never needs a model.
+and the step is re-runnable. When a `LOCAL_ASR_*` provider is configured, doctor recognizes it as
+authoritative and runs the contract probe against **that** executable (not Whisper), reports a mixed
+config's migration hint, and flags a partial pair as a configuration error. This is optional and
+excluded from the base `pnpm setup` — the `pnpm validate` gate never needs a model.
 
 The wrapper is a pip package with a `console_scripts` entry point, so pip generates a native launcher
 executable on every OS that the server's `execFile` runs directly (a `.py`/`.cmd` cannot be

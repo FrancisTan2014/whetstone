@@ -7,12 +7,16 @@ import {
   upsertEnvVars,
   validateWhisperContract,
   parseEnvVars,
-  probeWhisperContract,
+  probeSpeechContract,
+  resolveVoiceConfig,
   voiceStep
 } from "./voice.mjs";
 
 const ENV_PATH = "/repo/.env";
 const LAUNCHER = "/bin/whetstone-whisper";
+// A distinct provider-neutral LOCAL_ASR executable path, used to prove the local branch probes ITS
+// binary (not WHISPER_BINARY) in new-only and mixed configs.
+const LOCAL_BINARY = "/bin/local-asr";
 // The compatible contract probe payload the current whetstone-whisper launcher emits for
 // `--contract-version` (mirrors CONTRACT_VERSION in whisper-wrapper/whetstone_whisper/cli.py).
 const CONTRACT_STDOUT = '{"contractVersion":"1"}';
@@ -190,12 +194,169 @@ describe("voiceStep.check", () => {
   });
 });
 
-describe("probeWhisperContract", () => {
+describe("resolveVoiceConfig (#799)", () => {
+  it("makes the complete LOCAL_ASR pair authoritative (no legacy present)", () => {
+    expect(resolveVoiceConfig({ LOCAL_ASR_BINARY: LOCAL_BINARY, LOCAL_ASR_MODEL: "qwen" })).toEqual({
+      kind: "local",
+      binaryPath: LOCAL_BINARY,
+      modelIdentifier: "qwen",
+      legacyAlsoPresent: false
+    });
+  });
+
+  it("flags a mixed config: the new pair wins and legacy WHISPER_* is recorded as also-present", () => {
+    expect(
+      resolveVoiceConfig({
+        LOCAL_ASR_BINARY: LOCAL_BINARY,
+        LOCAL_ASR_MODEL: "qwen",
+        WHISPER_BINARY: LAUNCHER,
+        WHISPER_MODEL_PATH: "small"
+      })
+    ).toMatchObject({ kind: "local", legacyAlsoPresent: true });
+  });
+
+  it("treats exactly one new key as a partial (error) config, never a silent fallback", () => {
+    expect(resolveVoiceConfig({ LOCAL_ASR_BINARY: LOCAL_BINARY })).toEqual({ kind: "partial-local" });
+    expect(resolveVoiceConfig({ LOCAL_ASR_MODEL: "qwen" })).toEqual({ kind: "partial-local" });
+    // A partial new pair is an error even when a complete legacy pair is also present.
+    expect(
+      resolveVoiceConfig({
+        LOCAL_ASR_BINARY: LOCAL_BINARY,
+        WHISPER_BINARY: LAUNCHER,
+        WHISPER_MODEL_PATH: "small"
+      })
+    ).toEqual({ kind: "partial-local" });
+  });
+
+  it("honours the complete legacy pair only when no new key is present", () => {
+    expect(resolveVoiceConfig({ WHISPER_BINARY: LAUNCHER, WHISPER_MODEL_PATH: "small" })).toEqual({
+      kind: "whisper",
+      binaryPath: LAUNCHER,
+      modelPath: "small"
+    });
+  });
+
+  it("treats blank/whitespace values as unset (none), so the runtime falls back to the fake", () => {
+    expect(resolveVoiceConfig({ LOCAL_ASR_BINARY: "  ", LOCAL_ASR_MODEL: "" })).toEqual({
+      kind: "none"
+    });
+    expect(resolveVoiceConfig({})).toEqual({ kind: "none" });
+  });
+});
+
+describe("voiceStep.check with a LOCAL_ASR provider (#799)", () => {
+  // The local branch is provider-neutral: it probes the configured LOCAL_ASR_BINARY and needs no
+  // Python/faster-whisper. This handler answers the contract probe for the LOCAL binary only.
+  const localProbe =
+    (stdout = CONTRACT_STDOUT, code = 0) =>
+    (command, args) =>
+      command === LOCAL_BINARY && args[0] === "--contract-version"
+        ? { code, stdout, stderr: "traceback that must not leak" }
+        : { code: 0, stdout: "", stderr: "" };
+  const newOnlyEnv = `LOCAL_ASR_BINARY=${LOCAL_BINARY}\nLOCAL_ASR_MODEL=qwen\n`;
+
+  it("recognizes a complete LOCAL_ASR pair as ready by probing its own executable", () => {
+    const { ctx, execCalls } = createFakeContext({
+      files: [LOCAL_BINARY],
+      fileContents: { [ENV_PATH]: newOnlyEnv },
+      execHandler: localProbe()
+    });
+    expect(voiceStep.check(ctx)).toEqual({ status: "ok" });
+    // It probes the LOCAL_ASR executable — never Whisper — and never runs a faster-whisper import.
+    expect(execCalls).toContainEqual([LOCAL_BINARY, "--contract-version"]);
+    expect(execCalls.some((call) => call.join(" ").includes("faster_whisper"))).toBe(false);
+  });
+
+  it("does not log a migration hint for a new-only config", () => {
+    const { ctx, logs } = createFakeContext({
+      files: [LOCAL_BINARY],
+      fileContents: { [ENV_PATH]: newOnlyEnv },
+      execHandler: localProbe()
+    });
+    voiceStep.check(ctx);
+    expect(logs.some((line) => line.includes("finish the migration"))).toBe(false);
+  });
+
+  it("reports a mixed config ready, probes the LOCAL binary (not Whisper), and logs the migration hint", () => {
+    const { ctx, logs, execCalls } = createFakeContext({
+      files: [LOCAL_BINARY, LAUNCHER],
+      fileContents: {
+        [ENV_PATH]: `${newOnlyEnv}WHISPER_BINARY=${LAUNCHER}\nWHISPER_MODEL_PATH=small\n`
+      },
+      execHandler: localProbe()
+    });
+    expect(voiceStep.check(ctx)).toEqual({ status: "ok" });
+    // The authoritative provider is the LOCAL one — Whisper's launcher is never probed.
+    expect(execCalls).toContainEqual([LOCAL_BINARY, "--contract-version"]);
+    expect(execCalls).not.toContainEqual([LAUNCHER, "--contract-version"]);
+    expect(logs.some((line) => line.includes("finish the migration"))).toBe(true);
+  });
+
+  it("reports missing when the configured LOCAL_ASR executable file is absent", () => {
+    const { ctx } = createFakeContext({
+      fileContents: { [ENV_PATH]: newOnlyEnv },
+      execHandler: localProbe()
+    });
+    const result = voiceStep.check(ctx);
+    expect(result.status).toBe("missing");
+    expect(result.what).toContain("local speech executable is missing");
+  });
+
+  it("reports the local provider incompatible when its contract probe fails (no traceback leak)", () => {
+    const { ctx } = createFakeContext({
+      files: [LOCAL_BINARY],
+      fileContents: { [ENV_PATH]: newOnlyEnv },
+      execHandler: localProbe("", 2)
+    });
+    const result = voiceStep.check(ctx);
+    expect(result.status).toBe("missing");
+    expect(result.what).toContain("incompatible");
+    expect(result.what).toContain("LOCAL_ASR_BINARY");
+    expect(`${result.what}${result.remedy}`).not.toContain("traceback");
+  });
+
+  it("reports a partial LOCAL_ASR pair as an explicit configuration error with the exact remedy", () => {
+    const { ctx } = createFakeContext({
+      fileContents: { [ENV_PATH]: `LOCAL_ASR_BINARY=${LOCAL_BINARY}\n` },
+      execHandler: localProbe()
+    });
+    const result = voiceStep.check(ctx);
+    expect(result.status).toBe("error");
+    expect(result.what).toContain("partially configured");
+    expect(result.remedy).toContain("LOCAL_ASR_BINARY");
+    expect(result.remedy).toContain("LOCAL_ASR_MODEL");
+  });
+});
+
+describe("voiceStep.provision with a LOCAL_ASR provider (#799)", () => {
+  it("refuses to install the bundled Whisper fallback over a configured local provider", () => {
+    const { ctx, execCalls } = createFakeContext({
+      fileContents: { [ENV_PATH]: `LOCAL_ASR_BINARY=${LOCAL_BINARY}\nLOCAL_ASR_MODEL=qwen\n` }
+    });
+    const result = voiceStep.provision(ctx);
+    expect(result.status).toBe("error");
+    expect(result.what).toContain("LOCAL_ASR_BINARY");
+    // It never installs faster-whisper or the wrapper over the operator's chosen provider.
+    expect(execCalls.some((call) => call.join(" ").includes("pip install"))).toBe(false);
+  });
+
+  it("reports a partial LOCAL_ASR pair as a configuration error instead of provisioning Whisper", () => {
+    const { ctx, execCalls } = createFakeContext({
+      fileContents: { [ENV_PATH]: "LOCAL_ASR_MODEL=qwen\n" }
+    });
+    const result = voiceStep.provision(ctx);
+    expect(result.status).toBe("error");
+    expect(result.what).toContain("partially configured");
+    expect(execCalls.some((call) => call.join(" ").includes("pip install"))).toBe(false);
+  });
+});
+
+describe("probeSpeechContract", () => {
   const run = (stdout, code = 0) => {
     const { ctx } = createFakeContext({
       execHandler: () => ({ code, stdout, stderr: "" })
     });
-    return probeWhisperContract(ctx, LAUNCHER);
+    return probeSpeechContract(ctx, LAUNCHER);
   };
 
   it("is ok only for the exact supported contract version", () => {
@@ -497,12 +658,12 @@ function launcherProcessCtx(script) {
   };
 }
 
-describe("probeWhisperContract against real launcher processes (#780)", () => {
+describe("probeSpeechContract against real launcher processes (#780)", () => {
   it("passes the current launcher and rejects the stale one, each executed as its own process", () => {
-    expect(probeWhisperContract(launcherProcessCtx(CURRENT_LAUNCHER), "whetstone-whisper")).toEqual({
+    expect(probeSpeechContract(launcherProcessCtx(CURRENT_LAUNCHER), "whetstone-whisper")).toEqual({
       ok: true
     });
-    const stale = probeWhisperContract(launcherProcessCtx(STALE_LAUNCHER), "whetstone-whisper");
+    const stale = probeSpeechContract(launcherProcessCtx(STALE_LAUNCHER), "whetstone-whisper");
     expect(stale.ok).toBe(false);
   });
 });
