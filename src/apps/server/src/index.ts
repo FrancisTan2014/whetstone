@@ -69,6 +69,7 @@ import {
 import { resolveStructuredPdfRunner } from "./files/pdfStructuredRunnerResolution.js";
 import { resolvePdfOcrAdapter } from "./files/pdfOcrRunnerResolution.js";
 import { createFakeSpeechInput } from "./speech/fakeSpeechInput.js";
+import { createLocalSpeechInput } from "./speech/localSpeechInput.js";
 import { readSpeechConfig, resolveSpeechInput } from "./speech/speechConfig.js";
 import { checkSpeechHealth } from "./speech/speechHealth.js";
 import { createWhisperSpeechInput } from "./speech/whisperSpeechInput.js";
@@ -182,12 +183,18 @@ const resolveOfflineGloss = createOfflineGloss({
   chinese: (term) => cedict.lookup(term)
 });
 
-// The speech input seam (#207): config-gated and absent-config-safe. With no Whisper, speech stays on
-// its fake; configured (WHISPER_BINARY + WHISPER_MODEL_PATH), the real local adapter transcribes voice
-// diary captures (#236).
-const speechConfig = readSpeechConfig();
+// The speech input seam (#207, #799): config-gated and absent-config-safe. With no provider configured,
+// speech stays on its fake; configured (LOCAL_ASR_BINARY + LOCAL_ASR_MODEL, or the legacy WHISPER_* pair),
+// the real local adapter transcribes voice diary captures (#236). A partial LOCAL_ASR_* pair is an
+// explicit misconfiguration, not a silent fake fallback, so boot fails fast with the exact remedy.
+const speechConfigResult = readSpeechConfig();
+if (!speechConfigResult.ok) {
+  throw new Error(`${speechConfigResult.error.message} ${speechConfigResult.error.remedy}`);
+}
+const speechConfig = speechConfigResult.config;
 const speech = resolveSpeechInput({
   config: speechConfig,
+  createLocal: (config) => createLocalSpeechInput({ config }),
   createWhisper: (config) => createWhisperSpeechInput({ config }),
   fake: createFakeSpeechInput({ transcript: "", words: [] })
 });
@@ -386,9 +393,9 @@ const voiceCaptureWorker: VoiceCaptureWorkerDependencies = {
   logFailure: ({ captureId, category, rawMessage }) =>
     server.log.error({ captureId, category, rawMessage }, "voice_capture_failed"),
   speech,
-  // The speech boundary's report of whether local Whisper is set up on this machine, so an empty
+  // The speech boundary's report of whether a local provider is set up on this machine, so an empty
   // transcript is classified as genuine silence vs. missing voice setup (#675).
-  speechConfigured: speechConfig.whisper !== undefined,
+  speechConfigured: speechConfig.provider !== undefined,
   tidy: resolveDiaryTidy({ config: diaryTidyConfig, createModel: createOllamaModel })
 };
 const VOICE_CAPTURE_POLL_MS = 1_000;
@@ -530,8 +537,9 @@ try {
     }
   }
 
-  // Report the Whisper STT wiring (#347): a clear "run pnpm setup:voice" hint when voice diary capture
-  // would otherwise silently transcribe to empty, instead of an unexplained empty transcript.
+  // Report the local speech-to-text wiring (#347, #799): a clear "run pnpm setup:voice" hint when voice
+  // diary capture would otherwise silently transcribe to empty, and a migration hint when the config
+  // still uses the legacy WHISPER_* pair or leaves stale WHISPER_* keys alongside the new pair.
   const speechHealth = checkSpeechHealth({ config: speechConfig });
   if (speechHealth.status === "fake") {
     server.log.warn({ speech: speechHealth.status }, speechHealth.message);

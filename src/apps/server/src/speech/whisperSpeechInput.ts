@@ -1,7 +1,7 @@
 import type { TranscribedWord, Transcription } from "@whetstone/contracts";
 
 import type { SpeechAudio, SpeechInput } from "./speechInput.js";
-import { runCommand, type CommandRunner } from "./whisperProcess.js";
+import { runCommand, type CommandRunner } from "./speechProcess.js";
 
 // A local OSS Whisper adapter: it runs a configured, offline Whisper CLI (whisper.cpp / faster-whisper
 // or a thin wrapper) over an audio file and maps its word-timestamped JSON into a Transcription. Audio

@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { runCommand } from "./whisperProcess.js";
+import { runCommand } from "./speechProcess.js";
 
 // The runner is exercised end-to-end against a real child process by driving the Node binary itself as
-// the "command" — no Whisper install needed, fully cross-platform.
+// the "command" — no speech install needed, fully cross-platform.
 describe("runCommand", () => {
   it("resolves with the command's stdout", async () => {
     const stdout = await runCommand(process.execPath, [

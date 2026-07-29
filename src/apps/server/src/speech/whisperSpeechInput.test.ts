@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { CommandRunner } from "./whisperProcess.js";
+import type { CommandRunner } from "./speechProcess.js";
 import {
   buildWhisperArgs,
   createWhisperSpeechInput,
