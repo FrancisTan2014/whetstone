@@ -44,9 +44,12 @@ Permissive deps only: Docling + docling-core (MIT). OCR is disabled, not delegat
 """
 from __future__ import annotations
 
+import hashlib
+import io
 import json
 import os
 import sys
+import tempfile
 from typing import Any, Callable, Mapping, Optional, Protocol, Sequence
 
 # Exit codes — kept in LOCKSTEP with WORKER_EXIT_* in pdfStructuredErrors.ts. Changing one side
@@ -74,6 +77,14 @@ METRICS_PATH_ENV = "WHETSTONE_PDF_METRICS_PATH"
 # The ceiling (MiB) --check-memory-ceiling applies when no explicit WHETSTONE_PDF_MEMORY_MIB is set, so
 # the probe always exercises the real controller. Mirrors the server's 2 GiB structured-memory default.
 DEFAULT_PROBE_MEMORY_MIB = 2048
+
+# The docling labels whose item may carry a renderable picture (#807), matched to PICTURE_LABELS in
+# pdfCanonicalMapping.ts. Only a body item with one of these labels is offered to the artifact sink.
+PICTURE_LABELS = frozenset({"picture", "figure"})
+# The per-picture PNG byte ceiling. A rendered picture larger than this is left ref-less (it maps to a
+# #806 unresolved placeholder) so no single artifact can dominate the attempt's byte budget. In lockstep
+# with MAX_ARTIFACT_BYTES in pdfImportArtifacts.ts, which re-checks it on the server before adoption.
+MAX_PICTURE_ARTIFACT_BYTES = 16 * 1024 * 1024
 
 
 class PasswordRequired(Exception):
@@ -317,6 +328,10 @@ def build_converter() -> Any:  # pragma: no cover - real models; covered by the 
 
     pipeline_options = PdfPipelineOptions()
     pipeline_options.do_ocr = False
+    # Render each detected picture to a raster image so its bytes can be preserved as a canonical figure
+    # (#807). Page images and table images stay OFF: we only need the picture crops, not full-page renders.
+    pipeline_options.generate_picture_images = True
+    pipeline_options.images_scale = 2.0
 
     return DocumentConverter(
         format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)}
@@ -476,12 +491,97 @@ def _table_rows(
     return rows
 
 
+def _picture_image_reader(item: Any, doc: Any) -> Any:
+    """Render a docling picture item to a PIL image, or None when it carries no renderable image.
+
+    The real seam over ``PictureItem.get_image(document)`` (which returns a PIL image when
+    ``generate_picture_images`` is on, else None). Kept tiny and injectable so the extraction/manifest
+    logic tests against a fake item without real docling models.
+    """
+    getter = getattr(item, "get_image", None)
+    if getter is None:
+        return None
+    return getter(doc)
+
+
+class ArtifactSink:
+    """Collects rendered picture artifacts into a server-owned range directory (#807).
+
+    Holds the destination directory, the image-reader seam, and the per-picture byte ceiling, and hands
+    out a stable, collision-free file name per extracted picture. The bytes are written into the
+    directory the server prepared for this range; only a manifest ref (never the bytes) is returned to
+    the JSON contract.
+    """
+
+    def __init__(
+        self,
+        directory: str,
+        read_image: Callable[[Any, Any], Any],
+        max_bytes: int = MAX_PICTURE_ARTIFACT_BYTES,
+    ) -> None:
+        self.directory = directory
+        self.read_image = read_image
+        self.max_bytes = max_bytes
+        self._next_index = 0
+
+    def next_name(self) -> str:
+        name = f"fig-{self._next_index}.png"
+        self._next_index += 1
+        return name
+
+
+def _encode_png(image: Any) -> bytes:
+    """Encode a PIL image to PNG bytes in memory (no page/table images, just this picture crop)."""
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _write_artifact_file(directory: str, name: str, data: bytes) -> None:
+    """Write ``data`` to ``directory/name`` via a temp file + atomic rename.
+
+    The rename is the fence: a crashed worker never leaves a half-written artifact that a resume could
+    adopt — only a fully written file appears under its final name.
+    """
+    fd, tmp_path = tempfile.mkstemp(dir=directory, suffix=".tmp")
+    with os.fdopen(fd, "wb") as handle:
+        handle.write(data)
+    os.replace(tmp_path, os.path.join(directory, name))
+
+
+def extract_picture_artifact(item: Any, doc: Any, sink: ArtifactSink) -> Optional[dict[str, Any]]:
+    """Render one picture item to a PNG artifact and return its manifest ref, or None.
+
+    Returns None when the picture cannot be rendered (no image) or the rendered PNG exceeds the
+    per-picture byte ceiling — either way the caller leaves the item ref-less so it maps to a #806
+    unresolved placeholder rather than a resolved figure. The ref carries only metadata (root-relative
+    path, image/png, sha256, byte length, pixel dimensions); the bytes stay on disk.
+    """
+    image = sink.read_image(item, doc)
+    if image is None:
+        return None
+    data = _encode_png(image)
+    if len(data) > sink.max_bytes:
+        return None
+    name = sink.next_name()
+    _write_artifact_file(sink.directory, name, data)
+    return {
+        "path": name,
+        "contentType": "image/png",
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "byteLength": len(data),
+        "width": int(image.width),
+        "height": int(image.height),
+    }
+
+
 def map_item(
     item: Any,
     doc: Any,
     resolve: Callable[[Any, Any], Any],
     page_confidences: dict[int, float],
     inherited_page: int,
+    sink: Optional[ArtifactSink] = None,
 ) -> dict[str, Any]:
     """Project one DoclingDocument node (and its subtree) into a contract item.
 
@@ -490,7 +590,8 @@ def map_item(
     geometry and provenance — nothing is silently dropped. Children are mapped recursively in order.
     A docling ``TableItem`` is special: it carries no ``children``, so its ``data.table_cells`` grid is
     projected into ordered ``table_row`` -> cell items (see ``_table_rows``) that the canonical mapper
-    turns into a PM ``table`` block.
+    turns into a PM ``table`` block. When an ``ArtifactSink`` is supplied and this item is a picture
+    whose image renders, a manifest ref to the extracted PNG is attached as ``imageArtifact`` (#807).
     """
     prov = _prov(item)
     page_number = _page_number(prov, inherited_page)
@@ -500,11 +601,12 @@ def map_item(
     else:
         children_refs = getattr(item, "children", None) or []
         children = [
-            map_item(resolve(ref, doc), doc, resolve, page_confidences, page_number)
+            map_item(resolve(ref, doc), doc, resolve, page_confidences, page_number, sink)
             for ref in children_refs
         ]
-    return {
-        "label": str(getattr(item, "label", "unknown")),
+    label = str(getattr(item, "label", "unknown"))
+    mapped: dict[str, Any] = {
+        "label": label,
         "pageNumber": page_number,
         "boundingBox": _bounding_box(prov),
         "charSpan": _char_span(prov),
@@ -512,6 +614,11 @@ def map_item(
         "text": str(getattr(item, "text", "") or ""),
         "children": children,
     }
+    if sink is not None and label in PICTURE_LABELS:
+        artifact = extract_picture_artifact(item, doc, sink)
+        if artifact is not None:
+            mapped["imageArtifact"] = artifact
+    return mapped
 
 
 def map_group(
@@ -519,11 +626,16 @@ def map_group(
     doc: Any,
     resolve: Callable[[Any, Any], Any],
     page_confidences: dict[int, float],
+    sink: Optional[ArtifactSink] = None,
 ) -> list[dict[str, Any]]:
-    """Map a top-level group's ordered children (body or furniture) into contract items."""
+    """Map a top-level group's ordered children (body or furniture) into contract items.
+
+    An ``ArtifactSink`` is threaded only for the body group (the only source of canonical figures), so a
+    furniture picture is never extracted to a would-be-orphaned artifact.
+    """
     children_refs = getattr(group, "children", None) or []
     return [
-        map_item(resolve(ref, doc), doc, resolve, page_confidences, 1) for ref in children_refs
+        map_item(resolve(ref, doc), doc, resolve, page_confidences, 1, sink) for ref in children_refs
     ]
 
 
@@ -597,13 +709,15 @@ def build_range_payload(
     end_page: int,
     native_text: Callable[[int], bool],
     metadata: Optional[Mapping[str, Any]] = None,
+    sink: Optional[ArtifactSink] = None,
 ) -> dict[str, Any]:
     """Assemble one range payload from a converted DoclingDocument.
 
     Rejects an unsupported schema version up front (``UnsupportedSchema``) so an incompatible converter
     is a named failure, not a silent misread. Preserves the ordered body/furniture trees and reports
     native-text availability for every page in [start_page, end_page]. When the caller supplies the raw
-    PDF info dictionary, attaches its cleaned ``metadata`` (#702's title/author fallback source).
+    PDF info dictionary, attaches its cleaned ``metadata`` (#702's title/author fallback source). When an
+    ``ArtifactSink`` is supplied, each renderable body picture carries an ``imageArtifact`` ref (#807).
     """
     version = str(getattr(doc, "version", ""))
     if version not in SUPPORTED_SCHEMA_VERSIONS:
@@ -618,7 +732,7 @@ def build_range_payload(
         "schemaVersion": RANGE_SCHEMA_VERSION,
         "doclingSchema": {"name": DOCLING_SCHEMA_NAME, "version": version},
         "pages": pages,
-        "body": map_group(getattr(doc, "body", None), doc, _resolve_ref, page_confidences),
+        "body": map_group(getattr(doc, "body", None), doc, _resolve_ref, page_confidences, sink),
         "furniture": map_group(getattr(doc, "furniture", None), doc, _resolve_ref, page_confidences),
     }
     if metadata is not None:
@@ -633,16 +747,18 @@ def convert_range(
     converter_factory: Callable[[], Any],
     native_text: Callable[[int], bool],
     read_metadata: Optional[Callable[[], Mapping[str, Any]]] = None,
+    sink: Optional[ArtifactSink] = None,
 ) -> dict[str, Any]:
     """Convert one bounded page range to a range payload using a converter from ``converter_factory``.
 
     Docling's ``convert`` receives an explicit ``page_range`` so only the requested pages are decoded.
     When a ``read_metadata`` seam is supplied, its raw PDF info dictionary is cleaned onto the payload.
+    When an ``ArtifactSink`` is supplied, renderable body pictures are extracted to PNG artifacts (#807).
     """
     converter = converter_factory()
     result = converter.convert(pdf_path, page_range=(start_page, end_page))
     metadata = read_metadata() if read_metadata is not None else None
-    return build_range_payload(result.document, start_page, end_page, native_text, metadata)
+    return build_range_payload(result.document, start_page, end_page, native_text, metadata, sink)
 
 
 def native_text_prober(pdf_path: str, opener: Callable[[str], Any]) -> Callable[[int], bool]:
@@ -750,19 +866,24 @@ def run_range(
     metadata_reader_factory: Optional[
         Callable[[str], Callable[[], Mapping[str, Any]]]
     ] = None,
+    artifact_dir: Optional[str] = None,
+    image_reader: Callable[[Any, Any], Any] = _picture_image_reader,
 ) -> int:
     """``--range`` mode: emit one validated range payload, classifying each failure distinctly.
 
     When a ``metadata_reader_factory`` is wired, the payload carries the source PDF's cleaned document
     metadata (#702's title/author fallback); without one it is simply omitted (an older/metadata-less run).
+    When an ``artifact_dir`` is supplied, renderable body pictures are extracted into it as PNG artifacts
+    and referenced from the payload (#807); without one (a probe/back-compat run) no picture is extracted.
     """
     try:
         native_text = prober_factory(pdf_path)
         read_metadata = (
             metadata_reader_factory(pdf_path) if metadata_reader_factory is not None else None
         )
+        sink = ArtifactSink(artifact_dir, image_reader) if artifact_dir is not None else None
         payload = convert_range(
-            pdf_path, start_page, end_page, converter_factory, native_text, read_metadata
+            pdf_path, start_page, end_page, converter_factory, native_text, read_metadata, sink
         )
     except PasswordRequired:
         _write(stderr, "pdf is encrypted; a password is required to open it.\n")
@@ -863,11 +984,12 @@ def main(
     try:
         if len(argv) == 2 and argv[0] == "--probe":
             code = run_probe(argv[1], opener, prober_factory, geometry_factory, stdout, stderr)
-        elif len(argv) == 4 and argv[0] == "--range":
+        elif len(argv) in (4, 5) and argv[0] == "--range":
             start_page = _parse_positive_int(argv[2])
             end_page = _parse_positive_int(argv[3])
             if end_page < start_page:
                 raise ValueError("end page must be >= start page")
+            artifact_dir = argv[4] if len(argv) == 5 else None
             code = run_range(
                 argv[1],
                 start_page,
@@ -877,12 +999,13 @@ def main(
                 stdout,
                 stderr,
                 metadata_reader_factory,
+                artifact_dir,
             )
         else:
             _write(
                 stderr,
-                "usage: pdf_to_docling.py --probe <file.pdf> | --range <file.pdf> <start> <end> | "
-                "--check-memory-ceiling\n",
+                "usage: pdf_to_docling.py --probe <file.pdf> | "
+                "--range <file.pdf> <start> <end> [artifact-dir] | --check-memory-ceiling\n",
             )
             return EXIT_USAGE
     except ValueError as error:
