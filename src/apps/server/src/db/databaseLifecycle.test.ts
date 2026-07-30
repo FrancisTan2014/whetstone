@@ -57,6 +57,27 @@ describe("openManagedDatabase", () => {
     expect(managed.databaseDir).toBeUndefined();
   });
 
+  it("closes an in-memory database without touching a lease", async () => {
+    const events: string[] = [];
+    const pglite = fakePglite(async () => {
+      events.push("pglite.close");
+    });
+    const acquireLease = vi.fn(async (): Promise<DatabaseLease> => ({ release: async () => {} }));
+
+    const managed = await openManagedDatabase({
+      databaseDir: undefined,
+      openPglite: (async () => pglite) as never,
+      acquireLease,
+      createDb: () => ({}) as never
+    });
+
+    await managed.close();
+    await managed.close();
+
+    expect(events).toEqual(["pglite.close"]);
+    expect(acquireLease).not.toHaveBeenCalled();
+  });
+
   it("acquires the lease before constructing PGlite for a persistent directory", async () => {
     const order: string[] = [];
     const release = vi.fn(async () => {
