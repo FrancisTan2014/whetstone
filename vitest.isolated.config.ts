@@ -12,7 +12,8 @@ export default defineConfig({
     hookTimeout: 30000,
     include: [
       "scripts/setup/setupScriptRouting.test.mjs",
-      "src/apps/server/src/data/backupRestore.test.ts"
+      "src/apps/server/src/data/backupRestore.test.ts",
+      "src/apps/server/src/db/databaseLease.crossProcess.test.ts"
     ],
     maxWorkers: 1,
     setupFiles: ["./vitest.setup.ts"],

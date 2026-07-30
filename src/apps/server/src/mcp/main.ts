@@ -1,12 +1,15 @@
 import { PGlite } from "@electric-sql/pglite";
 import { randomUUID } from "node:crypto";
 
+import * as lockfile from "proper-lockfile";
 import WordPOS from "wordpos";
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
 import { readServerConfig } from "../config/serverConfig.js";
-import { createDbClient } from "../db/dbClient.js";
+import { createDatabaseLeaseAcquirer } from "../db/databaseLease.js";
+import { createFatalDatabaseGuard, installFatalSignalTeardown } from "../db/fatalDatabaseGuard.js";
+import { openManagedDatabase, type ManagedDatabase } from "../db/databaseLifecycle.js";
 import { runMigrations } from "../db/migrate.js";
 import { expireCardCreationAttempts } from "../features/notesReview/cardCreationAttemptStore.js";
 import { winkLemmatizer } from "../features/lexical/lexicalLemmatizer.js";
@@ -16,6 +19,7 @@ import {
   type WordPosSeekLike
 } from "../features/lexical/wordnetLexicalProvider.js";
 import { createDefaultCurrentUserProvider } from "../identity/currentUser.js";
+import { runManagedBootstrap } from "./mcpBootstrap.js";
 import { createMcpCardServer } from "./mcpServer.js";
 
 // The local stdio MCP bootstrap for the card surface (#717 preview, #718 commit). Coverage-excluded,
@@ -30,39 +34,83 @@ const cardCreationAttemptTtlMs = 30 * 60 * 1000;
 
 async function main(): Promise<void> {
   const config = readServerConfig();
-  const pglite = new PGlite(config.databaseDir);
-  await runMigrations(pglite);
-  const db = createDbClient(pglite);
-  await expireCardCreationAttempts(db, new Date());
-
-  const wordpos = new WordPOS();
-  const lexical = createLexicalRelationService({
-    wordnet: createWordNetLexical(wordpos as unknown as WordPosSeekLike),
-    lemmatize: winkLemmatizer
-  });
-
-  const server = createMcpCardServer({
-    preview: {
-      attemptTtlMs: cardCreationAttemptTtlMs,
-      createId: () => randomUUID(),
-      db,
-      lexical,
-      now: () => new Date()
+  // The MCP surface opens the SAME persistent database as the HTTP server, so it takes the same
+  // single-owner lease (#805): it cannot run while the app owns the directory, and a competing start
+  // fails loudly before PGlite construction instead of racing a second runtime into one WAL.
+  //
+  // The lease heartbeat goes live the instant the lease is acquired — inside `openManagedDatabase`,
+  // before it resolves and before this binding is assigned — so `onCompromised` (and the signal
+  // handlers) must read the handle lazily through the guard, never a not-yet-initialized `const` (a
+  // temporal-dead-zone ReferenceError). A mutable handle plus the covered `fatalDatabaseGuard` is the
+  // single idempotent teardown for a compromise or a SIGINT/SIGTERM.
+  let managedDatabase: ManagedDatabase | undefined = undefined;
+  const fatal = createFatalDatabaseGuard({
+    getDatabase: () => managedDatabase,
+    reportCloseError: (error) => {
+      process.stderr.write(`whetstone card MCP server database close failed: ${String(error)}\n`);
     },
-    commit: {
-      createId: () => randomUUID(),
-      db,
-      now: () => new Date()
-    },
-    currentUser: createDefaultCurrentUserProvider(),
-    log: (line) => {
-      process.stderr.write(`${line}\n`);
-    }
+    exit: (code) => process.exit(code)
   });
+  // Route SIGINT/SIGTERM through the same idempotent guard the instant it exists — before the lease is
+  // even acquired, and well before the post-open bootstrap (migrations, attempt sweep, lexical service,
+  // card server, transport connect) runs. A Ctrl+C in that post-open/pre-bootstrap window must close the
+  // open PGlite (checkpoint) and release-or-retain the lease, not abandon the runtime for stale reclaim
+  // (#805). The guard reads the handle lazily, so a signal during acquisition simply exits.
+  installFatalSignalTeardown(fatal, process, 0);
+  managedDatabase = await openManagedDatabase({
+    databaseDir: config.databaseDir,
+    openPglite: async (databaseDir) => {
+      const instance = new PGlite(databaseDir);
+      await instance.waitReady;
+      return instance;
+    },
+    acquireLease: createDatabaseLeaseAcquirer({
+      lock: (file, options) => lockfile.lock(file, options),
+      onCompromised: (error) => {
+        process.stderr.write(`whetstone card MCP server lease compromised: ${String(error)}\n`);
+        fatal.trigger(1);
+      }
+    })
+  });
+  const database = managedDatabase;
+  const { pglite, db } = database;
+  // Once the lease is held, every later startup failure — migrations, the attempt sweep, building the
+  // lexical service/card server, or connecting the stdio transport — must close PGlite and
+  // release-or-retain the lease before exiting (#805); otherwise this failed process keeps the
+  // directory locked via the live heartbeat and blocks the app/backup/MCP until it is killed.
+  await runManagedBootstrap(database, async () => {
+    await runMigrations(pglite);
+    await expireCardCreationAttempts(db, new Date());
 
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  process.stderr.write("whetstone card MCP server ready on stdio\n");
+    const wordpos = new WordPOS();
+    const lexical = createLexicalRelationService({
+      wordnet: createWordNetLexical(wordpos as unknown as WordPosSeekLike),
+      lemmatize: winkLemmatizer
+    });
+
+    const server = createMcpCardServer({
+      preview: {
+        attemptTtlMs: cardCreationAttemptTtlMs,
+        createId: () => randomUUID(),
+        db,
+        lexical,
+        now: () => new Date()
+      },
+      commit: {
+        createId: () => randomUUID(),
+        db,
+        now: () => new Date()
+      },
+      currentUser: createDefaultCurrentUserProvider(),
+      log: (line) => {
+        process.stderr.write(`${line}\n`);
+      }
+    });
+
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+    process.stderr.write("whetstone card MCP server ready on stdio\n");
+  });
 }
 
 main().catch((error: unknown) => {
