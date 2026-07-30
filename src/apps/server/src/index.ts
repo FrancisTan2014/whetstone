@@ -87,6 +87,10 @@ const config = readServerConfig();
 let shuttingDown = false;
 let httpServerListening = false;
 const backgroundIntervals: NodeJS.Timeout[] = [];
+// True once the idempotent shutdown path is wired (server built, `performShutdown` assigned, signal
+// handlers registered). Before that, a startup failure can only release the lease; after it, a failure
+// must route through the full teardown (stop drains, close Fastify, close PGlite, release lease, exit).
+let shutdownWired = false;
 // Assigned once the server exists; until then a compromise only records a failing exit code.
 let performShutdown: (exitCode: number) => Promise<void> = (exitCode) => {
   process.exitCode = exitCode;
@@ -119,10 +123,11 @@ const managedDatabase = await openManagedDatabase({
 });
 const pglite = managedDatabase.pglite;
 // Every step after acquiring the database — migrations, the legacy-note backfills, the attempt-expiry
-// sweeps, the store/lookup/speech/PDF service wiring, createServer, the shutdown wiring, and finally
-// server.listen — runs inside this one guard (#805). Any failure after acquisition therefore performs
-// the same cleanup: close PGlite and release the lease so the directory is reopenable and the next
-// start is not blocked by this failed attempt.
+// sweeps, the store/lookup/speech/PDF service wiring, createServer, the shutdown wiring, server.listen,
+// and the post-listen recovery/health steps — runs inside this one guard (#805). A failure before the
+// shutdown path is wired just releases the lease; once it is wired, a failure routes through the same
+// idempotent teardown (stop drains, close Fastify, close PGlite, release the lease, exit) so the process
+// never keeps serving on a released directory and the next start is not blocked by this failed attempt.
 try {
   await runMigrations(pglite);
   const db = managedDatabase.db;
@@ -610,6 +615,9 @@ try {
   };
   process.on("SIGINT", onShutdownSignal);
   process.on("SIGTERM", onShutdownSignal);
+  // From here on the full teardown exists, so any failure below — including every post-listen step —
+  // must go through it rather than only releasing the lease.
+  shutdownWired = true;
 
   await server.listen({ host: config.host, port: config.port });
   httpServerListening = true;
@@ -671,10 +679,20 @@ try {
   }
 } catch (error) {
   // Any failure after the database was acquired (migrations, backfills, attempt-expiry, the
-  // store/lookup/speech/PDF wiring, createServer, the shutdown wiring, or listen) performs the same
-  // cleanup so the lease is released and the directory reopenable. The Fastify logger may not exist
-  // yet when an early step throws, so report through the console.
+  // store/lookup/speech/PDF wiring, createServer, the shutdown wiring, listen, or the post-listen
+  // recovery/health steps) must leave the directory reopenable. The Fastify logger may not exist yet
+  // when an early step throws, so report through the console.
   console.error("[server] startup failed; closing database and releasing lease", error);
-  await managedDatabase.close();
-  process.exitCode = 1;
+  if (shutdownWired) {
+    // Once the shutdown path exists, a failure — even after `server.listen` succeeded and background
+    // intervals were registered — routes through the same idempotent teardown: stop the background
+    // drains, close Fastify so no request runs against a closing PGlite, close PGlite, release the
+    // lease, and exit. Never leave the process serving on a released directory.
+    await performShutdown(1);
+  } else {
+    // Before the shutdown path is wired there is nothing listening and no interval to clear, so the
+    // only teardown needed is releasing the lease and marking the failure.
+    await managedDatabase.close();
+    process.exitCode = 1;
+  }
 }
