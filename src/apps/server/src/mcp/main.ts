@@ -8,7 +8,8 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 
 import { readServerConfig } from "../config/serverConfig.js";
 import { createDatabaseLeaseAcquirer } from "../db/databaseLease.js";
-import { openManagedDatabase } from "../db/databaseLifecycle.js";
+import { createFatalDatabaseGuard } from "../db/fatalDatabaseGuard.js";
+import { openManagedDatabase, type ManagedDatabase } from "../db/databaseLifecycle.js";
 import { runMigrations } from "../db/migrate.js";
 import { expireCardCreationAttempts } from "../features/notesReview/cardCreationAttemptStore.js";
 import { winkLemmatizer } from "../features/lexical/lexicalLemmatizer.js";
@@ -36,7 +37,21 @@ async function main(): Promise<void> {
   // The MCP surface opens the SAME persistent database as the HTTP server, so it takes the same
   // single-owner lease (#805): it cannot run while the app owns the directory, and a competing start
   // fails loudly before PGlite construction instead of racing a second runtime into one WAL.
-  const managedDatabase = await openManagedDatabase({
+  //
+  // The lease heartbeat goes live the instant the lease is acquired — inside `openManagedDatabase`,
+  // before it resolves and before this binding is assigned — so `onCompromised` (and the signal
+  // handlers) must read the handle lazily through the guard, never a not-yet-initialized `const` (a
+  // temporal-dead-zone ReferenceError). A mutable handle plus the covered `fatalDatabaseGuard` is the
+  // single idempotent teardown for a compromise or a SIGINT/SIGTERM.
+  let managedDatabase: ManagedDatabase | undefined = undefined;
+  const fatal = createFatalDatabaseGuard({
+    getDatabase: () => managedDatabase,
+    reportCloseError: (error) => {
+      process.stderr.write(`whetstone card MCP server database close failed: ${String(error)}\n`);
+    },
+    exit: (code) => process.exit(code)
+  });
+  managedDatabase = await openManagedDatabase({
     databaseDir: config.databaseDir,
     openPglite: async (databaseDir) => {
       const instance = new PGlite(databaseDir);
@@ -47,16 +62,17 @@ async function main(): Promise<void> {
       lock: (file, options) => lockfile.lock(file, options),
       onCompromised: (error) => {
         process.stderr.write(`whetstone card MCP server lease compromised: ${String(error)}\n`);
-        void managedDatabase.close().finally(() => process.exit(1));
+        fatal.trigger(1);
       }
     })
   });
-  const { pglite, db } = managedDatabase;
+  const database = managedDatabase;
+  const { pglite, db } = database;
   // Once the lease is held, every later startup failure — migrations, the attempt sweep, building the
   // lexical service/card server, or connecting the stdio transport — must close PGlite and
   // release-or-retain the lease before exiting (#805); otherwise this failed process keeps the
   // directory locked via the live heartbeat and blocks the app/backup/MCP until it is killed.
-  await runManagedBootstrap(managedDatabase, async () => {
+  await runManagedBootstrap(database, async () => {
     await runMigrations(pglite);
     await expireCardCreationAttempts(db, new Date());
 
@@ -86,14 +102,10 @@ async function main(): Promise<void> {
     });
 
     // Release the lease on shutdown so the running app (or the next MCP invocation) can reclaim the
-    // directory. Idempotent by construction of `managedDatabase.close`.
-    let shuttingDown = false;
+    // directory, through the same idempotent guard a lease compromise uses so a signal and a compromise
+    // never tear down twice. Idempotent by construction of `managedDatabase.close`.
     const shutdown = (): void => {
-      if (shuttingDown) {
-        return;
-      }
-      shuttingDown = true;
-      void managedDatabase.close().finally(() => process.exit(0));
+      fatal.trigger(0);
     };
     process.on("SIGINT", shutdown);
     process.on("SIGTERM", shutdown);
