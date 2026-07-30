@@ -18,6 +18,7 @@ import {
   type WordPosSeekLike
 } from "../features/lexical/wordnetLexicalProvider.js";
 import { createDefaultCurrentUserProvider } from "../identity/currentUser.js";
+import { runManagedBootstrap } from "./mcpBootstrap.js";
 import { createMcpCardServer } from "./mcpServer.js";
 
 // The local stdio MCP bootstrap for the card surface (#717 preview, #718 commit). Coverage-excluded,
@@ -51,56 +52,56 @@ async function main(): Promise<void> {
     })
   });
   const { pglite, db } = managedDatabase;
-  try {
+  // Once the lease is held, every later startup failure — migrations, the attempt sweep, building the
+  // lexical service/card server, or connecting the stdio transport — must close PGlite and
+  // release-or-retain the lease before exiting (#805); otherwise this failed process keeps the
+  // directory locked via the live heartbeat and blocks the app/backup/MCP until it is killed.
+  await runManagedBootstrap(managedDatabase, async () => {
     await runMigrations(pglite);
     await expireCardCreationAttempts(db, new Date());
-  } catch (error) {
-    // Startup failure releases the lease so the directory stays reopenable.
-    await managedDatabase.close();
-    throw error;
-  }
 
-  const wordpos = new WordPOS();
-  const lexical = createLexicalRelationService({
-    wordnet: createWordNetLexical(wordpos as unknown as WordPosSeekLike),
-    lemmatize: winkLemmatizer
+    const wordpos = new WordPOS();
+    const lexical = createLexicalRelationService({
+      wordnet: createWordNetLexical(wordpos as unknown as WordPosSeekLike),
+      lemmatize: winkLemmatizer
+    });
+
+    const server = createMcpCardServer({
+      preview: {
+        attemptTtlMs: cardCreationAttemptTtlMs,
+        createId: () => randomUUID(),
+        db,
+        lexical,
+        now: () => new Date()
+      },
+      commit: {
+        createId: () => randomUUID(),
+        db,
+        now: () => new Date()
+      },
+      currentUser: createDefaultCurrentUserProvider(),
+      log: (line) => {
+        process.stderr.write(`${line}\n`);
+      }
+    });
+
+    // Release the lease on shutdown so the running app (or the next MCP invocation) can reclaim the
+    // directory. Idempotent by construction of `managedDatabase.close`.
+    let shuttingDown = false;
+    const shutdown = (): void => {
+      if (shuttingDown) {
+        return;
+      }
+      shuttingDown = true;
+      void managedDatabase.close().finally(() => process.exit(0));
+    };
+    process.on("SIGINT", shutdown);
+    process.on("SIGTERM", shutdown);
+
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+    process.stderr.write("whetstone card MCP server ready on stdio\n");
   });
-
-  const server = createMcpCardServer({
-    preview: {
-      attemptTtlMs: cardCreationAttemptTtlMs,
-      createId: () => randomUUID(),
-      db,
-      lexical,
-      now: () => new Date()
-    },
-    commit: {
-      createId: () => randomUUID(),
-      db,
-      now: () => new Date()
-    },
-    currentUser: createDefaultCurrentUserProvider(),
-    log: (line) => {
-      process.stderr.write(`${line}\n`);
-    }
-  });
-
-  // Release the lease on shutdown so the running app (or the next MCP invocation) can reclaim the
-  // directory. Idempotent by construction of `managedDatabase.close`.
-  let shuttingDown = false;
-  const shutdown = (): void => {
-    if (shuttingDown) {
-      return;
-    }
-    shuttingDown = true;
-    void managedDatabase.close().finally(() => process.exit(0));
-  };
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
-
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  process.stderr.write("whetstone card MCP server ready on stdio\n");
 }
 
 main().catch((error: unknown) => {
