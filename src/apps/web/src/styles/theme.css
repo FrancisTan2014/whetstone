@@ -1446,6 +1446,22 @@
   text-align: center;
 }
 
+/* An unresolved PDF figure placeholder (#806): the page-identifying fallback label rendered in place of
+   the missing image, so the figure reads as a real construct awaiting correction rather than an empty
+   surface. Muted and boxed to read as a placeholder, distinct from the caption below it. */
+.readerFigurePlaceholder {
+  width: 100%;
+  margin: 0;
+  padding: 1rem;
+  border: 1px dashed var(--color-border);
+  border-radius: 0.25rem;
+  color: var(--color-text-muted);
+  font-family: var(--font-sans);
+  font-size: 0.85em; /* em so the label scales with --reading-size on A+/A− (#233). */
+  font-style: italic;
+  text-align: center;
+}
+
 /*
  * Reader readability (#61): clean rendering of real-world content — lists, code, tables,
  * blockquotes, footnotes — to PRODUCT.md targets. `.readerBlock` owns the even vertical
