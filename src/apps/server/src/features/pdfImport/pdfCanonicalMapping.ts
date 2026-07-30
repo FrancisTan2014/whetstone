@@ -149,6 +149,14 @@ function figureFallbackLabel(pageNumber: number): string {
   return `Figure from PDF page ${pageNumber} (image not yet extracted)`;
 }
 
+// The non-decorative alt text for a RESOLVED figure whose image bytes were preserved (#807): prefer the
+// picture's own caption (the most descriptive text a reader/screen-reader benefits from), else a plain
+// page locator. Never empty, so a resolved figure is never treated as decorative/aria-hidden.
+function resolvedFigureAlt(item: StructuredDocItem): string {
+  const caption = figureCaptionText(item);
+  return caption.length > 0 ? caption : `Figure from PDF page ${item.pageNumber}`;
+}
+
 // The caption text for an unresolved figure: docling emits a picture's caption as a `caption` child, so
 // prefer the first such child's text; fall back to the picture item's own text. Empty when neither
 // carries any, so the placeholder figure omits its optional `figureCaption`.
@@ -158,18 +166,19 @@ function figureCaptionText(item: StructuredDocItem): string {
   return caption;
 }
 
-// Map a picture/figure construct to a canonical `figure` placeholder (#806): a null-image `image` child
-// (no resolved `imageResourceId`/`src` yet) carrying a page-identifying non-decorative fallback label,
-// plus its extracted caption as an optional `figureCaption`. The figure is a normal block whose evidence
-// (page/geometry/confidence/label) is keyed like any other, so the unresolved image is visible and
-// correctable instead of erasing the readable document.
+// Map a picture/figure construct to a canonical `figure` block. When the worker rendered the picture and
+// the server adopted its artifact (#807), the `image` child carries the content-addressed
+// `imageResourceId` (the artifact's sha256, which is the id `ImageResourceStore` stores it under) so the
+// Reader serves the real image. When no artifact was adopted, it stays the #806 null-image placeholder
+// carrying a page-identifying fallback label. Either way the picture's caption rides along as an optional
+// `figureCaption`, and the figure is a normal block whose evidence is keyed like any other.
 function figureNode(item: StructuredDocItem): DocumentNodeJSON {
-  const content: DocumentNodeJSON[] = [
-    {
-      attrs: { alt: figureFallbackLabel(item.pageNumber), imageResourceId: null, src: null },
-      type: "image"
-    }
-  ];
+  const artifact = item.imageArtifact;
+  const imageAttrs =
+    artifact !== undefined
+      ? { alt: resolvedFigureAlt(item), imageResourceId: artifact.sha256, src: null }
+      : { alt: figureFallbackLabel(item.pageNumber), imageResourceId: null, src: null };
+  const content: DocumentNodeJSON[] = [{ attrs: imageAttrs, type: "image" }];
   const caption = figureCaptionText(item);
   if (caption.length > 0) {
     content.push({ content: inlineContent(caption), type: "figureCaption" });
@@ -326,7 +335,10 @@ export function mapStructuredDocument(document: StructuredDocument): PdfCanonica
     if (block.node.type === "unknown") {
       unmapped.add(block.label);
     }
-    if (block.node.type === "figure") {
+    // Only a figure whose image was NOT preserved (#806 placeholder) is an unresolved-figure review
+    // warning. A figure whose artifact was adopted (#807) carries a resolved `imageResourceId`, so it is
+    // a fully readable image and must not inflate the warning count.
+    if (block.node.type === "figure" && block.source.imageArtifact === undefined) {
       unresolvedFigureCount += 1;
     }
   }

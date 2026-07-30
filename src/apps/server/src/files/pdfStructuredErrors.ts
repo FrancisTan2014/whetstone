@@ -30,6 +30,7 @@ export type PdfStructuredFailureKind =
   | "memory_ceiling_unsupported"
   | "child_crash"
   | "cancelled"
+  | "artifact_integrity"
   | "cleanup";
 
 export type PdfStructuredFailure = Readonly<{
@@ -139,6 +140,20 @@ export function cancelledFailure(): PdfStructuredFailure {
     kind: "cancelled",
     what: "The conversion was cancelled before it completed.",
     remedy: "Start the import again when ready."
+  });
+}
+
+// A rendered-picture artifact the worker emitted could not be trusted onto the canonical figure (#807):
+// its manifest path escaped the range directory, the file could not be read, or its digest/length/PNG
+// dimensions did not match the manifest. This is infra corruption (a tampered or lost artifact), not a
+// document-content problem, so the import fails loudly rather than silently dropping or mis-serving the
+// image — never a substitute for the #806 unresolved-placeholder path, which is a normal content outcome.
+export function artifactIntegrityFailure(detail: string): PdfStructuredFailure {
+  return Object.freeze({
+    kind: "artifact_integrity",
+    what: `A rendered-figure artifact failed its integrity check: ${detail}`,
+    remedy:
+      "Re-run the import; if it recurs, the server temp/stage directory may be corrupt or full."
   });
 }
 

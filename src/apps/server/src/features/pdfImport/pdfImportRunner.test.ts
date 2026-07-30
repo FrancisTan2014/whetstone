@@ -1,5 +1,6 @@
 import { PGlite } from "@electric-sql/pglite";
-import { mkdtemp, rm, stat, truncate } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdtemp, rm, stat, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -39,6 +40,7 @@ import {
   commitRange,
   getAttempt,
   getCommittedRangeIndices,
+  getCommittedRanges,
   insertQueuedAttempt,
   markCancelled,
   recoverInterruptedAttempts,
@@ -67,6 +69,60 @@ const rawUnsupported = JSON.stringify({
   ...payloadForPages(1, 1),
   doclingSchema: { name: "docling-core", version: "9.9.9" }
 });
+
+// A structurally valid PNG (signature + IHDR + short tail) whose dimensions `readPngDimensions` parses.
+function pngBytes(width: number, height: number, tail: number): Uint8Array {
+  const bytes = new Uint8Array(24 + tail);
+  bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+  const view = new DataView(bytes.buffer);
+  view.setUint32(8, 13);
+  bytes.set([0x49, 0x48, 0x44, 0x52], 12);
+  view.setUint32(16, width);
+  view.setUint32(20, height);
+  for (let index = 0; index < tail; index += 1) {
+    bytes[24 + index] = (index * 5 + 1) & 0xff;
+  }
+  return bytes;
+}
+
+// A runner that writes one rendered-figure PNG into the per-range artifact directory the runner prepared,
+// and returns a range payload whose single body picture references it (#807). `sha256` lets a test emit a
+// DELIBERATELY wrong digest to exercise the loud integrity-failure path.
+function artifactWritingRunner(png: Uint8Array, sha256: string): DoclingRunner {
+  return {
+    probe: () => Promise.resolve(nativeProbe(1)),
+    async convertRange(_pdfPath, startPage, endPage, _signal, artifactDir) {
+      await writeFile(join(artifactDir!, "fig-0.png"), png);
+      const payload = {
+        schemaVersion: RANGE_CONVERSION_SCHEMA_VERSION,
+        doclingSchema,
+        pages: [{ pageNumber: startPage, hasNativeText: true }],
+        body: [
+          {
+            label: "picture",
+            pageNumber: startPage,
+            boundingBox: { left: 0, top: 0, right: 10, bottom: 10 },
+            charSpan: [0, 0] as const,
+            confidence: 0.9,
+            text: "",
+            children: [],
+            imageArtifact: {
+              path: "fig-0.png",
+              contentType: "image/png" as const,
+              sha256,
+              byteLength: png.byteLength,
+              width: 320,
+              height: 200
+            }
+          }
+        ],
+        furniture: []
+      };
+      void endPage;
+      return { status: "ok", raw: JSON.stringify(payload) };
+    }
+  };
+}
 
 // Build a probe outcome whose pages are all born-digital (native text), the default a #744 probe reports
 // for a text-bearing PDF. Every existing runner test asserts the born-digital path (no OCR), so it routes
@@ -175,6 +231,37 @@ describe("processNextPdfImport", () => {
       0, 1, 2
     ]);
     await expect(stat(handlePath)).resolves.toBeDefined();
+  });
+
+  it("adopts a rendered figure artifact and commits its stage-relative path (#807)", async () => {
+    await seedStaged("a1");
+    const png = pngBytes(320, 200, 16);
+    const sha256 = createHash("sha256").update(png).digest("hex");
+    const deps = buildDeps({ runner: artifactWritingRunner(png, sha256) });
+
+    expect(await processNextPdfImport(deps)).toEqual({
+      status: "awaiting_review",
+      attemptId: "a1"
+    });
+
+    // The committed range payload carries the adopted picture with its path rewritten to the
+    // stage-relative `<rangeIndex>/fig-0.png` form publication reads back.
+    const ranges = await getCommittedRanges(db, "a1", PDF_IMPORT_ADAPTER_FINGERPRINT);
+    expect(ranges[0]!.body[0]!.imageArtifact).toMatchObject({
+      path: "0/fig-0.png",
+      sha256
+    });
+  });
+
+  it("fails loudly when a rendered figure artifact does not match its manifest (#807)", async () => {
+    await seedStaged("a1");
+    const png = pngBytes(320, 200, 16);
+    // A well-formed but WRONG digest: the file is fine, the manifest lies — loud integrity corruption.
+    const deps = buildDeps({ runner: artifactWritingRunner(png, "0".repeat(64)) });
+
+    const result = await processNextPdfImport(deps);
+    expect(result).toMatchObject({ status: "failed" });
+    expect((await getAttempt(db, DEFAULT_USER_ID, "a1"))?.failure?.kind).toBe("artifact_integrity");
   });
 
   it("resumes after the last committed range without re-probing", async () => {

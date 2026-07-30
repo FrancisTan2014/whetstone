@@ -24,8 +24,10 @@ import {
   tooLargeFailure,
   tooManyPagesFailure,
   unsupportedSchemaFailure,
+  artifactIntegrityFailure,
   type PdfStructuredFailure
 } from "../../files/pdfStructuredErrors.js";
+import { adoptRangeArtifacts, sumAdoptedArtifactBytes } from "./pdfImportArtifacts.js";
 import type { PdfImportStageStore } from "./pdfImportStage.js";
 import {
   PDF_IMPORT_ADAPTER_FINGERPRINT,
@@ -34,6 +36,7 @@ import {
   clearStagePath,
   commitRange,
   getCommittedRangeIndices,
+  getCommittedRanges,
   markAwaitingReview,
   markFailed,
   setPhase,
@@ -208,6 +211,10 @@ async function convertClaimed(
 
   const ranges = pageRangesFor(probed.pageCount, pageRangeSize);
   const committed = await getCommittedRangeIndices(deps.db, claimed.id, fingerprint);
+  // Seed the per-attempt adopted-figure byte budget from ranges already committed by an earlier run, so a
+  // resume enforces the 128 MiB cap across the whole attempt rather than only the ranges it re-converts.
+  const committedRanges = await getCommittedRanges(deps.db, claimed.id, fingerprint);
+  let adoptedBytes = sumAdoptedArtifactBytes(committedRanges);
   // Resume after the last committed range; committed ranges are already validated and idempotent, so a
   // restart or retry never re-converts them.
   for (let index = nextRangeIndex(committed, ranges.length); index < ranges.length; index += 1) {
@@ -215,7 +222,16 @@ async function convertClaimed(
       return { status: "fenced", attemptId: claimed.id };
     }
     const { startPage, endPage } = ranges[index]!;
-    const run = await deps.runner.convertRange(conversionHandle.path, startPage, endPage, signal);
+    // A FRESH artifact directory per (re-)converted range: any half-written picture from a prior
+    // uncommitted attempt is wiped first, so the worker writes into a clean slate the adoption can trust.
+    const artifactDir = await deps.stageStore.prepareRangeArtifactDir(stagePath, index);
+    const run = await deps.runner.convertRange(
+      conversionHandle.path,
+      startPage,
+      endPage,
+      signal,
+      artifactDir
+    );
     if (run.status === "failure") {
       if (run.failure.kind === "cancelled") {
         return { status: "fenced", attemptId: claimed.id };
@@ -229,6 +245,19 @@ async function convertClaimed(
     if (parsed.status === "unsupported_schema") {
       return fail(deps, claimed, runToken, stagePath, unsupportedSchemaFailure(parsed.version));
     }
+    // Validate and adopt this range's rendered figures before checkpointing it: an integrity mismatch is
+    // loud corruption (fail), while an over-bound picture is stripped to a #806 placeholder in the adjusted
+    // payload. Only the adjusted payload is committed, so a resume reads back exactly what was adopted.
+    const adoption = await adoptRangeArtifacts({
+      payload: parsed.value,
+      rangeIndex: index,
+      adoptedBytesSoFar: adoptedBytes,
+      readArtifact: (fileName) => deps.stageStore.readArtifact(stagePath, `${index}/${fileName}`)
+    });
+    if (adoption.status === "fatal") {
+      return fail(deps, claimed, runToken, stagePath, artifactIntegrityFailure(adoption.detail));
+    }
+    adoptedBytes += adoption.adoptedBytes;
     const applied = await commitRange(deps.db, {
       attemptId: claimed.id,
       runToken,
@@ -236,7 +265,7 @@ async function convertClaimed(
       startPage,
       endPage,
       fingerprint,
-      payload: parsed.value,
+      payload: adoption.payload,
       now: deps.now()
     });
     if (!applied) {

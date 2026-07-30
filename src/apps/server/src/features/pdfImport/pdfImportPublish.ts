@@ -10,11 +10,13 @@ import {
 
 import type { DbClient } from "../../db/dbClient.js";
 import { entries, pdfBlockEvidence, workMeta, workSources } from "../../db/schema.js";
-import { type SourceFileStore } from "../../files/sourceFileStore.js";
+import type { ImageResourceStore } from "../../files/imageResourceStore.js";
+import { hashBytes, type SourceFileStore } from "../../files/sourceFileStore.js";
 import { writeReadingUnits } from "../content/blockWriter.js";
 import { insertInBatches } from "../content/insertBatching.js";
 import { claimUploadedSource, findClaimedWork } from "../content/sourceClaims.js";
 import { resolveNamedAuthor } from "../library/authorResolver.js";
+import { collectAdoptedArtifacts } from "./pdfImportArtifacts.js";
 import { mapStructuredDocument, type PdfBlockEvidence } from "./pdfCanonicalMapping.js";
 import {
   bindStagedPdfAttempt,
@@ -153,9 +155,13 @@ export type PdfImportPublishDependencies = Readonly<{
   now: () => Date;
   // The staged-bytes reader (#721) and the immutable source-file store (#706): publication reads the
   // original uploaded PDF back from its retained stage and writes it through the source-file boundary so
-  // every published Work keeps its source bytes for provenance/export/re-ingestion.
-  stageStore: Pick<PdfImportStageStore, "readStage" | "removeStage">;
+  // every published Work keeps its source bytes for provenance/export/re-ingestion. `readArtifact` reads
+  // each adopted rendered-figure PNG (#807) back from the same retained stage.
+  stageStore: Pick<PdfImportStageStore, "readStage" | "readArtifact" | "removeStage">;
   sourceFileStore: Pick<SourceFileStore, "writePdfSource" | "deleteSourceFile">;
+  // The content-addressed image store (#807): each adopted figure PNG is stored here under its sha256, the
+  // same id the canonical `image` node carries as `imageResourceId`, so the existing Reader serves it.
+  imageResourceStore: Pick<ImageResourceStore, "store">;
   // A retained stage that could not be removed after a terminal publication stays VISIBLE (logged, never
   // silently swallowed); the durable provenance already lives in the source-file store by then.
   logCleanupFailure: PdfImportCleanupLogger;
@@ -240,6 +246,26 @@ async function writeBlockEvidence(
 
 function describeError(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
+}
+
+// Read each adopted rendered-figure PNG (#807) back from the attempt's retained stage and store it in the
+// content-addressed image store under its sha256 (the id the canonical `image` node already carries). The
+// stage was validated at adoption time; a digest mismatch here means the retained bytes were corrupted
+// after commit, so it throws loudly rather than storing wrong-content bytes under a trusted id.
+async function storeAdoptedFigureImages(
+  deps: PdfImportPublishDependencies,
+  stagePath: string,
+  document: Parameters<typeof collectAdoptedArtifacts>[0]
+): Promise<void> {
+  for (const artifact of collectAdoptedArtifacts(document)) {
+    const bytes = await deps.stageStore.readArtifact(stagePath, artifact.path);
+    if (hashBytes(bytes) !== artifact.sha256) {
+      throw new Error(
+        `Rendered-figure artifact "${artifact.path}" failed its digest check at publication (corrupt retained stage).`
+      );
+    }
+    await deps.imageResourceStore.store({ bytes, contentType: "image/png" });
+  }
 }
 
 // Remove the retained stage once its bytes are safely durable (persisted to the source-file store for a
@@ -341,6 +367,13 @@ export async function publishConvertedPdfImport(
   // correctable figures and are recorded as a review warning on the successful publication, never a
   // refusal.
   const unresolvedFigureCount = mapping.unresolvedFigureCount;
+
+  // Persist every adopted rendered-figure PNG (#807) into the content-addressed image store BEFORE the
+  // Work is committed, so each resolved figure's `imageResourceId` (its sha256) already resolves when the
+  // Reader serves it. The store is content-addressed and idempotent, so a reopened identical upload simply
+  // re-confirms the already-present bytes. A digest mismatch here means the retained stage was corrupted
+  // after commit — loud infra corruption, never a silent mis-serve.
+  await storeAdoptedFigureImages(deps, stagePath, document);
 
   const title = resolveTitle(
     publication.enteredTitle,

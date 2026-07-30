@@ -108,7 +108,10 @@ export interface DoclingRunner {
     pdfPath: string,
     startPage: number,
     endPage: number,
-    signal: AbortSignal | undefined
+    signal: AbortSignal | undefined,
+    // When set, the worker renders each body picture into this server-owned directory and references it
+    // from the payload (#807). Omitted (probe/whole-doc/back-compat callers) means no picture extraction.
+    artifactDir?: string | null
   ): Promise<RangeRunOutcome>;
 }
 
@@ -610,9 +613,14 @@ export function createDoclingRunner(dependencies: DoclingRunnerDependencies): Do
     pdfPath: string,
     startPage: number,
     endPage: number,
-    signal: AbortSignal | undefined
+    signal: AbortSignal | undefined,
+    artifactDir?: string | null
   ): Promise<RangeRunOutcome> {
-    const result = await spawn(["--range", pdfPath, String(startPage), String(endPage)], signal);
+    const args = ["--range", pdfPath, String(startPage), String(endPage)];
+    if (artifactDir !== undefined && artifactDir !== null) {
+      args.push(artifactDir);
+    }
+    const result = await spawn(args, signal);
     return "failure" in result
       ? { status: "failure", failure: result.failure }
       : { status: "ok", raw: result.stdout };
