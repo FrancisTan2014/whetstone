@@ -46,8 +46,14 @@ process.exitCode = await runBackupCommand(
       },
       acquireLease: createDatabaseLeaseAcquirer({
         lock: (file, options) => lockfile.lock(file, options),
+        // Losing the exclusive lease mid-backup is fatal: another process may have reclaimed the
+        // directory, so this process can no longer prove it is the sole PGlite owner. Continuing to
+        // dump could overlap a reclaimed owner — exactly the unsafe concurrency #805 prevents — so
+        // fail loud and abort after closing PGlite and releasing the lease, matching the server/MCP
+        // fatal handling.
         onCompromised: (error) => {
-          console.error("[data:backup] database lease compromised", error);
+          console.error("[data:backup] database lease compromised; aborting backup", error);
+          void managedDatabase.close().finally(() => process.exit(1));
         }
       })
     });
