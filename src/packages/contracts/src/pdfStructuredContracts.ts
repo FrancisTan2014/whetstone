@@ -43,6 +43,22 @@ export const MAX_PAGE_COUNT = 3000;
 
 export type BoundingBox = Readonly<{ left: number; top: number; right: number; bottom: number }>;
 
+// A manifest reference to ONE rendered picture the worker extracted to a server-owned artifact file
+// (#807). It carries only metadata — never the bytes: a root-relative `path` inside the range artifact
+// directory, the fixed `image/png` content type, the SHA-256 of the exact PNG bytes (the content-address
+// the ImageResourceStore later stores under), the byte length, and the pixel dimensions. The server
+// validates every field against the file on disk (path stays inside the root, digest/length/dimensions
+// match) before adopting it; an over-bound or unrenderable picture carries no ref and falls back to the
+// #806 unresolved-placeholder path.
+export type PdfImageArtifactRef = Readonly<{
+  path: string;
+  contentType: "image/png";
+  sha256: string;
+  byteLength: number;
+  width: number;
+  height: number;
+}>;
+
 export interface StructuredDocItem {
   // The raw docling label (e.g. "section_header", "table", "picture", "formula", or an unknown one).
   // Kept verbatim — never narrowed to an enum — so an unrecognized item is preserved, not dropped.
@@ -55,6 +71,10 @@ export interface StructuredDocItem {
   readonly confidence: number;
   readonly text: string;
   readonly children: readonly StructuredDocItem[];
+  // For a picture/figure item whose image the worker could render (#807): the manifest ref to its
+  // extracted PNG artifact. Absent for every non-picture item and for a picture the worker could not
+  // render or that exceeded the per-picture size bound (which stays a #806 placeholder).
+  readonly imageArtifact?: PdfImageArtifactRef | undefined;
 }
 
 export type StructuredPage = Readonly<{ pageNumber: number; hasNativeText: boolean }>;
@@ -106,6 +126,20 @@ const boundingBoxSchema = z
   .object({ left: z.number(), top: z.number(), right: z.number(), bottom: z.number() })
   .strict();
 
+// One rendered-picture artifact manifest ref (#807). `sha256` is a lowercase hex SHA-256 digest; the
+// server re-verifies it (and the length/dimensions) against the file before adoption, so an untrusted or
+// tampered ref cannot smuggle a wrong-size or wrong-content image into publication.
+const imageArtifactSchema = z
+  .object({
+    path: z.string().min(1),
+    contentType: z.literal("image/png"),
+    sha256: z.string().regex(/^[0-9a-f]{64}$/, "sha256 must be 64 lowercase hex characters."),
+    byteLength: z.number().int().positive(),
+    width: z.number().int().positive(),
+    height: z.number().int().positive()
+  })
+  .strict();
+
 const docItemSchema: z.ZodType<StructuredDocItem> = z.lazy(() =>
   z
     .object({
@@ -117,7 +151,8 @@ const docItemSchema: z.ZodType<StructuredDocItem> = z.lazy(() =>
         .refine(([start, end]) => start <= end, { message: "charSpan start must be <= end." }),
       confidence: z.number().min(0).max(1),
       text: z.string(),
-      children: z.array(docItemSchema)
+      children: z.array(docItemSchema),
+      imageArtifact: imageArtifactSchema.optional()
     })
     .strict()
 );
