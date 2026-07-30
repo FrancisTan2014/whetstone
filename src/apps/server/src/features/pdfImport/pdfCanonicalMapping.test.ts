@@ -1,6 +1,6 @@
 import type { StructuredDocItem, StructuredDocument, StructuredPage } from "@whetstone/contracts";
 import { STRUCTURED_DOCUMENT_SCHEMA_VERSION } from "@whetstone/contracts";
-import { parseDocument } from "@whetstone/document";
+import { parseDocument, type DocumentNodeJSON } from "@whetstone/document";
 import {
   classifyExtractionConfidence,
   isUnmappedBlockType,
@@ -138,48 +138,66 @@ describe("mapStructuredDocument", () => {
     expect(unitTypes(result, 0)).toEqual(["footnoteTarget", "footnoteTarget", "footnoteTarget"]);
   });
 
-  it("refuses a document with a picture as image_unsupported and maps no content", () => {
-    const result = mapEn(
-      doc([
-        item({ label: "text", text: "Body" }),
-        item({
-          children: [item({ label: "caption", text: "Figure 1. A diagram." })],
-          label: "picture"
-        })
-      ])
+  it("maps a picture with a caption to a canonical figure placeholder, keeping the readable text (#806)", () => {
+    const result = mapped(
+      mapEn(
+        doc([
+          item({ label: "text", text: "Body" }),
+          item({
+            children: [item({ label: "caption", text: "Figure 1. A diagram." })],
+            label: "picture",
+            pageNumber: 4
+          })
+        ])
+      )
     );
-    expect(result.status).toBe("image_unsupported");
-    if (result.status !== "image_unsupported") {
-      throw new Error(`expected image_unsupported, got ${result.status}`);
-    }
-    expect(result.unpreservableImages).toBe(1);
+    // The readable paragraph still publishes; the picture becomes a visible figure, never a refusal.
+    expect(unitTypes(result, 0)).toEqual(["paragraph", "figure"]);
+    expect(result.unresolvedFigureCount).toBe(1);
+
+    const figure = result.units[0]!.docBlocks[1]!.node;
+    const [image, caption] = figure.content as DocumentNodeJSON[];
+    expect(image!.type).toBe("image");
+    // A non-decorative fallback label names the source page; the image is unresolved (no resource/src yet).
+    expect(image!.attrs).toMatchObject({
+      alt: "Figure from PDF page 4 (image not yet extracted)",
+      imageResourceId: null,
+      src: null
+    });
+    expect(caption!.type).toBe("figureCaption");
+    expect(caption!.content).toEqual([{ text: "Figure 1. A diagram.", type: "text" }]);
   });
 
-  it("refuses a figure label as image_unsupported", () => {
-    const result = mapEn(doc([item({ label: "figure", text: "Inline figure." })]));
-    expect(result.status).toBe("image_unsupported");
+  it("maps a captionless figure label to a figure placeholder with no caption (#806)", () => {
+    const result = mapped(mapEn(doc([item({ label: "figure", text: "" })])));
+    expect(result.unresolvedFigureCount).toBe(1);
+    const figure = result.units[0]!.docBlocks[0]!.node;
+    expect(figure.type).toBe("figure");
+    const content = figure.content as DocumentNodeJSON[];
+    expect(content).toHaveLength(1);
+    expect(content[0]!.type).toBe("image");
   });
 
-  it("counts pictures nested inside other constructs when refusing", () => {
-    const result = mapEn(
-      doc([
-        item({
-          children: [
-            item({
-              children: [item({ label: "picture", text: "" })],
-              label: "table_cell"
-            }),
-            item({ label: "figure", text: "" })
-          ],
-          label: "table_row"
-        }),
-        item({ label: "picture", text: "" })
-      ])
+  it("counts every top-level picture/figure as an unresolved figure (#806)", () => {
+    const result = mapped(
+      mapEn(
+        doc([
+          item({ label: "text", text: "Intro" }),
+          item({ label: "picture", text: "" }),
+          item({ label: "figure", text: "" })
+        ])
+      )
     );
-    if (result.status !== "image_unsupported") {
-      throw new Error(`expected image_unsupported, got ${result.status}`);
-    }
-    expect(result.unpreservableImages).toBe(3);
+    expect(unitTypes(result, 0)).toEqual(["paragraph", "figure", "figure"]);
+    expect(result.unresolvedFigureCount).toBe(2);
+  });
+
+  it("adopts a picture's own text as the caption when it has no caption child (#806)", () => {
+    const result = mapped(mapEn(doc([item({ label: "picture", text: "Standalone caption." })])));
+    const figure = result.units[0]!.docBlocks[0]!.node;
+    const caption = (figure.content as DocumentNodeJSON[])[1];
+    expect(caption!.type).toBe("figureCaption");
+    expect(caption!.content).toEqual([{ text: "Standalone caption.", type: "text" }]);
   });
 
   it("projects a table with rows into a table, marking header cells", () => {

@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   describePdfImport,
+  figuresToReviewMessage,
   noReadableContentMessage,
   ocrValidationFailedMessage,
   recognizingTextLabel
@@ -44,10 +45,35 @@ function view(
 }
 
 describe("describePdfImport", () => {
-  it("reports a published Work so the caller can open the Reader", () => {
-    const progress = describePdfImport(view({ status: "published", workEntryId: "work-9" }));
+  it("reports a published Work with no unresolved figures so the caller can open the Reader", () => {
+    const progress = describePdfImport(
+      view({ status: "published", unresolvedFigureCount: 0, workEntryId: "work-9" })
+    );
 
-    expect(progress).toEqual({ kind: "published", terminal: true, workEntryId: "work-9" });
+    expect(progress).toEqual({
+      figuresToReview: 0,
+      kind: "published",
+      terminal: true,
+      workEntryId: "work-9"
+    });
+  });
+
+  it("carries the unresolved-figure warning count on a published Work (#806)", () => {
+    const progress = describePdfImport(
+      view({ status: "published", unresolvedFigureCount: 2, workEntryId: "work-fig" })
+    );
+
+    expect(progress).toEqual({
+      figuresToReview: 2,
+      kind: "published",
+      terminal: true,
+      workEntryId: "work-fig"
+    });
+  });
+
+  it("phrases the figures-to-review message, pluralized (#806)", () => {
+    expect(figuresToReviewMessage(1)).toBe("Imported with 1 figure to review.");
+    expect(figuresToReviewMessage(3)).toBe("Imported with 3 figures to review.");
   });
 
   it("refuses a single validation-failed page with the recognition-failed copy", () => {
