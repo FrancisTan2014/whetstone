@@ -1,5 +1,5 @@
 import { PGlite } from "@electric-sql/pglite";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
@@ -26,9 +26,14 @@ import {
 import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
 import {
   createSourceFileStore,
+  hashBytes,
   resolveWithinDirectory,
   type SourceFileStore
 } from "../../files/sourceFileStore.js";
+import {
+  createImageResourceStore,
+  type ImageResourceStore
+} from "../../files/imageResourceStore.js";
 import { loadWorkContent } from "../content/contentQueries.js";
 import {
   createPdfImportStageStore,
@@ -72,22 +77,27 @@ type CleanupFailure = Readonly<{ attemptId: string; stagePath: string; reason: s
 let db: DbClient;
 let stageRootDir: string;
 let sourceFilesDir: string;
+let imagesDir: string;
 let stageStore: PdfImportStageStore;
 let sourceFileStore: SourceFileStore;
+let imageResourceStore: ImageResourceStore;
 let cleanupFailures: CleanupFailure[];
 
 beforeEach(async () => {
   db = await buildDb();
   stageRootDir = await mkdtemp(join(tmpdir(), "pdf-import-publish-stage-"));
   sourceFilesDir = await mkdtemp(join(tmpdir(), "pdf-import-publish-src-"));
+  imagesDir = await mkdtemp(join(tmpdir(), "pdf-import-publish-img-"));
   stageStore = createPdfImportStageStore(stageRootDir);
   sourceFileStore = createSourceFileStore(sourceFilesDir);
+  imageResourceStore = createImageResourceStore(imagesDir);
   cleanupFailures = [];
 });
 
 afterEach(async () => {
   await rm(stageRootDir, { force: true, recursive: true });
   await rm(sourceFilesDir, { force: true, recursive: true });
+  await rm(imagesDir, { force: true, recursive: true });
 });
 
 function item(partial: Partial<StructuredDocItem> & { label: string }): StructuredDocItem {
@@ -101,6 +111,24 @@ function item(partial: Partial<StructuredDocItem> & { label: string }): Structur
     text: "",
     ...partial
   };
+}
+
+// A minimal but structurally valid PNG: the 8-byte signature followed by a well-formed IHDR chunk whose
+// width/height `readPngDimensions` parses, plus a short trailing tail so the byte length is unambiguous.
+// Adoption/publication verify the manifest's sha256/byteLength/width/height against these exact bytes, so a
+// test builds the manifest ref from the bytes this returns.
+function pngBytes(width: number, height: number, tail: number): Uint8Array {
+  const header = new Uint8Array(24 + tail);
+  header.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+  const view = new DataView(header.buffer);
+  view.setUint32(8, 13); // IHDR chunk length
+  header.set([0x49, 0x48, 0x44, 0x52], 12); // "IHDR"
+  view.setUint32(16, width);
+  view.setUint32(20, height);
+  for (let index = 0; index < tail; index += 1) {
+    header[24 + index] = (index * 7 + 3) & 0xff;
+  }
+  return header;
 }
 
 function rangePayload(
@@ -189,6 +217,7 @@ function publishDeps(db: DbClient): PdfImportPublishDependencies {
     now: () => NOW,
     stageStore,
     sourceFileStore,
+    imageResourceStore,
     logCleanupFailure: (event) => {
       cleanupFailures.push(event);
     }
@@ -515,6 +544,126 @@ describe("publishConvertedPdfImport", () => {
     expect(cleanupFailures).toEqual([]);
   });
 
+  it("preserves an extractable picture as a resolved figure whose image the reader can serve (#807)", async () => {
+    // #807: when the worker rendered a picture to a PNG artifact (its manifest ref adopted onto the range
+    // payload), publication stores those exact bytes in the content-addressed image store and the canonical
+    // figure carries a real `imageResourceId` (the bytes' sha256) instead of the #806 null placeholder.
+    const pdfBytes = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37, 0x0a, 0x07]);
+    const png = pngBytes(320, 200, 40);
+    const sha256 = hashBytes(png);
+    const figureBody: readonly StructuredDocItem[] = [
+      item({ label: "title", text: "A Study With A Rendered Figure" }),
+      item({ label: "text", text: "An opening paragraph with substantial readable prose." }),
+      item({
+        label: "picture",
+        pageNumber: 1,
+        children: [item({ label: "caption", text: "Rendered diagram." })],
+        // The adopted, stage-relative manifest ref the runner would have written after validation.
+        imageArtifact: {
+          path: "0/fig-0.png",
+          contentType: "image/png",
+          sha256,
+          byteLength: png.byteLength,
+          width: 320,
+          height: 200
+        }
+      })
+    ];
+    await driveToAwaitingReview(db, {
+      id: "att-resolved",
+      sourceHash: "f".repeat(64),
+      payload: rangePayload(figureBody, [true]),
+      totalPages: 1,
+      stageBytes: pdfBytes
+    });
+    // The adopted artifact lives in the attempt's retained stage at `<stage>/artifacts/0/fig-0.png`.
+    const artifactDir = await stageStore.prepareRangeArtifactDir("att-resolved", 0);
+    await writeFile(join(artifactDir, "fig-0.png"), png);
+    await insertPublicationIntent(db, {
+      attemptId: "att-resolved",
+      enteredTitle: null,
+      enteredAuthor: null,
+      enteredLanguage: null,
+      fileName: "resolved.pdf"
+    });
+
+    const result = published(await publishConvertedPdfImport(publishDeps(db), "att-resolved"));
+    // A resolved figure is NOT an unresolved-placeholder warning.
+    expect(result.unresolvedFigureCount).toBe(0);
+
+    const content = await loadWorkContent(db, result.work.entryId);
+    const blocks = content!.readingUnits.flatMap((unit) => unit.docBlocks ?? []);
+    const figures = blocks.filter((block) => block.type === "figure");
+    expect(figures).toHaveLength(1);
+    const figureNode = figures[0]!.node as {
+      content?: ReadonlyArray<{ type: string; attrs?: Record<string, unknown> }>;
+    };
+    const image = figureNode.content?.find((child) => child.type === "image");
+    // The canonical image node carries the content-addressed id (the bytes' sha256), not a null placeholder.
+    expect(image?.attrs?.["imageResourceId"]).toBe(sha256);
+    expect(String(image?.attrs?.["alt"] ?? "").length).toBeGreaterThan(0);
+    expect(JSON.stringify(figureNode)).toContain("Rendered diagram.");
+
+    // The exact PNG bytes are now in the content-addressed store under that id, so the reader serves them.
+    const stored = await imageResourceStore.read(sha256);
+    expect(stored?.contentType).toBe("image/png");
+    expect(stored?.bytes).toEqual(png);
+
+    // No unresolved-figure warning is persisted, and the DTO reports a clean publication.
+    const publication = await getPublication(db, "att-resolved");
+    expect(publication?.unresolvedFigureCount).toBeNull();
+    expect(publication?.unpreservableImages).toBeNull();
+    expect(cleanupFailures).toEqual([]);
+  });
+
+  it("fails loudly when a retained figure artifact is corrupted before publication (#807)", async () => {
+    // Defense in depth: the artifact was validated at adoption, so a digest mismatch at publication means the
+    // retained stage bytes were corrupted afterward. Publication must refuse loudly rather than store
+    // wrong-content bytes under a trusted content-addressed id.
+    const png = pngBytes(64, 48, 8);
+    const sha256 = hashBytes(png);
+    const figureBody: readonly StructuredDocItem[] = [
+      item({ label: "text", text: "Readable prose before the figure." }),
+      item({
+        label: "picture",
+        children: [item({ label: "caption", text: "A caption." })],
+        imageArtifact: {
+          path: "0/fig-0.png",
+          contentType: "image/png",
+          sha256,
+          byteLength: png.byteLength,
+          width: 64,
+          height: 48
+        }
+      })
+    ];
+    await driveToAwaitingReview(db, {
+      id: "att-corrupt",
+      sourceHash: "a".repeat(64),
+      payload: rangePayload(figureBody, [true]),
+      totalPages: 1
+    });
+    // Write DIFFERENT bytes than the manifest claims (same declared length, different content).
+    const tampered = pngBytes(64, 48, 8);
+    tampered[tampered.byteLength - 1] ^= 0xff;
+    const artifactDir = await stageStore.prepareRangeArtifactDir("att-corrupt", 0);
+    await writeFile(join(artifactDir, "fig-0.png"), tampered);
+    await insertPublicationIntent(db, {
+      attemptId: "att-corrupt",
+      enteredTitle: null,
+      enteredAuthor: null,
+      enteredLanguage: null,
+      fileName: "corrupt.pdf"
+    });
+
+    await expect(publishConvertedPdfImport(publishDeps(db), "att-corrupt")).rejects.toThrow(
+      /digest check/
+    );
+    // Nothing was stored under the trusted id, and no Work was linked to the publication.
+    expect(await imageResourceStore.read(sha256)).toBeUndefined();
+    expect((await getPublication(db, "att-corrupt"))?.workEntryId).toBeNull();
+  });
+
   it("records no unresolved-figure warning for a fully readable PDF with no pictures (#806)", async () => {
     // The warning is figure-driven: a plain readable document publishes with a zero count that the DTO
     // reports, and the legacy unpreservable-images marker is never written by the new path.
@@ -759,6 +908,7 @@ describe("publishConvertedPdfImport", () => {
         ...publishDeps(db),
         stageStore: {
           readStage: stageStore.readStage,
+          readArtifact: stageStore.readArtifact,
           removeStage: () => Promise.reject(rejection)
         }
       };

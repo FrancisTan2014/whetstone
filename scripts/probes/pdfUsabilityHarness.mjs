@@ -534,7 +534,7 @@ async function resolveOcrConversionSource(path, probePages, args, ocr, cleanupPa
 // must not pay Docling convert time or memory. An out-of-bound early return still records the real
 // sizeBytes/pageCount that trigger the exclusion; its observation is a never-classified placeholder because
 // eligibility drops the case via `facts` before any observation is read.
-async function convertOne(python, contracts, mapStructuredDocument, path, args, bounds, ocr) {
+async function convertOne(python, contracts, mapStructuredDocument, adoptRangeArtifacts, path, args, bounds, ocr) {
   const start = process.hrtime.bigint();
   let peakBytes = 0;
   const elapsed = () => Number(process.hrtime.bigint() - start) / 1e6;
@@ -603,11 +603,18 @@ async function convertOne(python, contracts, mapStructuredDocument, path, args, 
     const conversionPath = conversion.path;
 
     const ranges = [];
+    // Give each range its own server-owned artifact directory (as the production runner does inside the
+    // attempt stage) and adopt the worker's rendered-figure PNGs through the SAME gate, so a resolved figure
+    // is measured as the import lane resolves it rather than always falling to a #806 placeholder (#807).
+    let adoptedBytesSoFar = 0;
     for (let startPage = 1; startPage <= pageCount; startPage += args.rangeSize) {
       const endPage = Math.min(startPage + args.rangeSize - 1, pageCount);
+      const rangeIndex = ranges.length;
+      const artifactDir = mkdtempSync(join(ocr.tempRoot, "artifacts-"));
+      cleanupPaths.push(artifactDir);
       const range = await runWorker(
         python,
-        ["--range", conversionPath, String(startPage), String(endPage)],
+        ["--range", conversionPath, String(startPage), String(endPage), artifactDir],
         args.timeoutMs,
         args.memoryMib
       );
@@ -632,7 +639,21 @@ async function convertOne(python, contracts, mapStructuredDocument, path, args, 
           peakBytes,
           elapsedMs: elapsed()
         };
-      ranges.push(parsed.value);
+      const adopted = await adoptRangeArtifacts({
+        payload: parsed.value,
+        rangeIndex,
+        adoptedBytesSoFar,
+        readArtifact: (fileName) => Promise.resolve(readFileSync(join(artifactDir, fileName)))
+      });
+      if (adopted.status === "fatal")
+        return {
+          observation: { kind: "conversion_failed", detail: `artifact ${adopted.detail}` },
+          pageCount,
+          peakBytes,
+          elapsedMs: elapsed()
+        };
+      adoptedBytesSoFar += adopted.adoptedBytes;
+      ranges.push(adopted.payload);
     }
 
     // Provenance is always the IMMUTABLE ORIGINAL (byte length + hash), even when the converted bytes came
@@ -668,6 +689,11 @@ async function loadTypeScriptDeps() {
     const ocrPolicy = await import("../../src/packages/domain/src/pdfOcr.js");
     const mapper =
       await import("../../src/apps/server/src/features/pdfImport/pdfCanonicalMapping.js");
+    // The SAME server-side adoption gate the production runner applies to the worker's rendered-figure
+    // artifacts (#807), so a resolved figure is measured exactly as the import lane resolves it: read each
+    // ref's PNG, verify type/digest/length/dimensions, and adopt (or over-bound-strip to a #806 placeholder).
+    const artifacts =
+      await import("../../src/apps/server/src/features/pdfImport/pdfImportArtifacts.js");
     // Reuse the production runner's platform fence so the harness supports exactly the platforms the real
     // import lane does (a single source of truth for "where the memory ceiling can be enforced"), and its
     // server-issued staged-handle mint so the OCR adapter reads the corpus PDF exactly as it reads an
@@ -687,6 +713,7 @@ async function loadTypeScriptDeps() {
       contracts,
       domain,
       mapStructuredDocument: mapper.mapStructuredDocument,
+      adoptRangeArtifacts: artifacts.adoptRangeArtifacts,
       canEnforceStructuredPdfMemoryCeiling: adapter.canEnforceStructuredPdfMemoryCeiling,
       issueStagedFileHandle: adapter.issueStagedFileHandle,
       classifyOcrRouting: ocrPolicy.classifyOcrRouting,
@@ -896,6 +923,7 @@ async function runCorpus(python, contracts, domain, deps, args, bounds, ocr, fil
       python,
       contracts,
       deps.mapStructuredDocument,
+      deps.adoptRangeArtifacts,
       path,
       args,
       bounds,

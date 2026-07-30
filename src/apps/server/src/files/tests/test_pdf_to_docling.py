@@ -6,10 +6,12 @@ No real Docling models or network: ``build_converter``'s docling imports are moc
 
 Run with ``python -m unittest`` from this folder.
 """
+import hashlib
 import io
 import json
 import os
 import sys
+import tempfile
 import types
 import unittest
 
@@ -27,24 +29,30 @@ from pdf_to_docling import (  # noqa: E402  (path set above)
     MEMORY_LIMIT_ENV,
     METRICS_PATH_ENV,
     DEFAULT_PROBE_MEMORY_MIB,
+    MAX_PICTURE_ARTIFACT_BYTES,
+    PICTURE_LABELS,
     RANGE_SCHEMA_VERSION,
     SUPPORTED_SCHEMA_VERSIONS,
     ConversionFailed,
     MemoryCeilingUnsupported,
     PasswordRequired,
     UnsupportedSchema,
+    ArtifactSink,
     apply_memory_limit,
     resolve_memory_boundary,
     run_check_memory_ceiling,
     write_metrics_sidecar,
     _PosixMemoryBoundary,
     _WindowsMemoryBoundary,
+    _encode_png,
+    _picture_image_reader,
     build_converter,
     build_document_metadata,
     build_range_payload,
     clean_metadata_value,
     convert_range,
     count_pages,
+    extract_picture_artifact,
     main,
     map_group,
     map_item,
@@ -1117,6 +1125,191 @@ class WindowsMemoryCeilingEnforcementTests(unittest.TestCase):
         )
         self.assertNotIn("UNBOUNDED", result.stdout)
         self.assertIn(result.stdout.strip(), ("ENFORCED", "UNSUPPORTED"))
+
+
+# --- Picture artifact extraction (#807) --------------------------------------------------------
+
+
+class FakeImage:
+    """A stand-in for the PIL image docling's PictureItem.get_image returns: has width/height and a
+    ``save(fp, format=...)`` that writes deterministic bytes, so the encode/hash/manifest logic tests
+    without Pillow or real docling models."""
+
+    def __init__(self, width=4, height=3, data=b"\x89PNG-fake-bytes"):
+        self.width = width
+        self.height = height
+        self._data = data
+
+    def save(self, fp, format=None):
+        assert format == "PNG", f"expected PNG, got {format}"
+        fp.write(self._data)
+
+
+def picture_item(image=None, label="picture", text="", children=None, page_no=1):
+    """A FakeItem for a picture, optionally exposing a ``get_image`` seam returning ``image``."""
+    item = FakeItem(label=label, text=text, children=children, prov=FakeProv(page_no=page_no))
+    if image is not None:
+        item.get_image = lambda _doc, _img=image: _img
+    return item
+
+
+class PictureImageReaderTests(unittest.TestCase):
+    def test_returns_none_when_item_has_no_getter(self):
+        self.assertIsNone(_picture_image_reader(FakeItem(label="picture"), FakeDoc()))
+
+    def test_returns_the_image_from_the_getter(self):
+        image = FakeImage()
+        self.assertIs(_picture_image_reader(picture_item(image=image), FakeDoc()), image)
+
+
+class ExtractPictureArtifactTests(unittest.TestCase):
+    def test_writes_a_png_and_returns_a_manifest_ref(self):
+        image = FakeImage(width=8, height=6, data=b"\x89PNG-body")
+        with tempfile.TemporaryDirectory() as directory:
+            sink = ArtifactSink(directory, lambda _item, _doc: image)
+            ref = extract_picture_artifact(picture_item(image=image), FakeDoc(), sink)
+            self.assertEqual(ref["path"], "fig-0.png")
+            self.assertEqual(ref["contentType"], "image/png")
+            self.assertEqual(ref["byteLength"], len(b"\x89PNG-body"))
+            self.assertEqual(ref["width"], 8)
+            self.assertEqual(ref["height"], 6)
+            self.assertEqual(ref["sha256"], hashlib.sha256(b"\x89PNG-body").hexdigest())
+            written = os.path.join(directory, "fig-0.png")
+            with open(written, "rb") as handle:
+                self.assertEqual(handle.read(), b"\x89PNG-body")
+            # No leftover temp file remains beside the finished artifact.
+            self.assertEqual(sorted(os.listdir(directory)), ["fig-0.png"])
+
+    def test_returns_none_and_writes_nothing_when_no_image(self):
+        with tempfile.TemporaryDirectory() as directory:
+            sink = ArtifactSink(directory, lambda _item, _doc: None)
+            self.assertIsNone(extract_picture_artifact(FakeItem(label="picture"), FakeDoc(), sink))
+            self.assertEqual(os.listdir(directory), [])
+
+    def test_returns_none_when_the_png_exceeds_the_byte_ceiling(self):
+        big = FakeImage(data=b"x" * 100)
+        with tempfile.TemporaryDirectory() as directory:
+            sink = ArtifactSink(directory, lambda _item, _doc: big, max_bytes=10)
+            self.assertIsNone(extract_picture_artifact(picture_item(image=big), FakeDoc(), sink))
+            self.assertEqual(os.listdir(directory), [])
+
+    def test_assigns_distinct_names_to_successive_pictures(self):
+        image = FakeImage()
+        with tempfile.TemporaryDirectory() as directory:
+            sink = ArtifactSink(directory, lambda _item, _doc: image)
+            first = extract_picture_artifact(picture_item(image=image), FakeDoc(), sink)
+            second = extract_picture_artifact(picture_item(image=image), FakeDoc(), sink)
+            self.assertEqual([first["path"], second["path"]], ["fig-0.png", "fig-1.png"])
+
+    def test_encode_png_round_trips_the_image_bytes(self):
+        self.assertEqual(_encode_png(FakeImage(data=b"abc")), b"abc")
+
+
+class MapItemArtifactTests(unittest.TestCase):
+    def _map(self, item, sink):
+        return map_item(item, FakeDoc(), lambda ref, _doc: ref, {}, 1, sink)
+
+    def test_attaches_artifact_for_a_picture_when_a_sink_is_supplied(self):
+        image = FakeImage(width=5, height=5)
+        with tempfile.TemporaryDirectory() as directory:
+            sink = ArtifactSink(directory, lambda _item, _doc: image)
+            mapped = self._map(picture_item(image=image), sink)
+            self.assertEqual(mapped["imageArtifact"]["path"], "fig-0.png")
+            self.assertEqual(mapped["imageArtifact"]["width"], 5)
+
+    def test_omits_artifact_for_a_picture_that_cannot_render(self):
+        with tempfile.TemporaryDirectory() as directory:
+            sink = ArtifactSink(directory, lambda _item, _doc: None)
+            mapped = self._map(FakeItem(label="picture"), sink)
+            self.assertNotIn("imageArtifact", mapped)
+
+    def test_does_not_extract_for_a_non_picture_label(self):
+        image = FakeImage()
+        with tempfile.TemporaryDirectory() as directory:
+            sink = ArtifactSink(directory, lambda _item, _doc: image)
+            mapped = self._map(picture_item(image=image, label="text"), sink)
+            self.assertNotIn("imageArtifact", mapped)
+            self.assertEqual(os.listdir(directory), [])
+
+    def test_attaches_no_artifact_without_a_sink(self):
+        mapped = map_item(picture_item(image=FakeImage()), FakeDoc(), lambda ref, _doc: ref, {}, 1)
+        self.assertNotIn("imageArtifact", mapped)
+
+    def test_picture_labels_covers_picture_and_figure(self):
+        self.assertEqual(PICTURE_LABELS, {"picture", "figure"})
+
+
+class BuildRangePayloadArtifactTests(unittest.TestCase):
+    def test_extracts_body_pictures_but_not_furniture_pictures(self):
+        image = FakeImage()
+        body_picture = picture_item(image=image)
+        furniture_picture = picture_item(image=image)
+        doc = FakeDoc(
+            body=FakeGroup([body_picture]), furniture=FakeGroup([furniture_picture])
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            sink = ArtifactSink(directory, lambda _item, _doc: image)
+            payload = build_range_payload(doc, 1, 1, native_text=lambda _p: True, sink=sink)
+            self.assertIn("imageArtifact", payload["body"][0])
+            self.assertNotIn("imageArtifact", payload["furniture"][0])
+            # Only the body picture produced a file.
+            self.assertEqual(os.listdir(directory), ["fig-0.png"])
+
+
+class RunRangeArtifactTests(unittest.TestCase):
+    def test_writes_artifacts_when_a_directory_is_supplied(self):
+        image = FakeImage(width=7, height=9)
+        doc = FakeDoc(body=FakeGroup([picture_item(image=image)]))
+        stdout = io.StringIO()
+        with tempfile.TemporaryDirectory() as directory:
+            code = run_range(
+                "/tmp/a.pdf",
+                1,
+                1,
+                lambda: FakeConverter(doc),
+                lambda _p: (lambda page: True),
+                stdout,
+                io.StringIO(),
+                None,
+                directory,
+                lambda item, _doc: item.get_image(_doc),
+            )
+            self.assertEqual(code, EXIT_OK)
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(payload["body"][0]["imageArtifact"]["path"], "fig-0.png")
+            self.assertEqual(os.listdir(directory), ["fig-0.png"])
+
+    def test_extracts_nothing_when_no_directory_is_supplied(self):
+        doc = FakeDoc(body=FakeGroup([picture_item(image=FakeImage())]))
+        stdout = io.StringIO()
+        code = run_range(
+            "/tmp/a.pdf", 1, 1, lambda: FakeConverter(doc), lambda _p: (lambda page: True), stdout, io.StringIO()
+        )
+        self.assertEqual(code, EXIT_OK)
+        payload = json.loads(stdout.getvalue())
+        self.assertNotIn("imageArtifact", payload["body"][0])
+
+
+class MainRangeArtifactDispatchTests(unittest.TestCase):
+    def test_range_mode_accepts_an_artifact_directory_argument(self):
+        image = FakeImage()
+        doc = FakeDoc(body=FakeGroup([picture_item(image=image)]))
+        stdout = io.StringIO()
+        with tempfile.TemporaryDirectory() as directory:
+            code = main(
+                ["--range", "/tmp/a.pdf", "1", "1", directory],
+                converter_factory=lambda: FakeConverter(doc),
+                prober_factory=lambda _path: (lambda page: True),
+                metadata_reader_factory=lambda _path: (lambda: {"Title": None, "Author": None}),
+                boundary=None,
+                stdout=stdout,
+                stderr=io.StringIO(),
+            )
+            self.assertEqual(code, EXIT_OK)
+            payload = json.loads(stdout.getvalue())
+            # The default image reader seam calls item.get_image(doc), which the fake picture exposes.
+            self.assertEqual(payload["body"][0]["imageArtifact"]["path"], "fig-0.png")
+            self.assertEqual(os.listdir(directory), ["fig-0.png"])
 
 
 if __name__ == "__main__":

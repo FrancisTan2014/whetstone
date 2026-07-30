@@ -106,6 +106,8 @@ function publishDeps(db: DbClient): PdfImportPublishDependencies {
     now: () => NOW,
     stageStore: context.stageStore,
     sourceFileStore: context.sourceFileStore,
+    // These route tests never exercise a rendered-figure payload, so a no-op image store suffices.
+    imageResourceStore: { store: async () => ({ id: "" }) },
     logCleanupFailure: vi.fn()
   };
 }

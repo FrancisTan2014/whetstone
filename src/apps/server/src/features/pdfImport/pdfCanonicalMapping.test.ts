@@ -178,6 +178,74 @@ describe("mapStructuredDocument", () => {
     expect(content[0]!.type).toBe("image");
   });
 
+  it("resolves a picture with an adopted artifact into a figure carrying the content-addressed image (#807)", () => {
+    const sha = "b".repeat(64);
+    const result = mapped(
+      mapEn(
+        doc([
+          item({ label: "text", text: "Body" }),
+          item({
+            children: [item({ label: "caption", text: "Figure 1. A rendered diagram." })],
+            label: "picture",
+            pageNumber: 4,
+            imageArtifact: {
+              path: "0/fig-0.png",
+              contentType: "image/png",
+              sha256: sha,
+              byteLength: 128,
+              width: 320,
+              height: 200
+            }
+          })
+        ])
+      )
+    );
+    // A resolved figure is NOT counted as an unresolved-figure warning.
+    expect(unitTypes(result, 0)).toEqual(["paragraph", "figure"]);
+    expect(result.unresolvedFigureCount).toBe(0);
+
+    const figure = result.units[0]!.docBlocks[1]!.node;
+    const [image, caption] = figure.content as DocumentNodeJSON[];
+    expect(image!.type).toBe("image");
+    // The image carries the content-addressed id (the artifact sha256) and a caption-derived alt.
+    expect(image!.attrs).toMatchObject({
+      alt: "Figure 1. A rendered diagram.",
+      imageResourceId: sha,
+      src: null
+    });
+    expect(caption!.type).toBe("figureCaption");
+  });
+
+  it("uses a page-locator alt for a resolved figure that has no caption (#807)", () => {
+    const sha = "c".repeat(64);
+    const result = mapped(
+      mapEn(
+        doc([
+          item({
+            label: "picture",
+            pageNumber: 7,
+            imageArtifact: {
+              path: "0/fig-0.png",
+              contentType: "image/png",
+              sha256: sha,
+              byteLength: 64,
+              width: 10,
+              height: 10
+            }
+          })
+        ])
+      )
+    );
+    expect(result.unresolvedFigureCount).toBe(0);
+    const figure = result.units[0]!.docBlocks[0]!.node;
+    const [image] = figure.content as DocumentNodeJSON[];
+    expect(image!.attrs).toMatchObject({
+      alt: "Figure from PDF page 7",
+      imageResourceId: sha,
+      src: null
+    });
+  });
+
   it("counts every top-level picture/figure as an unresolved figure (#806)", () => {
     const result = mapped(
       mapEn(

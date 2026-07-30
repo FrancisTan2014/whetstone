@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  artifactIntegrityFailure,
   cancelledFailure,
   childCrashFailure,
   classifyWorkerExit,
@@ -39,7 +40,8 @@ describe("named failure constructors", () => {
       memoryCeilingUnsupportedFailure(),
       childCrashFailure("segfault"),
       cancelledFailure(),
-      cleanupFailure("EACCES")
+      cleanupFailure("EACCES"),
+      artifactIntegrityFailure("sha256 mismatch")
     ];
     for (const failure of failures) {
       expect(failure.kind.length).toBeGreaterThan(0);
@@ -57,6 +59,8 @@ describe("named failure constructors", () => {
     expect(malformedFailure("bad xref").what).toContain("bad xref");
     expect(childCrashFailure("segfault").what).toContain("segfault");
     expect(cleanupFailure("EACCES").what).toContain("EACCES");
+    expect(artifactIntegrityFailure("sha256 mismatch").kind).toBe("artifact_integrity");
+    expect(artifactIntegrityFailure("sha256 mismatch").what).toContain("sha256 mismatch");
   });
 });
 

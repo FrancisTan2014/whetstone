@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -149,6 +149,40 @@ describe("createPdfImportStageStore", () => {
       await expect(
         store.createStageFromStream("../escape", streamOf(new Uint8Array([0])), { maxBytes: 1_000 })
       ).rejects.toThrow(/letters, digits, hyphen, or underscore/);
+    });
+  });
+
+  describe("rendered-figure artifacts (#807)", () => {
+    it("prepares a fresh empty per-range artifact directory and round-trips a written artifact", async () => {
+      await store.createStage("art-1", new Uint8Array([1]));
+      const dir = await store.prepareRangeArtifactDir("art-1", 0);
+      const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
+      await writeFile(join(dir, "fig-0.png"), png);
+
+      // The runner reads it back via the stage-relative `<rangeIndex>/<file>` path recorded on the payload.
+      expect(await store.readArtifact("art-1", "0/fig-0.png")).toEqual(png);
+    });
+
+    it("wipes any leftover (uncommitted) artifacts when re-preparing a range directory", async () => {
+      await store.createStage("art-2", new Uint8Array([1]));
+      const first = await store.prepareRangeArtifactDir("art-2", 0);
+      await writeFile(join(first, "stale.png"), new Uint8Array([9]));
+
+      // Re-preparing the same range wipes the stale artifact so a resumed run never adopts it.
+      await store.prepareRangeArtifactDir("art-2", 0);
+      await expect(store.readArtifact("art-2", "0/stale.png")).rejects.toThrow();
+    });
+
+    it("rejects reading an artifact path that escapes the artifacts root", async () => {
+      await store.createStage("art-3", new Uint8Array([1]));
+      await store.prepareRangeArtifactDir("art-3", 0);
+      await expect(store.readArtifact("art-3", "../../escape.png")).rejects.toThrow();
+    });
+
+    it("rejects reading an artifact file that does not exist", async () => {
+      await store.createStage("art-4", new Uint8Array([1]));
+      await store.prepareRangeArtifactDir("art-4", 0);
+      await expect(store.readArtifact("art-4", "0/missing.png")).rejects.toThrow();
     });
   });
 });

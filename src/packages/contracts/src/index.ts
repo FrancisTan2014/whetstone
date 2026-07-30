@@ -255,6 +255,7 @@ export type {
   BoundingBox,
   DoclingSchemaRef,
   ParseRangeResult,
+  PdfImageArtifactRef,
   ProbePage,
   ProbeParseResult,
   RangeConversion,

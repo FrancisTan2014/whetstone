@@ -380,6 +380,8 @@ try {
     // back from the attempt's retained stage; a failed cleanup of that redundant stage stays visible.
     logCleanupFailure: logPdfImportCleanupFailure,
     now: () => new Date(),
+    // Each adopted rendered-figure PNG (#807) is stored content-addressed here so the Reader serves it.
+    imageResourceStore,
     sourceFileStore,
     stageStore: pdfImportStageStore
   };

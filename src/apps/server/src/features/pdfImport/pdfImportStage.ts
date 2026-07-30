@@ -36,6 +36,13 @@ const STAGED_FILE_NAME = "staged.pdf";
 // repeat; once `ocr_fingerprint` is recorded the file is the trusted structured-conversion source.
 const DERIVED_OCR_FILE_NAME = "ocr.pdf";
 
+// Rendered-figure artifacts (#807) live under this subdirectory of the attempt-owned stage, one directory
+// per converted range: `<stage>/artifacts/<rangeIndex>/fig-N.png`. It shares the stage's single cleanup
+// surface (one `removeStage` removes it with the rest), so a figure's bytes never outlive the attempt's
+// stage. A committed range's artifacts are trusted; an uncommitted range's directory is disposable and is
+// wiped fresh before that range is (re-)converted, so a resumed run never adopts a half-written picture.
+const ARTIFACTS_DIR_NAME = "artifacts";
+
 // Server-generated attempt ids only (uuid-shaped): letters, digits, hyphen, underscore — never a path
 // segment. Rejected before any filesystem touch so a crafted id cannot escape the stage root.
 const safeStageIdPattern = /^[A-Za-z0-9_-]+$/;
@@ -89,6 +96,14 @@ export type PdfImportStageStore = Readonly<{
   // original uploaded PDF as immutable provenance without ever seeing a user-supplied path. A missing or
   // unreadable stage rejects (the caller surfaces it), never silently returns empty bytes.
   readStage: (stagePath: string) => Promise<Uint8Array>;
+  // Prepare a FRESH, empty artifact directory for one range's rendered figures (#807) and return its
+  // absolute path for the worker to write into. Any leftover directory for this range index (a prior
+  // uncommitted attempt) is removed first, so a resumed run never adopts a stale or half-written picture.
+  prepareRangeArtifactDir: (stagePath: string, rangeIndex: number) => Promise<string>;
+  // Read one rendered-figure artifact's bytes back from the attempt's stage, given the root-relative
+  // artifact path recorded on the range payload (`<rangeIndex>/fig-N.png`). Path-safe: a path escaping the
+  // artifacts root rejects. A missing/unreadable file rejects so publication surfaces it as corruption.
+  readArtifact: (stagePath: string, artifactPath: string) => Promise<Uint8Array>;
   // Remove exactly this attempt-owned stage directory. A missing directory is a no-op (already gone); a
   // real filesystem error (e.g. permissions) still throws so the caller surfaces it as a retryable
   // cleanup failure. Never removes anything outside the exact path, and never by age.
@@ -183,6 +198,27 @@ export function createPdfImportStageStore(stageRootDir: string): PdfImportStageS
     return new Uint8Array(await readFile(handle.path));
   }
 
+  function artifactsRootFor(stagePath: string): string {
+    return join(stageDirFor(stagePath), ARTIFACTS_DIR_NAME);
+  }
+
+  async function prepareRangeArtifactDir(stagePath: string, rangeIndex: number): Promise<string> {
+    // The range index is a server-derived non-negative integer, never user input; still normalize it to a
+    // plain decimal segment so the joined path is a single directory name that cannot escape the root.
+    const segment = String(Math.trunc(rangeIndex));
+    const rangeDir = resolveWithinDirectory(artifactsRootFor(stagePath), segment);
+    // Wipe any leftover (uncommitted) directory for this range, then recreate it empty, so a resumed run
+    // starts each not-yet-committed range from a clean slate — no stale or half-written picture survives.
+    await rm(rangeDir, { force: true, recursive: true });
+    await mkdir(rangeDir, { recursive: true });
+    return rangeDir;
+  }
+
+  async function readArtifact(stagePath: string, artifactPath: string): Promise<Uint8Array> {
+    const target = resolveWithinDirectory(artifactsRootFor(stagePath), artifactPath);
+    return new Uint8Array(await readFile(target));
+  }
+
   async function removeStage(stagePath: string): Promise<void> {
     await rm(stageDirFor(stagePath), { force: true, recursive: true });
   }
@@ -194,6 +230,8 @@ export function createPdfImportStageStore(stageRootDir: string): PdfImportStageS
     writeDerivedStage,
     openDerivedStage,
     readStage,
+    prepareRangeArtifactDir,
+    readArtifact,
     removeStage
   });
 }
