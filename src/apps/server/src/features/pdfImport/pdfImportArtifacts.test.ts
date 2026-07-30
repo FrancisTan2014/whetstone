@@ -281,6 +281,41 @@ describe("adoptRangeArtifacts", () => {
     expect(result.adoptedBytes).toBe(0);
     expect(result.payload.body[0]!.imageArtifact).toBeUndefined();
   });
+
+  // A malformed/hostile worker manifest whose path is not a bare file name. The runner reads it as
+  // `<rangeIndex>/<ref.path>`, and the stage's path fence only keeps the result inside the attempt-level
+  // `artifacts` root — so `../0/fig-0.png` while adopting range 1 would resolve into a SIBLING range's
+  // directory and, if that file's bytes happened to match this manifest, stamp the wrong image digest onto
+  // this figure. Adoption must reject such a ref loudly BEFORE reading anything, never adopt a cross-range
+  // artifact. (#807: every manifest path is validated inside the range root; a path mismatch fails loud.)
+  it.each([
+    ["a parent-range traversal", "../0/fig-0.png"],
+    ["a nested subpath", "sub/fig-0.png"],
+    ["a Windows-separator path", "..\\0\\fig-0.png"],
+    ["an absolute path", "/etc/passwd"],
+    ["a bare parent segment", ".."],
+    ["a current-dir segment", "."],
+    ["an empty path", ""],
+    ["a NUL-injected path", "fig-0.png\u0000.png"]
+  ])("is fatal for a manifest path that is not a plain file name (%s)", async (_case, badPath) => {
+    const png = pngBytes(10, 10, 8);
+    const ref = refFor(badPath, png, 10, 10);
+    let reads = 0;
+    const result = await adoptRangeArtifacts({
+      payload: payload([item({ label: "picture", imageArtifact: ref })]),
+      rangeIndex: 1,
+      adoptedBytesSoFar: 0,
+      // A reader that would happily return a matching sibling artifact — adoption must never call it.
+      readArtifact: async () => {
+        reads += 1;
+        return png;
+      }
+    });
+    expect(reads).toBe(0);
+    expect(result.status).toBe("fatal");
+    if (result.status !== "fatal") return;
+    expect(result.detail).toContain("not a plain file name");
+  });
 });
 
 describe("sumAdoptedArtifactBytes", () => {

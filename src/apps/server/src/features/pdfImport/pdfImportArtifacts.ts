@@ -29,6 +29,22 @@ export const MAX_ATTEMPT_ARTIFACT_BYTES = 128 * 1024 * 1024;
 
 const PNG_SIGNATURE = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
+// A trusted artifact ref names a single file INSIDE this range's artifact directory (e.g. `fig-0.png`).
+// The runner reads it as `<rangeIndex>/<ref.path>`, but the stage's path fence only guarantees the result
+// stays inside the attempt-level `artifacts` root — not inside the current range directory. So a hostile
+// or malformed worker payload such as `../0/fig-0.png` while adopting range 1 would resolve into a sibling
+// range's directory and could stamp the WRONG image onto this figure. Adoption therefore requires every
+// manifest path to be a plain file name: no path separators, no `.`/`..` segments, no NUL. Anything else is
+// loud `artifact_integrity` corruption, never a silent cross-range read.
+function isPlainArtifactFileName(path: string): boolean {
+  if (path.length === 0 || path === "." || path === "..") {
+    return false;
+  }
+  // A separator (POSIX or Windows) or a NUL byte means the ref is more than a bare file name in the range
+  // dir. NUL is checked directly (not in the regex) so no control character appears in a pattern literal.
+  return !path.includes("\u0000") && !/[/\\]/.test(path);
+}
+
 // Reads one worker-relative artifact file name (e.g. `fig-0.png`) from this range's artifact directory.
 // Injected by the runner so this module stays free of `fs` and testable with an in-memory map.
 export type ArtifactReader = (fileName: string) => Promise<Uint8Array>;
@@ -119,6 +135,12 @@ export async function adoptRangeArtifacts(
   let newlyAdopted = 0;
 
   for (const { item, ref } of pictures) {
+    if (!isPlainArtifactFileName(ref.path)) {
+      return {
+        status: "fatal",
+        detail: `artifact path "${ref.path}" is not a plain file name inside its range directory`
+      };
+    }
     let bytes: Uint8Array;
     try {
       bytes = await input.readArtifact(ref.path);
