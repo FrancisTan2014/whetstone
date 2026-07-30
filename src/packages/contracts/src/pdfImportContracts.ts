@@ -149,17 +149,25 @@ export type PdfImportBeginResultDto = z.infer<typeof pdfImportBeginResultDtoSche
 
 // The publication outcome of an attempt (#702), served alongside its #721 execution status. `none` = the
 // attempt carries no publication intent (a bare #721 attempt); `pending` = converted but not yet
-// published (or not yet converted); `published` = a canonical Work is ready to open;
-// `ocr_validation_failed` = a typed refusal (a document still had text-less pages after the OCR pass — a
-// preflight/full-conversion disagreement or incomplete OCR) that publishes no Work and reports the
-// affected page count; `no_content` = a typed refusal (the pages had native text but mapped to zero
-// canonical blocks) that publishes no Work; `image_unsupported` = a typed refusal (the document contains
-// picture/figure constructs whose images cannot yet be preserved) that publishes no Work rather than a
-// content-losing placeholder, reporting how many images were affected.
+// published (or not yet converted); `published` = a canonical Work is ready to open, carrying
+// `unresolvedFigureCount` unresolved picture/figure placeholders (#806) as a non-blocking review warning
+// (0 when the Work has none); `ocr_validation_failed` = a typed refusal (a document still had text-less
+// pages after the OCR pass — a preflight/full-conversion disagreement or incomplete OCR) that publishes no
+// Work and reports the affected page count; `no_content` = a typed refusal (the pages had native text but
+// mapped to zero canonical blocks) that publishes no Work; `image_unsupported` = a LEGACY typed refusal
+// (retained so historical attempts stay readable) that published no Work rather than a content-losing
+// placeholder, reporting how many images were affected. New attempts never produce `image_unsupported` —
+// unresolved figures now publish as a correctable Work with an `unresolvedFigureCount` warning instead.
 export const pdfImportPublicationOutcomeDtoSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("none") }).strict(),
   z.object({ status: z.literal("pending") }).strict(),
-  z.object({ status: z.literal("published"), workEntryId: z.string().min(1) }).strict(),
+  z
+    .object({
+      status: z.literal("published"),
+      workEntryId: z.string().min(1),
+      unresolvedFigureCount: z.number().int().nonnegative()
+    })
+    .strict(),
   z
     .object({
       pagesNeedingOcr: z.number().int().positive(),

@@ -26,6 +26,7 @@ function cleanSummary(overrides: Partial<MappedWorkSummary> = {}): MappedWorkSum
     lowConfidenceBlockCount: 0,
     plainTextLength: 5000,
     unknownBlockCount: 0,
+    unresolvedFigureCount: 0,
     ...overrides
   };
 }
@@ -100,11 +101,12 @@ describe("classifyPdfUsability", () => {
     expect(verdict).toEqual({ class: "correctable", reason: "unmapped-constructs" });
   });
 
-  it("routes an image-refused document into the correction workflow", () => {
-    expect(classifyPdfUsability({ kind: "image_unsupported", unpreservableImages: 2 })).toEqual({
-      class: "correctable",
-      reason: "image-unsupported"
+  it("routes a mapped Work carrying an unresolved figure into the correction workflow (#806)", () => {
+    const verdict = classifyPdfUsability({
+      kind: "mapped",
+      summary: cleanSummary({ unresolvedFigureCount: 1 })
     });
+    expect(verdict).toEqual({ class: "correctable", reason: "image-unsupported" });
   });
 
   it("counts a scan needing OCR as unsupported", () => {
@@ -338,6 +340,17 @@ describe("regression fixtures", () => {
       // against the gate rather than publishing an empty shell.
       name: "textless scan without OCR",
       observation: { kind: "ocr_required", pagesNeedingOcr: 12 }
+    },
+    {
+      expected: { class: "correctable", reason: "image-unsupported" },
+      // A text-heavy, otherwise-clean Work that still carries one unresolved figure placeholder (#806):
+      // it publishes and reads, but an administrator must supply the image, so the rubric must classify it
+      // correctable — never counting it toward the automatic gate.
+      name: "readable Work with one unresolved figure",
+      observation: {
+        kind: "mapped",
+        summary: cleanSummary({ unresolvedFigureCount: 1 })
+      }
     }
   ];
 

@@ -203,8 +203,19 @@ describe("pdfImportPublicationOutcomeDtoSchema", () => {
       status: "pending"
     });
     expect(
-      pdfImportPublicationOutcomeDtoSchema.parse({ status: "published", workEntryId: "work-1" })
-    ).toEqual({ status: "published", workEntryId: "work-1" });
+      pdfImportPublicationOutcomeDtoSchema.parse({
+        status: "published",
+        unresolvedFigureCount: 0,
+        workEntryId: "work-1"
+      })
+    ).toEqual({ status: "published", unresolvedFigureCount: 0, workEntryId: "work-1" });
+    expect(
+      pdfImportPublicationOutcomeDtoSchema.parse({
+        status: "published",
+        unresolvedFigureCount: 2,
+        workEntryId: "work-fig"
+      })
+    ).toEqual({ status: "published", unresolvedFigureCount: 2, workEntryId: "work-fig" });
     expect(
       pdfImportPublicationOutcomeDtoSchema.parse({
         pagesNeedingOcr: 3,
@@ -227,6 +238,25 @@ describe("pdfImportPublicationOutcomeDtoSchema", () => {
       pdfImportPublicationOutcomeDtoSchema.safeParse({
         pagesNeedingOcr: 0,
         status: "ocr_validation_failed"
+      }).success
+    ).toBe(false);
+  });
+
+  it("rejects a published outcome missing its unresolved-figure count", () => {
+    expect(
+      pdfImportPublicationOutcomeDtoSchema.safeParse({
+        status: "published",
+        workEntryId: "work-1"
+      }).success
+    ).toBe(false);
+  });
+
+  it("rejects a negative unresolved-figure count", () => {
+    expect(
+      pdfImportPublicationOutcomeDtoSchema.safeParse({
+        status: "published",
+        unresolvedFigureCount: -1,
+        workEntryId: "work-1"
       }).success
     ).toBe(false);
   });

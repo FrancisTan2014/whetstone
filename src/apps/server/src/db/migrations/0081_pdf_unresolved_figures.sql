@@ -1,0 +1,2 @@
+ALTER TABLE "pdf_import_publications" ADD COLUMN "unresolved_figure_count" integer;--> statement-breakpoint
+ALTER TABLE "pdf_import_publications" ADD CONSTRAINT "pdf_import_publications_unresolved_figures_ck" CHECK ("pdf_import_publications"."unresolved_figure_count" is null or ("pdf_import_publications"."unresolved_figure_count" > 0 and "pdf_import_publications"."work_entry_id" is not null));

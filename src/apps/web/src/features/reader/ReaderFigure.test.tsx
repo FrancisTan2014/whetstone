@@ -275,10 +275,13 @@ describe("ReaderPage PM figure blocks", () => {
     expect(screen.getByText("PM caption.")).not.toBeNull();
   });
 
-  it("renders a PM figure caption-only when the image carries no stored reference", async () => {
+  it("renders the fallback label for a PM figure whose image carries no stored reference", async () => {
+    // #806: an unresolved figure (image child with a fallback `alt` but no stored id) shows the label
+    // as visible placeholder text — never an empty image or a silent drop — and requests no image URL.
     const { container } = renderReader(pmFigureContent({ alt: "no ref" }));
 
     await screen.findByText("PM caption.");
+    expect(screen.getByText("no ref")).not.toBeNull();
     expect(container.querySelector("img")).toBeNull();
   });
 
@@ -287,6 +290,67 @@ describe("ReaderPage PM figure blocks", () => {
 
     await screen.findByRole("figure");
     expect(container.querySelector("figcaption")).toBeNull();
+  });
+});
+
+// An unresolved PDF figure (#806): a PM `figure` whose `image` child has no stored reference
+// (`imageResourceId: null`, `src: null`) but carries a page-identifying non-decorative fallback label,
+// plus its caption only when the picture had one. The Reader must render every such placeholder
+// visibly — captionless or captioned — so no unresolved picture is dropped or shown as an empty image.
+function unresolvedPmFigureContent(
+  fallbackLabel: string,
+  caption: string | undefined
+): WorkContentDto {
+  const captionChild =
+    caption === undefined
+      ? []
+      : [{ content: [{ text: caption, type: "text" }], type: "figureCaption" }];
+  const node = {
+    attrs: { id: "pm-fig-1" },
+    content: [
+      { attrs: { alt: fallbackLabel, imageResourceId: null, src: null }, type: "image" },
+      ...captionChild
+    ],
+    type: "figure"
+  };
+
+  return {
+    readingUnits: [
+      {
+        blocks: [],
+        docBlocks: [{ entryId: toEntryId("pm-fig-1"), node, orderIndex: 0, type: "figure" }],
+        entryId: toEntryId("u-1"),
+        orderIndex: 0
+      }
+    ],
+    workEntryId: toEntryId("work-1")
+  };
+}
+
+describe("ReaderPage unresolved PDF figure placeholders (#806)", () => {
+  const fallbackLabel = "Figure from PDF page 3 (image not yet extracted)";
+
+  it("renders the fallback label for a captionless unresolved figure and requests no image", async () => {
+    const { container } = renderReader(unresolvedPmFigureContent(fallbackLabel, undefined));
+
+    // The placeholder label is visible inside a real <figure>, so the picture is never an empty box.
+    const figure = (await screen.findByText(fallbackLabel)).closest("figure") as HTMLElement;
+    expect(figure).not.toBeNull();
+    // No stored image at ingest, so nothing is served from /api/images/null.
+    expect(container.querySelector("img")).toBeNull();
+    // A captionless picture carries no figureCaption; the label alone represents it.
+    expect(container.querySelector("figcaption")).toBeNull();
+  });
+
+  it("renders both the fallback label and the caption for a captioned unresolved figure", async () => {
+    const { container } = renderReader(
+      unresolvedPmFigureContent(fallbackLabel, "Diagram of the widget.")
+    );
+
+    const figure = (await screen.findByText(fallbackLabel)).closest("figure") as HTMLElement;
+    // The extracted caption stays alongside the fallback label; neither replaces the other.
+    expect(within(figure).getByText("Diagram of the widget.")).not.toBeNull();
+    expect(container.querySelector("img")).toBeNull();
   });
 });
 

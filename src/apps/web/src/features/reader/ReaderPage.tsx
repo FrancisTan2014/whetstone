@@ -1502,9 +1502,16 @@ type ReaderBlockViewProps = Readonly<{
 
 // A figure block renders as a real `<figure>`: the stored image (served by #101 at
 // `/api/images/:id`, lazy-loaded and display-only) above its caption. The image degrades out —
-// leaving the caption alone — when there is no stored image (unsupported/missing at ingest) or it
-// fails to load at runtime. The caption keeps the block's text, so it stays selectable and
-// annotatable through the normal block selection flow; the image carries no text.
+// leaving the caption alone — when the image fails to load at runtime. The caption keeps the block's
+// text, so it stays selectable and annotatable through the normal block selection flow; the image
+// carries no text.
+//
+// An unresolved PDF figure (#806) is a PM `figure` whose `image` child has no stored reference
+// (`imageResourceId: null`) but carries a page-identifying non-decorative fallback label in `alt`.
+// Rather than an empty `<figure>` (captionless) or a caption with no sign of the missing image
+// (captioned), the label is rendered as visible placeholder text so every unresolved picture reads
+// as a real, locatable figure awaiting correction. The `imageResourceId === undefined` guard keeps
+// this path from ever requesting `/api/images/null`.
 function ReaderFigure({
   anchorByNodeId,
   block,
@@ -1520,6 +1527,12 @@ function ReaderFigure({
   const imageSrc =
     block.imageResourceId === undefined ? undefined : apiUrl(`/images/${block.imageResourceId}`);
   const showImage = imageSrc !== undefined && !imageFailed;
+  // The fallback label shows only for a PM figure that never had a stored image at ingest (not a
+  // runtime load failure, which keeps its stored reference and degrades to caption-only as before).
+  const fallbackLabel =
+    block.node !== undefined && imageSrc === undefined && (block.alt ?? "").trim().length > 0
+      ? block.alt
+      : undefined;
 
   return (
     <figure className="readerFigure">
@@ -1530,6 +1543,9 @@ function ReaderFigure({
           onError={() => setImageFailed(true)}
           src={imageSrc}
         />
+      ) : null}
+      {fallbackLabel !== undefined ? (
+        <p className="readerFigurePlaceholder">{fallbackLabel}</p>
       ) : null}
       <FigureCaption
         anchorByNodeId={anchorByNodeId}

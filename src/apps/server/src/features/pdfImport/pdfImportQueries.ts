@@ -54,8 +54,9 @@ export async function getPdfImportStatus(
 }
 
 // Project the #702 publication record into its outcome DTO: no intent -> `none`; a resolved Work ->
-// `published`; an OCR validation refusal -> `ocr_validation_failed`; a resolved no-content refusal ->
-// `no_content`; a resolved unsupported-image refusal -> `image_unsupported`; otherwise still `pending`.
+// `published` (carrying its unresolved-figure warning count, #806); an OCR validation refusal ->
+// `ocr_validation_failed`; a resolved no-content refusal -> `no_content`; a LEGACY resolved
+// unsupported-image refusal -> `image_unsupported` (historical rows only); otherwise still `pending`.
 export async function buildPdfImportPublicationOutcome(
   db: DbClient,
   attemptId: string
@@ -65,7 +66,11 @@ export async function buildPdfImportPublicationOutcome(
     return { status: "none" };
   }
   if (publication.workEntryId !== null) {
-    return { status: "published", workEntryId: publication.workEntryId };
+    return {
+      status: "published",
+      unresolvedFigureCount: publication.unresolvedFigureCount ?? 0,
+      workEntryId: publication.workEntryId
+    };
   }
   if (publication.ocrValidationFailedPages !== null) {
     return {

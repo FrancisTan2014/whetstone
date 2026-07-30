@@ -31,7 +31,10 @@ function runningView(): PdfImportViewDto {
 }
 
 function publishedView(workEntryId: string): PdfImportViewDto {
-  return { ...runningView(), publication: { status: "published", workEntryId } };
+  return {
+    ...runningView(),
+    publication: { status: "published", unresolvedFigureCount: 0, workEntryId }
+  };
 }
 
 // A view whose execution was interrupted (a crash/restart abandoned the running claim, recovered at

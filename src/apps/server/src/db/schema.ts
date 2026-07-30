@@ -1032,6 +1032,11 @@ export const pdfImportPublications = pgTable(
     ocrValidationFailedPages: integer("ocr_validation_failed_pages"),
     noContent: boolean("no_content"),
     unpreservableImages: integer("unpreservable_images"),
+    // A warning on a SUCCESSFUL publication (#806): how many unresolved picture/figure placeholders the
+    // published Work carries, so the Library can report "N figures to review". Null when no figures were
+    // present; a positive count coexists with `workEntryId` (it is a warning, not a terminal outcome), so
+    // it is deliberately excluded from the single-outcome check below.
+    unresolvedFigureCount: integer("unresolved_figure_count"),
     createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull().defaultNow(),
     publishedAt: timestamp("published_at", { mode: "date", withTimezone: true })
   },
@@ -1052,6 +1057,12 @@ export const pdfImportPublications = pgTable(
     check(
       "pdf_import_publications_images_ck",
       sql`${table.unpreservableImages} is null or ${table.unpreservableImages} > 0`
+    ),
+    // An unresolved-figure warning (#806), when present, is a positive count and only accompanies a
+    // published Work — it is a review warning on a real Work, never a standalone terminal state.
+    check(
+      "pdf_import_publications_unresolved_figures_ck",
+      sql`${table.unresolvedFigureCount} is null or (${table.unresolvedFigureCount} > 0 and ${table.workEntryId} is not null)`
     )
   ]
 );

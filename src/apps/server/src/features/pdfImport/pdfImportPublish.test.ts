@@ -54,6 +54,7 @@ import {
   markAwaitingReview,
   setProbeResult
 } from "./pdfImportStore.js";
+import { buildPdfImportPublicationOutcome } from "./pdfImportQueries.js";
 
 const NOW = new Date("2026-01-01T00:00:00.000Z");
 const doclingSchema = { name: "DoclingDocument", version: "1.10.0" } as const;
@@ -437,44 +438,109 @@ describe("publishConvertedPdfImport", () => {
     });
   });
 
-  it("refuses a converted PDF containing a picture as image_unsupported, creating no Work", async () => {
-    // Native text on every page, but the body carries a picture whose image #701 cannot preserve:
-    // publishing must refuse rather than write a content-losing null-image placeholder (#702).
+  it("publishes an image-bearing PDF as a correctable Work carrying an unresolved-figure placeholder (#806)", async () => {
+    // Synthetic regression fixture: substantial readable text plus one unresolved picture on a later page.
+    // The whole readable hierarchy must publish as a canonical Work; the picture becomes a visible,
+    // editable `figure` placeholder (null image resource, non-decorative page-naming label, its caption
+    // preserved) and the publication records an `unresolvedFigureCount` warning — no terminal refusal.
+    const pdfBytes = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37, 0x0a, 0x06]);
+    const figureBody: readonly StructuredDocItem[] = [
+      item({ label: "title", text: "A Study With Figures" }),
+      item({ label: "text", text: "An opening paragraph with substantial readable prose." }),
+      item({ label: "section_header", text: "Chapter One" }),
+      item({ label: "text", text: "The chapter body continues with more readable text." }),
+      item({
+        label: "picture",
+        pageNumber: 2,
+        children: [item({ label: "caption", pageNumber: 2, text: "Diagram of the pipeline." })]
+      }),
+      item({ label: "text", text: "A closing paragraph after the figure." })
+    ];
     await driveToAwaitingReview(db, {
-      id: "att-image",
+      id: "att-figure",
       sourceHash: "e".repeat(64),
-      payload: rangePayload(
-        [item({ label: "text", text: "Body" }), item({ label: "picture", text: "" })],
-        [true]
-      ),
-      totalPages: 1
+      payload: rangePayload(figureBody, [true, true]),
+      totalPages: 2,
+      stageBytes: pdfBytes
     });
     await insertPublicationIntent(db, {
-      attemptId: "att-image",
+      attemptId: "att-figure",
       enteredTitle: null,
       enteredAuthor: null,
       enteredLanguage: null,
       fileName: "figures.pdf"
     });
 
-    const result = await publishConvertedPdfImport(publishDeps(db), "att-image");
-    expect(result).toEqual({ status: "image_unsupported", unpreservableImages: 1 });
-    const publication = await getPublication(db, "att-image");
-    expect(publication?.unpreservableImages).toBe(1);
-    expect(publication?.workEntryId).toBeNull();
+    const result = published(await publishConvertedPdfImport(publishDeps(db), "att-figure"));
+    expect(result.unresolvedFigureCount).toBe(1);
+
+    // The whole readable hierarchy published, and the picture is a canonical figure placeholder: a null
+    // image resource, a non-empty (non-decorative) alt naming the source page, and its caption text.
+    const content = await loadWorkContent(db, result.work.entryId);
+    const blocks = content!.readingUnits.flatMap((unit) => unit.docBlocks ?? []);
+    expect(blocks.some((block) => block.type === "heading")).toBe(true);
+    expect(blocks.some((block) => block.type === "paragraph")).toBe(true);
+    const figures = blocks.filter((block) => block.type === "figure");
+    expect(figures).toHaveLength(1);
+    const figureNode = figures[0]!.node as {
+      content?: ReadonlyArray<{ type: string; attrs?: Record<string, unknown>; content?: unknown }>;
+    };
+    const image = figureNode.content?.find((child) => child.type === "image");
+    expect(image?.attrs?.["imageResourceId"]).toBeNull();
+    expect(String(image?.attrs?.["alt"] ?? "")).toContain("page 2");
+    expect(String(image?.attrs?.["alt"] ?? "").length).toBeGreaterThan(0);
+    expect(JSON.stringify(figureNode)).toContain("Diagram of the pipeline.");
+
+    // The warning is persisted on a successful publication, and it survives the DTO round-trip.
+    const publication = await getPublication(db, "att-figure");
+    expect(publication?.workEntryId).toBe(result.work.entryId);
+    expect(publication?.unresolvedFigureCount).toBe(1);
+    expect(publication?.unpreservableImages).toBeNull();
     expect(publication?.noContent).toBeNull();
-    expect(publication?.ocrValidationFailedPages).toBeNull();
-    // No Work, no source, no claim: nothing was committed before the refusal.
-    expect(await db.select().from(workSources)).toHaveLength(0);
-    expect(await db.select().from(uploadedSourceClaims)).toHaveLength(0);
-    expect(await db.select().from(workMeta)).toHaveLength(0);
-    // The redundant stage is freed cleanly and its binding cleared, like the other refusals.
-    await expect(stat(stageStore.openStage("att-image").path)).rejects.toThrow();
+    expect(await buildPdfImportPublicationOutcome(db, "att-figure")).toEqual({
+      status: "published",
+      unresolvedFigureCount: 1,
+      workEntryId: result.work.entryId
+    });
+
+    // Provenance retention: the original uploaded PDF is persisted and its bytes match the upload.
+    const sources = await db
+      .select()
+      .from(workSources)
+      .where(eq(workSources.workEntryId, result.work.entryId));
+    expect(sources).toHaveLength(1);
+    expect(sources[0]!.filePath).not.toBeNull();
+    const retained = await readFile(resolveWithinDirectory(sourceFilesDir, sources[0]!.filePath!));
+    expect(new Uint8Array(retained)).toEqual(pdfBytes);
     expect(cleanupFailures).toEqual([]);
-    expect((await getAttemptById(db, "att-image"))?.stagePath).toBeNull();
-    // The refusal is terminal: a second publish is an idempotent no-op, not a retry.
-    expect(await publishConvertedPdfImport(publishDeps(db), "att-image")).toEqual({
-      status: "already_published"
+  });
+
+  it("records no unresolved-figure warning for a fully readable PDF with no pictures (#806)", async () => {
+    // The warning is figure-driven: a plain readable document publishes with a zero count that the DTO
+    // reports, and the legacy unpreservable-images marker is never written by the new path.
+    await driveToAwaitingReview(db, {
+      id: "att-nofig",
+      sourceHash: "d".repeat(64),
+      payload: rangePayload(SAMPLE_BODY, [true]),
+      totalPages: 1
+    });
+    await insertPublicationIntent(db, {
+      attemptId: "att-nofig",
+      enteredTitle: null,
+      enteredAuthor: null,
+      enteredLanguage: null,
+      fileName: "plain.pdf"
+    });
+
+    const result = published(await publishConvertedPdfImport(publishDeps(db), "att-nofig"));
+    expect(result.unresolvedFigureCount).toBe(0);
+    const publication = await getPublication(db, "att-nofig");
+    expect(publication?.unresolvedFigureCount).toBeNull();
+    expect(publication?.unpreservableImages).toBeNull();
+    expect(await buildPdfImportPublicationOutcome(db, "att-nofig")).toEqual({
+      status: "published",
+      unresolvedFigureCount: 0,
+      workEntryId: result.work.entryId
     });
   });
 

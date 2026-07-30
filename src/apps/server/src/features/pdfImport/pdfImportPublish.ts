@@ -31,7 +31,6 @@ import {
   getPublication,
   insertPublicationIntent,
   linkPublishedWork,
-  markPublicationImagesUnsupported,
   markPublicationNoContent,
   markPublicationOcrValidationFailed,
   markReviewPublished,
@@ -167,17 +166,20 @@ export type PdfImportPublishDependencies = Readonly<{
 // prior tick (idempotent); `not_ready` = the attempt is not `converted`; `ocr_validation_failed` = a
 // typed refusal with no Work (a document still had text-less pages after the OCR pass); `no_content` = a
 // typed refusal with no Work (the pages had native text but mapped to zero canonical blocks);
-// `image_unsupported` = a typed refusal with no Work (the document contains picture/figure constructs
-// whose images cannot be preserved); `published` = a canonical Work (freshly created, or reopened for
-// identical bytes).
+// `published` = a canonical Work (freshly created, or reopened for identical bytes). A published Work may
+// carry `unresolvedFigureCount` unresolved figure placeholders (#806) as a non-blocking review warning.
 export type PublishConvertedResult =
   | Readonly<{ status: "skipped" }>
   | Readonly<{ status: "already_published" }>
   | Readonly<{ status: "not_ready" }>
   | Readonly<{ status: "ocr_validation_failed"; pagesNeedingOcr: number }>
   | Readonly<{ status: "no_content" }>
-  | Readonly<{ status: "image_unsupported"; unpreservableImages: number }>
-  | Readonly<{ status: "published"; work: WorkDto; reopened: boolean }>;
+  | Readonly<{
+      status: "published";
+      work: WorkDto;
+      reopened: boolean;
+      unresolvedFigureCount: number;
+    }>;
 
 // The document metadata resolution ladder (#702): entered value first, then the source PDF's own cleaned
 // metadata (#701 surfaces its title/author when the info dictionary carried them), then — for the title —
@@ -334,20 +336,11 @@ export async function publishConvertedPdfImport(
     await markReviewPublished(deps.db, attemptId, deps.now());
     return { status: "no_content" };
   }
-  if (mapping.status === "image_unsupported") {
-    // The document contains picture/figure constructs whose images #701 cannot extract: refuse before
-    // claiming/publishing rather than publishing a content-losing null-image placeholder (#702's "fail
-    // visibly when a construct cannot map"). Record the typed terminal refusal and free the retained bytes.
-    await markPublicationImagesUnsupported(
-      deps.db,
-      attemptId,
-      mapping.unpreservableImages,
-      deps.now()
-    );
-    await removeRetainedStage(deps, attemptId, stagePath);
-    await markReviewPublished(deps.db, attemptId, deps.now());
-    return { status: "image_unsupported", unpreservableImages: mapping.unpreservableImages };
-  }
+
+  // A mapped document may carry unresolved picture/figure placeholders (#806): they publish as visible,
+  // correctable figures and are recorded as a review warning on the successful publication, never a
+  // refusal.
+  const unresolvedFigureCount = mapping.unresolvedFigureCount;
 
   const title = resolveTitle(
     publication.enteredTitle,
@@ -409,8 +402,8 @@ export async function publishConvertedPdfImport(
       });
       await writeBlockEvidence(tx, workEntryId, mapping.evidence, ocrProvenance);
       // Terminal job state, atomic with the Work: a failure anywhere above leaves no readable Work and
-      // no linked publication.
-      await linkPublishedWork(tx, attemptId, workEntryId, deps.now());
+      // no linked publication. The unresolved-figure count rides along as a review warning (#806).
+      await linkPublishedWork(tx, attemptId, workEntryId, deps.now(), unresolvedFigureCount);
       return {
         expectedBlockCount,
         work: {
@@ -427,9 +420,16 @@ export async function publishConvertedPdfImport(
   });
 
   // Identical bytes reopened the owning Work (a concurrent creation's loser, or a genuine re-upload): the
-  // Work already exists, so link this attempt's publication to it as its terminal state.
+  // Work already exists, so link this attempt's publication to it as its terminal state. Identical bytes
+  // map to the same figures, so this attempt records the same unresolved-figure warning (#806).
   if (outcome.status === "exact_existing") {
-    await linkPublishedWork(deps.db, attemptId, outcome.work.entryId, deps.now());
+    await linkPublishedWork(
+      deps.db,
+      attemptId,
+      outcome.work.entryId,
+      deps.now(),
+      unresolvedFigureCount
+    );
   }
   // The Work's source bytes now live durably in the source-file store (a fresh create) or already did (a
   // reopen), so the retained stage is redundant: free it.
@@ -437,7 +437,12 @@ export async function publishConvertedPdfImport(
   // The review decision resolved: transition the awaiting-review attempt to its terminal `converted` state
   // so no further review attempt is ever minted for it. Idempotent (fenced on `awaiting_review`).
   await markReviewPublished(deps.db, attemptId, deps.now());
-  return { status: "published", work: outcome.work, reopened: outcome.status === "exact_existing" };
+  return {
+    reopened: outcome.status === "exact_existing",
+    status: "published",
+    unresolvedFigureCount,
+    work: outcome.work
+  };
 }
 
 // The metadata + provenance a converted attempt exposes to the shared Work-creation duplicate review

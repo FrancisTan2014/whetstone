@@ -451,18 +451,24 @@ function summarizeMapped(mapping) {
   const lowConfidenceBlockCount = mapping.evidence.filter(
     (item) => item.confidence < LOW_CONFIDENCE_THRESHOLD
   ).length;
-  return { blockCount, headingCount, lowConfidenceBlockCount, plainTextLength, unknownBlockCount };
+  return {
+    blockCount,
+    headingCount,
+    lowConfidenceBlockCount,
+    plainTextLength,
+    unknownBlockCount,
+    unresolvedFigureCount: mapping.unresolvedFigureCount
+  };
 }
 
-// Convert a mapping result into a rubric observation.
+// Convert a mapping result into a rubric observation. A mapped document carrying unresolved figures (#806)
+// stays a `mapped` observation — the summary's unresolvedFigureCount drives its correctable verdict.
 function observationForMapping(mapping) {
   switch (mapping.status) {
     case "ocr_validation_failed":
       return { kind: "ocr_required", pagesNeedingOcr: mapping.pagesNeedingOcr };
     case "no_content":
       return { kind: "no_content" };
-    case "image_unsupported":
-      return { kind: "image_unsupported", unpreservableImages: mapping.unpreservableImages };
     default:
       return { kind: "mapped", summary: summarizeMapped(mapping) };
   }
