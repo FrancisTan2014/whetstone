@@ -57,3 +57,28 @@ export function createFatalDatabaseGuard(options: FatalDatabaseGuardOptions): Fa
     }
   };
 }
+
+// The minimal signal surface the teardown needs, so the wiring is unit-testable without registering
+// real handlers on the test runner's process.
+export type SignalTeardownRegistrar = Readonly<{
+  on: (signal: "SIGINT" | "SIGTERM", listener: () => void) => unknown;
+}>;
+
+// Route SIGINT/SIGTERM through the guard so a normal interruption of a command that owns an existing
+// persistent database closes PGlite (checkpointing) and releases-or-retains the lease before the process
+// exits, instead of abandoning the open runtime for stale-lock recovery after an abrupt exit (#805).
+// Wired the instant the guard exists — before the post-open bootstrap (MCP) or the long dump (backup)
+// runs — so a Ctrl+C in the post-open/pre-bootstrap window still tears down cleanly, mirroring index.ts,
+// which registers a stable signal handler at acquisition. The guard reads the handle lazily, so a signal
+// before it is assigned simply exits, leaving the lock for the stale-lock path.
+export function installFatalSignalTeardown(
+  guard: FatalDatabaseGuard,
+  registrar: SignalTeardownRegistrar,
+  exitCode: number
+): void {
+  const onSignal = (): void => {
+    guard.trigger(exitCode);
+  };
+  registrar.on("SIGINT", onSignal);
+  registrar.on("SIGTERM", onSignal);
+}

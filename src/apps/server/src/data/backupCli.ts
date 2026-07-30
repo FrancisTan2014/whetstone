@@ -4,7 +4,7 @@ import * as lockfile from "proper-lockfile";
 
 import { readServerConfig } from "../config/serverConfig.js";
 import { createDatabaseLeaseAcquirer } from "../db/databaseLease.js";
-import { createFatalDatabaseGuard } from "../db/fatalDatabaseGuard.js";
+import { createFatalDatabaseGuard, installFatalSignalTeardown } from "../db/fatalDatabaseGuard.js";
 import { openManagedDatabase, type ManagedDatabase } from "../db/databaseLifecycle.js";
 import { backupData } from "./backup.js";
 import { BackupError } from "./backupError.js";
@@ -51,6 +51,12 @@ process.exitCode = await runBackupCommand(
       },
       exit: (code) => process.exit(code)
     });
+    // Route SIGINT/SIGTERM through the guard before the (potentially long) dump starts, so interrupting
+    // a backup mid-dump closes the open PGlite (checkpoint) and releases-or-retains the lease instead of
+    // abandoning the runtime for stale-lock recovery after an abrupt exit (#805). An interrupted backup
+    // did not complete, so it exits non-zero. The guard reads the handle lazily, so a signal during
+    // acquisition simply exits.
+    installFatalSignalTeardown(fatal, process, 1);
     managedDatabase = await openManagedDatabase({
       databaseDir: config.databaseDir,
       openPglite: async (databaseDir) => {

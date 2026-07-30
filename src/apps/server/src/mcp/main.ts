@@ -8,7 +8,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 
 import { readServerConfig } from "../config/serverConfig.js";
 import { createDatabaseLeaseAcquirer } from "../db/databaseLease.js";
-import { createFatalDatabaseGuard } from "../db/fatalDatabaseGuard.js";
+import { createFatalDatabaseGuard, installFatalSignalTeardown } from "../db/fatalDatabaseGuard.js";
 import { openManagedDatabase, type ManagedDatabase } from "../db/databaseLifecycle.js";
 import { runMigrations } from "../db/migrate.js";
 import { expireCardCreationAttempts } from "../features/notesReview/cardCreationAttemptStore.js";
@@ -51,6 +51,12 @@ async function main(): Promise<void> {
     },
     exit: (code) => process.exit(code)
   });
+  // Route SIGINT/SIGTERM through the same idempotent guard the instant it exists — before the lease is
+  // even acquired, and well before the post-open bootstrap (migrations, attempt sweep, lexical service,
+  // card server, transport connect) runs. A Ctrl+C in that post-open/pre-bootstrap window must close the
+  // open PGlite (checkpoint) and release-or-retain the lease, not abandon the runtime for stale reclaim
+  // (#805). The guard reads the handle lazily, so a signal during acquisition simply exits.
+  installFatalSignalTeardown(fatal, process, 0);
   managedDatabase = await openManagedDatabase({
     databaseDir: config.databaseDir,
     openPglite: async (databaseDir) => {
@@ -100,15 +106,6 @@ async function main(): Promise<void> {
         process.stderr.write(`${line}\n`);
       }
     });
-
-    // Release the lease on shutdown so the running app (or the next MCP invocation) can reclaim the
-    // directory, through the same idempotent guard a lease compromise uses so a signal and a compromise
-    // never tear down twice. Idempotent by construction of `managedDatabase.close`.
-    const shutdown = (): void => {
-      fatal.trigger(0);
-    };
-    process.on("SIGINT", shutdown);
-    process.on("SIGTERM", shutdown);
 
     const transport = new StdioServerTransport();
     await server.connect(transport);

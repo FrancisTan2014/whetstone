@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createFatalDatabaseGuard } from "./fatalDatabaseGuard.js";
+import {
+  createFatalDatabaseGuard,
+  installFatalSignalTeardown,
+  type SignalTeardownRegistrar
+} from "./fatalDatabaseGuard.js";
 
 describe("createFatalDatabaseGuard", () => {
   it("exits without touching a database that does not exist yet on a pre-assignment compromise", async () => {
@@ -95,5 +99,82 @@ describe("createFatalDatabaseGuard", () => {
     expect(close).toHaveBeenCalledTimes(1);
     expect(exit).toHaveBeenCalledTimes(1);
     expect(exit).toHaveBeenCalledWith(1);
+  });
+});
+
+describe("installFatalSignalTeardown", () => {
+  const collectRegistrar = (): {
+    registrar: SignalTeardownRegistrar;
+    handlers: Map<"SIGINT" | "SIGTERM", () => void>;
+  } => {
+    const handlers = new Map<"SIGINT" | "SIGTERM", () => void>();
+    const registrar: SignalTeardownRegistrar = {
+      on: (signal, listener) => {
+        handlers.set(signal, listener);
+        return undefined;
+      }
+    };
+    return { registrar, handlers };
+  };
+
+  it("registers both SIGINT and SIGTERM handlers", () => {
+    const { registrar, handlers } = collectRegistrar();
+    const guard = createFatalDatabaseGuard({
+      getDatabase: () => undefined,
+      reportCloseError: vi.fn(),
+      exit: vi.fn()
+    });
+
+    installFatalSignalTeardown(guard, registrar, 0);
+
+    expect([...handlers.keys()].sort()).toEqual(["SIGINT", "SIGTERM"]);
+  });
+
+  it("closes an owned database on a post-open interruption before exiting with the wired code", async () => {
+    // The regression (#805): a Ctrl+C in the MCP post-open/pre-bootstrap window, or mid backup dump, must
+    // close the open PGlite (checkpoint) and release-or-retain the lease — not abandon the runtime for
+    // stale reclaim. The signal must route through the guard, which closes the lazily-read handle.
+    const order: string[] = [];
+    const close = vi.fn(async () => {
+      order.push("close");
+    });
+    const exit = vi.fn<(code: number) => void>(() => {
+      order.push("exit");
+    });
+    const { registrar, handlers } = collectRegistrar();
+    const guard = createFatalDatabaseGuard({
+      getDatabase: () => ({ close }),
+      reportCloseError: vi.fn(),
+      exit
+    });
+
+    installFatalSignalTeardown(guard, registrar, 1);
+    handlers.get("SIGINT")?.();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(order).toEqual(["close", "exit"]);
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it("exits safely when a signal fires before the database handle is assigned", async () => {
+    // Wired before the lease is acquired: a signal during acquisition has no owned PGlite to close, so it
+    // just exits (leaving the lock for stale reclaim) rather than throwing on an uninitialized handle.
+    const close = vi.fn(async () => {});
+    const exit = vi.fn<(code: number) => void>();
+    const { registrar, handlers } = collectRegistrar();
+    const guard = createFatalDatabaseGuard({
+      getDatabase: () => undefined,
+      reportCloseError: vi.fn(),
+      exit
+    });
+
+    installFatalSignalTeardown(guard, registrar, 0);
+    handlers.get("SIGTERM")?.();
+    await Promise.resolve();
+
+    expect(close).not.toHaveBeenCalled();
+    expect(exit).toHaveBeenCalledTimes(1);
+    expect(exit).toHaveBeenCalledWith(0);
   });
 });
