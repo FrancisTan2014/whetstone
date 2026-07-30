@@ -16,6 +16,15 @@ export const noReadableContentMessage =
 // language (#746), not English alone. A named export so the flow and its tests agree.
 export const recognizingTextLabel = "Recognizing text…";
 
+// The learner-facing phrase for a PDF that published with one or more unresolved figure placeholders
+// (#806): the readable text is imported, but each figure still needs an administrator to supply its image
+// in the shared Work editor. A named export so the Library flow and its tests agree, and pluralized so a
+// larger count reads naturally.
+export function figuresToReviewMessage(figuresToReview: number): string {
+  const figures = figuresToReview === 1 ? "1 figure" : `${figuresToReview} figures`;
+  return `Imported with ${figures} to review.`;
+}
+
 function imageUnsupportedMessage(unpreservableImages: number): string {
   const images =
     unpreservableImages === 1
@@ -35,7 +44,7 @@ function ocrValidationFailedPagesMessage(pagesNeedingOcr: number): string {
 // and every phrase/branch is unit-tested without a component or the network.
 export type PdfImportProgress =
   | Readonly<{ kind: "in_progress"; label: string; needsResume: boolean; terminal: false }>
-  | Readonly<{ kind: "published"; workEntryId: string; terminal: true }>
+  | Readonly<{ kind: "published"; workEntryId: string; figuresToReview: number; terminal: true }>
   | Readonly<{ kind: "needs_review"; review: WorkCreationReviewDto; terminal: true }>
   | Readonly<{ kind: "ocr_validation_failed"; message: string; terminal: true }>
   | Readonly<{ kind: "no_content"; message: string; terminal: true }>
@@ -53,7 +62,12 @@ export type PdfImportProgress =
 // paused forever.
 export function describePdfImport(view: PdfImportViewDto): PdfImportProgress {
   if (view.publication.status === "published") {
-    return { kind: "published", terminal: true, workEntryId: view.publication.workEntryId };
+    return {
+      figuresToReview: view.publication.unresolvedFigureCount,
+      kind: "published",
+      terminal: true,
+      workEntryId: view.publication.workEntryId
+    };
   }
 
   if (view.publication.status === "ocr_validation_failed") {

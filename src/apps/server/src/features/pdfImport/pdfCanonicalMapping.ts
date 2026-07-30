@@ -38,14 +38,15 @@ export type PdfBlockEvidence = Readonly<{
 // publication is refused with a typed `ocr_validation_failed` outcome and NO partial Work is created. A
 // PDF whose pages carry native text but map to ZERO canonical blocks (an empty body) is refused with a
 // typed `no_content` outcome, so publication never creates an empty-shell Work (#702's "no empty shell").
-// A PDF that contains picture/figure constructs is refused with a typed `image_unsupported` outcome: #701
-// emits no extractable image bytes, so the image cannot be preserved through the image-resource boundary,
-// and publishing a null-image placeholder would silently lose content — the whole document fails visibly
-// instead (#702's "fail visibly when a construct cannot map"). The affected page/image count is reported.
+// A picture/figure construct whose image bytes #701 cannot yet extract does NOT refuse the document
+// (#806): an unresolved leaf must not erase otherwise readable pages. It maps to an explicit, editable
+// canonical `figure` placeholder (a null-image `image` child carrying a page-identifying fallback label
+// plus any extracted caption), so the whole text hierarchy still publishes and the figure stays visible
+// for later correction. The count of such placeholders is returned as `unresolvedFigureCount` so
+// publication can record it as a review warning rather than a terminal failure.
 export type PdfCanonicalMappingResult =
   | Readonly<{ status: "ocr_validation_failed"; pagesNeedingOcr: number }>
   | Readonly<{ status: "no_content" }>
-  | Readonly<{ status: "image_unsupported"; unpreservableImages: number }>
   | Readonly<{
       status: "mapped";
       units: readonly PersistableReadingUnit[];
@@ -53,6 +54,9 @@ export type PdfCanonicalMappingResult =
       // The distinct docling labels that had no canonical node type and became `unknown` nodes, so the
       // caller can record the fail-loud gap without re-walking the tree.
       unmappedLabels: readonly string[];
+      // How many unresolved picture/figure placeholders (#806) were produced. Zero for a document with no
+      // pictures; a positive count is a review warning on the successful publication, never a refusal.
+      unresolvedFigureCount: number;
     }>;
 
 // A body item paired with the canonical block node it projected to, carrying the source item so the
@@ -67,9 +71,13 @@ type DraftUnit = { title: string | null; blocks: MappedBlock[] };
 const HEADING_LEVEL_BY_LABEL: Readonly<Record<string, number>> = { title: 1, section_header: 2 };
 const LIST_GROUP_LABELS = new Set(["list", "ordered_list", "unordered_list"]);
 const HEADER_CELL_LABELS = new Set(["table_header", "column_header", "row_header"]);
-// Picture/figure constructs whose image bytes #701 does not extract. Their presence refuses the whole
-// publication (`image_unsupported`) rather than publishing a content-losing null-image placeholder.
+// Picture/figure constructs whose image bytes #701 does not yet extract. Rather than refusing the whole
+// publication (#806), each maps to an explicit, editable `figure` placeholder so readable pages still
+// publish and the unresolved image stays visible for later correction.
 const PICTURE_LABELS = new Set(["picture", "figure"]);
+// A child label that carries a picture's caption text. Docling emits a picture's caption as a `caption`
+// child rather than the picture item's own text, so a placeholder figure adopts it when present.
+const CAPTION_LABEL = "caption";
 
 function inlineContent(text: string): DocumentNodeJSON[] {
   return text.length === 0 ? [] : [{ text, type: "text" }];
@@ -134,24 +142,53 @@ function tableNode(item: StructuredDocItem): DocumentNodeJSON | null {
   return { content: rows, type: "table" };
 }
 
-// Count the picture/figure constructs anywhere in the body tree (including nested inside lists or table
-// cells): each one carries an image #701 cannot extract, so any occurrence refuses the whole document.
-function countUnpreservableImages(items: readonly StructuredDocItem[]): number {
-  return items.reduce(
-    (total, item) =>
-      total + (PICTURE_LABELS.has(item.label) ? 1 : 0) + countUnpreservableImages(item.children),
-    0
-  );
+// The non-decorative alt text for an unresolved figure placeholder (#806): it identifies the source page
+// so the figure reads as a real, locatable construct in the Reader and shared editor rather than an empty
+// or decorative image. It is never the empty string (which would mark the image decorative/aria-hidden).
+function figureFallbackLabel(pageNumber: number): string {
+  return `Figure from PDF page ${pageNumber} (image not yet extracted)`;
+}
+
+// The caption text for an unresolved figure: docling emits a picture's caption as a `caption` child, so
+// prefer the first such child's text; fall back to the picture item's own text. Empty when neither
+// carries any, so the placeholder figure omits its optional `figureCaption`.
+function figureCaptionText(item: StructuredDocItem): string {
+  const captionChild = item.children.find((child) => child.label === CAPTION_LABEL);
+  const caption = (captionChild?.text ?? item.text).trim();
+  return caption;
+}
+
+// Map a picture/figure construct to a canonical `figure` placeholder (#806): a null-image `image` child
+// (no resolved `imageResourceId`/`src` yet) carrying a page-identifying non-decorative fallback label,
+// plus its extracted caption as an optional `figureCaption`. The figure is a normal block whose evidence
+// (page/geometry/confidence/label) is keyed like any other, so the unresolved image is visible and
+// correctable instead of erasing the readable document.
+function figureNode(item: StructuredDocItem): DocumentNodeJSON {
+  const content: DocumentNodeJSON[] = [
+    {
+      attrs: { alt: figureFallbackLabel(item.pageNumber), imageResourceId: null, src: null },
+      type: "image"
+    }
+  ];
+  const caption = figureCaptionText(item);
+  if (caption.length > 0) {
+    content.push({ content: inlineContent(caption), type: "figureCaption" });
+  }
+  return { content, type: "figure" };
 }
 
 // Project one top-level body item to its canonical block node. The raw docling label decides the node
 // type; a construct with no canonical representation (or an empty table/list) becomes a visible `unknown`
-// node so nothing a publisher wrote is silently dropped. Picture/figure constructs never reach here — a
-// document containing one is refused as `image_unsupported` before mapping.
+// node so nothing a publisher wrote is silently dropped. A picture/figure becomes a canonical `figure`
+// placeholder (#806) whose image is unresolved, so the readable document publishes with the figure
+// visible for correction rather than the whole document being refused.
 function bodyItemToBlock(item: StructuredDocItem): DocumentNodeJSON {
   const headingLevel = HEADING_LEVEL_BY_LABEL[item.label];
   if (headingLevel !== undefined) {
     return { attrs: { level: headingLevel }, content: inlineContent(item.text), type: "heading" };
+  }
+  if (PICTURE_LABELS.has(item.label)) {
+    return figureNode(item);
   }
   switch (item.label) {
     case "text":
@@ -278,20 +315,19 @@ export function mapStructuredDocument(document: StructuredDocument): PdfCanonica
     return { pagesNeedingOcr, status: "ocr_validation_failed" };
   }
 
-  // A picture/figure carries an image #701 does not extract, so it cannot be preserved through the
-  // image-resource boundary. Refuse the whole document (no null-image placeholder is ever published)
-  // before mapping, reporting how many images were affected (#702's "fail visibly when a construct
-  // cannot map").
-  const unpreservableImages = countUnpreservableImages(document.body);
-  if (unpreservableImages > 0) {
-    return { status: "image_unsupported", unpreservableImages };
-  }
+  // A picture/figure carries an image #701 does not yet extract, but an unresolved leaf must not erase
+  // the readable pages (#806). Each maps to a visible `figure` placeholder; the count is reported as a
+  // review warning on the successful publication rather than refusing the whole document.
 
   const walked = walkBody(document.body);
   const unmapped = new Set<string>();
+  let unresolvedFigureCount = 0;
   for (const block of walked) {
     if (block.node.type === "unknown") {
       unmapped.add(block.label);
+    }
+    if (block.node.type === "figure") {
+      unresolvedFigureCount += 1;
     }
   }
 
@@ -311,5 +347,11 @@ export function mapStructuredDocument(document: StructuredDocument): PdfCanonica
     return { status: "no_content" };
   }
 
-  return { evidence, status: "mapped", unmappedLabels: [...unmapped], units };
+  return {
+    evidence,
+    status: "mapped",
+    unmappedLabels: [...unmapped],
+    unresolvedFigureCount,
+    units
+  };
 }

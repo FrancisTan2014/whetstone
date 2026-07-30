@@ -36,6 +36,7 @@ import {
   pollPdfImportUntilTerminal,
   type PdfImportPollResult
 } from "../pdfImport/pdfImportPolling";
+import { figuresToReviewMessage } from "../pdfImport/pdfImportProgress";
 import {
   forgetActivePdfImport,
   readActivePdfImport,
@@ -441,7 +442,14 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
 
     if (progress.kind === "published") {
       await reload();
-      toast.success("Your PDF is ready to read.");
+      // A born-digital PDF with unresolved figures still publishes (#806): open the Work and report how many
+      // figures need an image supplied in the editor, so the administrator knows the review workload rather
+      // than seeing a terminal failure. A Work with no unresolved figures shows the plain ready message.
+      toast.success(
+        progress.figuresToReview > 0
+          ? figuresToReviewMessage(progress.figuresToReview)
+          : "Your PDF is ready to read."
+      );
       openReader(progress.workEntryId);
       return;
     }

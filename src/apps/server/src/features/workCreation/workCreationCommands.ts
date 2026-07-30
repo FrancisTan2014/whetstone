@@ -97,7 +97,6 @@ export type PdfReviewPublishOutcome =
       status:
         | "ocr_validation_failed"
         | "no_content"
-        | "image_unsupported"
         | "not_ready"
         | "already_published"
         | "skipped";

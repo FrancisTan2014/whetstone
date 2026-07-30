@@ -53,18 +53,22 @@ export type MappedWorkSummary = Readonly<{
   unknownBlockCount: number;
   // Blocks whose retained extraction confidence is below PDF_EXTRACTION_CONFIDENCE_THRESHOLD.
   lowConfidenceBlockCount: number;
+  // Unresolved picture/figure placeholders in the Work (#806): pictures whose image bytes are not yet
+  // extracted. A positive count makes the Work `correctable` (an administrator supplies the images later),
+  // never `automatic-usable`.
+  unresolvedFigureCount: number;
   // Readable body code points across all blocks; 0 means a mapped-but-textless shell.
   plainTextLength: number;
 }>;
 
 // The typed outcome of running one corpus PDF through the supported import pipeline, reduced to what the
 // rubric needs. `corrupt`/`password_required` are handled by eligibility (excluded from the denominator);
-// every other kind is classifiable.
+// every other kind is classifiable. A mapped Work carrying unresolved figures is NOT a separate kind — it
+// is a `mapped` observation whose summary counts them (#806), so it stays a real, published Work.
 export type ClassifiableObservation =
   | Readonly<{ kind: "mapped"; summary: MappedWorkSummary }>
   | Readonly<{ kind: "ocr_required"; pagesNeedingOcr: number }>
   | Readonly<{ kind: "no_content" }>
-  | Readonly<{ kind: "image_unsupported"; unpreservableImages: number }>
   | Readonly<{ kind: "conversion_failed"; detail: string }>
   | Readonly<{ kind: "timeout" }>
   | Readonly<{ kind: "memory" }>;
@@ -87,10 +91,6 @@ export function classifyPdfUsability(observation: ClassifiableObservation): PdfU
   switch (observation.kind) {
     case "mapped":
       return classifyMappedWork(observation.summary);
-    case "image_unsupported":
-      // A born-digital page-text document refused only for an unextractable figure keeps recoverable
-      // body text, so it enters the correction workflow rather than counting as a hard failure.
-      return { class: "correctable", reason: "image-unsupported" };
     case "ocr_required":
       return { class: "unsupported", reason: "ocr-required" };
     case "no_content":
@@ -109,6 +109,13 @@ function classifyMappedWork(summary: MappedWorkSummary): PdfUsabilityVerdict {
   // readable content: it is recoverable by retyping, so it is `correctable`, never automatic.
   if (summary.plainTextLength === 0) {
     return { class: "correctable", reason: "unmapped-constructs" };
+  }
+  // An unresolved figure placeholder (#806) means the Work published its readable text but still needs an
+  // administrator to supply the image bytes, so it is `correctable` (never counted as automatic) and its
+  // reason names the image gap. This keeps a `correctable`/`image-unsupported` verdict corresponding to a
+  // real, published Work.
+  if (summary.unresolvedFigureCount > 0) {
+    return { class: "correctable", reason: "image-unsupported" };
   }
   const unknownRatio = summary.unknownBlockCount / summary.blockCount;
   if (unknownRatio > MAX_AUTOMATIC_UNKNOWN_BLOCK_RATIO) {

@@ -409,6 +409,9 @@ export type PdfImportPublicationRecord = Readonly<{
   ocrValidationFailedPages: number | null;
   noContent: boolean | null;
   unpreservableImages: number | null;
+  // A warning on a successful publication (#806): unresolved figure placeholders in the published Work,
+  // or null when there were none. Positive only alongside a non-null `workEntryId`.
+  unresolvedFigureCount: number | null;
   publishedAt: Date | null;
 }>;
 
@@ -425,6 +428,7 @@ function toPublicationRecord(row: PublicationRow): PdfImportPublicationRecord {
     ocrValidationFailedPages: row.ocrValidationFailedPages,
     noContent: row.noContent,
     unpreservableImages: row.unpreservableImages,
+    unresolvedFigureCount: row.unresolvedFigureCount,
     publishedAt: row.publishedAt
   });
 }
@@ -488,11 +492,19 @@ export async function linkPublishedWork(
   tx: Executor,
   attemptId: string,
   workEntryId: string,
-  now: Date
+  now: Date,
+  // The unresolved-figure warning count (#806) for this publication, or null when the Work carried no
+  // unresolved figures. Recorded atomically with the linked Work so a successful publication always
+  // exposes its figure-review workload.
+  unresolvedFigureCount: number | null = null
 ): Promise<void> {
   await tx
     .update(pdfImportPublications)
-    .set({ workEntryId, publishedAt: now })
+    .set({
+      workEntryId,
+      publishedAt: now,
+      unresolvedFigureCount: unresolvedFigureCount === 0 ? null : unresolvedFigureCount
+    })
     .where(pendingPublicationGuard(attemptId));
 }
 
