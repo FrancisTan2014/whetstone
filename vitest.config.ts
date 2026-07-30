@@ -44,6 +44,10 @@ export default defineConfig({
         "scripts/setup/**/*.{test,spec}.mjs",
         "scripts/setup/testSupport.mjs",
         "**/src/mcp/main.ts", // MCP stdio bootstrap is wiring-only infrastructure (like index.ts).
+        // The spawned child-process harness for the real cross-process database lease (#805): a
+        // `node --import tsx` entrypoint exercised only by databaseLease.crossProcess.test.ts, not
+        // shipped product code and not instrumentable in-process.
+        "**/src/db/databaseLease.crossProcessWorker.ts",
         "**/src/main.tsx",
         // Browser Web Audio / MediaRecorder boundary for voice-diary capture (#455/#565): touches
         // AudioContext/AnalyserNode/MediaRecorder/real timers, not exercisable in jsdom; every decision
@@ -92,7 +96,8 @@ export default defineConfig({
     exclude: [
       ...configDefaults.exclude,
       "scripts/setup/setupScriptRouting.test.mjs",
-      "src/apps/server/src/data/backupRestore.test.ts"
+      "src/apps/server/src/data/backupRestore.test.ts",
+      "src/apps/server/src/db/databaseLease.crossProcess.test.ts"
     ],
     hookTimeout: 30000,
     include: [

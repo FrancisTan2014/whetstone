@@ -1,6 +1,10 @@
 import { PGlite } from "@electric-sql/pglite";
 
+import * as lockfile from "proper-lockfile";
+
 import { readServerConfig } from "../config/serverConfig.js";
+import { createDatabaseLeaseAcquirer } from "../db/databaseLease.js";
+import { openManagedDatabase } from "../db/databaseLifecycle.js";
 import { backupData } from "./backup.js";
 import { BackupError } from "./backupError.js";
 import { runBackupCommand } from "./cli.js";
@@ -8,8 +12,8 @@ import { resolveDataRoots } from "./dataRoots.js";
 import { readVersionInfo } from "./metadata.js";
 
 // Thin real-I/O bootstrap for `pnpm data:backup`: reads server config, opens the persistent
-// database, and delegates every decision to the covered cli + backup modules. Wiring only, like
-// index.ts — excluded from coverage in vitest.config.ts.
+// database through the single-owner lifecycle boundary (#805), and delegates every decision to the
+// covered cli + backup modules. Wiring only, like index.ts — excluded from coverage in vitest.config.ts.
 
 const io = {
   out: (line: string) => {
@@ -30,12 +34,27 @@ process.exitCode = await runBackupCommand(
           "up. Set DATABASE_DIR to your persistent database directory, then run the backup again."
       );
     }
-    const pglite = new PGlite(config.databaseDir);
-    await pglite.waitReady;
+    // Take the same lease the running app holds, so a backup can never open a second PGlite over a
+    // directory the app owns. If Whetstone already owns it, this fails before PGlite construction with
+    // the stop-the-running-app remedy.
+    const managedDatabase = await openManagedDatabase({
+      databaseDir: config.databaseDir,
+      openPglite: async (databaseDir) => {
+        const instance = new PGlite(databaseDir);
+        await instance.waitReady;
+        return instance;
+      },
+      acquireLease: createDatabaseLeaseAcquirer({
+        lock: (file, options) => lockfile.lock(file, options),
+        onCompromised: (error) => {
+          console.error("[data:backup] database lease compromised", error);
+        }
+      })
+    });
     try {
       return await backupData({
         dumpDatabase: async () => {
-          const dump = await pglite.dumpDataDir("gzip");
+          const dump = await managedDatabase.pglite.dumpDataDir("gzip");
           return new Uint8Array(await dump.arrayBuffer());
         },
         roots: resolveDataRoots(config),
@@ -43,7 +62,7 @@ process.exitCode = await runBackupCommand(
         outputPath
       });
     } finally {
-      await pglite.close();
+      await managedDatabase.close();
     }
   },
   io

@@ -1,12 +1,14 @@
 import { PGlite } from "@electric-sql/pglite";
 import { randomUUID } from "node:crypto";
 
+import * as lockfile from "proper-lockfile";
 import WordPOS from "wordpos";
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
 import { readServerConfig } from "../config/serverConfig.js";
-import { createDbClient } from "../db/dbClient.js";
+import { createDatabaseLeaseAcquirer } from "../db/databaseLease.js";
+import { openManagedDatabase } from "../db/databaseLifecycle.js";
 import { runMigrations } from "../db/migrate.js";
 import { expireCardCreationAttempts } from "../features/notesReview/cardCreationAttemptStore.js";
 import { winkLemmatizer } from "../features/lexical/lexicalLemmatizer.js";
@@ -30,10 +32,33 @@ const cardCreationAttemptTtlMs = 30 * 60 * 1000;
 
 async function main(): Promise<void> {
   const config = readServerConfig();
-  const pglite = new PGlite(config.databaseDir);
-  await runMigrations(pglite);
-  const db = createDbClient(pglite);
-  await expireCardCreationAttempts(db, new Date());
+  // The MCP surface opens the SAME persistent database as the HTTP server, so it takes the same
+  // single-owner lease (#805): it cannot run while the app owns the directory, and a competing start
+  // fails loudly before PGlite construction instead of racing a second runtime into one WAL.
+  const managedDatabase = await openManagedDatabase({
+    databaseDir: config.databaseDir,
+    openPglite: async (databaseDir) => {
+      const instance = new PGlite(databaseDir);
+      await instance.waitReady;
+      return instance;
+    },
+    acquireLease: createDatabaseLeaseAcquirer({
+      lock: (file, options) => lockfile.lock(file, options),
+      onCompromised: (error) => {
+        process.stderr.write(`whetstone card MCP server lease compromised: ${String(error)}\n`);
+        void managedDatabase.close().finally(() => process.exit(1));
+      }
+    })
+  });
+  const { pglite, db } = managedDatabase;
+  try {
+    await runMigrations(pglite);
+    await expireCardCreationAttempts(db, new Date());
+  } catch (error) {
+    // Startup failure releases the lease so the directory stays reopenable.
+    await managedDatabase.close();
+    throw error;
+  }
 
   const wordpos = new WordPOS();
   const lexical = createLexicalRelationService({
@@ -59,6 +84,19 @@ async function main(): Promise<void> {
       process.stderr.write(`${line}\n`);
     }
   });
+
+  // Release the lease on shutdown so the running app (or the next MCP invocation) can reclaim the
+  // directory. Idempotent by construction of `managedDatabase.close`.
+  let shuttingDown = false;
+  const shutdown = (): void => {
+    if (shuttingDown) {
+      return;
+    }
+    shuttingDown = true;
+    void managedDatabase.close().finally(() => process.exit(0));
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
 
   const transport = new StdioServerTransport();
   await server.connect(transport);

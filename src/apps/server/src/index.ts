@@ -5,10 +5,12 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
 
+import * as lockfile from "proper-lockfile";
 import WordPOS from "wordpos";
 
 import { readServerConfig, createLoggerOptions } from "./config/serverConfig.js";
-import { createDbClient } from "./db/dbClient.js";
+import { createDatabaseLeaseAcquirer } from "./db/databaseLease.js";
+import { openManagedDatabase } from "./db/databaseLifecycle.js";
 import { runMigrations } from "./db/migrate.js";
 import { createEpubParser } from "./files/epubSource.js";
 import { createImageResourceStore } from "./files/imageResourceStore.js";
@@ -76,9 +78,55 @@ import { checkSpeechHealth } from "./speech/speechHealth.js";
 import { createWhisperSpeechInput } from "./speech/whisperSpeechInput.js";
 
 const config = readServerConfig();
-const pglite = new PGlite(config.databaseDir);
-await runMigrations(pglite);
-const db = createDbClient(pglite);
+
+// The single-owner database lifecycle boundary (#805). A persistent DATABASE_DIR is owned through a
+// cross-process lease acquired BEFORE PGlite is constructed and released only after it is closed, so
+// starting Whetstone twice — or a development watch reload — can never run two embedded PostgreSQL
+// runtimes over one WAL. In-memory (DATABASE_DIR unset) needs no lease. Shutdown is wired below and
+// referenced here so a compromised lease can trigger the same idempotent teardown.
+let shuttingDown = false;
+let httpServerListening = false;
+const backgroundIntervals: NodeJS.Timeout[] = [];
+// Assigned once the server exists; until then a compromise only records a failing exit code.
+let performShutdown: (exitCode: number) => Promise<void> = (exitCode) => {
+  process.exitCode = exitCode;
+  return Promise.resolve();
+};
+const requestShutdown = (exitCode: number): void => {
+  void performShutdown(exitCode);
+};
+
+const managedDatabase = await openManagedDatabase({
+  databaseDir: config.databaseDir,
+  openPglite: async (databaseDir) => {
+    const instance = new PGlite(databaseDir);
+    await instance.waitReady;
+    return instance;
+  },
+  acquireLease: createDatabaseLeaseAcquirer({
+    lock: (file, options) => lockfile.lock(file, options),
+    // Losing the exclusive lease mid-run is fatal: another process may reclaim the directory, so stop
+    // this one rather than keep writing into a store we no longer own.
+    onCompromised: (error) => {
+      console.error("[database] lease compromised; shutting down", error);
+      requestShutdown(1);
+    },
+    // A development watch reload kills the old process and starts a replacement; a small bounded retry
+    // lets the new process wait for the exiting owner's graceful release instead of failing the reload,
+    // while a genuinely live competing owner (which keeps its heartbeat) still fails with a clear remedy.
+    retries: { retries: 50, factor: 1, minTimeout: 100, maxTimeout: 100 }
+  })
+});
+const pglite = managedDatabase.pglite;
+try {
+  await runMigrations(pglite);
+} catch (error) {
+  // Startup failure performs the same cleanup: close PGlite and release the lease so the directory is
+  // reopenable and the next start is not blocked by this failed attempt.
+  await managedDatabase.close();
+  throw error;
+}
+const db = managedDatabase.db;
 // One-time backfill of exact-material fingerprints for legacy notes (#711). Composes the
 // document-package projection after the pure-SQL migration, then VALIDATEs the shape constraint. It is
 // idempotent (only NULL note rows), so a restart re-runs it harmlessly.
@@ -523,8 +571,42 @@ const drainPdfImportQueue = async (): Promise<void> => {
   }
 };
 
+// One idempotent shutdown path (#805) shared by SIGINT/SIGTERM, a compromised-lease abort, and a
+// startup failure: stop background drains, stop accepting requests, then close PGlite and release the
+// database lease so normal shutdown gives PGlite time to checkpoint and the directory is handed off
+// cleanly. Guarded so close/release run exactly once no matter how many signals arrive.
+const onShutdownSignal = (signal: NodeJS.Signals): void => {
+  server.log.info({ signal }, "server_shutdown_signal");
+  requestShutdown(0);
+};
+performShutdown = async (exitCode) => {
+  if (shuttingDown) {
+    return;
+  }
+  shuttingDown = true;
+  process.off("SIGINT", onShutdownSignal);
+  process.off("SIGTERM", onShutdownSignal);
+  for (const interval of backgroundIntervals) {
+    clearInterval(interval);
+  }
+  let code = exitCode;
+  try {
+    if (httpServerListening) {
+      await server.close();
+    }
+    await managedDatabase.close();
+  } catch (error) {
+    server.log.error({ err: error }, "server_shutdown_failed");
+    code = 1;
+  }
+  process.exit(code);
+};
+process.on("SIGINT", onShutdownSignal);
+process.on("SIGTERM", onShutdownSignal);
+
 try {
   await server.listen({ host: config.host, port: config.port });
+  httpServerListening = true;
   server.log.info({ host: config.host, port: config.port }, "server_started");
 
   // Recover any voice captures a previous process left mid-flight (transcribing/tidying), then start the
@@ -533,9 +615,11 @@ try {
   if (requeued > 0) {
     server.log.info({ requeued }, "voice_capture_requeued_stalled");
   }
-  setInterval(() => {
+  const voiceCaptureInterval = setInterval(() => {
     void drainVoiceCaptureQueue();
-  }, VOICE_CAPTURE_POLL_MS).unref();
+  }, VOICE_CAPTURE_POLL_MS);
+  voiceCaptureInterval.unref();
+  backgroundIntervals.push(voiceCaptureInterval);
 
   // Recover any PDF import a previous process left mid-conversion: mark abandoned `running` attempts
   // `interrupted` (retryable, never left running, never silently resumed), then start the single-active
@@ -544,9 +628,11 @@ try {
   if (interruptedImports > 0) {
     server.log.info({ interrupted: interruptedImports }, "pdf_import_recovered_interrupted");
   }
-  setInterval(() => {
+  const pdfImportInterval = setInterval(() => {
     void drainPdfImportQueue();
-  }, PDF_IMPORT_POLL_MS).unref();
+  }, PDF_IMPORT_POLL_MS);
+  pdfImportInterval.unref();
+  backgroundIntervals.push(pdfImportInterval);
 
   // Report the optional AI utilities' model wiring (#602): diary "tidy" and the Reader "AI 解释" gloss.
   // A clean "run pnpm setup:ai" hint when a utility is off or its Ollama model is not serving, instead
@@ -579,5 +665,7 @@ try {
   }
 } catch (error) {
   server.log.error({ err: error }, "server_start_failed");
+  // Startup failure performs the same cleanup so the lease is released and the directory reopenable.
+  await managedDatabase.close();
   process.exitCode = 1;
 }

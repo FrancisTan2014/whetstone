@@ -130,6 +130,19 @@ can navigate them from another package.
   stale `dist/` 404s) — and it defaults `DATABASE_DIR` to a git-ignored `.data/db` so content
   survives a restart. `start` (`node dist/index.js`) is the production path. Server assembly in
   `src/http/createServer.ts`.
+- Single-owner database lifecycle (#805): a persistent `DATABASE_DIR` has exactly one process owner at
+  a time. `src/db/databaseLifecycle.ts` (`openManagedDatabase`) canonicalizes the directory, acquires a
+  cross-process lease FIRST, constructs PGlite only after, and releases the lease only after
+  `pglite.close()` — so two embedded PostgreSQL runtimes can never mutate one WAL. In-memory needs no
+  lease. `src/db/databaseLease.ts` (`createDatabaseLeaseAcquirer`, `DatabaseBusyError`) is the
+  `proper-lockfile` heartbeat lock: a live owner is never displaced, a crashed owner's directory is
+  reclaimed only after the stale window (never by touching the database). `index.ts` handles
+  SIGINT/SIGTERM and startup failure through one idempotent shutdown (stop drains → close Fastify →
+  close PGlite → release lease). Every entrypoint that opens the persistent store — `index.ts`,
+  `mcp/main.ts`, and `data/backupCli.ts` — goes through this boundary, so a second start or a backup
+  fails loudly before PGlite construction with a stop-the-running-app remedy. The real cross-process
+  contract is proven by `src/db/databaseLease.crossProcess.test.ts` (isolated lane) via the
+  coverage-excluded child harness `databaseLease.crossProcessWorker.ts`.
 - Single-origin serving: when `WEB_DIR` is set, `createServer`'s `web` option registers
   `src/http/staticWeb.ts` (`@fastify/static`) so the built web client is served at `/` alongside
   `/api/*` from one port — the deploy path (#184). Unset in dev/tests, where Vite serves the client.
@@ -820,9 +833,10 @@ can navigate them from another package.
   and `restore.ts` (orchestrators with injectable I/O), and `cli.ts` (arg parse + output/error mapping).
   The thin, coverage-excluded `backupCli.ts`/`restoreCli.ts` wire real PGlite (`dumpDataDir`/`loadDataDir`)
   and fs for `pnpm data:backup -- --output <artifact>` / `pnpm data:restore -- --input <artifact>
---target <empty-dir>`. Backup refuses an in-memory `DATABASE_DIR` and an existing output; restore
-  verifies before writing, refuses a non-empty target, runs migrations, and integrity-probes the restored
-  database. Operator guide: `docs/BACKUP.md`.
+--target <empty-dir>`. Backup refuses an in-memory `DATABASE_DIR` and an existing output, and opens
+  the persistent store through the single-owner lifecycle boundary (#805, above) so it fails loudly if
+  the running app already owns the directory; restore verifies before writing, refuses a non-empty
+  target, runs migrations, and integrity-probes the restored database. Operator guide: `docs/BACKUP.md`.
 - Tests colocated `*.test.ts`. Invariant: PostgreSQL is the content source of truth; blocks are rows.
 
 ### `src/apps/web/` — React + Vite PWA
