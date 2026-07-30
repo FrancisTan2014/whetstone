@@ -71,9 +71,7 @@ export class DatabaseBusyError extends Error {
 
 function isLockedError(error: unknown): boolean {
   return (
-    typeof error === "object" &&
-    error !== null &&
-    (error as { code?: unknown }).code === "ELOCKED"
+    typeof error === "object" && error !== null && (error as { code?: unknown }).code === "ELOCKED"
   );
 }
 
