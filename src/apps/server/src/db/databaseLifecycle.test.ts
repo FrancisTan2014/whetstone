@@ -147,23 +147,33 @@ describe("openManagedDatabase", () => {
     expect(release).toHaveBeenCalledTimes(1);
   });
 
-  it("still releases the lease when close fails, so the directory stays reopenable", async () => {
+  it("keeps the lease held and stays fail-loud when close fails, never displacing a live owner", async () => {
     const closeFailure = new Error("checkpoint failed");
     const release = vi.fn(async () => {});
+    let closeCalls = 0;
 
     const managed = await openManagedDatabase({
       databaseDir: "/configured/db",
       canonicalizeDir: () => "/canonical/db",
       openPglite: (async () =>
         fakePglite(async () => {
+          closeCalls += 1;
           throw closeFailure;
         })) as never,
       acquireLease: async () => ({ release }),
       createDb: () => ({}) as never
     });
 
+    // A failed PGlite close must NOT release the lease: the runtime has not proven it closed cleanly,
+    // so the directory stays owned and the stale-lock path — not an immediate handoff — reclaims a
+    // terminated owner.
     await expect(managed.close()).rejects.toBe(closeFailure);
-    expect(release).toHaveBeenCalledTimes(1);
+    expect(release).not.toHaveBeenCalled();
+
+    // Retrying stays fail-loud and still never hands the directory to another owner.
+    await expect(managed.close()).rejects.toBe(closeFailure);
+    expect(release).not.toHaveBeenCalled();
+    expect(closeCalls).toBe(2);
   });
 
   it("canonicalizes a real directory and builds the default Drizzle client when not overridden", async () => {

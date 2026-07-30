@@ -6,8 +6,11 @@
 // WAL on disk, nothing to corrupt.
 //
 // `close` is idempotent by construction, so a signal handler, a startup-failure path, and a normal
-// shutdown can all call it and PGlite is closed and the lease released exactly once. Release runs in a
-// `finally`, so even a failing close still frees the lease and leaves the directory reopenable.
+// shutdown can all call it and PGlite is closed and the lease released exactly once. The lease is
+// released only AFTER `pglite.close()` resolves: a failing close stays fail-loud and keeps the lock
+// held, because the embedded runtime has not proven it checkpointed cleanly and no other process may
+// take the directory yet. A terminated owner is reclaimed by the cross-process stale-lock recovery
+// path, never by handing an unverified directory to a new owner here.
 
 import { mkdirSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
@@ -67,13 +70,14 @@ function buildManagedDatabase(
     if (closed) {
       return;
     }
+    // Close PGlite first. If it rejects, we stay fail-loud (rethrow) and DO NOT release the lease:
+    // the runtime has not cleanly closed/checkpointed, so releasing the lock could let another owner
+    // acquire the directory over an unfinished shutdown and recreate the overlap this fix prevents.
+    // The stale-lock recovery path reclaims a truly terminated owner instead.
+    await pglite.close();
     closed = true;
-    try {
-      await pglite.close();
-    } finally {
-      if (lease !== undefined) {
-        await lease.release();
-      }
+    if (lease !== undefined) {
+      await lease.release();
     }
   };
 
