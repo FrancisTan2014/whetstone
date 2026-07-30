@@ -10,8 +10,9 @@ import WordPOS from "wordpos";
 
 import { readServerConfig, createLoggerOptions } from "./config/serverConfig.js";
 import { createDatabaseLeaseAcquirer } from "./db/databaseLease.js";
-import { openManagedDatabase } from "./db/databaseLifecycle.js";
+import { openManagedDatabase, type ManagedDatabase } from "./db/databaseLifecycle.js";
 import { runMigrations } from "./db/migrate.js";
+import { createShutdownController, type Teardown } from "./db/startupShutdown.js";
 import { createEpubParser } from "./files/epubSource.js";
 import { createImageResourceStore } from "./files/imageResourceStore.js";
 import { createSourceFileStore } from "./files/sourceFileStore.js";
@@ -82,25 +83,42 @@ const config = readServerConfig();
 // The single-owner database lifecycle boundary (#805). A persistent DATABASE_DIR is owned through a
 // cross-process lease acquired BEFORE PGlite is constructed and released only after it is closed, so
 // starting Whetstone twice — or a development watch reload — can never run two embedded PostgreSQL
-// runtimes over one WAL. In-memory (DATABASE_DIR unset) needs no lease. Shutdown is wired below and
-// referenced here so a compromised lease can trigger the same idempotent teardown.
-let shuttingDown = false;
+// runtimes over one WAL. In-memory (DATABASE_DIR unset) needs no lease.
 let httpServerListening = false;
 const backgroundIntervals: NodeJS.Timeout[] = [];
-// True once the idempotent shutdown path is wired (server built, `performShutdown` assigned, signal
-// handlers registered). Before that, a startup failure can only release the lease; after it, a failure
-// must route through the full teardown (stop drains, close Fastify, close PGlite, release lease, exit).
-let shutdownWired = false;
-// Assigned once the server exists; until then a compromise only records a failing exit code.
-let performShutdown: (exitCode: number) => Promise<void> = (exitCode) => {
-  process.exitCode = exitCode;
-  return Promise.resolve();
-};
-const requestShutdown = (exitCode: number): void => {
-  void performShutdown(exitCode);
-};
+// Assigned once the database is acquired; the teardown closures capture it so a shutdown triggered
+// during acquisition (before it resolves) simply exits, leaving the lock for the stale-lock path.
+let managedDatabase: ManagedDatabase | undefined = undefined;
 
-const managedDatabase = await openManagedDatabase({
+// The early, database-only teardown: live from the moment signals/onCompromised are wired, before the
+// full server shutdown path exists. It closes PGlite — which releases the lease on a clean close, or
+// retains it fail-loud on a failed close so a terminated owner is reclaimed by the stale-lock path,
+// never handed off over an unfinished shutdown — then exits so startup cannot keep using the directory.
+const earlyShutdown: Teardown = async (exitCode) => {
+  let code = exitCode;
+  try {
+    // `undefined` only while the lease is still being acquired; there is no owned PGlite to close yet,
+    // so exiting is the whole teardown and the internal lock is left for stale reclaim.
+    await managedDatabase?.close();
+  } catch (error) {
+    // The Fastify logger may not exist this early, so report through the console. A failed close kept
+    // the lease held on purpose; still exit non-zero so the failure is loud.
+    console.error("[server] closing the database during startup shutdown failed", error);
+    code = 1;
+  }
+  process.exit(code);
+};
+// The one idempotent teardown any startup-phase failure, signal, or lease compromise routes through.
+const shutdown = createShutdownController(earlyShutdown);
+// A single stable signal handler, registered before the database is acquired, so a SIGINT/SIGTERM at
+// any startup phase runs the currently-active teardown instead of the default abrupt termination.
+const onShutdownSignal = (): void => {
+  shutdown.request(0);
+};
+process.on("SIGINT", onShutdownSignal);
+process.on("SIGTERM", onShutdownSignal);
+
+managedDatabase = await openManagedDatabase({
   databaseDir: config.databaseDir,
   openPglite: async (databaseDir) => {
     const instance = new PGlite(databaseDir);
@@ -110,10 +128,11 @@ const managedDatabase = await openManagedDatabase({
   acquireLease: createDatabaseLeaseAcquirer({
     lock: (file, options) => lockfile.lock(file, options),
     // Losing the exclusive lease mid-run is fatal: another process may reclaim the directory, so stop
-    // this one rather than keep writing into a store we no longer own.
+    // this one rather than keep writing into a store we no longer own. This routes to the active
+    // teardown — the early database-only teardown during startup, the full teardown once the server is up.
     onCompromised: (error) => {
       console.error("[database] lease compromised; shutting down", error);
-      requestShutdown(1);
+      shutdown.request(1);
     },
     // A development watch reload kills the old process and starts a replacement; a small bounded retry
     // lets the new process wait for the exiting owner's graceful release instead of failing the reload,
@@ -121,16 +140,20 @@ const managedDatabase = await openManagedDatabase({
     retries: { retries: 50, factor: 1, minTimeout: 100, maxTimeout: 100 }
   })
 });
-const pglite = managedDatabase.pglite;
+// Narrowed to a non-undefined handle for everything after acquisition; the mutable `managedDatabase`
+// stays available to the early teardown, which may run before this point with nothing yet to close.
+const database = managedDatabase;
+const pglite = database.pglite;
 // Every step after acquiring the database — migrations, the legacy-note backfills, the attempt-expiry
 // sweeps, the store/lookup/speech/PDF service wiring, createServer, the shutdown wiring, server.listen,
 // and the post-listen recovery/health steps — runs inside this one guard (#805). A failure before the
-// shutdown path is wired just releases the lease; once it is wired, a failure routes through the same
-// idempotent teardown (stop drains, close Fastify, close PGlite, release the lease, exit) so the process
-// never keeps serving on a released directory and the next start is not blocked by this failed attempt.
+// full server teardown is wired closes PGlite and releases the lease through the early teardown; once it
+// is wired, a failure routes through the full teardown (stop drains, close Fastify, close PGlite, release
+// the lease, exit) so the process never keeps serving on a released directory and the next start is not
+// blocked by this failed attempt.
 try {
   await runMigrations(pglite);
-  const db = managedDatabase.db;
+  const db = database.db;
   // One-time backfill of exact-material fingerprints for legacy notes (#711). Composes the
   // document-package projection after the pure-SQL migration, then VALIDATEs the shape constraint. It is
   // idempotent (only NULL note rows), so a restart re-runs it harmlessly.
@@ -583,19 +606,12 @@ try {
     }
   };
 
-  // One idempotent shutdown path (#805) shared by SIGINT/SIGTERM, a compromised-lease abort, and a
-  // startup failure: stop background drains, stop accepting requests, then close PGlite and release the
-  // database lease so normal shutdown gives PGlite time to checkpoint and the directory is handed off
-  // cleanly. Guarded so close/release run exactly once no matter how many signals arrive.
-  const onShutdownSignal = (signal: NodeJS.Signals): void => {
-    server.log.info({ signal }, "server_shutdown_signal");
-    requestShutdown(0);
-  };
-  performShutdown = async (exitCode) => {
-    if (shuttingDown) {
-      return;
-    }
-    shuttingDown = true;
+  // Upgrade the active teardown to the full server shutdown (#805), shared by SIGINT/SIGTERM, a
+  // compromised-lease abort, and any post-acquisition startup failure: stop background drains, stop
+  // accepting requests, then close PGlite and release the database lease so normal shutdown gives PGlite
+  // time to checkpoint and the directory is handed off cleanly. The controller guards it, so
+  // close/release run exactly once no matter how many signals arrive.
+  const fullShutdown: Teardown = async (exitCode) => {
     process.off("SIGINT", onShutdownSignal);
     process.off("SIGTERM", onShutdownSignal);
     for (const interval of backgroundIntervals) {
@@ -606,18 +622,17 @@ try {
       if (httpServerListening) {
         await server.close();
       }
-      await managedDatabase.close();
+      await database.close();
     } catch (error) {
       server.log.error({ err: error }, "server_shutdown_failed");
       code = 1;
     }
     process.exit(code);
   };
-  process.on("SIGINT", onShutdownSignal);
-  process.on("SIGTERM", onShutdownSignal);
   // From here on the full teardown exists, so any failure below — including every post-listen step —
-  // must go through it rather than only releasing the lease.
-  shutdownWired = true;
+  // routes through it (stop drains, close Fastify, close PGlite, release lease) rather than the early
+  // database-only teardown.
+  shutdown.upgrade(fullShutdown);
 
   await server.listen({ host: config.host, port: config.port });
   httpServerListening = true;
@@ -682,17 +697,11 @@ try {
   // store/lookup/speech/PDF wiring, createServer, the shutdown wiring, listen, or the post-listen
   // recovery/health steps) must leave the directory reopenable. The Fastify logger may not exist yet
   // when an early step throws, so report through the console.
-  console.error("[server] startup failed; closing database and releasing lease", error);
-  if (shutdownWired) {
-    // Once the shutdown path exists, a failure — even after `server.listen` succeeded and background
-    // intervals were registered — routes through the same idempotent teardown: stop the background
-    // drains, close Fastify so no request runs against a closing PGlite, close PGlite, release the
-    // lease, and exit. Never leave the process serving on a released directory.
-    await performShutdown(1);
-  } else {
-    // Before the shutdown path is wired there is nothing listening and no interval to clear, so the
-    // only teardown needed is releasing the lease and marking the failure.
-    await managedDatabase.close();
-    process.exitCode = 1;
-  }
+  console.error("[server] startup failed; shutting down", error);
+  // Route through the currently-active teardown: the early database-only teardown before the server is
+  // wired, or the full teardown (stop drains, close Fastify, close PGlite, release the lease) after.
+  // Both close PGlite (releasing or retaining the lease per the close-failure rule) and exit, so the
+  // process never keeps serving on a released directory. If a compromise or signal already began the
+  // shutdown, the controller's guard makes this a no-op and that in-flight teardown owns the exit.
+  await shutdown.run(1);
 }
