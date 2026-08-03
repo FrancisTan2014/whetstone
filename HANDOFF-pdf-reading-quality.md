@@ -122,6 +122,17 @@ self-approval. The merge gates need the **label plus the comment marker**, not a
   mapper is the mature one (h1–h6, table spans, callouts, footnote identity, code language, evidence);
   PDF should converge on it rather than keep a bespoke mapper. Do not start this without a design pass.
 
+### Follow-ups raised in review of #824 (not blocking, not yet filed)
+
+- **`resolveOutlineHeadingLevel` re-normalizes every outline title per candidate per rung**, i.e.
+  O(headings × outline). Measured at ~850 ms for 200 × 5000, so `MAX_OUTLINE_ENTRIES = 5000` admits
+  roughly 30 s of blocking CPU on a hostile file. Normalizing outline entries **once per document**
+  collapses it to O(outline). Deferred only because a fix costs another ~25-minute CI cycle.
+- **Known interaction between #811 and #815**: a chapter opener whose text also repeats as that
+  chapter's running head is excluded as furniture before #815 can promote it, so that chapter gets no
+  heading. It is recorded in `excludedFurniture`, and #811's rule is the safer default — but worth
+  revisiting alongside #816.
+
 ## 6. Environment gotchas that cost time
 
 **The credential trap — this cost several agent sessions.** The `gh-personal` profile's stored token is
