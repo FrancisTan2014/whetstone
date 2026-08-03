@@ -190,8 +190,46 @@ Other traps:
   `--silent` swallows the next positional arg.
 - Python env: docling 2.114.0, docling-core 2.87.1, pypdfium2, pdfminer.six, ocrmypdf. No PyMuPDF.
 
-## 7. Still unverified
+## 7. Verified: the screenshot defect is measurably gone
 
-The end-to-end result has **not** been re-checked in the Reader against the original Clean Code
-screenshot. Do that first after merging — it is the only check that confirms the user-visible defect
-is actually gone.
+Measured on the exact book from the original screenshot (`Clean Code.pdf`, pages 46–72 — 27 real
+pages), running the **pinned worker and the production `mapStructuredDocument`** on each branch:
+
+| metric | `main` | integration (#824) |
+|---|---|---|
+| junk blocks in the reading flow | **10** | **0** |
+| furniture items excluded | 0 | 10 |
+| heading spine | flat — `H2`×6 | **`H2`×7 + `H3`×1** |
+| reading units | 7 | 8 |
+
+The 10 junk blocks on `main` are precisely what the screenshot showed interleaved with the prose:
+running heads (`Bibliography`, `Add Meaningful Context`, `Chapter 3: Functions`), bare folios
+(`15`, `27`, `38`) and the `www.it-ebooks.info` watermark. They were **not** invisible — the mapper
+routes an unmapped label to an `unknown` node that preserves the raw text in `attrs.html` and
+deliberately "renders visibly (never dropped)" (`pdfCanonicalMapping.ts:141-144`). So every one of
+them was on the page.
+
+Reproduce with the probe added on this branch:
+
+```powershell
+pnpm build   # the probe imports the workspace packages
+node --import tsx scripts/probes/pdfReadingPreview.mjs "<book.pdf>" 46 72
+```
+
+`scripts/probes/pdfReadingPreview.mjs` is the **qualitative** complement to
+`scripts/probes/pdfUsabilityHarness.mjs`: the aggregate harness deliberately prints no text, so it can
+prove a ratio but never that a page *reads* correctly. This one prints the block tree, so a defect you
+can see in a screenshot can be confirmed gone. It is a manual diagnostic — it prints book text, so keep
+its output out of PRs and issues, and note it stores nothing.
+
+### One caveat worth knowing
+
+On a **narrow** range (pages 50–56) one verso running head, `Chapter 2: Meaningful Names`, survived as
+a paragraph. That is a **windowing artifact, not a product defect**: both rules that would catch it
+need context outside the window — `repeated-across-pages` needs a second occurrence, and
+`matches-heading` needs the chapter opener, which sits on page 49. Widen to a realistic range and it
+disappears (junk = 0 above). Worth remembering when reading a narrow-range probe result: a
+single-window run **understates** furniture exclusion, so do not tune the rules against one.
+
+Still not exercised: the actual Reader UI and a full-book import. The mapping layer is proven; the
+render path above it is unchanged by this work, so the remaining risk is low but non-zero.
