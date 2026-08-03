@@ -3,15 +3,15 @@
 **Status: landed.** Everything described here is merged to `main` (`c57be64c`). Nothing important
 lives only on this machine.
 
-Merged: **#819, #820, #821, #822, #824**. Closed: **#811, #813, #814, #815**.
-Reviewed and approved, waiting only on CI: **#827** (fixes #826).
-Open and now unblocked (`ready-for-dev`): **#816, #817**, plus **#825** raised from the verification
-below. Filed as follow-ups from #827's review: **#828, #829**.
+Merged: **#819, #820, #821, #822, #824, #827**. Closed: **#811, #813, #814, #815, #826**.
+Open and now unblocked (`ready-for-dev`): **#816, #817, #828**, plus **#825** raised from the
+verification below. Blocked on #828: **#829**.
 Held deliberately: **#812** (deprioritized), **#818** (`needs-design`).
 
 Verified on merged `main` with the probe in §7: Clean Code pages 46–72 now yields **0** junk blocks in
 the reading flow, against **10** before. The defect in the original screenshot is gone. Seven
-Concurrency Models pages 40–62 went **11 → 3** on `main`, and **3 → 1** with #827.
+Concurrency Models pages 40–62 went **11 → 3** with #824, and **3 → 1** with #827; the last one is
+**#828**, and §5 explains why it is deliberately left rather than force-deleted.
 
 ## 1. The finding that changed the diagnosis
 
@@ -135,14 +135,19 @@ head. #819, #821 and #822 auto-closed as **merged** because the integration bran
 commits — that was the whole point of building it. `unblockReadyIssues.mjs` then reported
 `unblocked=2` (#816, #817).
 
+**#827 then landed the same way** (`main` = `86c64c2a`), closing #826 and auto-unblocking #828.
+Its first CI attempt failed on the #825 flake; attempt 2 of the same run was green — see the
+attempt-versus-summary trap below before you conclude anything from a red check.
+
 Next, in order:
 
-1. **#827 (closes #826)** — written, reviewed, **`review-approved` at `89c11414`**, waiting only on the
-   Quality lane. When it is green, run the two delivery scripts below; nothing else is needed. It takes
-   Seven Concurrency Models pages 40–62 from 3 leaked blocks to 1, and the surviving 1 is **#828**.
-2. **#828 use the bookmark outline as furniture evidence** — the principled way to reach 0. It is also
-   what makes **#829** safe to fix, so do it before either.
-3. **#816 chapter-scale reading units** — with #815 landed, this is what actually fixes the flat TOC.
+1. **#828 use the bookmark outline as furniture evidence** — `ready-for-dev`, unblocked automatically
+   when #827 closed #826. It is the principled route to the last leaked block, and it is also what
+   makes **#829** safe to fix, so do it before #829.
+2. **#816 chapter-scale reading units** — with #815 landed, this is what actually fixes the flat TOC.
+3. **#817 measured usability gate** — reuse `tools/bench_pdf.py` (aggregate) plus
+   `scripts/probes/pdfReadingPreview.mjs` (qualitative).
+4. **#829** — only after #828; §5 explains why the obvious tightening is wrong.
 4. **#817 measured usability gate** — reuse `tools/bench_pdf.py` (aggregate) plus
    `scripts/probes/pdfReadingPreview.mjs` (qualitative).
 
@@ -277,6 +282,14 @@ Reproduce with the probe added on this branch:
 ```powershell
 pnpm build   # the probe imports the workspace packages
 node --import tsx scripts/probes/pdfReadingPreview.mjs "<book.pdf>" 46 72
+
+# The two books measured here (corpus is nested under `library\`, not the repo root):
+#   Q:\src\reading-book\library\software engineering\Clean Code.pdf                     46 72
+#   Q:\src\reading-book\library\architecture\Seven Concurrency Models in Seven Weeks.pdf 40 62
+# Add --json out.json to inspect `excludedFurniture` (page, rule, label, normalizedText).
+# To count leaks by eye, list the printed `[type] text` lines shorter than ~60 chars:
+#   node --import tsx scripts/probes/... > p.txt
+#   Get-Content p.txt | ? { $_ -match '^\[' } | ? { ($_ -replace '^\[[^\]]*\]\s*','').Length -lt 60 }
 ```
 
 `scripts/probes/pdfReadingPreview.mjs` is the **qualitative** complement to
@@ -298,19 +311,25 @@ single-window run **understates** furniture exclusion, so do not tune the rules 
 
 *Seven Concurrency Models in Seven Weeks*, pages 40–62, same method:
 
-| metric | `main` | integration (#824) | +#827 |
+| metric | `main` (before) | integration (#824) | merged `main` + #827 |
 |---|---|---|---|
 | junk blocks in the reading flow | **11** | **3** | **1** |
-| furniture items excluded | 0 | 6 | 8 |
+| furniture items excluded | 0 | 6 | 10 |
 
 The 3 survivors on #824 were all the same shape — `Chapter 2. Threads and Locks · 26`, a running head
 with the folio **embedded**. That was **#826**, and unlike the caveat above it is *not* a windowing
 artifact: each instance carries a different page number, so a wider range yields more distinct strings
-and makes it worse, not better. **#827 fixes it, taking 3 → 1.**
+and makes it worse, not better. **#827 fixed it, taking 3 → 1.**
 
-The last survivor is a different shape again: a header docling emits exactly **once**, whose title
-appears nowhere else in the window. It is deliberately preserved by #811's guard against deleting
-mislabeled chapter openers, and closing it properly needs outline evidence — that is **#828**.
+Re-measured on merged `main` (`86c64c2a`) after #827 landed, so these numbers are the live state, not
+a branch prediction. The single survivor is `Day 2: Beyond Intrinsic Locks · 27` — a header docling
+emits **once**, whose stripped form matches no heading inside the window, so neither content rule can
+fire and #811's protective keep applies. Closing it properly needs outline evidence: that is **#828**,
+which now carries this exact reproduction.
+
+Clean Code pages 46–72 re-measured on the same commit: **0** junk, **10** excluded
+(`matches-heading` ×3, `folio` ×3, `repeated-across-pages` ×4), heading spine **H2×7 + H3×1**. That is
+the counter-case #828 must not regress.
 
 So the honest summary is: the class of defect in the screenshot is fixed, completely on a book whose
 printer emits the running head and folio as separate items, and from 11 down to 1 on one that combines
