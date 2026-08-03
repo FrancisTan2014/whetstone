@@ -133,11 +133,23 @@ self-approval. The merge gates need the **label plus the comment marker**, not a
 
 ## 5. Remaining issues
 
+- **#826 running head with an embedded folio** *(filed from the verification in §7 — real, reproducible)*.
+  `Chapter 2. Threads and Locks · 26` defeats all three of #811's rules at once: the embedded page
+  number makes every instance a **distinct** normalized string, so `repeated-across-pages` never reaches
+  its threshold, `folio` fails because `isFolioShape` tests the whole string, and `matches-heading` fails
+  because the suffix breaks equality. Widening the page range does **not** help — it produces more
+  distinct strings. Common trade-book convention (Pragmatic Bookshelf, O'Reilly), so it affects a class
+  of books. Fix: derive a folio-stripped variant of the normalized text and test the two content rules
+  against it too. Pure domain change; stacked on #824.
+- **#825 selection toolbar dismissed by a note re-render** — a genuine product defect, not just the
+  flaky test it surfaced as: `applyNoteHighlights` unwraps/re-wraps text nodes, invalidating the live
+  Range, so a background notes refresh can dismiss the toolbar while the learner is acting on it.
 - **#816 chapter-scale reading units** — `splitIntoUnits` starts a unit at *every* heading (~1 unit per
   page). Must land **after** #815: with zero `title` labels, a naive depth rule would collapse a whole
   book into one unit. This plus #815 is what actually fixes the flat TOC.
 - **#817 measured usability gate** — `pdfUsability.ts` collects `headingCount` and never uses it, so the
   gate passes debris. Reuse the `tools/bench_pdf.py` methodology: coverage, furniture ratio, outline depth.
+  `scripts/probes/pdfReadingPreview.mjs` (§7) gives the qualitative half of the same measurement.
 - **#812 descendant walking** — deprioritized; near-zero impact once #811 landed (`unknown` already 80 → 0).
 - **#818 converge on `htmlToDocument.ts`** — `needs-design`, deliberately **not** scheduled. The EPUB
   mapper is the mature one (h1–h6, table spans, callouts, footnote identity, code language, evidence);
@@ -230,6 +242,24 @@ need context outside the window — `repeated-across-pages` needs a second occur
 `matches-heading` needs the chapter opener, which sits on page 49. Widen to a realistic range and it
 disappears (junk = 0 above). Worth remembering when reading a narrow-range probe result: a
 single-window run **understates** furniture exclusion, so do not tune the rules against one.
+
+### Second book — where it still falls short
+
+*Seven Concurrency Models in Seven Weeks*, pages 40–62, same method:
+
+| metric | `main` | integration (#824) |
+|---|---|---|
+| junk blocks in the reading flow | **11** | **3** |
+| furniture items excluded | 0 | 6 |
+
+The 3 survivors are all the same shape — `Chapter 2. Threads and Locks · 26`, a running head with the
+folio **embedded**. That is **#826**, and unlike the caveat above it is *not* a windowing artifact:
+each instance carries a different page number, so a wider range yields more distinct strings and makes
+it worse, not better. See §5.
+
+So the honest summary is: the class of defect in the screenshot is fixed, completely on a book whose
+printer emits the running head and folio as separate items, and largely (11 → 3) on one that combines
+them. #826 closes the remainder.
 
 Still not exercised: the actual Reader UI and a full-book import. The mapping layer is proven; the
 render path above it is unchanged by this work, so the remaining risk is low but non-zero.
