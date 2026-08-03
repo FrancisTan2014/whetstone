@@ -88,6 +88,17 @@ export type StructuredDocumentMetadata = Readonly<{
   author: string | null;
 }>;
 
+// One entry of the PDF's own embedded bookmark outline (#815) — the author's DECLARED heading hierarchy,
+// the only depth evidence a PDF actually carries. `level` is 1-based (the worker converts pypdfium2's
+// 0-based nesting level) and `pageNumber` is the 1-based page the bookmark points at, so an entry is
+// directly comparable with a body item's `pageNumber`. Carried as ordinary extraction provenance beside
+// page/bbox/confidence: canonicalization RESOLVES heading depth from it, and no consumer re-opens the PDF.
+export type PdfOutlineEntry = Readonly<{
+  title: string;
+  level: number;
+  pageNumber: number;
+}>;
+
 export type StructuredDocumentSource = Readonly<{
   sha256: string;
   byteLength: number;
@@ -106,13 +117,16 @@ export type StructuredDocument = Readonly<{
   // Cleaned PDF document metadata, when the source carried any; absent otherwise. Explicit `| undefined`
   // to match the Zod `.optional()` inference under `exactOptionalPropertyTypes`.
   metadata?: StructuredDocumentMetadata | undefined;
+  // The PDF's embedded bookmark outline (#815), when the source carried one; absent otherwise (including
+  // for a payload committed before the worker read outlines, which must keep validating).
+  outline?: readonly PdfOutlineEntry[] | undefined;
 }>;
 
 // One page range's worth of converted structure, as emitted by the worker. It carries no source hash
 // or total page count (the adapter owns those); the adapter concatenates ranges in source order and
 // adds the source metadata to form the final StructuredDocument. Each range may carry the document's
 // cleaned bibliographic metadata (the worker reads it per invocation); the adapter surfaces the first
-// non-empty title/author across ranges.
+// non-empty title/author across ranges. The document's bookmark outline rides along the same way.
 export type RangeConversion = Readonly<{
   schemaVersion: typeof RANGE_CONVERSION_SCHEMA_VERSION;
   doclingSchema: DoclingSchemaRef;
@@ -120,6 +134,7 @@ export type RangeConversion = Readonly<{
   body: readonly StructuredDocItem[];
   furniture: readonly StructuredDocItem[];
   metadata?: StructuredDocumentMetadata | undefined;
+  outline?: readonly PdfOutlineEntry[] | undefined;
 }>;
 
 const boundingBoxSchema = z
@@ -168,6 +183,20 @@ const documentMetadataSchema = z
   .object({ title: z.string().nullable(), author: z.string().nullable() })
   .strict();
 
+// One bookmark-outline entry (#815). Bounds mirror the worker's (`MAX_OUTLINE_TITLE_CHARS`, a 1-based
+// level and page): the outline comes from an untrusted file, so a blank title, a non-positive level or
+// page, or an over-long title is a MALFORMED payload here rather than something the matcher must defend
+// against. `outline` itself is optional on both envelopes so a payload committed before the worker read
+// outlines still validates.
+const OUTLINE_TITLE_MAX_CHARS = 512;
+const outlineEntrySchema = z
+  .object({
+    title: z.string().min(1).max(OUTLINE_TITLE_MAX_CHARS),
+    level: z.number().int().positive(),
+    pageNumber: z.number().int().positive()
+  })
+  .strict();
+
 const doclingSchemaRefSchema = z
   .object({ name: z.string().min(1), version: z.string().min(1) })
   .strict();
@@ -187,7 +216,8 @@ const rangeConversionSchema = z
     pages: z.array(pageSchema),
     body: z.array(docItemSchema),
     furniture: z.array(docItemSchema),
-    metadata: documentMetadataSchema.optional()
+    metadata: documentMetadataSchema.optional(),
+    outline: z.array(outlineEntrySchema).optional()
   })
   .strict();
 
@@ -199,7 +229,8 @@ const structuredDocumentSchema = z
     pages: z.array(pageSchema),
     body: z.array(docItemSchema),
     furniture: z.array(docItemSchema),
-    metadata: documentMetadataSchema.optional()
+    metadata: documentMetadataSchema.optional(),
+    outline: z.array(outlineEntrySchema).optional()
   })
   .strict();
 
@@ -360,6 +391,22 @@ function resolveDocumentMetadata(
   return title === null && author === null ? undefined : { author, title };
 }
 
+// Resolve the document's bookmark outline from its ranges (#815): the FIRST non-empty outline in range
+// order wins, mirroring `resolveDocumentMetadata`. The worker reads the whole document's outline on every
+// invocation, so every range carries the same tree; taking the first non-empty one tolerates a range
+// committed before outlines were read (absent) and a range whose read failed (empty) without producing a
+// spliced or duplicated tree. Returns undefined when no range carried one, keeping the field optional.
+function resolveDocumentOutline(
+  ranges: readonly RangeConversion[]
+): readonly PdfOutlineEntry[] | undefined {
+  for (const range of ranges) {
+    if (range.outline !== undefined && range.outline.length > 0) {
+      return range.outline;
+    }
+  }
+  return undefined;
+}
+
 // Concatenate validated ranges in source order into one structured document, attaching the adapter's
 // source metadata. Body and furniture items keep their given order (ranges already arrive in page
 // order); pages are ordered by page number. Trusts already-validated ranges — it does not re-reject.
@@ -377,6 +424,7 @@ export function concatenateRanges(
     .sort((left, right) => left.pageNumber - right.pageNumber);
 
   const metadata = resolveDocumentMetadata(ranges);
+  const outline = resolveDocumentOutline(ranges);
   return Object.freeze({
     schemaVersion: STRUCTURED_DOCUMENT_SCHEMA_VERSION,
     doclingSchema,
@@ -384,7 +432,8 @@ export function concatenateRanges(
     pages,
     body: ranges.flatMap((range) => range.body),
     furniture: ranges.flatMap((range) => range.furniture),
-    ...(metadata ? { metadata } : {})
+    ...(metadata ? { metadata } : {}),
+    ...(outline ? { outline } : {})
   });
 }
 

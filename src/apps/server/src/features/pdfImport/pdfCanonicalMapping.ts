@@ -1,10 +1,16 @@
-import type { BoundingBox, StructuredDocItem, StructuredDocument } from "@whetstone/contracts";
+import type {
+  BoundingBox,
+  PdfOutlineEntry,
+  StructuredDocItem,
+  StructuredDocument
+} from "@whetstone/contracts";
 import {
   assignNodeIds,
   parseDocument,
   serializeDocument,
   type DocumentNodeJSON
 } from "@whetstone/document";
+import { MAX_PDF_HEADING_LEVEL, resolveOutlineHeadingLevel } from "@whetstone/domain";
 
 import type { PersistableReadingUnit } from "../content/blockWriter.js";
 import type { IngestedBlock } from "../content/htmlToDocument.js";
@@ -14,7 +20,9 @@ import type { IngestedBlock } from "../content/htmlToDocument.js";
 // ->Block model, storing content ONLY as ProseMirror/Tiptap `doc_blocks` (never Markdown/mdast). Layout
 // order, labels, tables, and figures are fallible EVIDENCE, so the raw docling label decides the node
 // type, page geometry/confidence are retained additively as block evidence, and a construct the schema
-// cannot represent becomes an explicit `unknown` node (visible, never silently dropped).
+// cannot represent becomes an explicit `unknown` node (visible, never silently dropped). Heading DEPTH is
+// the one thing the label cannot supply, so it is resolved from the PDF's own bookmark outline (#815)
+// and falls back to the label table only where the document declared nothing.
 //
 // It is DOM-free and database-free: it only reads the validated contract shape and builds node JSON with
 // the shared document builders, so every mapping rule is unit-testable without Fastify or PostgreSQL. The
@@ -31,6 +39,13 @@ export type PdfBlockEvidence = Readonly<{
   confidence: number;
   label: string;
 }>;
+
+// How many of a document's heading levels were DERIVED from the PDF's own bookmark outline versus merely
+// assumed from the docling label (#815). Recorded per work so a reviewer, and the usability gate, can see
+// whether depth was really derived rather than trusting that it was: an all-`label` document is a flat
+// outline by construction, and a regression that stops matching shows up here as a number rather than as
+// a book that quietly goes flat again.
+export type PdfHeadingLevelSources = Readonly<{ outline: number; label: number }>;
 
 // A structured PDF with any text-less page (a page #701 found no native text on) cannot be canonicalized
 // as-is (#745). Every Work language now ships an OCR pack (#746), so a text-less page reaching this
@@ -57,6 +72,9 @@ export type PdfCanonicalMappingResult =
       // How many unresolved picture/figure placeholders (#806) were produced. Zero for a document with no
       // pictures; a positive count is a review warning on the successful publication, never a refusal.
       unresolvedFigureCount: number;
+      // Where each heading's level came from (#815) — the document's own bookmark outline, or the
+      // docling label's last-resort default.
+      headingLevelSources: PdfHeadingLevelSources;
     }>;
 
 // A body item paired with the canonical block node it projected to, carrying the source item so the
@@ -65,10 +83,20 @@ type MappedBlock = Readonly<{ node: DocumentNodeJSON; source: StructuredDocItem;
 
 type DraftUnit = { title: string | null; blocks: MappedBlock[] };
 
-// The heading level each heading label starts at. A `title` is the work-level heading (level 1) and a
-// `section_header` is a section (level 2); the projection carries no depth, so the level is assigned
-// deterministically from the label rather than guessed from geometry.
+// Where one heading's level came from: the document's own bookmark outline (real, declared depth) or the
+// docling label (a flat default). Reported so an undeserved level is never claimed silently.
+type ResolvedHeading = Readonly<{ level: number; source: keyof PdfHeadingLevelSources }>;
+
+// The heading level each heading label starts at when — and ONLY when — the PDF's outline cannot justify
+// a real one. A `title` is the work-level heading (level 1) and a `section_header` is a section (level 2).
+// This table is a last-resort fallback, not the source of truth: measured across two real books docling
+// emitted `title` zero times, so trusting it alone flattens every heading in a book to H2 (#815).
 const HEADING_LEVEL_BY_LABEL: Readonly<Record<string, number>> = { title: 1, section_header: 2 };
+// Labels that are NOT heading labels but may still name a heading the outline knows about. Docling
+// routinely mislabels a chapter opener `page_header`; when the document's own outline names that exact
+// text on that exact page, the item IS the chapter heading and is emitted as one at the matched level.
+// A candidate the outline does not name keeps its ordinary mapping — a label alone never promotes.
+const OUTLINE_PROMOTABLE_LABELS = new Set(["page_header", "page_footer"]);
 const LIST_GROUP_LABELS = new Set(["list", "ordered_list", "unordered_list"]);
 const HEADER_CELL_LABELS = new Set(["table_header", "column_header", "row_header"]);
 // Picture/figure constructs whose image bytes #701 does not yet extract. Rather than refusing the whole
@@ -186,15 +214,42 @@ function figureNode(item: StructuredDocItem): DocumentNodeJSON {
   return { content, type: "figure" };
 }
 
+// Resolve the heading level for one top-level body item, or null when the item is not a heading. The
+// document's own outline decides first (real declared depth); the label table only supplies a level for
+// an item docling already labelled a heading and the outline did not name. A furniture-labelled item is
+// promoted to a heading ONLY on an outline match — otherwise it keeps its ordinary mapping.
+function resolveHeading(
+  item: StructuredDocItem,
+  outline: readonly PdfOutlineEntry[]
+): ResolvedHeading | null {
+  const labelLevel = HEADING_LEVEL_BY_LABEL[item.label];
+  if (labelLevel === undefined && !OUTLINE_PROMOTABLE_LABELS.has(item.label)) {
+    return null;
+  }
+  const outlineLevel = resolveOutlineHeadingLevel(
+    { pageNumber: item.pageNumber, text: item.text },
+    outline
+  );
+  if (outlineLevel !== null) {
+    return { level: outlineLevel, source: "outline" };
+  }
+  return labelLevel === undefined
+    ? null
+    : { level: Math.min(labelLevel, MAX_PDF_HEADING_LEVEL), source: "label" };
+}
+
 // Project one top-level body item to its canonical block node. The raw docling label decides the node
 // type; a construct with no canonical representation (or an empty table/list) becomes a visible `unknown`
 // node so nothing a publisher wrote is silently dropped. A picture/figure becomes a canonical `figure`
 // placeholder (#806) whose image is unresolved, so the readable document publishes with the figure
-// visible for correction rather than the whole document being refused.
-function bodyItemToBlock(item: StructuredDocItem): DocumentNodeJSON {
-  const headingLevel = HEADING_LEVEL_BY_LABEL[item.label];
-  if (headingLevel !== undefined) {
-    return { attrs: { level: headingLevel }, content: inlineContent(item.text), type: "heading" };
+// visible for correction rather than the whole document being refused. `heading` is the already-resolved
+// depth (#815) — outline-derived where the document declared one — so this projection never re-decides it.
+function bodyItemToBlock(
+  item: StructuredDocItem,
+  heading: ResolvedHeading | null
+): DocumentNodeJSON {
+  if (heading !== null) {
+    return { attrs: { level: heading.level }, content: inlineContent(item.text), type: "heading" };
   }
   if (PICTURE_LABELS.has(item.label)) {
     return figureNode(item);
@@ -223,9 +278,15 @@ function bodyItemToBlock(item: StructuredDocItem): DocumentNodeJSON {
 }
 
 // Walk the ordered body into (node, source) pairs, grouping a run of top-level `list_item`s into one
-// bullet list (docling sometimes emits list items without a wrapping group).
-function walkBody(body: readonly StructuredDocItem[]): MappedBlock[] {
+// bullet list (docling sometimes emits list items without a wrapping group). Each item's heading depth is
+// resolved once against the document's own outline (#815) before it is projected, and where each level
+// came from is tallied so the caller can report derived-versus-assumed depth.
+function walkBody(
+  body: readonly StructuredDocItem[],
+  outline: readonly PdfOutlineEntry[]
+): { blocks: MappedBlock[]; headingLevelSources: PdfHeadingLevelSources } {
   const out: MappedBlock[] = [];
+  const sources = { label: 0, outline: 0 };
   let index = 0;
   while (index < body.length) {
     const item = body[index]!;
@@ -242,10 +303,14 @@ function walkBody(body: readonly StructuredDocItem[]): MappedBlock[] {
       });
       continue;
     }
-    out.push({ label: item.label, node: bodyItemToBlock(item), source: item });
+    const heading = resolveHeading(item, outline);
+    if (heading !== null) {
+      sources[heading.source] += 1;
+    }
+    out.push({ label: item.label, node: bodyItemToBlock(item, heading), source: item });
     index += 1;
   }
-  return out;
+  return { blocks: out, headingLevelSources: sources };
 }
 
 // Split the walked blocks into reading units: each heading starts a new unit (so the unit's first block
@@ -328,10 +393,13 @@ export function mapStructuredDocument(document: StructuredDocument): PdfCanonica
   // the readable pages (#806). Each maps to a visible `figure` placeholder; the count is reported as a
   // review warning on the successful publication rather than refusing the whole document.
 
-  const walked = walkBody(document.body);
+  // The PDF's own bookmark outline is the ONLY depth evidence the document carries (#815). It arrives
+  // already validated on the contract (absent for a bookmark-less PDF, or for a payload committed before
+  // the worker read outlines), and an absent one simply leaves every heading on the label fallback.
+  const walked = walkBody(document.body, document.outline ?? []);
   const unmapped = new Set<string>();
   let unresolvedFigureCount = 0;
-  for (const block of walked) {
+  for (const block of walked.blocks) {
     if (block.node.type === "unknown") {
       unmapped.add(block.label);
     }
@@ -345,7 +413,7 @@ export function mapStructuredDocument(document: StructuredDocument): PdfCanonica
 
   const units: PersistableReadingUnit[] = [];
   const evidence: PdfBlockEvidence[] = [];
-  for (const draft of splitIntoUnits(walked)) {
+  for (const draft of splitIntoUnits(walked.blocks)) {
     const built = buildUnit(draft);
     units.push(built.persistable);
     evidence.push(...built.evidence);
@@ -361,6 +429,7 @@ export function mapStructuredDocument(document: StructuredDocument): PdfCanonica
 
   return {
     evidence,
+    headingLevelSources: walked.headingLevelSources,
     status: "mapped",
     unmappedLabels: [...unmapped],
     unresolvedFigureCount,
