@@ -3,10 +3,11 @@
 **Status: landed.** Everything described here is merged to `main` (`c57be64c`). Nothing important
 lives only on this machine.
 
-Merged: **#819, #820, #821, #822, #824, #827**. Closed: **#811, #813, #814, #815, #826**.
+Merged: **#819, #820, #821, #822, #824, #827, #831**. Closed: **#811, #813, #814, #815, #826, #830**.
 Open and now unblocked (`ready-for-dev`): **#816, #817, #828**, plus **#825** raised from the
 verification below. Blocked on #828: **#829**.
 Held deliberately: **#812** (deprioritized), **#818** (`needs-design`).
+No pull request is left open.
 
 Verified on merged `main` with the probe in §7: Clean Code pages 46–72 now yields **0** junk blocks in
 the reading flow, against **10** before. The defect in the original screenshot is gone. Seven
@@ -169,6 +170,19 @@ Both the PR author and the gh account are `FrancisTan2014`, so `gh pr review --a
 self-approval. The merge gates need the **label plus the comment marker** (posted with
 `gh pr comment` — `workflow.mjs` never reads a review body), not a native review.
 
+Two details that make a verdict silently invisible if you get them wrong — both cost a round trip
+before a reviewer caught them:
+
+- The rejection label is **`changes-requested`**, not `review-changes-requested`. That is what
+  `mergeApprovedPrs.mjs` and `reviewerNextAction.mjs` actually read; the longer name leaves the PR
+  absent from the queue with no error anywhere.
+- The marker must carry the **full 40-character sha**: `workflow.mjs` matches `[0-9a-f]{40}`, so an
+  abbreviated `reviewer-run-reviewed: dc37a56a` is parsed as no marker at all.
+
+The reliable check is to run the repo's own helpers against the live comments rather than eyeballing
+them — `reviewedSha()` and `reviewedHeadMatches()` from `scripts/delivery/workflow.mjs` tell you
+whether the gate will honour what you just posted.
+
 ## 5. Remaining issues
 
 - **#826 running head with an embedded folio** — **fixed by PR #827, approved, awaiting CI.**
@@ -277,16 +291,17 @@ routes an unmapped label to an `unknown` node that preserves the raw text in `at
 deliberately "renders visibly (never dropped)" (`pdfCanonicalMapping.ts:141-144`). So every one of
 them was on the page.
 
-Reproduce with the probe added on this branch:
+Reproduce with the probe, which is now **on `main`** (#830/#831 — it was branch-only until then):
 
 ```powershell
-pnpm build   # the probe imports the workspace packages
+pnpm build   # the probe imports the workspace packages; skipping it fails only AFTER the long convert
 node --import tsx scripts/probes/pdfReadingPreview.mjs "<book.pdf>" 46 72
 
 # The two books measured here (corpus is nested under `library\`, not the repo root):
 #   Q:\src\reading-book\library\software engineering\Clean Code.pdf                     46 72
 #   Q:\src\reading-book\library\architecture\Seven Concurrency Models in Seven Weeks.pdf 40 62
-# Add --json out.json to inspect `excludedFurniture` (page, rule, label, normalizedText).
+# It prints every exclusion as `page  rule  label  normalizedText`, so a false positive is visible.
+# Add --json out.json for the full records, --raw to dump the worker's per-page items before mapping.
 # To count leaks by eye, list the printed `[type] text` lines shorter than ~60 chars:
 #   node --import tsx scripts/probes/... > p.txt
 #   Get-Content p.txt | ? { $_ -match '^\[' } | ? { ($_ -replace '^\[[^\]]*\]\s*','').Length -lt 60 }
@@ -296,7 +311,18 @@ node --import tsx scripts/probes/pdfReadingPreview.mjs "<book.pdf>" 46 72
 `scripts/probes/pdfUsabilityHarness.mjs`: the aggregate harness deliberately prints no text, so it can
 prove a ratio but never that a page *reads* correctly. This one prints the block tree, so a defect you
 can see in a screenshot can be confirmed gone. It is a manual diagnostic — it prints book text, so keep
-its output out of PRs and issues, and note it stores nothing.
+its output out of PRs and issues.
+
+Two bugs in it were caught by review and fixed before it landed, both worth knowing because they
+failed in the **reassuring** direction: it printed every exclusion as blank (it read `item.text`, but
+`PdfExcludedFurniture` carries `normalizedText`), so you could see *that* ten items were dropped but
+never *what* — exactly the judgement the probe exists to support. And `process.exit()` inside the
+`try` abandoned the `finally`, leaving converted artifacts holding extracted book text in `$env:TEMP`;
+four orphaned `whetstone-preview-*` directories were sitting there when this was found. If you extend
+the probe, return an exit code — never call `process.exit()` after the temp dir is created.
+
+Known and accepted: `--raw` on unparseable worker stdout throws a bare `SyntaxError` instead of the
+clean `payload rejected` line. Cleanup is still correct on that path; it is cosmetic.
 
 ### One caveat worth knowing
 

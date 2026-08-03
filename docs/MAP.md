@@ -1348,6 +1348,13 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   POSIX. Flipping the supported
   lane and rewriting PRODUCT/setup wording stay maintainer steps gated on a measured passing run (the
   legacy Docling→Markdown route was removed in #783).
+  `scripts/probes/pdfReadingPreview.mjs` (#830) is the **qualitative** counterpart to that aggregate
+  harness: same pinned worker and same `mapStructuredDocument`, but it renders one page range
+  (`<book.pdf> <firstPage> <lastPage> [--json out.json]`, after `pnpm build`) as the block tree the
+  learner would actually read, alongside every `excludedFurniture` decision (page, rule, label,
+  normalized text). Use the harness to ask whether a corpus is broadly usable and this probe to ask
+  what is on the page — it is how the #811/#826 furniture rules were judged and how #828's remaining
+  leak was isolated. It prints extracted text, so keep its output out of issues and PRs.
   `diary/` is the Diary mode (#246 origin, #571 rich-Entry rework): `DiaryPage.tsx` renders the shared
   `capture/CaptureCard` at the top (in the **workspace** presentation, #678), wiring `onCaptured` to prepend
   the newly saved diary Entry into the browsable Timeline. `CaptureCard` composes typed capture in the

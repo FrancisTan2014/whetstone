@@ -9,8 +9,13 @@
 // Manual diagnostic only — never part of `pnpm validate`, and it prints book text, so keep its output
 // out of PRs and issues.
 //
+// Requires a built workspace: run `pnpm build` first, or the workspace imports below fail.
+//
 // Usage:
-//   node --import tsx scripts/probes/pdfReadingPreview.mjs "<file.pdf>" <startPage> <endPage> [--json out.json]
+//   pnpm build
+//   node --import tsx scripts/probes/pdfReadingPreview.mjs "<file.pdf>" <startPage> <endPage> \
+//     [--json <out.json>]   also write the block tree and the full excluded-furniture records
+//     [--raw]               additionally dump the worker's per-page items before mapping
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -19,34 +24,52 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const WORKER = "src/apps/server/src/files/pdf_to_docling.py";
+const USAGE =
+  'usage: pdfReadingPreview.mjs "<file.pdf>" <startPage> <endPage> [--json <out.json>] [--raw]\n' +
+  "       run `pnpm build` first — this imports the built workspace packages";
+
 const [pdfPath, startArg, endArg, ...rest] = process.argv.slice(2);
 if (!pdfPath || !startArg || !endArg) {
-  console.error('usage: pdfReadingPreview.mjs "<file.pdf>" <startPage> <endPage> [--json out.json]');
+  console.error(USAGE);
   process.exit(2);
 }
+
 const jsonFlag = rest.indexOf("--json");
 const jsonOut = jsonFlag === -1 ? null : rest[jsonFlag + 1];
+// A bare trailing `--json` would otherwise silently skip the write the caller asked for.
+if (jsonFlag !== -1 && (jsonOut === undefined || jsonOut.startsWith("--"))) {
+  console.error(`--json requires an output path\n${USAGE}`);
+  process.exit(2);
+}
 
 const sha256 = (path) => createHash("sha256").update(readFileSync(path)).digest("hex");
 
-const artifactDir = mkdtempSync(join(tmpdir(), "whetstone-preview-"));
-try {
-  const run = spawnSync(
+const text = (node) => {
+  if (typeof node?.attrs?.html === "string") return node.attrs.html;
+  if (typeof node?.text === "string") return node.text;
+  if (!Array.isArray(node?.content)) return "";
+  return node.content.map(text).join("");
+};
+
+// Returns an exit code rather than calling process.exit, so the caller's `finally` always removes the
+// converted artifacts — those hold extracted book text and must not be left behind on any path.
+const run = async (artifactDir) => {
+  const worker = spawnSync(
     "python",
     [WORKER, "--range", pdfPath, startArg, endArg, artifactDir],
     { encoding: "utf-8", maxBuffer: 64 * 1024 * 1024, env: { ...process.env, WHETSTONE_PDF_MEMORY_MIB: "6144" } }
   );
-  if (run.status !== 0) {
-    console.error(`worker exit ${run.status}\n${(run.stderr ?? "").slice(0, 4000)}`);
-    process.exit(1);
+  if (worker.status !== 0) {
+    console.error(`worker exit ${worker.status}\n${(worker.stderr ?? "").slice(0, 4000)}`);
+    return 1;
   }
 
   const contracts = await import("../../src/packages/contracts/src/index.js");
   const mapper = await import("../../src/apps/server/src/features/pdfImport/pdfCanonicalMapping.js");
 
-  const parsed = contracts.parseRangeConversion(run.stdout);
+  const parsed = contracts.parseRangeConversion(worker.stdout);
   if (rest.includes("--raw")) {
-    const raw = JSON.parse(run.stdout);
+    const raw = JSON.parse(worker.stdout);
     const perPage = new Map();
     for (const item of raw.body ?? []) {
       const key = `${item.pageNumber}`;
@@ -60,8 +83,9 @@ try {
   }
   if (parsed.status !== "ok") {
     console.error(`payload rejected: ${JSON.stringify(parsed).slice(0, 2000)}`);
-    process.exit(1);
+    return 1;
   }
+
   const document = contracts.concatenateRanges(
     { byteLength: statSync(pdfPath).size, pageCount: Number(endArg) - Number(startArg) + 1, sha256: sha256(pdfPath) },
     [parsed.value]
@@ -70,41 +94,48 @@ try {
 
   if (!Array.isArray(mapping.units)) {
     console.log(`STATUS ${mapping.status}`);
-    process.exit(0);
+    return 0;
   }
-
-  const text = (node) => {
-    if (typeof node?.attrs?.html === "string") return node.attrs.html;
-    if (typeof node?.text === "string") return node.text;
-    if (!Array.isArray(node?.content)) return "";
-    return node.content.map(text).join("");
-  };
 
   const dump = { status: mapping.status, units: [] };
   console.log(`STATUS ${mapping.status}   units=${mapping.units.length}`);
   for (const unit of mapping.units) {
-    const u = { title: unit.title ?? unit.label ?? "(untitled)", blocks: [] };
-    console.log(`\n${"=".repeat(78)}\nUNIT: ${u.title}\n${"=".repeat(78)}`);
+    const title = unit.title ?? unit.label ?? "(untitled)";
+    const blocks = [];
+    console.log(`\n${"=".repeat(78)}\nUNIT: ${title}\n${"=".repeat(78)}`);
     for (const block of unit.docBlocks) {
       const node = block.node;
       const kind = node.type === "heading" ? `H${node.attrs?.level ?? "?"}` : node.type;
       const body = text(node).replace(/\s+/g, " ").trim();
-      u.blocks.push({ kind, text: body });
+      blocks.push({ kind, text: body });
       console.log(`[${kind.padEnd(11)}] ${body.slice(0, 150)}`);
     }
-    dump.units.push(u);
+    dump.units.push({ title, blocks });
   }
 
+  // An exclusion removes content with nothing left on the page to reveal the loss, so print WHAT was
+  // dropped, not merely how many. `PdfExcludedFurniture` carries `normalizedText`, never `text`.
   const excluded = mapping.excludedFurniture ?? [];
   console.log(`\n--- excluded furniture: ${excluded.length} ---`);
-  for (const item of excluded.slice(0, 40))
-    console.log(`  (${item.rule ?? "?"}) ${String(item.text ?? "").replace(/\s+/g, " ").slice(0, 90)}`);
+  for (const item of excluded.slice(0, 40)) {
+    const page = String(item.page ?? "?").padStart(4);
+    const rule = String(item.rule ?? "?").padEnd(22);
+    const label = String(item.label ?? "?").padEnd(12);
+    const dropped = String(item.normalizedText ?? "").replace(/\s+/g, " ").slice(0, 90);
+    console.log(`  p${page}  ${rule} ${label} ${dropped}`);
+  }
 
   if (jsonOut) {
     dump.excludedFurniture = excluded;
     writeFileSync(jsonOut, JSON.stringify(dump, null, 2), "utf-8");
     console.log(`\nwrote ${jsonOut}`);
   }
+  return 0;
+};
+
+const artifactDir = mkdtempSync(join(tmpdir(), "whetstone-preview-"));
+try {
+  process.exitCode = await run(artifactDir);
 } finally {
   rmSync(artifactDir, { force: true, recursive: true });
 }
