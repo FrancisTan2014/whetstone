@@ -55,7 +55,30 @@ the mapper as auditable evidence rather than relocated into a furniture group.
 before merging: landing four PRs separately costs four ~25-minute CI cycles. The integration branch
 carries the original head commits, so merging it **auto-closes #819, #821 and #822 as merged**.
 
-Verified locally on the integration branch: `typecheck` clean, **118/118 Python worker tests pass**.
+Verified locally on the integration branch:
+
+- `pnpm typecheck` — clean.
+- **144/144 PDF tests pass** (`pdfCanonicalMapping` 41, `pdfOutlineHeadings` 37, `pdfUsability` 29,
+  `pdfPageFurniture` 21, `pdfUsabilityHarness` 16) — #811's and #815's suites green *together*, which
+  is what proves the conflict resolution below is correct.
+- **118/118 Python worker tests pass** (`test_pdf_to_docling.py`).
+- Full suite: 5446/5448. The 2–3 failures were **load-induced flakes** — a different set failed on each
+  run while two suites ran concurrently (`RichContentEditor` caret ordering; `content.test.ts` large-EPUB
+  test hitting the 120s timeout). Neither touches PDF code. Expect green on an unloaded CI host.
+
+### Conflicts resolved when building the integration branch
+
+`#811` and `#815` both edit `pdfCanonicalMapping.ts`, and `#813` and `#815` both edit
+`pdf_to_docling.py`. All conflicts were additive (each side adding distinct exports, types and result
+fields) and were resolved by keeping both. Exactly one line genuinely interacted — the two changes
+compose:
+
+```ts
+// #815 wanted walkBody(document.body, outline); #811 wanted walkBody(furniture.readable)
+const walked = walkBody(furniture.readable, document.outline ?? []);
+```
+
+so headings take depth from the bookmark outline *and* the body has furniture removed first.
 
 ## 4. To finish (in order)
 
