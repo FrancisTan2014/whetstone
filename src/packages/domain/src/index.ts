@@ -190,6 +190,16 @@ export type {
   PdfOutlineEntry as PdfOutlineHeadingEntry
 } from "./pdfOutlineHeadings.js";
 export {
+  decidePageFurniture,
+  isPageFurnitureCandidate,
+  normalizePageFurnitureText
+} from "./pdfPageFurniture.js";
+export type {
+  PageFurnitureDecision,
+  PageFurnitureExclusionRule,
+  PageFurnitureItem
+} from "./pdfPageFurniture.js";
+export {
   assessCorpusEligibility,
   classifyPdfUsability,
   evaluateCorpusCase,
