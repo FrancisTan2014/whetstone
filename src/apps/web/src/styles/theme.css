@@ -1570,7 +1570,7 @@
 }
 
 /* Inline code is distinguished on a subtle wash; fenced code blocks use a distinct surface
-   and scroll horizontally instead of breaking the reading measure. */
+   and wrap inside the reading measure rather than scrolling out of it. */
 .reader :not(pre) > code {
   padding: 0.1em 0.35em;
   border-radius: 0.25rem;
@@ -1579,6 +1579,19 @@
   font-size: 0.9em;
 }
 
+/* Code blocks wrap to the reading column at EVERY width (#814) — this is a reader, not an editor,
+   and the wrap must not depend on the source format (one Reader, no PDF/EPUB branch). Extracted PDF
+   code arrives as one long line with its authored line breaks lost, so the pre-#814 desktop
+   `overflow-x` scroll (#61) hid a whole listing behind a scrollbar a reader never sees; the mobile
+   half (#197) had already chosen wrapping for the same reason, and its `max-width: 55.999rem` block
+   is removed rather than duplicated here.
+   - `pre-wrap` (never `normal`/`pre-line`) keeps whitespace significant, so leading indentation and
+     blank lines survive the wrap.
+   - `overflow-wrap: anywhere` breaks an unbreakable 200-character token, and — unlike `break-word` —
+     also shrinks the block's min-content width, so a listing can never widen the reading measure or
+     push the page into a horizontal scroll.
+   `overflow-x: auto` stays as containment only: wrapped text never reaches it, but it keeps content
+   that genuinely cannot break inside the block instead of spilling across the reading surface. */
 .reader pre {
   overflow-x: auto;
   padding: 1rem 1.25rem;
@@ -1587,24 +1600,16 @@
   color: var(--color-text);
   font-size: 0.9em;
   line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .reader pre code {
   padding: 0;
   background-color: transparent;
   font-family: var(--font-mono);
-}
-
-/* On narrow screens the horizontal scroll (desktop default above) has no visible affordance on
-   touch, so a long line reads as truncated/lost. Wrap code to the column instead so nothing
-   disappears beyond the reading surface (#197); long unbreakable tokens still break rather than
-   overflow. Desktop keeps the deliberate horizontal scroll (#61). */
-@media (max-width: 55.999rem) {
-  .reader pre,
-  .reader pre code {
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-  }
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* Blockquotes / epigraphs read as quotes. */
