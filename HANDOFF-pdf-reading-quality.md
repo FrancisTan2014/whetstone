@@ -4,11 +4,14 @@
 lives only on this machine.
 
 Merged: **#819, #820, #821, #822, #824**. Closed: **#811, #813, #814, #815**.
-Open and now unblocked (`ready-for-dev`): **#816, #817**, plus **#825** and **#826** raised from the
-verification below. Held deliberately: **#812** (deprioritized), **#818** (`needs-design`).
+Reviewed and approved, waiting only on CI: **#827** (fixes #826).
+Open and now unblocked (`ready-for-dev`): **#816, #817**, plus **#825** raised from the verification
+below. Filed as follow-ups from #827's review: **#828, #829**.
+Held deliberately: **#812** (deprioritized), **#818** (`needs-design`).
 
 Verified on merged `main` with the probe in §7: Clean Code pages 46–72 now yields **0** junk blocks in
-the reading flow, against **10** before. The defect in the original screenshot is gone.
+the reading flow, against **10** before. The defect in the original screenshot is gone. Seven
+Concurrency Models pages 40–62 went **11 → 3** on `main`, and **3 → 1** with #827.
 
 ## 1. The finding that changed the diagnosis
 
@@ -134,10 +137,13 @@ commits — that was the whole point of building it. `unblockReadyIssues.mjs` th
 
 Next, in order:
 
-1. **#826** — a fix is already in flight on `dev/issue-826-embedded-folio`, stacked on what is now
-   `main`. Land it: it closes the last known furniture gap (see §5 and §7).
-2. **#816 chapter-scale reading units** — with #815 landed, this is what actually fixes the flat TOC.
-3. **#817 measured usability gate** — reuse `tools/bench_pdf.py` (aggregate) plus
+1. **#827 (closes #826)** — written, reviewed, **`review-approved` at `89c11414`**, waiting only on the
+   Quality lane. When it is green, run the two delivery scripts below; nothing else is needed. It takes
+   Seven Concurrency Models pages 40–62 from 3 leaked blocks to 1, and the surviving 1 is **#828**.
+2. **#828 use the bookmark outline as furniture evidence** — the principled way to reach 0. It is also
+   what makes **#829** safe to fix, so do it before either.
+3. **#816 chapter-scale reading units** — with #815 landed, this is what actually fixes the flat TOC.
+4. **#817 measured usability gate** — reuse `tools/bench_pdf.py` (aggregate) plus
    `scripts/probes/pdfReadingPreview.mjs` (qualitative).
 
 Re-run the whole loop with:
@@ -160,14 +166,32 @@ self-approval. The merge gates need the **label plus the comment marker** (poste
 
 ## 5. Remaining issues
 
-- **#826 running head with an embedded folio** *(filed from the verification in §7 — real, reproducible)*.
+- **#826 running head with an embedded folio** — **fixed by PR #827, approved, awaiting CI.**
   `Chapter 2. Threads and Locks · 26` defeats all three of #811's rules at once: the embedded page
   number makes every instance a **distinct** normalized string, so `repeated-across-pages` never reaches
   its threshold, `folio` fails because `isFolioShape` tests the whole string, and `matches-heading` fails
   because the suffix breaks equality. Widening the page range does **not** help — it produces more
   distinct strings. Common trade-book convention (Pragmatic Bookshelf, O'Reilly), so it affects a class
-  of books. Fix: derive a folio-stripped variant of the normalized text and test the two content rules
-  against it too. Pure domain change; stacked on #824.
+  of books. The fix derives a folio-stripped variant of the normalized text and tests the two content
+  rules against it too. Pure domain change (`stripEmbeddedFolio` in `pdfPageFurniture.ts`).
+  It reaches **1** leaked block, not the 0 its acceptance criteria asked for — see **#828** for why
+  that last one is a *design* gap rather than a bug, and why forcing it to 0 today would be worse.
+- **#828 use the PDF bookmark outline as furniture evidence** — the remaining leak is a `page_header`
+  docling emits exactly **once**, whose title appears nowhere else in the window. It survives by
+  construction: `repeated-across-pages` needs a second occurrence and `matches-heading` needs a
+  matching heading, and this has neither. That is precisely the unique heading-less candidate #811
+  **deliberately keeps** so a mislabeled chapter opener is not silently deleted (the same guard that
+  preserves Clean Code's `Chapter 3: Functions`). The missing ingredient is evidence, not a stricter
+  rule: #815 already parses the publisher's bookmark outline, which knows a section title even when the
+  page window does not. Use it **both ways** — exclude a once-seen header that names an outline entry
+  another block already claims, and *protect* one that names an unclaimed entry.
+- **#829 whitespace-separated trailing number collapses distinct short headings** — #827's
+  `stripEmbeddedFolio` accepts whitespace as a folio separator (as #826 required), so `Chapter 3`
+  (p30) and `Chapter 4` (p60) both reduce to `chapter` and are **both** removed. Accepted knowingly:
+  the same mechanism correctly removes genuine `Chapter N` running heads, the module cannot tell them
+  apart without more evidence, and the obvious tightening breaks the pinned `Formatting. 121` case.
+  **Real today and not pinned by any test.** #828 is the clean way to narrow it — an outline lookup
+  can tell a real `Chapter 3` opener from a running head.
 - **#825 selection toolbar dismissed by a note re-render** — a genuine product defect, not just the
   flaky test it surfaced as: `applyNoteHighlights` unwraps/re-wraps text nodes, invalidating the live
   Range, so a background notes refresh can dismiss the toolbar while the learner is acting on it.
@@ -274,19 +298,24 @@ single-window run **understates** furniture exclusion, so do not tune the rules 
 
 *Seven Concurrency Models in Seven Weeks*, pages 40–62, same method:
 
-| metric | `main` | integration (#824) |
-|---|---|---|
-| junk blocks in the reading flow | **11** | **3** |
-| furniture items excluded | 0 | 6 |
+| metric | `main` | integration (#824) | +#827 |
+|---|---|---|---|
+| junk blocks in the reading flow | **11** | **3** | **1** |
+| furniture items excluded | 0 | 6 | 8 |
 
-The 3 survivors are all the same shape — `Chapter 2. Threads and Locks · 26`, a running head with the
-folio **embedded**. That is **#826**, and unlike the caveat above it is *not* a windowing artifact:
-each instance carries a different page number, so a wider range yields more distinct strings and makes
-it worse, not better. See §5.
+The 3 survivors on #824 were all the same shape — `Chapter 2. Threads and Locks · 26`, a running head
+with the folio **embedded**. That was **#826**, and unlike the caveat above it is *not* a windowing
+artifact: each instance carries a different page number, so a wider range yields more distinct strings
+and makes it worse, not better. **#827 fixes it, taking 3 → 1.**
+
+The last survivor is a different shape again: a header docling emits exactly **once**, whose title
+appears nowhere else in the window. It is deliberately preserved by #811's guard against deleting
+mislabeled chapter openers, and closing it properly needs outline evidence — that is **#828**.
 
 So the honest summary is: the class of defect in the screenshot is fixed, completely on a book whose
-printer emits the running head and folio as separate items, and largely (11 → 3) on one that combines
-them. #826 closes the remainder.
+printer emits the running head and folio as separate items, and from 11 down to 1 on one that combines
+them. #828 closes the remainder, and does so by adding evidence rather than by deleting more
+aggressively.
 
 Still not exercised: the actual Reader UI and a full-book import. The mapping layer is proven; the
 render path above it is unchanged by this work, so the remaining risk is low but non-zero.
