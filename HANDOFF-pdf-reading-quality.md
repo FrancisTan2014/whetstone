@@ -1,6 +1,14 @@
 # Handoff — PDF reading quality (2026-08-03)
 
-Everything below is pushed to GitHub. Nothing important lives only on this machine.
+**Status: landed.** Everything described here is merged to `main` (`c57be64c`). Nothing important
+lives only on this machine.
+
+Merged: **#819, #820, #821, #822, #824**. Closed: **#811, #813, #814, #815**.
+Open and now unblocked (`ready-for-dev`): **#816, #817**, plus **#825** and **#826** raised from the
+verification below. Held deliberately: **#812** (deprioritized), **#818** (`needs-design`).
+
+Verified on merged `main` with the probe in §7: Clean Code pages 46–72 now yields **0** junk blocks in
+the reading flow, against **10** before. The defect in the original screenshot is gone.
 
 ## 1. The finding that changed the diagnosis
 
@@ -42,20 +50,34 @@ the mapper as auditable evidence rather than relocated into a furniture group.
 
 ## 3. Where the work is
 
-| Branch | Contains | PR | CI |
+| Branch | Contains | PR | Outcome |
 |---|---|---|---|
-| `integration/pdf-reading-quality` | **all of the below, merged and conflict-resolved** | **#824** | running |
-| `dev/issue-811-pdf-furniture` | #811 furniture exclusion | #819 | green (approved) |
-| `dev/issue-813-group-page-provenance` | #813 page provenance | #821 | green (approved) |
-| `dev/issue-815-pdf-outline-depth` | #815 as the developer finally wrote it (**authoritative**) | — (covered by #824) | — |
+| `integration/pdf-reading-quality` | **all of the below, merged and conflict-resolved** | **#824** | **merged** (`c57be64c`) |
+| `dev/issue-811-pdf-furniture` | #811 furniture exclusion | #819 | merged via #824 |
+| `dev/issue-813-group-page-provenance` | #813 page provenance | #821 | merged via #824 |
+| `dev/issue-815-pdf-outline-depth` | #815 as the developer finally wrote it (**authoritative**) | — | merged via #824 |
 | `dev/issue-815-heading-depth` | #815 **first commit only** — superseded, do not use | — | — |
-| `design/pdf-mapping-reading-quality` | PRODUCT.md + DECISIONS.md D6 + QUICK_START.md | #822 | green (approved) |
-| `handoff/pdf-reading-quality` | this document + `tools/bench_pdf.py` | — | — |
-| — | #814 code wrapping | #820 | **merged** |
+| `design/pdf-mapping-reading-quality` | PRODUCT.md + DECISIONS.md D6 + QUICK_START.md | #822 | merged via #824 |
+| `handoff/pdf-reading-quality` | this document + `tools/bench_pdf.py` + `scripts/probes/pdfReadingPreview.mjs` | — | not for merge |
+| — | #814 code wrapping | #820 | merged directly |
 
 `integration/pdf-reading-quality` was created because `main` requires branches to be **up to date**
-before merging: landing four PRs separately costs four ~25-minute CI cycles. The integration branch
-carries the original head commits, so merging it **auto-closes #819, #821 and #822 as merged**.
+before merging: landing four PRs separately costs four ~25-minute CI cycles. Because the integration
+branch carried the original head commits, merging it closed **#819, #821 and #822 as merged** rather
+than stranding them — worth reusing whenever several approved PRs must land under a deadline.
+
+### CI flakes: check the latest *attempt*, not the check summary
+
+`gh pr checks` reported Quality as **fail** while the run's **attempt 2 was already green**. The
+attempt-1 failure was `1 failed | 5448 passed` — the single known `RichContentEditor` caret race
+(#825), in a file #824 does not touch. Confirm with:
+
+```powershell
+gh api repos/FrancisTan2014/whetstone/actions/runs/<runId> --jq '{attempt:.run_attempt,concl:.conclusion}'
+```
+
+`gh run view --log` truncates before the failure summary; download the raw job log
+(`gh api .../actions/jobs/<jobId>/logs`) and read its tail to see which test actually failed.
 
 ### Two staleness near-misses — check pushed heads, not descriptions
 
@@ -102,34 +124,39 @@ const walked = walkBody(furniture.readable, document.outline ?? []);
 
 so headings take depth from the bookmark outline *and* the body has furniture removed first.
 
-## 4. To finish
+## 4. How it landed, and what to do next
 
-**PR #824 is already open** with all the work in it. What remains:
+**Done.** `scripts/delivery/mergeApprovedPrs.mjs` merged #824 once the four checks were green and the
+reviewer's `review-approved` label plus its `reviewer-run-reviewed: <sha>` comment marker matched the
+head. #819, #821 and #822 auto-closed as **merged** because the integration branch carried their head
+commits — that was the whole point of building it. `unblockReadyIssues.mjs` then reported
+`unblocked=2` (#816, #817).
+
+Next, in order:
+
+1. **#826** — a fix is already in flight on `dev/issue-826-embedded-folio`, stacked on what is now
+   `main`. Land it: it closes the last known furniture gap (see §5 and §7).
+2. **#816 chapter-scale reading units** — with #815 landed, this is what actually fixes the flat TOC.
+3. **#817 measured usability gate** — reuse `tools/bench_pdf.py` (aggregate) plus
+   `scripts/probes/pdfReadingPreview.mjs` (qualitative).
+
+Re-run the whole loop with:
 
 ```powershell
-# 1. Get a working token (see §6 — this exact form is load-bearing).
-cd Q:\src\whetstone
+# Get a working token (see §6 — this exact form is load-bearing).
 $in = "protocol=https`nhost=github.com`nusername=FrancisTan2014`n`n"
 $tok = ((($in | git -c credential.https://github.com.helper=manager -c credential.interactive=never credential fill 2>&1) | Select-String '^password=').ToString()) -replace '^password=',''
-$env:GH_TOKEN=$tok; $env:GH_CONFIG_DIR="$env:USERPROFILE\.config\gh-probe3"
+$env:GH_TOKEN=$tok; $env:GITHUB_TOKEN=$tok; $env:GH_CONFIG_DIR="$env:USERPROFILE\.config\gh-probe3"
 gh api user --jq .login    # must print FrancisTan2014
 
-# 2. When the 3 required checks on #824 are green and it carries `review-approved`:
-gh pr merge 824 --repo FrancisTan2014/whetstone --merge
+cd Q:\src\whetstone
+node scripts\delivery\mergeApprovedPrs.mjs
 node scripts\delivery\unblockReadyIssues.mjs
 ```
 
-If PR #821's verdict was still not recorded, its already-written approval body is saved at
-`.agent-logs/review-821.md`. `workflow.mjs` reads the `reviewer-run-reviewed` marker from PR
-**comments** only, so it must be posted with `gh pr comment`, not as a review body:
-
-```powershell
-gh pr comment 821 --repo FrancisTan2014/whetstone --body-file .agent-logs\review-821.md
-gh pr edit 821 --repo FrancisTan2014/whetstone --add-label review-approved --remove-label needs-review
-```
-
 Both the PR author and the gh account are `FrancisTan2014`, so `gh pr review --approve` is rejected as
-self-approval. The merge gates need the **label plus the comment marker**, not a native review.
+self-approval. The merge gates need the **label plus the comment marker** (posted with
+`gh pr comment` — `workflow.mjs` never reads a review body), not a native review.
 
 ## 5. Remaining issues
 
