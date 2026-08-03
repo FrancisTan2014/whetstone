@@ -881,6 +881,69 @@ describe("outline-derived heading depth", () => {
     expect(result.headingLevelSources).toEqual({ label: 0, outline: 1 });
   });
 
+  it("refuses to promote the real running heads that repeat an already-claimed bookmark", () => {
+    // Measured on the real Clean Code pp.124-129 payload: docling labels the running head at the top of
+    // each verso/recto `page_header`, restating the chapter or section title the page belongs to. Those
+    // restatements match the SAME bookmarks the printed headings already matched. A bookmark names one
+    // heading, so they must stay furniture — promoting them would duplicate every real heading in the
+    // sidebar, which is worse than the flat list this issue set out to fix.
+    const body: readonly StructuredDocItem[] = [
+      item({ label: "section_header", pageNumber: 124, text: "Objects and Data Structures" }),
+      item({ label: "section_header", pageNumber: 124, text: "Data Abstraction" }),
+      item({ label: "text", pageNumber: 124, text: "Body." }),
+      item({
+        label: "page_header",
+        pageNumber: 125,
+        text: "Chapter 6: Objects and Data Structures"
+      }),
+      item({ label: "section_header", pageNumber: 126, text: "Data/Object Anti-Symmetry" }),
+      item({ label: "page_header", pageNumber: 126, text: "Data/Object Anti-Symmetry" }),
+      item({ label: "section_header", pageNumber: 128, text: "The Law of Demeter" }),
+      item({ label: "page_header", pageNumber: 128, text: "The Law of Demeter" }),
+      item({ label: "page_footer", pageNumber: 128, text: "97" }),
+      item({ label: "section_header", pageNumber: 129, text: "Train Wrecks" })
+    ];
+    const result = mapped(mapEn(doc(body, cleanCodePages, cleanCodeOutline)));
+
+    // Exactly the five printed headings, at their real declared depth — no duplicates from the four
+    // furniture items.
+    expect(headingLevels(result)).toEqual([1, 2, 2, 2, 3]);
+    expect(result.headingLevelSources).toEqual({ label: 0, outline: 5 });
+    expect(result.units.map((unit) => unit.title)).toEqual([
+      "Objects and Data Structures",
+      "Data Abstraction",
+      "Data/Object Anti-Symmetry",
+      "The Law of Demeter",
+      "Train Wrecks"
+    ]);
+  });
+
+  it("promotes a mislabelled opener whose bookmark no real heading claimed, beside claimed ones", () => {
+    // The other half of the claim rule: when docling emits NO heading for a bookmark, the furniture item
+    // that names it is the only candidate, so it is promoted. Ordering matters — the claimed entries are
+    // resolved first, so this promotion cannot steal one of them.
+    const result = mapped(
+      mapEn(
+        doc(
+          [
+            item({ label: "section_header", pageNumber: 124, text: "Data Abstraction" }),
+            item({ label: "page_header", pageNumber: 124, text: "Data Abstraction" }),
+            item({ label: "page_header", pageNumber: 128, text: "The Law of Demeter" }),
+            item({ label: "text", pageNumber: 128, text: "Body." })
+          ],
+          cleanCodePages,
+          cleanCodeOutline
+        )
+      )
+    );
+    expect(headingLevels(result)).toEqual([2, 2]);
+    expect(result.units.map((unit) => unit.title)).toEqual([
+      "Data Abstraction",
+      "The Law of Demeter"
+    ]);
+    expect(result.headingLevelSources).toEqual({ label: 0, outline: 2 });
+  });
+
   it("leaves an unnamed page_header on its ordinary mapping — a label alone never promotes", () => {
     const result = mapped(
       mapEn(
