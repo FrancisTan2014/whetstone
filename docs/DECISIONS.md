@@ -10,6 +10,50 @@ it. Newest first.
 
 ---
 
+## D6 — "PDF extraction loses the text" → measured extraction reliability; the defect is our mapping
+
+**Status:** Superseded 2026-08-03 by direct measurement.
+**Replaced by:** the canonical-mapping rules and measured usability definition in `PRODUCT.md` →
+"v0 content ingestion".
+
+**What it was.** The working diagnosis for the Reader's poor PDF results was that the converter itself
+lost roughly 90% of a book's text, which made "replace or bypass the extractor" look like the fix and
+kept alternatives such as a PDF-specific reader or a Markdown/EPUB intermediate alive in discussion.
+
+**Why superseded.** That number was a measurement artifact: the walker used to measure it did not
+traverse docling table cells, so table-borne text (all of a book's front-matter contents pages) read as
+missing. Re-measured with the pinned converter (docling 2.114.0, `do_ocr=False`) against each PDF's own
+text layer read through pypdfium2, normalized whitespace-stripped:
+
+| Source | Pages | Recursive item text | Top-level body only | `export_to_html` |
+| --- | --- | --- | --- | --- |
+| Clean Code | 1–30 | 41.1% | 38.8% | 103.8% |
+| Clean Code | 50–60 | 99.8% | 99.8% | 108.5% |
+| Clean Code | 120–140 | 99.9% | 99.5% | 105.6% |
+| Seven Concurrency Models | 40–55 | 99.5% | 93.9% | 101.3% |
+
+An independent re-run over Clean Code pages 124–129 measured 99.7–99.9% per page (99.8% overall) with
+table/list descendants included. The 41.1% row is front matter whose contents pages are 11 docling
+tables; `export_to_html` reaching 103.8% there proves the text is present, and the worker already
+projects table cells via `_table_rows`.
+
+**What replaced it.** Extraction is treated as reliable, and every observed Reader defect is owned by
+the canonical mapping layer (`pdfCanonicalMapping.ts`): page furniture flooding the body as unknown
+blocks (~26% of top-level items measured), heading level assigned from a label so every book is flat,
+a new ReadingUnit at every heading, and descendants of unmapped parents dropped. Usability is
+certified by measured page coverage, furniture contamination, and outline quality rather than
+fallback-block ratios. The recorded future direction is convergence onto EPUB's proven
+`htmlToDocument` mapper through a structured-semantic-HTML intermediate carrying page/bbox/confidence
+sidecars.
+
+**Rejected alternatives (still rejected).** A PDF.js or otherwise PDF-specific reader, a page-block
+content model, and retaining the PDF as the readable copy — all remain superseded by D4. Converting
+PDF to EPUB or Markdown as an intermediate file hop: Markdown is strictly narrower than the canonical
+schema and destroys page, bounding-box, and confidence provenance. Everything is still a block, and
+every source format still becomes one canonical ProseMirror `Work -> ReadingUnit -> Block`.
+
+---
+
 ## D5 — Seven-day queue lock → non-blocking daily-use evidence
 
 **Status:** Superseded 2026-07-22.
