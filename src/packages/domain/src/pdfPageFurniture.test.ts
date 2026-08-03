@@ -196,3 +196,178 @@ describe("decidePageFurniture", () => {
     expect(decidePageFurniture([])).toEqual([]);
   });
 });
+
+// A running head that embeds its folio (#826) — `Chapter 2. Threads and Locks · 26` — is a different
+// string on every page, so repetition and heading restatement only see it once one edge folio is removed.
+describe("decidePageFurniture with an embedded folio", () => {
+  it("excludes a running head whose folio-stripped form repeats across pages", () => {
+    // The three instances share no normalized text at all; only the stripped form repeats.
+    expect(
+      rules([
+        header("Chapter 2. Threads and Locks \u00b7 26", 40),
+        body("Prose about locks."),
+        header("Chapter 2. Threads and Locks \u00b7 38", 52)
+      ])
+    ).toEqual(["repeated-across-pages", null, "repeated-across-pages"]);
+  });
+
+  it("excludes a running head whose folio-stripped form matches a heading, seen only once", () => {
+    expect(
+      rules([
+        heading("Day 2: Beyond Intrinsic Locks", 41),
+        header("Day 2: Beyond Intrinsic Locks \u00b7 27", 41)
+      ])
+    ).toEqual([null, "matches-heading"]);
+  });
+
+  it("strips the folio behind any of the printer separators, at either edge", () => {
+    // Each pair repeats the same head with a different folio, so exclusion proves the separator was
+    // recognized: middle dot, pipe, em dash, hyphen, colon, and bare whitespace, trailing then leading.
+    const pairs: readonly [string, string][] = [
+      ["Threads and Locks \u00b7 26", "Threads and Locks \u00b7 38"],
+      ["Threads and Locks | 26", "Threads and Locks | 38"],
+      ["Threads and Locks \u2014 26", "Threads and Locks \u2014 38"],
+      ["Threads and Locks - 26", "Threads and Locks - 38"],
+      ["Threads and Locks: 26", "Threads and Locks: 38"],
+      ["Threads and Locks 26", "Threads and Locks 38"],
+      ["26 \u00b7 Threads and Locks", "38 \u00b7 Threads and Locks"],
+      ["26 | Threads and Locks", "38 | Threads and Locks"],
+      ["26 \u2014 Threads and Locks", "38 \u2014 Threads and Locks"],
+      ["26 - Threads and Locks", "38 - Threads and Locks"],
+      ["26: Threads and Locks", "38: Threads and Locks"],
+      ["26 Threads and Locks", "38 Threads and Locks"]
+    ];
+    for (const [first, second] of pairs) {
+      expect(rules([header(first, 40), footer(second, 52)]), `${first} / ${second}`).toEqual([
+        "repeated-across-pages",
+        "repeated-across-pages"
+      ]);
+    }
+  });
+
+  it("counts a separated folio and an embedded one as the same running head", () => {
+    // Docling emits the head alone on some pages and combined with the folio on others; both forms are
+    // the same printed running head, so one page of each reaches the repetition threshold.
+    expect(
+      rules([header("Chapter 5: Formatting", 121), header("Chapter 5: Formatting \u00b7 123", 123)])
+    ).toEqual(["repeated-across-pages", "repeated-across-pages"]);
+  });
+
+  it("trims punctuation left behind by the folio, so the residue still matches a heading", () => {
+    expect(rules([heading("Formatting", 120), header("Formatting. 121", 121)])).toEqual([
+      null,
+      "matches-heading"
+    ]);
+  });
+
+  it("reports the item's own normalized text, not the folio-stripped comparison form", () => {
+    // The evidence has to name the line that actually vanished, or an administrator cannot audit it.
+    expect(
+      excluded([
+        header("Chapter 2. Threads and Locks \u00b7 26", 40),
+        header("Chapter 2. Threads and Locks \u00b7 38", 52)
+      ])
+    ).toEqual([
+      {
+        kind: "excluded",
+        normalizedText: "chapter 2. threads and locks \u00b7 26",
+        rule: "repeated-across-pages"
+      },
+      {
+        kind: "excluded",
+        normalizedText: "chapter 2. threads and locks \u00b7 38",
+        rule: "repeated-across-pages"
+      }
+    ]);
+  });
+
+  it("still matches a heading that itself ends in a number", () => {
+    // The heading text carries the number, so only the UNSTRIPPED comparison can equal it.
+    expect(rules([heading("Rule 34", 10), header("Rule 34", 11)])).toEqual([
+      null,
+      "matches-heading"
+    ]);
+  });
+
+  it("still reports a bare folio as folio, never as stripped repetition", () => {
+    expect(rules([footer("26", 40), footer("38", 52), footer("Page 26", 41)])).toEqual([
+      "folio",
+      "folio",
+      "folio"
+    ]);
+  });
+
+  it("never strips a body block that ends in a number, however often it repeats", () => {
+    // The candidate-label gate is the outer guard: prose is never a folio-stripping candidate.
+    expect(
+      rules([
+        body("Deadlock is covered in Chapter 2", 40),
+        body("Deadlock is covered in Chapter 2", 52),
+        body("Chapter 2. Threads and Locks \u00b7 26", 41)
+      ])
+    ).toEqual([null, null, null]);
+  });
+
+  it("never strips a number in the middle of a candidate", () => {
+    // Only edge tokens are removable, so these two keep their differing numbers and never merge.
+    expect(
+      rules([header("Rule 26 for concurrency", 40), header("Rule 38 for concurrency", 52)])
+    ).toEqual([null, null]);
+  });
+
+  it("requires a separator, so digits joined to the text are kept", () => {
+    expect(rules([header("Threads and Locks26", 40), header("Threads and Locks38", 52)])).toEqual([
+      null,
+      null
+    ]);
+  });
+
+  it("strips a folio of one to four digits, and nothing longer", () => {
+    // Four digits is a real folio in a long book; five is not a page number, so those lines stay.
+    expect(
+      rules([
+        header("Threads and Locks \u00b7 1004", 40),
+        header("Threads and Locks \u00b7 1038", 52)
+      ])
+    ).toEqual(["repeated-across-pages", "repeated-across-pages"]);
+    expect(
+      rules([
+        header("Threads and Locks \u00b7 10045", 40),
+        header("Threads and Locks \u00b7 10046", 52)
+      ])
+    ).toEqual([null, null]);
+  });
+
+  it("strips at most one token, so a head fenced by numbers on both edges keeps one", () => {
+    // Both lines shed only their trailing number; the leading folios still differ, so nothing merges and
+    // the lines stay readable rather than being deleted on partial evidence.
+    expect(
+      rules([
+        header("26 \u00b7 Chapter 2 \u00b7 26", 40),
+        header("38 \u00b7 Chapter 2 \u00b7 38", 52)
+      ])
+    ).toEqual([null, null]);
+  });
+
+  it("keeps a lone chapter opener that merely carries a number", () => {
+    // Docling labels some chapter openers `page_header`. One `Part 1` is unique after stripping too, so
+    // it survives as readable content.
+    expect(rules([header("Part 1", 5), body("Prose.")])).toEqual([null, null]);
+  });
+
+  it("refuses to strip when the residue is not substantive", () => {
+    // A residue of bare digits, or one that is itself a folio, is no evidence of a running head. Each
+    // pair would merge if the edge number were taken; because it is not, the lines are compared whole,
+    // match nothing, and stay.
+    expect(
+      rules([
+        header("26 \u00b7 27", 40),
+        header("26 \u00b7 38", 52),
+        footer("Page 26 \u00b7 27", 41),
+        footer("Page 26 \u00b7 38", 53),
+        footer("26 \u00b7 iv", 42),
+        footer("38 \u00b7 iv", 54)
+      ])
+    ).toEqual([null, null, null, null, null, null]);
+  });
+});
