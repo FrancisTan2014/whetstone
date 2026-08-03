@@ -11,6 +11,12 @@
 // carries. Docling mislabels some chapter openers `page_header`; such a unique, heading-less candidate is
 // KEPT as readable text.
 //
+// Repetition and heading restatement are additionally tested against a FOLIO-STRIPPED form of the text
+// (#826), because a large class of trade books sets the running head as `<chapter title> · <folio>`. That
+// embedded page number makes every instance a DIFFERENT string, so repetition never reaches its
+// threshold however many pages are imported, and the folio suffix breaks equality with the real heading —
+// the running head survives into the prose. Stripping one edge folio restores both comparisons.
+//
 // Pure and dependency-free (no React, Fastify, PostgreSQL, fs, or contracts): the caller passes the
 // document's ordered top-level body items reduced to label/page/text, so every rule is unit-testable in
 // isolation and a planted bug in a threshold or a regex fails a test rather than a book.
@@ -61,6 +67,18 @@ const FOLIO_PATTERNS: readonly RegExp[] = [
 // is a running head. Two is the minimum that distinguishes "printed on every page" from a one-off line
 // that might be real content.
 const REPEATED_PAGE_THRESHOLD = 2;
+
+// A running head that EMBEDS its folio (#826): the printed page number sits at one edge, behind a
+// separator a printer chose — `Chapter 2. Threads and Locks · 26`, `26 | Chapter 2`, `Formatting — 121`,
+// `Comments: 53`, or plain whitespace. Anchored at the edges, so a number in the MIDDLE of a line is
+// never touched, and a separator is REQUIRED, so `Locks26` keeps its digits.
+//
+// Only a bare 1-4 digit arabic run counts as the embedded token. The roman and `page 89` folio shapes
+// stay whole-string-only: inside a longer line, `^[ivxlcdm]{1,7}$` matches ordinary English words
+// (`mill`, `civil`, `mid`), and stripping one would delete real title text — the exact failure this
+// module refuses to risk.
+const TRAILING_EMBEDDED_FOLIO = /^(.+?)[\s\u00b7\u2022|\u2013\u2014:-]+(?:\d{1,4})$/u;
+const LEADING_EMBEDDED_FOLIO = /^(?:\d{1,4})[\s\u00b7\u2022|\u2013\u2014:-]+(.+)$/u;
 
 // Why one candidate was excluded. Reported per item so the exclusion is auditable — a caller can show
 // exactly which rule removed which line rather than a bare count.
@@ -118,6 +136,37 @@ function isFolioShape(normalized: string): boolean {
   return FOLIO_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 
+// The comparison form of a candidate once at most ONE edge folio is removed, or the text unchanged when
+// no edge token is safely removable. This rule DELETES content, so it strips at most one token, only at
+// an edge, and only when what remains is still substantive — text carrying a letter that is not itself a
+// folio. So `26` and `page 26 · 27` are left whole for the `folio` rule (or for no rule at all) rather
+// than dissolving into nothing, and a residue of bare digits never becomes a repetition key.
+//
+// A line with a number at BOTH edges gives up only its trailing one — the common convention — and keeps
+// the leading number inside the compared text. Taking a single token means such a line at worst matches
+// nothing and stays readable: the conservative direction, a stray line kept over a title deleted.
+function stripEmbeddedFolio(normalized: string): string {
+  const trailing = TRAILING_EMBEDDED_FOLIO.exec(normalized);
+  if (trailing) {
+    const residue = trimEdgePunctuation(trailing[1]!);
+    if (isSubstantiveResidue(residue)) {
+      return residue;
+    }
+  }
+  const leading = LEADING_EMBEDDED_FOLIO.exec(normalized);
+  if (leading) {
+    const residue = trimEdgePunctuation(leading[1]!);
+    if (isSubstantiveResidue(residue)) {
+      return residue;
+    }
+  }
+  return normalized;
+}
+
+function isSubstantiveResidue(residue: string): boolean {
+  return /\p{L}/u.test(residue) && !isFolioShape(residue);
+}
+
 export function isPageFurnitureCandidate(label: string): boolean {
   return FURNITURE_CANDIDATE_LABELS.has(label);
 }
@@ -133,7 +182,7 @@ export function decidePageFurniture(
   body: readonly PageFurnitureItem[]
 ): readonly PageFurnitureDecision[] {
   const headings = new Set<string>();
-  const candidatePages = new Map<string, Set<number>>();
+  const pagesByComparisonText = new Map<string, Set<number>>();
   for (const item of body) {
     const normalized = normalizePageFurnitureText(item.text);
     if (HEADING_LABELS.has(item.label)) {
@@ -143,40 +192,58 @@ export function decidePageFurniture(
     if (!isPageFurnitureCandidate(item.label)) {
       continue;
     }
-    const pages = candidatePages.get(normalized) ?? new Set<number>();
-    pages.add(item.pageNumber);
-    candidatePages.set(normalized, pages);
+    recordPage(pagesByComparisonText, stripEmbeddedFolio(normalized), item.pageNumber);
   }
+  const index: FurnitureIndex = { headings, pagesByComparisonText };
 
   return body.map((item) => {
     if (!isPageFurnitureCandidate(item.label)) {
       return { kind: "body" };
     }
     const normalizedText = normalizePageFurnitureText(item.text);
-    const rule = exclusionRule(normalizedText, candidatePages, headings);
+    const rule = exclusionRule(normalizedText, index);
     return rule === null ? { kind: "body" } : { kind: "excluded", normalizedText, rule };
   });
 }
 
+// What the whole document proves about one candidate. Local to this module and read-only at the point of
+// use, so no mutable index escapes the decision. Candidates are counted under their FOLIO-STRIPPED text,
+// which is the text itself whenever there is no edge folio to remove: an exactly repeating running head
+// is therefore counted exactly as before, while `<head> · 26` and `<head> · 38` — and a book that emits
+// the head alone on some pages and combined on others — finally land in one bucket.
+type FurnitureIndex = Readonly<{
+  headings: ReadonlySet<string>;
+  pagesByComparisonText: ReadonlyMap<string, ReadonlySet<number>>;
+}>;
+
+function recordPage(pages: Map<string, Set<number>>, text: string, pageNumber: number): void {
+  const seen = pages.get(text) ?? new Set<number>();
+  seen.add(pageNumber);
+  pages.set(text, seen);
+}
+
 function exclusionRule(
   normalizedText: string,
-  candidatePages: ReadonlyMap<string, ReadonlySet<number>>,
-  headings: ReadonlySet<string>
+  index: FurnitureIndex
 ): PageFurnitureExclusionRule | null {
   if (normalizedText.length === 0) {
     return "empty";
   }
+  // Before any folio is stripped, so a candidate that is ONLY a folio is still reported as one.
   if (isFolioShape(normalizedText)) {
     return "folio";
   }
-  // `candidatePages` was built from every candidate, so the lookup always hits for a candidate's own
-  // normalized text; the empty fallback keeps the type total.
+  const comparisonText = stripEmbeddedFolio(normalizedText);
+  // The index was built from every candidate's comparison text, so this lookup always hits; the empty
+  // fallback keeps the type total.
   /* v8 ignore next */
-  const pageCount = candidatePages.get(normalizedText)?.size ?? 0;
+  const pageCount = index.pagesByComparisonText.get(comparisonText)?.size ?? 0;
   if (pageCount >= REPEATED_PAGE_THRESHOLD) {
     return "repeated-across-pages";
   }
-  if (headings.has(normalizedText)) {
+  // Both forms are tried: a heading may itself end in a number (`Rule 34`), which the stripped form would
+  // no longer equal, and a running head may carry a folio the heading does not.
+  if (index.headings.has(normalizedText) || index.headings.has(comparisonText)) {
     return "matches-heading";
   }
   return null;
