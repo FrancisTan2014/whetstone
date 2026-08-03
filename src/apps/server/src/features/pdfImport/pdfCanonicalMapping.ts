@@ -219,12 +219,12 @@ function bodyItemToBlock(item: StructuredDocItem): DocumentNodeJSON {
     return figureNode(item);
   }
   switch (item.label) {
-    case "text":
-    case "paragraph":
-    case "caption":
     // A running head/foot that SURVIVED the furniture rules (#811) is unique, folio-less text docling
     // labelled `page_header`/`page_footer` — typically a chapter opener it mislabelled. It is readable
     // content, so it maps to a plain paragraph and never to the dashed `unknown` fallback.
+    case "text":
+    case "paragraph":
+    case "caption":
     case "page_header":
     case "page_footer":
       return paragraph(item.text);
