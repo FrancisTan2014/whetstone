@@ -50,7 +50,7 @@ import json
 import os
 import sys
 import tempfile
-from typing import Any, Callable, Mapping, Optional, Protocol, Sequence
+from typing import Any, Callable, Iterator, Mapping, Optional, Protocol, Sequence
 
 # Exit codes — kept in LOCKSTEP with WORKER_EXIT_* in pdfStructuredErrors.ts. Changing one side
 # requires changing the other; the Node adapter maps each to a named PdfStructuredFailure.
@@ -391,6 +391,11 @@ def _bounding_box(prov: Any) -> dict[str, float]:
     return _bounding_box_from(prov.bbox if prov is not None else None)
 
 
+def _ordered_span(start: int, end: int) -> list[int]:
+    """Order a char-span pair so ``start <= end`` — the contract's charSpan invariant, in one place."""
+    return [start, end] if start <= end else [end, start]
+
+
 def _char_span(prov: Any) -> list[int]:
     """Project a ProvenanceItem char span to a [start, end] pair, defaulting to [0, 0]."""
     if prov is None:
@@ -398,8 +403,7 @@ def _char_span(prov: Any) -> list[int]:
     span = getattr(prov, "charspan", None)
     if not span:
         return [0, 0]
-    start, end = int(span[0]), int(span[1])
-    return [start, end] if start <= end else [end, start]
+    return _ordered_span(int(span[0]), int(span[1]))
 
 
 def _page_number(prov: Any, default: int) -> int:
@@ -407,6 +411,61 @@ def _page_number(prov: Any, default: int) -> int:
     if prov is None:
         return default
     return int(getattr(prov, "page_no", default))
+
+
+def _subtree_provs(item: Any, doc: Any, resolve: Callable[[Any, Any], Any]) -> Iterator[Any]:
+    """Yield the first provenance record of every node in ``item``'s subtree, in pre-order (document) order."""
+    prov = _prov(item)
+    if prov is not None:
+        yield prov
+    for ref in getattr(item, "children", None) or []:
+        yield from _subtree_provs(resolve(ref, doc), doc, resolve)
+
+
+def _borrowed_geometry(
+    item: Any, doc: Any, resolve: Callable[[Any, Any], Any], fallback_page: int
+) -> Optional[tuple[int, dict[str, float], list[int]]]:
+    """Page/box/span a provenance-LESS node borrows from the content it holds, or None (#813).
+
+    A docling group (``list``, ``inline``, ...) carries no ``prov`` of its own, so left to a constant it
+    would claim a page its content is not on — evidence that describes no source, which is worse than
+    no evidence. It borrows page and bounding box from the FIRST descendant with provenance in document
+    order, and a char span running from that descendant's start to the LAST descendant's end ON THAT
+    SAME PAGE, so the span stays a coherent single-page range and no box is synthesized across pages.
+
+    Returns None when nothing in the subtree carries provenance — the caller then keeps its inherited
+    fallback page and a zero-area box.
+    """
+    provs = _subtree_provs(item, doc, resolve)
+    first = next(provs, None)
+    if first is None:
+        return None
+    page = _page_number(first, fallback_page)
+    start, end = _char_span(first)
+    for prov in provs:
+        if _page_number(prov, fallback_page) == page:
+            end = _char_span(prov)[1]
+    return page, _bounding_box(first), _ordered_span(start, end)
+
+
+def _resolve_geometry(
+    item: Any, doc: Any, resolve: Callable[[Any, Any], Any], inherited_page: int
+) -> tuple[int, dict[str, float], list[int]]:
+    """Resolve the (page, bounding box, char span) evidence one node reports.
+
+    A node with provenance of its own is resolved from it, unchanged. A node WITHOUT provenance — every
+    docling group — borrows from the content it holds (``_borrowed_geometry``). Only when nothing in its
+    subtree carries provenance either does it fall back to ``inherited_page`` with a zero-area box: the
+    range's first page at the top level, the enclosing item's resolved page deeper in — never the
+    constant page 1 (#813).
+    """
+    prov = _prov(item)
+    if prov is not None:
+        return _page_number(prov, inherited_page), _bounding_box(prov), _char_span(prov)
+    borrowed = _borrowed_geometry(item, doc, resolve, inherited_page)
+    if borrowed is not None:
+        return borrowed
+    return inherited_page, _bounding_box(None), _char_span(None)
 
 
 def _confidence(item: Any, page_confidences: dict[int, float], page_number: int) -> float:
@@ -592,9 +651,12 @@ def map_item(
     projected into ordered ``table_row`` -> cell items (see ``_table_rows``) that the canonical mapper
     turns into a PM ``table`` block. When an ``ArtifactSink`` is supplied and this item is a picture
     whose image renders, a manifest ref to the extracted PNG is attached as ``imageArtifact`` (#807).
+
+    ``inherited_page`` is only the LAST resort: a node with no provenance of its own borrows page, box,
+    and span from the content it holds first (``_resolve_geometry``), so a group reports the page its
+    content is actually on rather than a page nothing on it came from (#813).
     """
-    prov = _prov(item)
-    page_number = _page_number(prov, inherited_page)
+    page_number, bounding_box, char_span = _resolve_geometry(item, doc, resolve, inherited_page)
     table_rows = _table_rows(item, page_number, page_confidences)
     if table_rows is not None:
         children = table_rows
@@ -608,8 +670,8 @@ def map_item(
     mapped: dict[str, Any] = {
         "label": label,
         "pageNumber": page_number,
-        "boundingBox": _bounding_box(prov),
-        "charSpan": _char_span(prov),
+        "boundingBox": bounding_box,
+        "charSpan": char_span,
         "confidence": _confidence(item, page_confidences, page_number),
         "text": str(getattr(item, "text", "") or ""),
         "children": children,
@@ -626,16 +688,23 @@ def map_group(
     doc: Any,
     resolve: Callable[[Any, Any], Any],
     page_confidences: dict[int, float],
+    fallback_page: int,
     sink: Optional[ArtifactSink] = None,
 ) -> list[dict[str, Any]]:
     """Map a top-level group's ordered children (body or furniture) into contract items.
+
+    ``fallback_page`` is the range's FIRST page (``build_range_payload``'s ``start_page``): the last
+    resort for a top-level node whose whole subtree carries no provenance. It is deliberately NOT the
+    constant 1 — a range converted from page 300 that reported page 1 would attribute its content to a
+    page it cannot be on (#813).
 
     An ``ArtifactSink`` is threaded only for the body group (the only source of canonical figures), so a
     furniture picture is never extracted to a would-be-orphaned artifact.
     """
     children_refs = getattr(group, "children", None) or []
     return [
-        map_item(resolve(ref, doc), doc, resolve, page_confidences, 1, sink) for ref in children_refs
+        map_item(resolve(ref, doc), doc, resolve, page_confidences, fallback_page, sink)
+        for ref in children_refs
     ]
 
 
@@ -718,6 +787,8 @@ def build_range_payload(
     native-text availability for every page in [start_page, end_page]. When the caller supplies the raw
     PDF info dictionary, attaches its cleaned ``metadata`` (#702's title/author fallback source). When an
     ``ArtifactSink`` is supplied, each renderable body picture carries an ``imageArtifact`` ref (#807).
+    ``start_page`` is also the last-resort page for a provenance-less item, so a range never reports a
+    page outside its own window (#813).
     """
     version = str(getattr(doc, "version", ""))
     if version not in SUPPORTED_SCHEMA_VERSIONS:
@@ -732,8 +803,12 @@ def build_range_payload(
         "schemaVersion": RANGE_SCHEMA_VERSION,
         "doclingSchema": {"name": DOCLING_SCHEMA_NAME, "version": version},
         "pages": pages,
-        "body": map_group(getattr(doc, "body", None), doc, _resolve_ref, page_confidences, sink),
-        "furniture": map_group(getattr(doc, "furniture", None), doc, _resolve_ref, page_confidences),
+        "body": map_group(
+            getattr(doc, "body", None), doc, _resolve_ref, page_confidences, start_page, sink
+        ),
+        "furniture": map_group(
+            getattr(doc, "furniture", None), doc, _resolve_ref, page_confidences, start_page
+        ),
     }
     if metadata is not None:
         payload["metadata"] = build_document_metadata(metadata)
