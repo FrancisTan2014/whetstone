@@ -5,6 +5,7 @@ import {
   serializeDocument,
   type DocumentNodeJSON
 } from "@whetstone/document";
+import { decidePageFurniture, type PageFurnitureExclusionRule } from "@whetstone/domain";
 
 import type { PersistableReadingUnit } from "../content/blockWriter.js";
 import type { IngestedBlock } from "../content/htmlToDocument.js";
@@ -32,6 +33,18 @@ export type PdfBlockEvidence = Readonly<{
   label: string;
 }>;
 
+// One top-level body item excluded from the readable hierarchy as page furniture (#811): a running head,
+// running foot, or folio docling emitted inside `doc.body`. Nothing a publisher wrote may vanish
+// unaccountably, and docling's own `furniture` group is deprecated and empty in 2.114, so the exclusion
+// is REPORTED here — page, docling label, the rule that matched, and the normalized text compared — and
+// is therefore auditable rather than assumed to be preserved somewhere else.
+export type PdfExcludedFurniture = Readonly<{
+  page: number;
+  label: string;
+  rule: PageFurnitureExclusionRule;
+  normalizedText: string;
+}>;
+
 // A structured PDF with any text-less page (a page #701 found no native text on) cannot be canonicalized
 // as-is (#745). Every Work language now ships an OCR pack (#746), so a text-less page reaching this
 // mapping means the OCR pass and the full conversion DISAGREED, or OCR was incomplete: the whole
@@ -57,6 +70,12 @@ export type PdfCanonicalMappingResult =
       // How many unresolved picture/figure placeholders (#806) were produced. Zero for a document with no
       // pictures; a positive count is a review warning on the successful publication, never a refusal.
       unresolvedFigureCount: number;
+      // The page furniture excluded from the readable body (#811), in source order, plus the counts a
+      // caller records: how many items were removed and how many characters they carried. Excluded
+      // furniture becomes no block and no block evidence — it exists only here.
+      excludedFurniture: readonly PdfExcludedFurniture[];
+      excludedFurnitureCount: number;
+      excludedFurnitureCharacters: number;
     }>;
 
 // A body item paired with the canonical block node it projected to, carrying the source item so the
@@ -203,6 +222,11 @@ function bodyItemToBlock(item: StructuredDocItem): DocumentNodeJSON {
     case "text":
     case "paragraph":
     case "caption":
+    // A running head/foot that SURVIVED the furniture rules (#811) is unique, folio-less text docling
+    // labelled `page_header`/`page_footer` — typically a chapter opener it mislabelled. It is readable
+    // content, so it maps to a plain paragraph and never to the dashed `unknown` fallback.
+    case "page_header":
+    case "page_footer":
       return paragraph(item.text);
     case "formula":
     case "code":
@@ -313,6 +337,36 @@ function buildUnit(unit: DraftUnit): {
   };
 }
 
+// Split a document's ordered top-level body into the items that are readable content and the page
+// furniture excluded from it (#811). The rules are evaluated over the WHOLE document (repetition and
+// heading restatement are only visible across pages), and every exclusion is returned so the caller can
+// account for what was removed.
+function partitionPageFurniture(body: readonly StructuredDocItem[]): {
+  readable: StructuredDocItem[];
+  excluded: PdfExcludedFurniture[];
+  excludedCharacters: number;
+} {
+  const decisions = decidePageFurniture(body);
+  const readable: StructuredDocItem[] = [];
+  const excluded: PdfExcludedFurniture[] = [];
+  let excludedCharacters = 0;
+  body.forEach((item, index) => {
+    const decision = decisions[index]!;
+    if (decision.kind === "body") {
+      readable.push(item);
+      return;
+    }
+    excluded.push({
+      label: item.label,
+      normalizedText: decision.normalizedText,
+      page: item.pageNumber,
+      rule: decision.rule
+    });
+    excludedCharacters += item.text.length;
+  });
+  return { excluded, excludedCharacters, readable };
+}
+
 // Map a reconstructed structured PDF document to canonical reading units + block evidence, or refuse the
 // whole document when any page is still text-less. Every Work language now ships an OCR pack (#746), so a
 // text-less page reaching here means the OCR pass and the full conversion disagreed (or OCR was
@@ -324,11 +378,18 @@ export function mapStructuredDocument(document: StructuredDocument): PdfCanonica
     return { pagesNeedingOcr, status: "ocr_validation_failed" };
   }
 
+  // Page furniture is printing, not authorship (#811): running heads, running feet, and folios are
+  // removed BEFORE the body is walked, so they never become addressable blocks (and never reach the
+  // `unknown` fallback that rendered them as dashed debris). They are returned as evidence instead —
+  // docling's own `furniture` group is deprecated and empty, so this result is their only record.
+  const furniture = partitionPageFurniture(document.body);
+
   // A picture/figure carries an image #701 does not yet extract, but an unresolved leaf must not erase
   // the readable pages (#806). Each maps to a visible `figure` placeholder; the count is reported as a
   // review warning on the successful publication rather than refusing the whole document.
 
-  const walked = walkBody(document.body);
+  const walked = walkBody(furniture.readable);
+
   const unmapped = new Set<string>();
   let unresolvedFigureCount = 0;
   for (const block of walked) {
@@ -351,9 +412,10 @@ export function mapStructuredDocument(document: StructuredDocument): PdfCanonica
     evidence.push(...built.evidence);
   }
 
-  // The pages had native text but yielded no canonical blocks (an empty body): refuse rather than
-  // publishing an empty-shell Work with no readable units (#702's "no empty shell"). Every walked item
-  // produces at least one block, so zero blocks means the body was empty.
+  // The pages had native text but yielded no canonical blocks (an empty body, or a body that was
+  // entirely page furniture): refuse rather than publishing an empty-shell Work with no readable units
+  // (#702's "no empty shell"). Exclusion is never a refusal REASON — a furniture-only document simply
+  // has no readable content, so it takes the same typed `no_content` outcome as an empty one.
   const blockCount = units.reduce((total, unit) => total + unit.docBlocks.length, 0);
   if (blockCount === 0) {
     return { status: "no_content" };
@@ -361,6 +423,9 @@ export function mapStructuredDocument(document: StructuredDocument): PdfCanonica
 
   return {
     evidence,
+    excludedFurniture: furniture.excluded,
+    excludedFurnitureCharacters: furniture.excludedCharacters,
+    excludedFurnitureCount: furniture.excluded.length,
     status: "mapped",
     unmappedLabels: [...unmapped],
     unresolvedFigureCount,

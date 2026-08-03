@@ -488,6 +488,215 @@ describe("mapStructuredDocument", () => {
   });
 });
 
+// Page furniture (#811): docling emits running heads, running feet, and folios INSIDE `doc.body`, and its
+// own `furniture` group is deprecated and arrives empty, so the mapper is the only place that can keep
+// layout debris out of the readable hierarchy — and the only place that can account for what it removed.
+describe("mapStructuredDocument page-furniture exclusion", () => {
+  const pages: readonly StructuredPage[] = [
+    { hasNativeText: true, pageNumber: 1 },
+    { hasNativeText: true, pageNumber: 2 },
+    { hasNativeText: true, pageNumber: 3 }
+  ];
+
+  it("excludes folios and running heads from the body and reports them as evidence", () => {
+    const result = mapped(
+      mapEn(
+        doc(
+          [
+            item({ label: "page_header", pageNumber: 1, text: "Chapter 5: Formatting" }),
+            item({ label: "page_footer", pageNumber: 1, text: "\u2014 89 \u2014" }),
+            item({ label: "text", pageNumber: 1, text: "Readable prose." }),
+            item({ label: "page_header", pageNumber: 2, text: "Chapter 5: Formatting" }),
+            item({ label: "page_footer", pageNumber: 2, text: "90" }),
+            item({ label: "text", pageNumber: 2, text: "More prose." })
+          ],
+          pages
+        )
+      )
+    );
+
+    // Only the two readable paragraphs became blocks; no furniture block, and none on the unknown path.
+    expect(unitTypes(result, 0)).toEqual(["paragraph", "paragraph"]);
+    expect(result.unmappedLabels).toEqual([]);
+    expect(result.evidence.map((row) => row.label)).toEqual(["text", "text"]);
+
+    expect(result.excludedFurniture).toEqual([
+      {
+        label: "page_header",
+        normalizedText: "chapter 5: formatting",
+        page: 1,
+        rule: "repeated-across-pages"
+      },
+      { label: "page_footer", normalizedText: "89", page: 1, rule: "folio" },
+      {
+        label: "page_header",
+        normalizedText: "chapter 5: formatting",
+        page: 2,
+        rule: "repeated-across-pages"
+      },
+      { label: "page_footer", normalizedText: "90", page: 2, rule: "folio" }
+    ]);
+    expect(result.excludedFurnitureCount).toBe(4);
+    // Excluded characters count the RAW source text (not the normalized form), so the caller can measure
+    // what share of the text layer left the body.
+    expect(result.excludedFurnitureCharacters).toBe(
+      "Chapter 5: Formatting".length +
+        "\u2014 89 \u2014".length +
+        "Chapter 5: Formatting".length +
+        2
+    );
+  });
+
+  it("excludes a running head that repeats across page ranges of one document", () => {
+    // The mapper sees the WHOLE document (every committed range concatenated), so a head printed once per
+    // range is still detectable as repetition — a per-range view could never see it.
+    const result = mapped(
+      mapEn(
+        doc(
+          [
+            item({ label: "page_header", pageNumber: 1, text: "Clean Code" }),
+            item({ label: "text", pageNumber: 1, text: "Range one prose." }),
+            item({ label: "page_header", pageNumber: 3, text: "Clean Code" }),
+            item({ label: "text", pageNumber: 3, text: "Range two prose." })
+          ],
+          pages
+        )
+      )
+    );
+    expect(unitTypes(result, 0)).toEqual(["paragraph", "paragraph"]);
+    expect(result.excludedFurniture.map((row) => row.rule)).toEqual([
+      "repeated-across-pages",
+      "repeated-across-pages"
+    ]);
+  });
+
+  it("excludes a one-off running head that restates a heading the document carries", () => {
+    const result = mapped(
+      mapEn(
+        doc(
+          [
+            item({ label: "page_header", pageNumber: 2, text: "The Law of Demeter" }),
+            item({ label: "section_header", pageNumber: 2, text: "The Law of Demeter" }),
+            item({ label: "text", pageNumber: 2, text: "Prose." })
+          ],
+          pages
+        )
+      )
+    );
+    expect(unitTypes(result, 0)).toEqual(["heading", "paragraph"]);
+    expect(result.excludedFurniture).toEqual([
+      {
+        label: "page_header",
+        normalizedText: "the law of demeter",
+        page: 2,
+        rule: "matches-heading"
+      }
+    ]);
+  });
+
+  it("keeps a unique page_header as a readable paragraph instead of an unknown block", () => {
+    // Docling labels some chapter openers `page_header`. Silently discarding a unique candidate would
+    // destroy content, and the old `unknown` fallback rendered it as dashed debris.
+    const result = mapped(
+      mapEn(
+        doc(
+          [
+            item({ label: "page_header", pageNumber: 1, text: "Chapter 3: Functions" }),
+            item({ label: "text", pageNumber: 1, text: "Prose." }),
+            item({ label: "page_footer", pageNumber: 2, text: "1. [Martin]." })
+          ],
+          pages
+        )
+      )
+    );
+    expect(unitTypes(result, 0)).toEqual(["paragraph", "paragraph", "paragraph"]);
+    const kept = result.units[0]!.docBlocks[0]!.node;
+    expect(kept.content).toEqual([{ text: "Chapter 3: Functions", type: "text" }]);
+    // Neither kept label reaches the unknown/fallback path, so neither is reported as unmapped.
+    expect(result.unmappedLabels).toEqual([]);
+    expect(result.excludedFurniture).toEqual([]);
+    expect(result.excludedFurnitureCount).toBe(0);
+    expect(result.excludedFurnitureCharacters).toBe(0);
+  });
+
+  it("keeps surviving blocks in source order with their own page, geometry, and confidence", () => {
+    const result = mapped(
+      mapEn(
+        doc(
+          [
+            item({ label: "page_header", pageNumber: 1, text: "1" }),
+            item({
+              boundingBox: { bottom: 30, left: 5, right: 95, top: 10 },
+              charSpan: [4, 20],
+              confidence: 0.71,
+              label: "text",
+              pageNumber: 1,
+              text: "First."
+            }),
+            item({ label: "page_footer", pageNumber: 1, text: "Running foot" }),
+            item({ label: "section_header", pageNumber: 2, text: "Second Section" }),
+            item({ label: "page_footer", pageNumber: 2, text: "Running foot" }),
+            item({
+              boundingBox: { bottom: 60, left: 6, right: 96, top: 40 },
+              charSpan: [30, 44],
+              confidence: 0.55,
+              label: "text",
+              pageNumber: 2,
+              text: "Second."
+            })
+          ],
+          pages
+        )
+      )
+    );
+
+    expect(unitTypes(result, 0)).toEqual(["paragraph"]);
+    expect(unitTypes(result, 1)).toEqual(["heading", "paragraph"]);
+    // Evidence still describes the surviving blocks only, in source order, each with its own geometry.
+    expect(
+      result.evidence.map((row) => ({
+        confidence: row.confidence,
+        label: row.label,
+        page: row.page,
+        top: row.boundingBox.top
+      }))
+    ).toEqual([
+      { confidence: 0.71, label: "text", page: 1, top: 10 },
+      { confidence: 0.9, label: "section_header", page: 2, top: 0 },
+      { confidence: 0.55, label: "text", page: 2, top: 40 }
+    ]);
+    expect(result.excludedFurniture.map((row) => [row.page, row.rule])).toEqual([
+      [1, "folio"],
+      [1, "repeated-across-pages"],
+      [2, "repeated-across-pages"]
+    ]);
+  });
+
+  it("refuses a document whose body is entirely furniture as no_content, never a new refusal kind", () => {
+    // Exclusion is not a refusal reason: a furniture-only body simply has no readable content, so it
+    // takes the SAME typed `no_content` outcome an empty body does — no empty-shell Work either way.
+    const result = mapEn(
+      doc(
+        [
+          item({ label: "page_header", pageNumber: 1, text: "Clean Code" }),
+          item({ label: "page_footer", pageNumber: 1, text: "12" }),
+          item({ label: "page_header", pageNumber: 2, text: "Clean Code" }),
+          item({ label: "page_footer", pageNumber: 2, text: "13" })
+        ],
+        pages
+      )
+    );
+    expect(result).toEqual({ status: "no_content" });
+  });
+
+  it("reports no furniture for a document that has none", () => {
+    const result = mapped(mapEn(doc([item({ label: "text", text: "Just prose." })])));
+    expect(result.excludedFurniture).toEqual([]);
+    expect(result.excludedFurnitureCount).toBe(0);
+    expect(result.excludedFurnitureCharacters).toBe(0);
+  });
+});
+
 // The shared `needs review` policy (#763) is the SAME pure function the editor's evidence query uses, so
 // asserting it here over the mapper's own output proves the two never diverge: a block's review suggestion
 // is derived from the mapper's node type (`unknown` = the unknown/fallback path) and its retained
