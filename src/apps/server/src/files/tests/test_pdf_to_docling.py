@@ -30,6 +30,9 @@ from pdf_to_docling import (  # noqa: E402  (path set above)
     METRICS_PATH_ENV,
     DEFAULT_PROBE_MEMORY_MIB,
     MAX_PICTURE_ARTIFACT_BYTES,
+    MAX_OUTLINE_DEPTH,
+    MAX_OUTLINE_ENTRIES,
+    MAX_OUTLINE_TITLE_CHARS,
     PICTURE_LABELS,
     RANGE_SCHEMA_VERSION,
     SUPPORTED_SCHEMA_VERSIONS,
@@ -48,6 +51,7 @@ from pdf_to_docling import (  # noqa: E402  (path set above)
     _picture_image_reader,
     build_converter,
     build_document_metadata,
+    build_document_outline,
     build_range_payload,
     clean_metadata_value,
     convert_range,
@@ -57,6 +61,8 @@ from pdf_to_docling import (  # noqa: E402  (path set above)
     map_group,
     map_item,
     page_confidence_map,
+    read_outline_entries,
+    read_pdf_outline,
     run_probe,
     run_range,
 )
@@ -562,6 +568,253 @@ class DocumentMetadataTests(unittest.TestCase):
     def test_build_range_payload_omits_metadata_when_absent(self):
         payload = build_range_payload(FakeDoc(), 1, 1, native_text=lambda _p: True)
         self.assertNotIn("metadata", payload)
+
+
+# --- Bookmark outline (#815) ---------------------------------------------------------------------
+
+
+class FakeDest:
+    """A pypdfium2 bookmark destination: resolves to a 0-based page index, or raises."""
+
+    def __init__(self, index=0, raises=False):
+        self._index = index
+        self._raises = raises
+
+    def get_index(self):
+        if self._raises:
+            raise RuntimeError("broken destination")
+        return self._index
+
+
+class FakeBookmark:
+    """A pypdfium2 PdfBookmark: a 0-based ``level`` plus title/destination accessors."""
+
+    def __init__(self, title="Chapter", level=0, dest=FakeDest(), title_raises=False):
+        self.level = level
+        self._title = title
+        self._dest = dest
+        self._title_raises = title_raises
+
+    def get_title(self):
+        if self._title_raises:
+            raise RuntimeError("broken title")
+        return self._title
+
+    def get_dest(self):
+        return self._dest
+
+
+class FakeOutlineDoc:
+    """A backend document exposing only ``get_toc``, recording the max_depth it was walked with."""
+
+    def __init__(self, bookmarks=(), raises=False):
+        self._bookmarks = list(bookmarks)
+        self._raises = raises
+        self.max_depths = []
+
+    def get_toc(self, max_depth=15):
+        self.max_depths.append(max_depth)
+        if self._raises:
+            raise RuntimeError("no outline")
+        return iter(self._bookmarks)
+
+
+class ReadPdfOutlineTests(unittest.TestCase):
+    def test_reads_a_nested_tree_with_zero_based_levels_and_page_indexes(self):
+        document = FakeOutlineDoc(
+            [
+                FakeBookmark("Chapter 1", level=0, dest=FakeDest(30)),
+                FakeBookmark("Section 1.1", level=1, dest=FakeDest(31)),
+                FakeBookmark("Detail", level=2, dest=FakeDest(32)),
+            ]
+        )
+        self.assertEqual(
+            read_pdf_outline(document),
+            [
+                {"title": "Chapter 1", "level": 0, "pageIndex": 30},
+                {"title": "Section 1.1", "level": 1, "pageIndex": 31},
+                {"title": "Detail", "level": 2, "pageIndex": 32},
+            ],
+        )
+
+    def test_walks_the_tree_under_the_bounded_depth(self):
+        document = FakeOutlineDoc([FakeBookmark()])
+        read_pdf_outline(document)
+        self.assertEqual(document.max_depths, [MAX_OUTLINE_DEPTH])
+
+    def test_a_bookmarkless_document_reads_as_an_empty_outline(self):
+        self.assertEqual(read_pdf_outline(FakeOutlineDoc([])), [])
+
+    def test_a_destinationless_bookmark_reads_with_a_null_page(self):
+        document = FakeOutlineDoc([FakeBookmark("Orphan", dest=None)])
+        self.assertEqual(
+            read_pdf_outline(document), [{"title": "Orphan", "level": 0, "pageIndex": None}]
+        )
+
+    def test_one_broken_bookmark_is_dropped_and_the_rest_survive(self):
+        document = FakeOutlineDoc(
+            [
+                FakeBookmark("Good", dest=FakeDest(1)),
+                FakeBookmark("Broken destination", dest=FakeDest(raises=True)),
+                FakeBookmark("Broken title", title_raises=True),
+                FakeBookmark("Also good", level=1, dest=FakeDest(2)),
+            ]
+        )
+        self.assertEqual(
+            [entry["title"] for entry in read_pdf_outline(document)], ["Good", "Also good"]
+        )
+
+    def test_an_over_limit_tree_is_truncated_to_the_entry_bound(self):
+        document = FakeOutlineDoc(
+            [FakeBookmark(f"Entry {index}") for index in range(MAX_OUTLINE_ENTRIES + 25)]
+        )
+        self.assertEqual(len(read_pdf_outline(document)), MAX_OUTLINE_ENTRIES)
+
+
+class BuildDocumentOutlineTests(unittest.TestCase):
+    def test_projects_levels_and_pages_to_the_one_based_contract(self):
+        self.assertEqual(
+            build_document_outline(
+                [
+                    {"title": "  Chapter 6: Objects  ", "level": 0, "pageIndex": 123},
+                    {"title": "Data Abstraction", "level": 1, "pageIndex": 123},
+                ]
+            ),
+            [
+                {"title": "Chapter 6: Objects", "level": 1, "pageNumber": 124},
+                {"title": "Data Abstraction", "level": 2, "pageNumber": 124},
+            ],
+        )
+
+    def test_drops_entries_that_cannot_be_located_or_named(self):
+        self.assertEqual(
+            build_document_outline(
+                [
+                    {"title": "No page", "level": 0, "pageIndex": None},
+                    {"title": "   ", "level": 0, "pageIndex": 1},
+                    {"title": None, "level": 0, "pageIndex": 1},
+                    {"title": "Bad level", "level": "1", "pageIndex": 1},
+                    {"title": "Negative level", "level": -1, "pageIndex": 1},
+                    {"title": "Negative page", "level": 0, "pageIndex": -1},
+                    {"title": "Boolean level", "level": True, "pageIndex": 1},
+                    {"title": "Boolean page", "level": 0, "pageIndex": True},
+                    "not a mapping",
+                    {"title": "Kept", "level": 0, "pageIndex": 0},
+                ]
+            ),
+            [{"title": "Kept", "level": 1, "pageNumber": 1}],
+        )
+
+    def test_truncates_an_over_long_title(self):
+        [entry] = build_document_outline(
+            [{"title": "x" * (MAX_OUTLINE_TITLE_CHARS + 40), "level": 0, "pageIndex": 0}]
+        )
+        self.assertEqual(entry["title"], "x" * MAX_OUTLINE_TITLE_CHARS)
+
+    def test_truncates_an_over_long_outline(self):
+        raw = [
+            {"title": f"Entry {index}", "level": 0, "pageIndex": index}
+            for index in range(MAX_OUTLINE_ENTRIES + 10)
+        ]
+        self.assertEqual(len(build_document_outline(raw)), MAX_OUTLINE_ENTRIES)
+
+
+class ReadOutlineEntriesTests(unittest.TestCase):
+    def test_an_unwired_seam_yields_no_outline_at_all(self):
+        self.assertIsNone(read_outline_entries(None))
+
+    def test_a_raising_seam_yields_an_empty_outline_rather_than_failing(self):
+        def read():
+            raise RuntimeError("pypdfium2 exploded")
+
+        self.assertEqual(read_outline_entries(read), [])
+
+    def test_a_wired_seam_projects_its_entries(self):
+        self.assertEqual(
+            read_outline_entries(lambda: [{"title": "Intro", "level": 0, "pageIndex": 4}]),
+            [{"title": "Intro", "level": 1, "pageNumber": 5}],
+        )
+
+
+class RangeOutlinePayloadTests(unittest.TestCase):
+    def test_build_range_payload_attaches_the_outline_when_supplied(self):
+        payload = build_range_payload(
+            FakeDoc(),
+            1,
+            1,
+            native_text=lambda _p: True,
+            outline=[{"title": "Chapter 1", "level": 1, "pageNumber": 3}],
+        )
+        self.assertEqual(payload["outline"], [{"title": "Chapter 1", "level": 1, "pageNumber": 3}])
+
+    def test_build_range_payload_attaches_an_empty_outline_distinctly_from_none(self):
+        self.assertEqual(
+            build_range_payload(FakeDoc(), 1, 1, native_text=lambda _p: True, outline=[])["outline"],
+            [],
+        )
+
+    def test_build_range_payload_omits_the_outline_when_absent(self):
+        payload = build_range_payload(FakeDoc(), 1, 1, native_text=lambda _p: True)
+        self.assertNotIn("outline", payload)
+
+    def test_convert_range_projects_the_outline_seam(self):
+        converter = FakeConverter(FakeDoc(body=FakeGroup([FakeItem(text="x")])))
+        payload = convert_range(
+            "/tmp/a.pdf",
+            1,
+            1,
+            lambda: converter,
+            native_text=lambda _p: True,
+            read_outline=lambda: [{"title": "Preface", "level": 0, "pageIndex": 8}],
+        )
+        self.assertEqual(payload["outline"], [{"title": "Preface", "level": 1, "pageNumber": 9}])
+
+    def test_convert_range_survives_an_outline_read_failure(self):
+        converter = FakeConverter(FakeDoc(body=FakeGroup([FakeItem(text="x")])))
+
+        def read_outline():
+            raise RuntimeError("broken")
+
+        payload = convert_range(
+            "/tmp/a.pdf", 1, 1, lambda: converter, native_text=lambda _p: True, read_outline=read_outline
+        )
+        self.assertEqual(payload["outline"], [])
+        self.assertEqual(payload["body"][0]["text"], "x")
+
+    def test_run_range_emits_the_outline_from_its_factory(self):
+        doc = FakeDoc(body=FakeGroup([FakeItem(text="ok")]))
+        stdout = io.StringIO()
+        code = run_range(
+            "/tmp/a.pdf",
+            1,
+            1,
+            lambda: FakeConverter(doc),
+            lambda _p: (lambda page: True),
+            stdout,
+            io.StringIO(),
+            outline_reader_factory=lambda _path: (
+                lambda: [{"title": "Chapter 2", "level": 1, "pageIndex": 40}]
+            ),
+        )
+        self.assertEqual(code, EXIT_OK)
+        self.assertEqual(
+            json.loads(stdout.getvalue())["outline"],
+            [{"title": "Chapter 2", "level": 2, "pageNumber": 41}],
+        )
+
+    def test_run_range_omits_the_outline_without_a_factory(self):
+        doc = FakeDoc(body=FakeGroup([FakeItem(text="ok")]))
+        stdout = io.StringIO()
+        run_range(
+            "/tmp/a.pdf",
+            1,
+            1,
+            lambda: FakeConverter(doc),
+            lambda _p: (lambda page: True),
+            stdout,
+            io.StringIO(),
+        )
+        self.assertNotIn("outline", json.loads(stdout.getvalue()))
 
 
 # --- Page counting -----------------------------------------------------------------------------
@@ -1092,6 +1345,9 @@ class MainTests(unittest.TestCase):
             converter_factory=lambda: FakeConverter(doc),
             prober_factory=lambda _path: (lambda page: page == 1),
             metadata_reader_factory=lambda _path: (lambda: {"Title": "Doc", "Author": "Ada"}),
+            outline_reader_factory=lambda _path: (
+                lambda: [{"title": "Chapter 1", "level": 0, "pageIndex": 0}]
+            ),
             boundary=None,
             stdout=stdout,
             stderr=io.StringIO(),
@@ -1100,6 +1356,9 @@ class MainTests(unittest.TestCase):
         payload = json.loads(stdout.getvalue())
         self.assertEqual([p["hasNativeText"] for p in payload["pages"]], [True, False])
         self.assertEqual(payload["metadata"], {"title": "Doc", "author": "Ada"})
+        self.assertEqual(
+            payload["outline"], [{"title": "Chapter 1", "level": 1, "pageNumber": 1}]
+        )
 
     def test_range_rejects_non_positive_pages(self):
         stderr = io.StringIO()
@@ -1450,6 +1709,7 @@ class MainRangeArtifactDispatchTests(unittest.TestCase):
                 converter_factory=lambda: FakeConverter(doc),
                 prober_factory=lambda _path: (lambda page: True),
                 metadata_reader_factory=lambda _path: (lambda: {"Title": None, "Author": None}),
+                outline_reader_factory=lambda _path: (lambda: []),
                 boundary=None,
                 stdout=stdout,
                 stderr=io.StringIO(),

@@ -86,6 +86,18 @@ PICTURE_LABELS = frozenset({"picture", "figure"})
 # with MAX_ARTIFACT_BYTES in pdfImportArtifacts.ts, which re-checks it on the server before adoption.
 MAX_PICTURE_ARTIFACT_BYTES = 16 * 1024 * 1024
 
+# Bounds on the imported PDF bookmark outline (#815). The outline is the author's DECLARED heading
+# hierarchy, so it is read once per invocation and carried as ordinary extraction evidence — but it comes
+# from an untrusted file, so it is bounded here rather than trusted: a corpus probe of 186 real PDFs found
+# a median of 150 entries and a maximum of 985, so 5,000 entries admits every real book while refusing a
+# pathological or hostile bookmark tree, and 512 characters admits every real bookmark title.
+MAX_OUTLINE_ENTRIES = 5000
+MAX_OUTLINE_TITLE_CHARS = 512
+# How deep pypdfium2 walks the bookmark tree. The same corpus probe found a maximum nesting depth of 6,
+# and the canonical heading model only has six levels, so this is generous headroom that still bounds the
+# recursion over a maliciously deep tree.
+MAX_OUTLINE_DEPTH = 15
+
 
 class PasswordRequired(Exception):
     """Raised when the PDF is encrypted and cannot be opened without a password."""
@@ -772,6 +784,113 @@ def pdf_metadata_reader(
     return read
 
 
+def read_pdf_outline(document: Any) -> list[dict[str, Any]]:
+    """Read an open pypdfium2 document's bookmark tree into raw ``{title, level, pageIndex}`` records.
+
+    The bookmark outline is the author's OWN declared hierarchy (#815) — the only depth evidence a PDF
+    carries — so it is read here once and travels in the range contract; the mapper never re-opens the
+    PDF. ``PdfBookmark.level`` is 0-based (its number of parents) and ``get_dest().get_index()`` is a
+    0-based page index; both are projected to the contract's 1-based form by ``build_document_outline``.
+
+    Fail-soft PER ENTRY: a bookmark whose title or destination cannot be read is dropped and the walk
+    continues, because one broken bookmark must never cost the other 383. The walk is bounded by
+    ``MAX_OUTLINE_ENTRIES`` and ``MAX_OUTLINE_DEPTH`` so a hostile tree cannot make it unbounded.
+    """
+    entries: list[dict[str, Any]] = []
+    for bookmark in document.get_toc(max_depth=MAX_OUTLINE_DEPTH):
+        if len(entries) >= MAX_OUTLINE_ENTRIES:
+            break
+        try:
+            destination = bookmark.get_dest()
+            page_index = None if destination is None else destination.get_index()
+            entries.append(
+                {
+                    "title": bookmark.get_title(),
+                    "level": bookmark.level,
+                    "pageIndex": page_index,
+                }
+            )
+        except Exception:  # noqa: BLE001 - one unreadable bookmark never costs the rest of the outline.
+            continue
+    return entries
+
+
+def pdf_outline_reader(
+    pdf_path: str, opener: Callable[[str], Any]
+) -> Callable[[], Sequence[Mapping[str, Any]]]:  # pragma: no cover - real backend; read tested via fake.
+    """A bookmark-outline reader over the same pypdfium2 backend, mirroring ``pdf_metadata_reader``.
+
+    Only the ``opener`` call lives here; the bounded, fail-soft walk is ``read_pdf_outline``, which tests
+    against a fake document so the real pypdfium2 read stays out of the coverage lane.
+    """
+    document = opener(pdf_path)
+
+    def read() -> Sequence[Mapping[str, Any]]:
+        return read_pdf_outline(document)
+
+    return read
+
+
+def build_document_outline(raw_entries: Any) -> list[dict[str, Any]]:
+    """Project raw bookmark records into the contract's ``[{title, level, pageNumber}]`` (#815).
+
+    Cleans like ``build_document_metadata`` does and additionally BOUNDS the result, because an outline
+    comes from an untrusted file: a blank/non-string title, a non-integer level, or an entry with no
+    resolvable destination page is DROPPED (an entry that cannot be located cannot resolve a heading);
+    titles are truncated to ``MAX_OUTLINE_TITLE_CHARS`` and the list to ``MAX_OUTLINE_ENTRIES``. Levels
+    and page numbers are converted from pypdfium2's 0-based form to the contract's 1-based form. Source
+    order is preserved, so the contract carries the tree as the author declared it.
+    """
+    outline: list[dict[str, Any]] = []
+    for entry in raw_entries:
+        if len(outline) >= MAX_OUTLINE_ENTRIES:
+            break
+        projected = _project_outline_entry(entry)
+        if projected is not None:
+            outline.append(projected)
+    return outline
+
+
+def _project_outline_entry(entry: Any) -> Optional[dict[str, Any]]:
+    """Project one raw bookmark record, or None when it is unusable (blank title / unlocatable page)."""
+    if not isinstance(entry, Mapping):
+        return None
+    title = clean_metadata_value(entry.get("title"))
+    if title is None:
+        return None
+    level = entry.get("level")
+    page_index = entry.get("pageIndex")
+    # `bool` is an `int` subclass in Python; excluding it keeps a `True` level from becoming level 2.
+    if not isinstance(level, int) or isinstance(level, bool) or level < 0:
+        return None
+    if not isinstance(page_index, int) or isinstance(page_index, bool) or page_index < 0:
+        return None
+    return {
+        "title": title[:MAX_OUTLINE_TITLE_CHARS],
+        "level": level + 1,
+        "pageNumber": page_index + 1,
+    }
+
+
+def read_outline_entries(
+    read_outline: Optional[Callable[[], Any]]
+) -> Optional[list[dict[str, Any]]]:
+    """Call the outline seam fail-soft (#815): ``None`` when unwired, ``[]`` when the read failed.
+
+    An outline is optional evidence, so a PDF with no bookmarks, a backend that raised, or a tree that
+    projected to nothing all yield an EMPTY outline on the payload — never a failed conversion. The
+    distinction between ``None`` (no seam wired at all: an older/back-compat run) and ``[]`` (a seam ran
+    and found nothing) is what keeps the payload field truly optional.
+    """
+    if read_outline is None:
+        return None
+    try:
+        raw = read_outline()
+    except Exception:  # noqa: BLE001 - an outline is optional evidence; never fail a conversion for it.
+        return []
+    return build_document_outline(raw)
+
+
 def build_range_payload(
     doc: Any,
     start_page: int,
@@ -779,6 +898,7 @@ def build_range_payload(
     native_text: Callable[[int], bool],
     metadata: Optional[Mapping[str, Any]] = None,
     sink: Optional[ArtifactSink] = None,
+    outline: Optional[Sequence[Mapping[str, Any]]] = None,
 ) -> dict[str, Any]:
     """Assemble one range payload from a converted DoclingDocument.
 
@@ -788,7 +908,10 @@ def build_range_payload(
     PDF info dictionary, attaches its cleaned ``metadata`` (#702's title/author fallback source). When an
     ``ArtifactSink`` is supplied, each renderable body picture carries an ``imageArtifact`` ref (#807).
     ``start_page`` is also the last-resort page for a provenance-less item, so a range never reports a
-    page outside its own window (#813).
+    page outside its own window (#813). When the caller supplies the document's already-projected
+    bookmark records, attaches them as ``outline`` (#815's declared heading hierarchy) — document-level
+    evidence repeated on every range, exactly like ``metadata``, so the Node side takes the first
+    non-empty one.
     """
     version = str(getattr(doc, "version", ""))
     if version not in SUPPORTED_SCHEMA_VERSIONS:
@@ -812,6 +935,8 @@ def build_range_payload(
     }
     if metadata is not None:
         payload["metadata"] = build_document_metadata(metadata)
+    if outline is not None:
+        payload["outline"] = list(outline)
     return payload
 
 
@@ -823,17 +948,23 @@ def convert_range(
     native_text: Callable[[int], bool],
     read_metadata: Optional[Callable[[], Mapping[str, Any]]] = None,
     sink: Optional[ArtifactSink] = None,
+    read_outline: Optional[Callable[[], Any]] = None,
 ) -> dict[str, Any]:
     """Convert one bounded page range to a range payload using a converter from ``converter_factory``.
 
     Docling's ``convert`` receives an explicit ``page_range`` so only the requested pages are decoded.
     When a ``read_metadata`` seam is supplied, its raw PDF info dictionary is cleaned onto the payload.
     When an ``ArtifactSink`` is supplied, renderable body pictures are extracted to PNG artifacts (#807).
+    When a ``read_outline`` seam is supplied, the PDF's bookmark tree is projected onto the payload as
+    ``outline`` (#815), fail-soft: a bookmark-less or unreadable outline is an empty list, never an error.
     """
     converter = converter_factory()
     result = converter.convert(pdf_path, page_range=(start_page, end_page))
     metadata = read_metadata() if read_metadata is not None else None
-    return build_range_payload(result.document, start_page, end_page, native_text, metadata, sink)
+    outline = read_outline_entries(read_outline)
+    return build_range_payload(
+        result.document, start_page, end_page, native_text, metadata, sink, outline
+    )
 
 
 def native_text_prober(pdf_path: str, opener: Callable[[str], Any]) -> Callable[[int], bool]:
@@ -943,6 +1074,7 @@ def run_range(
     ] = None,
     artifact_dir: Optional[str] = None,
     image_reader: Callable[[Any, Any], Any] = _picture_image_reader,
+    outline_reader_factory: Optional[Callable[[str], Callable[[], Any]]] = None,
 ) -> int:
     """``--range`` mode: emit one validated range payload, classifying each failure distinctly.
 
@@ -950,15 +1082,27 @@ def run_range(
     metadata (#702's title/author fallback); without one it is simply omitted (an older/metadata-less run).
     When an ``artifact_dir`` is supplied, renderable body pictures are extracted into it as PNG artifacts
     and referenced from the payload (#807); without one (a probe/back-compat run) no picture is extracted.
+    When an ``outline_reader_factory`` is wired, the payload carries the PDF's bookmark outline (#815);
+    without one it is omitted, and a PDF that simply has no bookmarks carries an empty one.
     """
     try:
         native_text = prober_factory(pdf_path)
         read_metadata = (
             metadata_reader_factory(pdf_path) if metadata_reader_factory is not None else None
         )
+        read_outline = (
+            outline_reader_factory(pdf_path) if outline_reader_factory is not None else None
+        )
         sink = ArtifactSink(artifact_dir, image_reader) if artifact_dir is not None else None
         payload = convert_range(
-            pdf_path, start_page, end_page, converter_factory, native_text, read_metadata, sink
+            pdf_path,
+            start_page,
+            end_page,
+            converter_factory,
+            native_text,
+            read_metadata,
+            sink,
+            read_outline,
         )
     except PasswordRequired:
         _write(stderr, "pdf is encrypted; a password is required to open it.\n")
@@ -1030,6 +1174,7 @@ def main(
         Callable[[str], Callable[[], Mapping[str, Any]]]
     ] = None,
     metrics_writer: Callable[..., None] = write_metrics_sidecar,
+    outline_reader_factory: Optional[Callable[[str], Callable[[], Any]]] = None,
 ) -> int:
     """Parse args, apply the memory ceiling through the platform boundary, and dispatch the requested mode."""
     argv = sys.argv[1:] if argv is None else list(argv)
@@ -1044,6 +1189,8 @@ def main(
         geometry_factory = lambda path: page_geometry_prober(path, opener)
     if metadata_reader_factory is None:
         metadata_reader_factory = lambda path: pdf_metadata_reader(path, opener)
+    if outline_reader_factory is None:
+        outline_reader_factory = lambda path: pdf_outline_reader(path, opener)
 
     # The readiness probe exercises the real controller itself, so it precedes (and does not double-apply)
     # the startup ceiling.
@@ -1075,6 +1222,7 @@ def main(
                 stderr,
                 metadata_reader_factory,
                 artifact_dir,
+                outline_reader_factory=outline_reader_factory,
             )
         else:
             _write(
