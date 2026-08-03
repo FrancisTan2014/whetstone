@@ -256,6 +256,7 @@ export type {
   DoclingSchemaRef,
   ParseRangeResult,
   PdfImageArtifactRef,
+  PdfOutlineEntry,
   ProbePage,
   ProbeParseResult,
   RangeConversion,

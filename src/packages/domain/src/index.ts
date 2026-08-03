@@ -180,6 +180,27 @@ export {
 } from "./pdfExtractionReview.js";
 export type { ExtractionConfidenceBand } from "./pdfExtractionReview.js";
 export {
+  MAX_PDF_HEADING_LEVEL,
+  matchOutlineHeading,
+  normalizeOutlineTitle,
+  stripHeadingNumbering
+} from "./pdfOutlineHeadings.js";
+export type {
+  PdfHeadingCandidate,
+  PdfOutlineEntry as PdfOutlineHeadingEntry,
+  PdfOutlineHeadingMatch
+} from "./pdfOutlineHeadings.js";
+export {
+  decidePageFurniture,
+  isPageFurnitureCandidate,
+  normalizePageFurnitureText
+} from "./pdfPageFurniture.js";
+export type {
+  PageFurnitureDecision,
+  PageFurnitureExclusionRule,
+  PageFurnitureItem
+} from "./pdfPageFurniture.js";
+export {
   assessCorpusEligibility,
   classifyPdfUsability,
   evaluateCorpusCase,

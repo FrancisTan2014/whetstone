@@ -30,6 +30,9 @@ from pdf_to_docling import (  # noqa: E402  (path set above)
     METRICS_PATH_ENV,
     DEFAULT_PROBE_MEMORY_MIB,
     MAX_PICTURE_ARTIFACT_BYTES,
+    MAX_OUTLINE_DEPTH,
+    MAX_OUTLINE_ENTRIES,
+    MAX_OUTLINE_TITLE_CHARS,
     PICTURE_LABELS,
     RANGE_SCHEMA_VERSION,
     SUPPORTED_SCHEMA_VERSIONS,
@@ -48,6 +51,7 @@ from pdf_to_docling import (  # noqa: E402  (path set above)
     _picture_image_reader,
     build_converter,
     build_document_metadata,
+    build_document_outline,
     build_range_payload,
     clean_metadata_value,
     convert_range,
@@ -57,6 +61,8 @@ from pdf_to_docling import (  # noqa: E402  (path set above)
     map_group,
     map_item,
     page_confidence_map,
+    read_outline_entries,
+    read_pdf_outline,
     run_probe,
     run_range,
 )
@@ -225,7 +231,8 @@ class MappingTests(unittest.TestCase):
 
     def test_map_item_defaults_when_provenance_is_absent(self):
         mapped = map_item(FakeItem(label="text"), FakeDoc(), identity_resolve, {}, inherited_page=7)
-        # A group/synthetic node without geometry inherits the page and gets zeroed geometry.
+        # A node with no geometry ANYWHERE in its subtree keeps the inherited page (the range's first
+        # page at the top level) and zeroed geometry — see ProvenanceLessGeometryTests for the #813 rule.
         self.assertEqual(mapped["pageNumber"], 7)
         self.assertEqual(
             mapped["boundingBox"], {"left": 0.0, "top": 0.0, "right": 0.0, "bottom": 0.0}
@@ -295,11 +302,11 @@ class MappingTests(unittest.TestCase):
 
     def test_map_group_maps_children_in_order(self):
         group = FakeGroup([FakeItem(text="a"), FakeItem(text="b")])
-        mapped = map_group(group, FakeDoc(), identity_resolve, {})
+        mapped = map_group(group, FakeDoc(), identity_resolve, {}, 1)
         self.assertEqual([entry["text"] for entry in mapped], ["a", "b"])
 
     def test_map_group_tolerates_a_missing_group(self):
-        self.assertEqual(map_group(None, FakeDoc(), identity_resolve, {}), [])
+        self.assertEqual(map_group(None, FakeDoc(), identity_resolve, {}, 1), [])
 
     def test_resolve_ref_uses_a_docling_ref_resolver(self):
         target = FakeItem(text="resolved")
@@ -309,7 +316,7 @@ class MappingTests(unittest.TestCase):
                 return target
 
         group = FakeGroup([Ref()])
-        mapped = map_group(group, FakeDoc(), lambda ref, doc: ref.resolve(doc), {})
+        mapped = map_group(group, FakeDoc(), lambda ref, doc: ref.resolve(doc), {}, 1)
         self.assertEqual(mapped[0]["text"], "resolved")
 
     def test_page_confidence_map_reads_layout_scores(self):
@@ -327,6 +334,154 @@ class MappingTests(unittest.TestCase):
     def test_page_confidence_map_ignores_non_numeric_scores(self):
         doc = FakeDoc(confidence=types.SimpleNamespace(pages={1: FakeGrade("bad")}))
         self.assertEqual(page_confidence_map(doc), {})
+
+
+# --- Provenance of a node that carries none of its own (#813) -----------------------------------
+
+
+class ProvenanceLessGeometryTests(unittest.TestCase):
+    """A docling group carries no ``prov``, so its page/box/span must come from the content it holds.
+
+    Measured against the real pinned worker (docling 2.114.0, Clean Code pp.124-129) every ``list``
+    group came back as ``page 1`` with a zero-area box while its ``list_item`` children were on p128/129
+    — evidence that points at a page the content is not on, which silently corrupts the correction
+    disclosure and any per-page coverage measure built on it.
+    """
+
+    def test_a_group_borrows_page_and_box_from_its_first_child_with_provenance(self):
+        group = FakeItem(
+            label="list",
+            children=[
+                FakeItem(
+                    label="list_item",
+                    prov=FakeProv(bbox=FakeBBox(72, 300, 500, 320), charspan=(0, 24), page_no=128),
+                ),
+                FakeItem(
+                    label="list_item",
+                    prov=FakeProv(bbox=FakeBBox(72, 330, 500, 350), charspan=(0, 46), page_no=128),
+                ),
+            ],
+        )
+        mapped = map_item(group, FakeDoc(), identity_resolve, {}, inherited_page=124)
+        self.assertEqual(mapped["pageNumber"], 128)
+        # The FIRST descendant's box verbatim — not a union across the list, which would describe a
+        # region no single item occupies.
+        self.assertEqual(
+            mapped["boundingBox"], {"left": 72.0, "top": 300.0, "right": 500.0, "bottom": 320.0}
+        )
+        # First descendant's start through the last same-page descendant's end.
+        self.assertEqual(mapped["charSpan"], [0, 46])
+
+    def test_a_group_resolves_through_a_provenance_less_first_child(self):
+        # The first child is itself a group with no provenance: the search is pre-order over the whole
+        # subtree, not a scan of direct children only.
+        inner = FakeItem(
+            label="inline",
+            children=[
+                FakeItem(
+                    label="text",
+                    prov=FakeProv(bbox=FakeBBox(10, 20, 30, 40), charspan=(4, 9), page_no=57),
+                )
+            ],
+        )
+        group = FakeItem(
+            label="list",
+            children=[inner, FakeItem(label="text", prov=FakeProv(charspan=(0, 12), page_no=57))],
+        )
+        mapped = map_item(group, FakeDoc(), identity_resolve, {}, inherited_page=50)
+        self.assertEqual(mapped["pageNumber"], 57)
+        self.assertEqual(
+            mapped["boundingBox"], {"left": 10.0, "top": 20.0, "right": 30.0, "bottom": 40.0}
+        )
+        self.assertEqual(mapped["charSpan"], [4, 12])
+        # The nested group resolves from its own descendant too, rather than inheriting page 50.
+        self.assertEqual(mapped["children"][0]["pageNumber"], 57)
+        self.assertEqual(mapped["children"][0]["charSpan"], [4, 9])
+
+    def test_a_group_with_no_provenance_anywhere_never_claims_page_one(self):
+        group = FakeItem(
+            label="list", children=[FakeItem(label="inline", children=[FakeItem(label="text")])]
+        )
+        mapped = map_item(group, FakeDoc(), identity_resolve, {}, inherited_page=311)
+        self.assertEqual(mapped["pageNumber"], 311)
+        self.assertEqual(
+            mapped["boundingBox"], {"left": 0.0, "top": 0.0, "right": 0.0, "bottom": 0.0}
+        )
+        self.assertEqual(mapped["charSpan"], [0, 0])
+        # Every descendant of an unresolvable node inherits the same fallback, not the constant 1.
+        self.assertEqual(mapped["children"][0]["pageNumber"], 311)
+
+    def test_a_multi_page_group_takes_the_first_page_and_a_span_that_stays_on_it(self):
+        group = FakeItem(
+            label="list",
+            children=[
+                FakeItem(
+                    label="list_item",
+                    prov=FakeProv(bbox=FakeBBox(72, 300, 500, 320), charspan=(0, 20), page_no=128),
+                ),
+                FakeItem(label="list_item", prov=FakeProv(charspan=(0, 41), page_no=128)),
+                FakeItem(label="list_item", prov=FakeProv(charspan=(0, 900), page_no=129)),
+            ],
+        )
+        mapped = map_item(group, FakeDoc(), identity_resolve, {}, inherited_page=1)
+        self.assertEqual(mapped["pageNumber"], 128)
+        # The span ends with the last descendant ON PAGE 128; the page-129 child never extends it.
+        self.assertEqual(mapped["charSpan"], [0, 41])
+        self.assertEqual(
+            mapped["boundingBox"], {"left": 72.0, "top": 300.0, "right": 500.0, "bottom": 320.0}
+        )
+        # Children keep their own pages; only the container borrowed.
+        self.assertEqual([child["pageNumber"] for child in mapped["children"]], [128, 128, 129])
+
+    def test_a_borrowed_span_is_ordered_so_the_contract_stays_valid(self):
+        # Char spans are item-relative (out of scope here), so the last same-page descendant's end can
+        # sit before the first's start. The contract requires charSpan start <= end regardless.
+        group = FakeItem(
+            label="list",
+            children=[
+                FakeItem(prov=FakeProv(charspan=(40, 90), page_no=6)),
+                FakeItem(prov=FakeProv(charspan=(0, 12), page_no=6)),
+            ],
+        )
+        mapped = map_item(group, FakeDoc(), identity_resolve, {}, inherited_page=1)
+        self.assertEqual(mapped["charSpan"], [12, 40])
+
+    def test_a_group_reads_the_page_confidence_of_the_page_it_resolved_to(self):
+        # Confidence resolution itself is unchanged (item -> page -> 1.0); it simply now keys on the
+        # page the group is really on instead of the fallback.
+        group = FakeItem(label="list", children=[FakeItem(prov=FakeProv(page_no=3))])
+        mapped = map_item(group, FakeDoc(), identity_resolve, {1: 0.1, 3: 0.8}, inherited_page=1)
+        self.assertEqual(mapped["confidence"], 0.8)
+
+    def test_a_range_starting_after_page_one_never_reports_page_one(self):
+        # The end-to-end #813 regression: a pp.124-129 range whose list group claimed page 1.
+        listing = FakeItem(
+            label="list",
+            children=[
+                FakeItem(
+                    label="list_item",
+                    prov=FakeProv(bbox=FakeBBox(72, 300, 500, 320), charspan=(0, 3), page_no=128),
+                ),
+                FakeItem(label="list_item", prov=FakeProv(charspan=(0, 46), page_no=128)),
+            ],
+        )
+        unresolvable = FakeItem(label="inline")
+        doc = FakeDoc(
+            body=FakeGroup([listing, unresolvable]),
+            furniture=FakeGroup([FakeItem(label="page_header")]),
+        )
+        payload = build_range_payload(doc, 124, 129, native_text=lambda _p: True)
+        self.assertEqual(payload["body"][0]["pageNumber"], 128)
+        self.assertEqual(payload["body"][0]["charSpan"], [0, 46])
+        self.assertEqual(
+            payload["body"][0]["boundingBox"],
+            {"left": 72.0, "top": 300.0, "right": 500.0, "bottom": 320.0},
+        )
+        # Nothing resolvable at all -> the RANGE's first page, never the constant 1.
+        self.assertEqual(payload["body"][1]["pageNumber"], 124)
+        self.assertEqual(payload["furniture"][0]["pageNumber"], 124)
+        pages = [item["pageNumber"] for item in payload["body"] + payload["furniture"]]
+        self.assertTrue(all(124 <= page <= 129 for page in pages), pages)
 
 
 # --- Range payload -----------------------------------------------------------------------------
@@ -413,6 +568,253 @@ class DocumentMetadataTests(unittest.TestCase):
     def test_build_range_payload_omits_metadata_when_absent(self):
         payload = build_range_payload(FakeDoc(), 1, 1, native_text=lambda _p: True)
         self.assertNotIn("metadata", payload)
+
+
+# --- Bookmark outline (#815) ---------------------------------------------------------------------
+
+
+class FakeDest:
+    """A pypdfium2 bookmark destination: resolves to a 0-based page index, or raises."""
+
+    def __init__(self, index=0, raises=False):
+        self._index = index
+        self._raises = raises
+
+    def get_index(self):
+        if self._raises:
+            raise RuntimeError("broken destination")
+        return self._index
+
+
+class FakeBookmark:
+    """A pypdfium2 PdfBookmark: a 0-based ``level`` plus title/destination accessors."""
+
+    def __init__(self, title="Chapter", level=0, dest=FakeDest(), title_raises=False):
+        self.level = level
+        self._title = title
+        self._dest = dest
+        self._title_raises = title_raises
+
+    def get_title(self):
+        if self._title_raises:
+            raise RuntimeError("broken title")
+        return self._title
+
+    def get_dest(self):
+        return self._dest
+
+
+class FakeOutlineDoc:
+    """A backend document exposing only ``get_toc``, recording the max_depth it was walked with."""
+
+    def __init__(self, bookmarks=(), raises=False):
+        self._bookmarks = list(bookmarks)
+        self._raises = raises
+        self.max_depths = []
+
+    def get_toc(self, max_depth=15):
+        self.max_depths.append(max_depth)
+        if self._raises:
+            raise RuntimeError("no outline")
+        return iter(self._bookmarks)
+
+
+class ReadPdfOutlineTests(unittest.TestCase):
+    def test_reads_a_nested_tree_with_zero_based_levels_and_page_indexes(self):
+        document = FakeOutlineDoc(
+            [
+                FakeBookmark("Chapter 1", level=0, dest=FakeDest(30)),
+                FakeBookmark("Section 1.1", level=1, dest=FakeDest(31)),
+                FakeBookmark("Detail", level=2, dest=FakeDest(32)),
+            ]
+        )
+        self.assertEqual(
+            read_pdf_outline(document),
+            [
+                {"title": "Chapter 1", "level": 0, "pageIndex": 30},
+                {"title": "Section 1.1", "level": 1, "pageIndex": 31},
+                {"title": "Detail", "level": 2, "pageIndex": 32},
+            ],
+        )
+
+    def test_walks_the_tree_under_the_bounded_depth(self):
+        document = FakeOutlineDoc([FakeBookmark()])
+        read_pdf_outline(document)
+        self.assertEqual(document.max_depths, [MAX_OUTLINE_DEPTH])
+
+    def test_a_bookmarkless_document_reads_as_an_empty_outline(self):
+        self.assertEqual(read_pdf_outline(FakeOutlineDoc([])), [])
+
+    def test_a_destinationless_bookmark_reads_with_a_null_page(self):
+        document = FakeOutlineDoc([FakeBookmark("Orphan", dest=None)])
+        self.assertEqual(
+            read_pdf_outline(document), [{"title": "Orphan", "level": 0, "pageIndex": None}]
+        )
+
+    def test_one_broken_bookmark_is_dropped_and_the_rest_survive(self):
+        document = FakeOutlineDoc(
+            [
+                FakeBookmark("Good", dest=FakeDest(1)),
+                FakeBookmark("Broken destination", dest=FakeDest(raises=True)),
+                FakeBookmark("Broken title", title_raises=True),
+                FakeBookmark("Also good", level=1, dest=FakeDest(2)),
+            ]
+        )
+        self.assertEqual(
+            [entry["title"] for entry in read_pdf_outline(document)], ["Good", "Also good"]
+        )
+
+    def test_an_over_limit_tree_is_truncated_to_the_entry_bound(self):
+        document = FakeOutlineDoc(
+            [FakeBookmark(f"Entry {index}") for index in range(MAX_OUTLINE_ENTRIES + 25)]
+        )
+        self.assertEqual(len(read_pdf_outline(document)), MAX_OUTLINE_ENTRIES)
+
+
+class BuildDocumentOutlineTests(unittest.TestCase):
+    def test_projects_levels_and_pages_to_the_one_based_contract(self):
+        self.assertEqual(
+            build_document_outline(
+                [
+                    {"title": "  Chapter 6: Objects  ", "level": 0, "pageIndex": 123},
+                    {"title": "Data Abstraction", "level": 1, "pageIndex": 123},
+                ]
+            ),
+            [
+                {"title": "Chapter 6: Objects", "level": 1, "pageNumber": 124},
+                {"title": "Data Abstraction", "level": 2, "pageNumber": 124},
+            ],
+        )
+
+    def test_drops_entries_that_cannot_be_located_or_named(self):
+        self.assertEqual(
+            build_document_outline(
+                [
+                    {"title": "No page", "level": 0, "pageIndex": None},
+                    {"title": "   ", "level": 0, "pageIndex": 1},
+                    {"title": None, "level": 0, "pageIndex": 1},
+                    {"title": "Bad level", "level": "1", "pageIndex": 1},
+                    {"title": "Negative level", "level": -1, "pageIndex": 1},
+                    {"title": "Negative page", "level": 0, "pageIndex": -1},
+                    {"title": "Boolean level", "level": True, "pageIndex": 1},
+                    {"title": "Boolean page", "level": 0, "pageIndex": True},
+                    "not a mapping",
+                    {"title": "Kept", "level": 0, "pageIndex": 0},
+                ]
+            ),
+            [{"title": "Kept", "level": 1, "pageNumber": 1}],
+        )
+
+    def test_truncates_an_over_long_title(self):
+        [entry] = build_document_outline(
+            [{"title": "x" * (MAX_OUTLINE_TITLE_CHARS + 40), "level": 0, "pageIndex": 0}]
+        )
+        self.assertEqual(entry["title"], "x" * MAX_OUTLINE_TITLE_CHARS)
+
+    def test_truncates_an_over_long_outline(self):
+        raw = [
+            {"title": f"Entry {index}", "level": 0, "pageIndex": index}
+            for index in range(MAX_OUTLINE_ENTRIES + 10)
+        ]
+        self.assertEqual(len(build_document_outline(raw)), MAX_OUTLINE_ENTRIES)
+
+
+class ReadOutlineEntriesTests(unittest.TestCase):
+    def test_an_unwired_seam_yields_no_outline_at_all(self):
+        self.assertIsNone(read_outline_entries(None))
+
+    def test_a_raising_seam_yields_an_empty_outline_rather_than_failing(self):
+        def read():
+            raise RuntimeError("pypdfium2 exploded")
+
+        self.assertEqual(read_outline_entries(read), [])
+
+    def test_a_wired_seam_projects_its_entries(self):
+        self.assertEqual(
+            read_outline_entries(lambda: [{"title": "Intro", "level": 0, "pageIndex": 4}]),
+            [{"title": "Intro", "level": 1, "pageNumber": 5}],
+        )
+
+
+class RangeOutlinePayloadTests(unittest.TestCase):
+    def test_build_range_payload_attaches_the_outline_when_supplied(self):
+        payload = build_range_payload(
+            FakeDoc(),
+            1,
+            1,
+            native_text=lambda _p: True,
+            outline=[{"title": "Chapter 1", "level": 1, "pageNumber": 3}],
+        )
+        self.assertEqual(payload["outline"], [{"title": "Chapter 1", "level": 1, "pageNumber": 3}])
+
+    def test_build_range_payload_attaches_an_empty_outline_distinctly_from_none(self):
+        self.assertEqual(
+            build_range_payload(FakeDoc(), 1, 1, native_text=lambda _p: True, outline=[])["outline"],
+            [],
+        )
+
+    def test_build_range_payload_omits_the_outline_when_absent(self):
+        payload = build_range_payload(FakeDoc(), 1, 1, native_text=lambda _p: True)
+        self.assertNotIn("outline", payload)
+
+    def test_convert_range_projects_the_outline_seam(self):
+        converter = FakeConverter(FakeDoc(body=FakeGroup([FakeItem(text="x")])))
+        payload = convert_range(
+            "/tmp/a.pdf",
+            1,
+            1,
+            lambda: converter,
+            native_text=lambda _p: True,
+            read_outline=lambda: [{"title": "Preface", "level": 0, "pageIndex": 8}],
+        )
+        self.assertEqual(payload["outline"], [{"title": "Preface", "level": 1, "pageNumber": 9}])
+
+    def test_convert_range_survives_an_outline_read_failure(self):
+        converter = FakeConverter(FakeDoc(body=FakeGroup([FakeItem(text="x")])))
+
+        def read_outline():
+            raise RuntimeError("broken")
+
+        payload = convert_range(
+            "/tmp/a.pdf", 1, 1, lambda: converter, native_text=lambda _p: True, read_outline=read_outline
+        )
+        self.assertEqual(payload["outline"], [])
+        self.assertEqual(payload["body"][0]["text"], "x")
+
+    def test_run_range_emits_the_outline_from_its_factory(self):
+        doc = FakeDoc(body=FakeGroup([FakeItem(text="ok")]))
+        stdout = io.StringIO()
+        code = run_range(
+            "/tmp/a.pdf",
+            1,
+            1,
+            lambda: FakeConverter(doc),
+            lambda _p: (lambda page: True),
+            stdout,
+            io.StringIO(),
+            outline_reader_factory=lambda _path: (
+                lambda: [{"title": "Chapter 2", "level": 1, "pageIndex": 40}]
+            ),
+        )
+        self.assertEqual(code, EXIT_OK)
+        self.assertEqual(
+            json.loads(stdout.getvalue())["outline"],
+            [{"title": "Chapter 2", "level": 2, "pageNumber": 41}],
+        )
+
+    def test_run_range_omits_the_outline_without_a_factory(self):
+        doc = FakeDoc(body=FakeGroup([FakeItem(text="ok")]))
+        stdout = io.StringIO()
+        run_range(
+            "/tmp/a.pdf",
+            1,
+            1,
+            lambda: FakeConverter(doc),
+            lambda _p: (lambda page: True),
+            stdout,
+            io.StringIO(),
+        )
+        self.assertNotIn("outline", json.loads(stdout.getvalue()))
 
 
 # --- Page counting -----------------------------------------------------------------------------
@@ -943,6 +1345,9 @@ class MainTests(unittest.TestCase):
             converter_factory=lambda: FakeConverter(doc),
             prober_factory=lambda _path: (lambda page: page == 1),
             metadata_reader_factory=lambda _path: (lambda: {"Title": "Doc", "Author": "Ada"}),
+            outline_reader_factory=lambda _path: (
+                lambda: [{"title": "Chapter 1", "level": 0, "pageIndex": 0}]
+            ),
             boundary=None,
             stdout=stdout,
             stderr=io.StringIO(),
@@ -951,6 +1356,9 @@ class MainTests(unittest.TestCase):
         payload = json.loads(stdout.getvalue())
         self.assertEqual([p["hasNativeText"] for p in payload["pages"]], [True, False])
         self.assertEqual(payload["metadata"], {"title": "Doc", "author": "Ada"})
+        self.assertEqual(
+            payload["outline"], [{"title": "Chapter 1", "level": 1, "pageNumber": 1}]
+        )
 
     def test_range_rejects_non_positive_pages(self):
         stderr = io.StringIO()
@@ -1301,6 +1709,7 @@ class MainRangeArtifactDispatchTests(unittest.TestCase):
                 converter_factory=lambda: FakeConverter(doc),
                 prober_factory=lambda _path: (lambda page: True),
                 metadata_reader_factory=lambda _path: (lambda: {"Title": None, "Author": None}),
+                outline_reader_factory=lambda _path: (lambda: []),
                 boundary=None,
                 stdout=stdout,
                 stderr=io.StringIO(),

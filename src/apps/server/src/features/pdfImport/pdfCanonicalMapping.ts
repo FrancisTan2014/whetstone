@@ -1,10 +1,21 @@
-import type { BoundingBox, StructuredDocItem, StructuredDocument } from "@whetstone/contracts";
+import type {
+  BoundingBox,
+  PdfOutlineEntry,
+  StructuredDocItem,
+  StructuredDocument
+} from "@whetstone/contracts";
 import {
   assignNodeIds,
   parseDocument,
   serializeDocument,
   type DocumentNodeJSON
 } from "@whetstone/document";
+import {
+  MAX_PDF_HEADING_LEVEL,
+  decidePageFurniture,
+  matchOutlineHeading,
+  type PageFurnitureExclusionRule
+} from "@whetstone/domain";
 
 import type { PersistableReadingUnit } from "../content/blockWriter.js";
 import type { IngestedBlock } from "../content/htmlToDocument.js";
@@ -14,7 +25,9 @@ import type { IngestedBlock } from "../content/htmlToDocument.js";
 // ->Block model, storing content ONLY as ProseMirror/Tiptap `doc_blocks` (never Markdown/mdast). Layout
 // order, labels, tables, and figures are fallible EVIDENCE, so the raw docling label decides the node
 // type, page geometry/confidence are retained additively as block evidence, and a construct the schema
-// cannot represent becomes an explicit `unknown` node (visible, never silently dropped).
+// cannot represent becomes an explicit `unknown` node (visible, never silently dropped). Heading DEPTH is
+// the one thing the label cannot supply, so it is resolved from the PDF's own bookmark outline (#815)
+// and falls back to the label table only where the document declared nothing.
 //
 // It is DOM-free and database-free: it only reads the validated contract shape and builds node JSON with
 // the shared document builders, so every mapping rule is unit-testable without Fastify or PostgreSQL. The
@@ -30,6 +43,25 @@ export type PdfBlockEvidence = Readonly<{
   charEnd: number;
   confidence: number;
   label: string;
+}>;
+
+// How many of a document's heading levels were DERIVED from the PDF's own bookmark outline versus merely
+// assumed from the docling label (#815). Recorded per work so a reviewer, and the usability gate, can see
+// whether depth was really derived rather than trusting that it was: an all-`label` document is a flat
+// outline by construction, and a regression that stops matching shows up here as a number rather than as
+// a book that quietly goes flat again.
+export type PdfHeadingLevelSources = Readonly<{ outline: number; label: number }>;
+
+// One top-level body item excluded from the readable hierarchy as page furniture (#811): a running head,
+// running foot, or folio docling emitted inside `doc.body`. Nothing a publisher wrote may vanish
+// unaccountably, and docling's own `furniture` group is deprecated and empty in 2.114, so the exclusion
+// is REPORTED here — page, docling label, the rule that matched, and the normalized text compared — and
+// is therefore auditable rather than assumed to be preserved somewhere else.
+export type PdfExcludedFurniture = Readonly<{
+  page: number;
+  label: string;
+  rule: PageFurnitureExclusionRule;
+  normalizedText: string;
 }>;
 
 // A structured PDF with any text-less page (a page #701 found no native text on) cannot be canonicalized
@@ -57,6 +89,15 @@ export type PdfCanonicalMappingResult =
       // How many unresolved picture/figure placeholders (#806) were produced. Zero for a document with no
       // pictures; a positive count is a review warning on the successful publication, never a refusal.
       unresolvedFigureCount: number;
+      // Where each heading's level came from (#815) — the document's own bookmark outline, or the
+      // docling label's last-resort default.
+      headingLevelSources: PdfHeadingLevelSources;
+      // The page furniture excluded from the readable body (#811), in source order, plus the counts a
+      // caller records: how many items were removed and how many characters they carried. Excluded
+      // furniture becomes no block and no block evidence — it exists only here.
+      excludedFurniture: readonly PdfExcludedFurniture[];
+      excludedFurnitureCount: number;
+      excludedFurnitureCharacters: number;
     }>;
 
 // A body item paired with the canonical block node it projected to, carrying the source item so the
@@ -65,10 +106,20 @@ type MappedBlock = Readonly<{ node: DocumentNodeJSON; source: StructuredDocItem;
 
 type DraftUnit = { title: string | null; blocks: MappedBlock[] };
 
-// The heading level each heading label starts at. A `title` is the work-level heading (level 1) and a
-// `section_header` is a section (level 2); the projection carries no depth, so the level is assigned
-// deterministically from the label rather than guessed from geometry.
+// Where one heading's level came from: the document's own bookmark outline (real, declared depth) or the
+// docling label (a flat default). Reported so an undeserved level is never claimed silently.
+type ResolvedHeading = Readonly<{ level: number; source: keyof PdfHeadingLevelSources }>;
+
+// The heading level each heading label starts at when — and ONLY when — the PDF's outline cannot justify
+// a real one. A `title` is the work-level heading (level 1) and a `section_header` is a section (level 2).
+// This table is a last-resort fallback, not the source of truth: measured across two real books docling
+// emitted `title` zero times, so trusting it alone flattens every heading in a book to H2 (#815).
 const HEADING_LEVEL_BY_LABEL: Readonly<Record<string, number>> = { title: 1, section_header: 2 };
+// Labels that are NOT heading labels but may still name a heading the outline knows about. Docling
+// routinely mislabels a chapter opener `page_header`; when the document's own outline names that exact
+// text on that exact page, the item IS the chapter heading and is emitted as one at the matched level.
+// A candidate the outline does not name keeps its ordinary mapping — a label alone never promotes.
+const OUTLINE_PROMOTABLE_LABELS = new Set(["page_header", "page_footer"]);
 const LIST_GROUP_LABELS = new Set(["list", "ordered_list", "unordered_list"]);
 const HEADER_CELL_LABELS = new Set(["table_header", "column_header", "row_header"]);
 // Picture/figure constructs whose image bytes #701 does not yet extract. Rather than refusing the whole
@@ -190,19 +241,27 @@ function figureNode(item: StructuredDocItem): DocumentNodeJSON {
 // type; a construct with no canonical representation (or an empty table/list) becomes a visible `unknown`
 // node so nothing a publisher wrote is silently dropped. A picture/figure becomes a canonical `figure`
 // placeholder (#806) whose image is unresolved, so the readable document publishes with the figure
-// visible for correction rather than the whole document being refused.
-function bodyItemToBlock(item: StructuredDocItem): DocumentNodeJSON {
-  const headingLevel = HEADING_LEVEL_BY_LABEL[item.label];
-  if (headingLevel !== undefined) {
-    return { attrs: { level: headingLevel }, content: inlineContent(item.text), type: "heading" };
+// visible for correction rather than the whole document being refused. `heading` is the already-resolved
+// depth (#815) — outline-derived where the document declared one — so this projection never re-decides it.
+function bodyItemToBlock(
+  item: StructuredDocItem,
+  heading: ResolvedHeading | null
+): DocumentNodeJSON {
+  if (heading !== null) {
+    return { attrs: { level: heading.level }, content: inlineContent(item.text), type: "heading" };
   }
   if (PICTURE_LABELS.has(item.label)) {
     return figureNode(item);
   }
   switch (item.label) {
+    // A running head/foot that SURVIVED the furniture rules (#811) is unique, folio-less text docling
+    // labelled `page_header`/`page_footer` — typically a chapter opener it mislabelled. It is readable
+    // content, so it maps to a plain paragraph and never to the dashed `unknown` fallback.
     case "text":
     case "paragraph":
     case "caption":
+    case "page_header":
+    case "page_footer":
       return paragraph(item.text);
     case "formula":
     case "code":
@@ -222,10 +281,62 @@ function bodyItemToBlock(item: StructuredDocItem): DocumentNodeJSON {
   }
 }
 
+// Resolve every top-level body item's heading depth in ONE pass over the document, so a bookmark can name
+// only one heading. Items docling already labelled headings go first and CLAIM the outline entry that
+// names them; only then may a furniture-labelled item (a chapter opener docling mislabelled
+// `page_header`) claim an entry no real heading took. That ordering is what keeps a running head — which
+// restates its chapter title on every page and therefore matches the same bookmark — from being promoted
+// into a duplicate heading beside the real one.
+//
+// Returns one slot per input item, in the SAME order, so the walk can zip resolutions onto the body it
+// already traverses. `null` means "not a heading".
+function resolveHeadingLevels(
+  body: readonly StructuredDocItem[],
+  outline: readonly PdfOutlineEntry[]
+): readonly (ResolvedHeading | null)[] {
+  const resolved: (ResolvedHeading | null)[] = body.map(() => null);
+  const claimedEntries = new Set<number>();
+
+  body.forEach((item, index) => {
+    const labelLevel = HEADING_LEVEL_BY_LABEL[item.label];
+    if (labelLevel === undefined) {
+      return;
+    }
+    const match = matchOutlineHeading({ pageNumber: item.pageNumber, text: item.text }, outline);
+    if (match === null) {
+      resolved[index] = { level: Math.min(labelLevel, MAX_PDF_HEADING_LEVEL), source: "label" };
+      return;
+    }
+    claimedEntries.add(match.entryIndex);
+    resolved[index] = { level: match.level, source: "outline" };
+  });
+
+  body.forEach((item, index) => {
+    if (!OUTLINE_PROMOTABLE_LABELS.has(item.label)) {
+      return;
+    }
+    const match = matchOutlineHeading({ pageNumber: item.pageNumber, text: item.text }, outline);
+    if (match === null || claimedEntries.has(match.entryIndex)) {
+      return;
+    }
+    claimedEntries.add(match.entryIndex);
+    resolved[index] = { level: match.level, source: "outline" };
+  });
+
+  return resolved;
+}
+
 // Walk the ordered body into (node, source) pairs, grouping a run of top-level `list_item`s into one
-// bullet list (docling sometimes emits list items without a wrapping group).
-function walkBody(body: readonly StructuredDocItem[]): MappedBlock[] {
+// bullet list (docling sometimes emits list items without a wrapping group). Heading depth is resolved
+// once for the whole body against the document's own outline (#815) before the walk, and where each level
+// came from is tallied so the caller can report derived-versus-assumed depth.
+function walkBody(
+  body: readonly StructuredDocItem[],
+  outline: readonly PdfOutlineEntry[]
+): { blocks: MappedBlock[]; headingLevelSources: PdfHeadingLevelSources } {
+  const headings = resolveHeadingLevels(body, outline);
   const out: MappedBlock[] = [];
+  const sources = { label: 0, outline: 0 };
   let index = 0;
   while (index < body.length) {
     const item = body[index]!;
@@ -242,10 +353,14 @@ function walkBody(body: readonly StructuredDocItem[]): MappedBlock[] {
       });
       continue;
     }
-    out.push({ label: item.label, node: bodyItemToBlock(item), source: item });
+    const heading = headings[index]!;
+    if (heading !== null) {
+      sources[heading.source] += 1;
+    }
+    out.push({ label: item.label, node: bodyItemToBlock(item, heading), source: item });
     index += 1;
   }
-  return out;
+  return { blocks: out, headingLevelSources: sources };
 }
 
 // Split the walked blocks into reading units: each heading starts a new unit (so the unit's first block
@@ -313,6 +428,36 @@ function buildUnit(unit: DraftUnit): {
   };
 }
 
+// Split a document's ordered top-level body into the items that are readable content and the page
+// furniture excluded from it (#811). The rules are evaluated over the WHOLE document (repetition and
+// heading restatement are only visible across pages), and every exclusion is returned so the caller can
+// account for what was removed.
+function partitionPageFurniture(body: readonly StructuredDocItem[]): {
+  readable: StructuredDocItem[];
+  excluded: PdfExcludedFurniture[];
+  excludedCharacters: number;
+} {
+  const decisions = decidePageFurniture(body);
+  const readable: StructuredDocItem[] = [];
+  const excluded: PdfExcludedFurniture[] = [];
+  let excludedCharacters = 0;
+  body.forEach((item, index) => {
+    const decision = decisions[index]!;
+    if (decision.kind === "body") {
+      readable.push(item);
+      return;
+    }
+    excluded.push({
+      label: item.label,
+      normalizedText: decision.normalizedText,
+      page: item.pageNumber,
+      rule: decision.rule
+    });
+    excludedCharacters += item.text.length;
+  });
+  return { excluded, excludedCharacters, readable };
+}
+
 // Map a reconstructed structured PDF document to canonical reading units + block evidence, or refuse the
 // whole document when any page is still text-less. Every Work language now ships an OCR pack (#746), so a
 // text-less page reaching here means the OCR pass and the full conversion disagreed (or OCR was
@@ -324,14 +469,24 @@ export function mapStructuredDocument(document: StructuredDocument): PdfCanonica
     return { pagesNeedingOcr, status: "ocr_validation_failed" };
   }
 
+  // Page furniture is printing, not authorship (#811): running heads, running feet, and folios are
+  // removed BEFORE the body is walked, so they never become addressable blocks (and never reach the
+  // `unknown` fallback that rendered them as dashed debris). They are returned as evidence instead —
+  // docling's own `furniture` group is deprecated and empty, so this result is their only record.
+  const furniture = partitionPageFurniture(document.body);
+
   // A picture/figure carries an image #701 does not yet extract, but an unresolved leaf must not erase
   // the readable pages (#806). Each maps to a visible `figure` placeholder; the count is reported as a
   // review warning on the successful publication rather than refusing the whole document.
 
-  const walked = walkBody(document.body);
+  // The PDF's own bookmark outline is the ONLY depth evidence the document carries (#815). It arrives
+  // already validated on the contract (absent for a bookmark-less PDF, or for a payload committed before
+  // the worker read outlines), and an absent one simply leaves every heading on the label fallback.
+  const walked = walkBody(furniture.readable, document.outline ?? []);
+
   const unmapped = new Set<string>();
   let unresolvedFigureCount = 0;
-  for (const block of walked) {
+  for (const block of walked.blocks) {
     if (block.node.type === "unknown") {
       unmapped.add(block.label);
     }
@@ -345,15 +500,16 @@ export function mapStructuredDocument(document: StructuredDocument): PdfCanonica
 
   const units: PersistableReadingUnit[] = [];
   const evidence: PdfBlockEvidence[] = [];
-  for (const draft of splitIntoUnits(walked)) {
+  for (const draft of splitIntoUnits(walked.blocks)) {
     const built = buildUnit(draft);
     units.push(built.persistable);
     evidence.push(...built.evidence);
   }
 
-  // The pages had native text but yielded no canonical blocks (an empty body): refuse rather than
-  // publishing an empty-shell Work with no readable units (#702's "no empty shell"). Every walked item
-  // produces at least one block, so zero blocks means the body was empty.
+  // The pages had native text but yielded no canonical blocks (an empty body, or a body that was
+  // entirely page furniture): refuse rather than publishing an empty-shell Work with no readable units
+  // (#702's "no empty shell"). Exclusion is never a refusal REASON — a furniture-only document simply
+  // has no readable content, so it takes the same typed `no_content` outcome as an empty one.
   const blockCount = units.reduce((total, unit) => total + unit.docBlocks.length, 0);
   if (blockCount === 0) {
     return { status: "no_content" };
@@ -361,6 +517,10 @@ export function mapStructuredDocument(document: StructuredDocument): PdfCanonica
 
   return {
     evidence,
+    headingLevelSources: walked.headingLevelSources,
+    excludedFurniture: furniture.excluded,
+    excludedFurnitureCharacters: furniture.excludedCharacters,
+    excludedFurnitureCount: furniture.excluded.length,
     status: "mapped",
     unmappedLabels: [...unmapped],
     unresolvedFigureCount,
