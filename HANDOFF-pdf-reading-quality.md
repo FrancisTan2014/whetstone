@@ -47,7 +47,8 @@ the mapper as auditable evidence rather than relocated into a furniture group.
 | `integration/pdf-reading-quality` | **all of the below, merged and conflict-resolved** | **#824** | running |
 | `dev/issue-811-pdf-furniture` | #811 furniture exclusion | #819 | green (approved) |
 | `dev/issue-813-group-page-provenance` | #813 page provenance | #821 | green (approved) |
-| `dev/issue-815-heading-depth` | #815 outline-derived heading depth | — (covered by #824) | — |
+| `dev/issue-815-pdf-outline-depth` | #815 as the developer finally wrote it (**authoritative**) | — (covered by #824) | — |
+| `dev/issue-815-heading-depth` | #815 **first commit only** — superseded, do not use | — | — |
 | `design/pdf-mapping-reading-quality` | PRODUCT.md + DECISIONS.md D6 + QUICK_START.md | #822 | green (approved) |
 | `handoff/pdf-reading-quality` | this document + `tools/bench_pdf.py` | — | — |
 | — | #814 code wrapping | #820 | **merged** |
@@ -55,6 +56,26 @@ the mapper as auditable evidence rather than relocated into a furniture group.
 `integration/pdf-reading-quality` was created because `main` requires branches to be **up to date**
 before merging: landing four PRs separately costs four ~25-minute CI cycles. The integration branch
 carries the original head commits, so merging it **auto-closes #819, #821 and #822 as merged**.
+
+### Two staleness near-misses — check pushed heads, not descriptions
+
+Both were caught by review, not by CI, and CI *could not* have caught either:
+
+1. Another agent **force-pushed the design commit `c4ef7d5d` over `dev/issue-811-pdf-furniture`**
+   mid-session. `gh pr view 819` then reported that phantom commit as the PR head, so it got integrated
+   as "#811" while the actual furniture slice was missing. The branch was restored to `284b84d4`; the
+   integration now carries #819's real head `36abb725` (merged content-neutrally so #819 closes as
+   merged). **The integration branch was also pushed once at a stale commit** — the local merge was
+   correct but never pushed, so GitHub served a head that would have closed #811 unfixed while shipping
+   docs claiming it worked.
+2. **#815 was integrated at its superseded first commit.** The developer later wrote `9bf84902`,
+   *"let one bookmark name one heading, not many"* — without it, the 10 `page_header` items restating
+   chapter titles on real pages produce **a duplicate heading beside every real one**. The API changed
+   from `resolveOutlineHeadingLevel(): number | null` to `matchOutlineHeading(): {entryIndex, level} | null`
+   so a caller can tell an entry is already claimed. Cherry-picked in as `81f67089`.
+
+Lesson worth keeping: verify the **pushed** SHA and its file contents, never the PR description or a
+`headRefOid` read while another agent may be pushing.
 
 Verified locally on the integration branch:
 
