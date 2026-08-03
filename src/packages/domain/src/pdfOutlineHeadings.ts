@@ -121,6 +121,12 @@ type NormalizedCandidate = Readonly<{
   pageNumber: number;
 }>;
 
+// A resolved match: WHICH outline entry named the heading, and the level it justifies (already clamped to
+// the canonical model). The entry's index is reported, not just the level, because a bookmark names ONE
+// heading: a caller deciding whether a second, ambiguously-labelled item is really that same heading — or
+// merely the running head repeating it — needs to know the entry is already spoken for.
+export type PdfOutlineHeadingMatch = Readonly<{ entryIndex: number; level: number }>;
+
 // The ladder, most to least specific. Each rung is page-anchored, so a heading can only ever inherit the
 // level of a bookmark that points at (or immediately beside) the page it was extracted from — an
 // identical title elsewhere in the book cannot capture it.
@@ -141,15 +147,15 @@ const OUTLINE_RUNGS: readonly OutlineRung[] = [
     stripHeadingNumbering(normalizeOutlineTitle(entry.title)) === candidate.stripped
 ];
 
-// Resolve the heading level a document's own outline justifies for one heading candidate, or null when
-// no bookmark names it (the caller then falls back to the label-derived level). The first rung that
-// matches wins; among that rung's matches the SHALLOWEST level wins, so an ambiguous heading is never
-// pushed deeper than the evidence supports. A level deeper than the canonical model clamps to
-// `MAX_PDF_HEADING_LEVEL`. A blank heading carries no evidence and matches nothing.
-export function resolveOutlineHeadingLevel(
+// Resolve which outline entry names one heading candidate, or null when none does (the caller then falls
+// back to the label-derived level). The first rung that matches wins; among that rung's matches the
+// SHALLOWEST level wins, so an ambiguous heading is never pushed deeper than the evidence supports. A
+// level deeper than the canonical model clamps to `MAX_PDF_HEADING_LEVEL`. A blank heading carries no
+// evidence and matches nothing.
+export function matchOutlineHeading(
   candidate: PdfHeadingCandidate,
   outline: readonly PdfOutlineEntry[]
-): number | null {
+): PdfOutlineHeadingMatch | null {
   const normalized = normalizeOutlineTitle(candidate.text);
   if (normalized.length === 0) {
     return null;
@@ -160,24 +166,29 @@ export function resolveOutlineHeadingLevel(
     stripped: stripHeadingNumbering(normalized)
   };
   for (const rung of OUTLINE_RUNGS) {
-    const level = shallowestMatch(normalizedCandidate, outline, rung);
-    if (level !== null) {
-      return Math.min(level, MAX_PDF_HEADING_LEVEL);
+    const entryIndex = shallowestMatch(normalizedCandidate, outline, rung);
+    if (entryIndex !== null) {
+      return { entryIndex, level: Math.min(outline[entryIndex]!.level, MAX_PDF_HEADING_LEVEL) };
     }
   }
   return null;
 }
 
+// The index of the shallowest entry this rung matches, or null when it matches none. Ties on level keep
+// the FIRST such entry, so the result is deterministic in source order.
 function shallowestMatch(
   candidate: NormalizedCandidate,
   outline: readonly PdfOutlineEntry[],
   rung: OutlineRung
 ): number | null {
-  let shallowest: number | null = null;
-  for (const entry of outline) {
-    if (rung(candidate, entry) && (shallowest === null || entry.level < shallowest)) {
-      shallowest = entry.level;
+  let bestIndex: number | null = null;
+  outline.forEach((entry, index) => {
+    if (!rung(candidate, entry)) {
+      return;
     }
-  }
-  return shallowest;
+    if (bestIndex === null || entry.level < outline[bestIndex]!.level) {
+      bestIndex = index;
+    }
+  });
+  return bestIndex;
 }

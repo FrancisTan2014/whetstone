@@ -10,7 +10,7 @@ import {
   serializeDocument,
   type DocumentNodeJSON
 } from "@whetstone/document";
-import { MAX_PDF_HEADING_LEVEL, resolveOutlineHeadingLevel } from "@whetstone/domain";
+import { MAX_PDF_HEADING_LEVEL, matchOutlineHeading } from "@whetstone/domain";
 
 import type { PersistableReadingUnit } from "../content/blockWriter.js";
 import type { IngestedBlock } from "../content/htmlToDocument.js";
@@ -214,30 +214,6 @@ function figureNode(item: StructuredDocItem): DocumentNodeJSON {
   return { content, type: "figure" };
 }
 
-// Resolve the heading level for one top-level body item, or null when the item is not a heading. The
-// document's own outline decides first (real declared depth); the label table only supplies a level for
-// an item docling already labelled a heading and the outline did not name. A furniture-labelled item is
-// promoted to a heading ONLY on an outline match — otherwise it keeps its ordinary mapping.
-function resolveHeading(
-  item: StructuredDocItem,
-  outline: readonly PdfOutlineEntry[]
-): ResolvedHeading | null {
-  const labelLevel = HEADING_LEVEL_BY_LABEL[item.label];
-  if (labelLevel === undefined && !OUTLINE_PROMOTABLE_LABELS.has(item.label)) {
-    return null;
-  }
-  const outlineLevel = resolveOutlineHeadingLevel(
-    { pageNumber: item.pageNumber, text: item.text },
-    outline
-  );
-  if (outlineLevel !== null) {
-    return { level: outlineLevel, source: "outline" };
-  }
-  return labelLevel === undefined
-    ? null
-    : { level: Math.min(labelLevel, MAX_PDF_HEADING_LEVEL), source: "label" };
-}
-
 // Project one top-level body item to its canonical block node. The raw docling label decides the node
 // type; a construct with no canonical representation (or an empty table/list) becomes a visible `unknown`
 // node so nothing a publisher wrote is silently dropped. A picture/figure becomes a canonical `figure`
@@ -277,14 +253,60 @@ function bodyItemToBlock(
   }
 }
 
+// Resolve every top-level body item's heading depth in ONE pass over the document, so a bookmark can name
+// only one heading. Items docling already labelled headings go first and CLAIM the outline entry that
+// names them; only then may a furniture-labelled item (a chapter opener docling mislabelled
+// `page_header`) claim an entry no real heading took. That ordering is what keeps a running head — which
+// restates its chapter title on every page and therefore matches the same bookmark — from being promoted
+// into a duplicate heading beside the real one.
+//
+// Returns one slot per input item, in the SAME order, so the walk can zip resolutions onto the body it
+// already traverses. `null` means "not a heading".
+function resolveHeadingLevels(
+  body: readonly StructuredDocItem[],
+  outline: readonly PdfOutlineEntry[]
+): readonly (ResolvedHeading | null)[] {
+  const resolved: (ResolvedHeading | null)[] = body.map(() => null);
+  const claimedEntries = new Set<number>();
+
+  body.forEach((item, index) => {
+    const labelLevel = HEADING_LEVEL_BY_LABEL[item.label];
+    if (labelLevel === undefined) {
+      return;
+    }
+    const match = matchOutlineHeading({ pageNumber: item.pageNumber, text: item.text }, outline);
+    if (match === null) {
+      resolved[index] = { level: Math.min(labelLevel, MAX_PDF_HEADING_LEVEL), source: "label" };
+      return;
+    }
+    claimedEntries.add(match.entryIndex);
+    resolved[index] = { level: match.level, source: "outline" };
+  });
+
+  body.forEach((item, index) => {
+    if (!OUTLINE_PROMOTABLE_LABELS.has(item.label)) {
+      return;
+    }
+    const match = matchOutlineHeading({ pageNumber: item.pageNumber, text: item.text }, outline);
+    if (match === null || claimedEntries.has(match.entryIndex)) {
+      return;
+    }
+    claimedEntries.add(match.entryIndex);
+    resolved[index] = { level: match.level, source: "outline" };
+  });
+
+  return resolved;
+}
+
 // Walk the ordered body into (node, source) pairs, grouping a run of top-level `list_item`s into one
-// bullet list (docling sometimes emits list items without a wrapping group). Each item's heading depth is
-// resolved once against the document's own outline (#815) before it is projected, and where each level
+// bullet list (docling sometimes emits list items without a wrapping group). Heading depth is resolved
+// once for the whole body against the document's own outline (#815) before the walk, and where each level
 // came from is tallied so the caller can report derived-versus-assumed depth.
 function walkBody(
   body: readonly StructuredDocItem[],
   outline: readonly PdfOutlineEntry[]
 ): { blocks: MappedBlock[]; headingLevelSources: PdfHeadingLevelSources } {
+  const headings = resolveHeadingLevels(body, outline);
   const out: MappedBlock[] = [];
   const sources = { label: 0, outline: 0 };
   let index = 0;
@@ -303,7 +325,7 @@ function walkBody(
       });
       continue;
     }
-    const heading = resolveHeading(item, outline);
+    const heading = headings[index]!;
     if (heading !== null) {
       sources[heading.source] += 1;
     }

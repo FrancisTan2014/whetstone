@@ -181,13 +181,14 @@ export {
 export type { ExtractionConfidenceBand } from "./pdfExtractionReview.js";
 export {
   MAX_PDF_HEADING_LEVEL,
+  matchOutlineHeading,
   normalizeOutlineTitle,
-  resolveOutlineHeadingLevel,
   stripHeadingNumbering
 } from "./pdfOutlineHeadings.js";
 export type {
   PdfHeadingCandidate,
-  PdfOutlineEntry as PdfOutlineHeadingEntry
+  PdfOutlineEntry as PdfOutlineHeadingEntry,
+  PdfOutlineHeadingMatch
 } from "./pdfOutlineHeadings.js";
 export {
   assessCorpusEligibility,
