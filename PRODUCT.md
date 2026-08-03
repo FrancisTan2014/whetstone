@@ -306,11 +306,38 @@ owning source flow:
   character span, and extraction confidence remain provenance/evidence, not content identity.
 - Born-digital text is preferred. Pages without usable native text receive language-aware OCR during
   ingestion and then enter the same structured mapping; OCR is never a Reader-time enrichment path.
+- **Extraction is reliable; canonical mapping owns reading quality.** Measured against each PDF's own
+  text layer, the pinned converter returns essentially all material body text (99.7–99.9% of a page's
+  characters on born-digital books). A Reader defect is therefore a defect of our canonical mapping,
+  not evidence that a different converter, a page-image reader, or a Markdown/EPUB intermediate is
+  needed. These mapping rules are product behavior, not implementation detail:
+  - **Page furniture never reaches the readable body.** Running heads, running feet, folios, and
+    watermark lines are excluded from the block hierarchy and recorded as excluded evidence — never
+    rendered as unknown/fallback blocks. About a quarter of a real book's top-level items are
+    furniture, so admitting them makes one rendered block in four unreadable debris. Exclusion is
+    evidence-based (page-number shape, text repeating across pages, or text duplicating a body
+    heading); a unique running-head candidate stays readable content, because a chapter opener is
+    sometimes labelled a page header, and losing a chapter title is worse than keeping one stray line.
+  - **Headings carry real depth.** Heading level comes from the PDF's own outline (bookmark tree)
+    where the source has one, matched to body headings by page and title. Depth is never assigned from
+    a structure label alone; a source with no outline falls back to the label and is reported as an
+    outline gap rather than presented as a flat book.
+  - **ReadingUnits are chapter-scale.** A unit is a chapter-level division, not every heading.
+    Sub-headings stay heading blocks inside their unit and appear in the same table of contents as
+    in-unit anchors. Unit boundaries are navigation and reading-position identity, so a unit per page
+    fragments both and turns the contents drawer into an undifferentiated wall.
+  - **Nothing below an unmapped construct is dropped.** An item whose label has no canonical node is
+    still walked into its children, so descendants become real blocks; only a genuinely
+    unrepresentable leaf becomes a visible `unknown`.
 - The product target is usable automatic ingestion for at least 95% of the deduplicated supported PDF
   pressure corpus. "Usable" means the current Reader can present materially complete body content in
   readable order, with a workable heading/block hierarchy for search, selection, notes, and editing.
-  Corrupt, password-required, and declared size/page-bound violations are typed unsupported inputs,
-  not successes hidden outside the denominator.
+  That judgement is **certified by measurement, not proxy counts**: page-level body-text coverage
+  against the PDF's own text layer, furniture contamination of the readable body, and outline
+  usability (real heading depth, chapter-scale units). Unknown-block and low-confidence ratios are
+  supporting signals only — a document that is a quarter furniture, or completely flat, is not usable
+  however few blocks took a fallback path. Corrupt, password-required, and declared size/page-bound
+  violations are typed unsupported inputs, not successes hidden outside the denominator.
 - For the remaining supported PDFs, administrators correct the canonical blocks in the shared rich
   Work editor: edit or retype content, change block kind, split, merge, reorder, add, or remove blocks.
   Low-confidence/unknown extraction evidence points to likely corrections: in the shared editor only,
@@ -324,15 +351,27 @@ owning source flow:
   notes, or non-PDF Works, and saving changes only canonical blocks and correction markers. Corrected
   blocks remain the sole readable authority; the immutable PDF stays provenance/export, and re-ingestion
   never silently overwrites corrections.
-- **Current shipped scope (born-digital preview).** Today the PDF lane above is a born-digital
-  preview: an uploaded PDF with usable native text on every page publishes as canonical blocks and
-  opens in the Reader. Administrators now correct any canonical imported Work's blocks in the shared
-  rich editor (#762); language-aware OCR for scanned/mixed pages (#704) and the measured
-  corpus-calibration claim (#705) are still pending. A page lacking
-  native text returns a typed **OCR required** outcome and publishes no partial Work; until #704,
-  scanned/mixed uploads report **OCR support is not available yet** rather than falling back to legacy
-  Markdown or silently persisting incomplete content. #705 alone replaces this preview copy with the
-  measured supported-PDF claim.
+- **Current shipped scope (uncertified preview).** The production PDF lane now handles born-digital,
+  scanned, and mixed English/Chinese inputs through the canonical structured/OCR pipeline. A passing
+  import publishes canonical text and extractable figures; unresolved figures remain visible,
+  correctable placeholders instead of discarding an otherwise readable Work. OCR validation failure,
+  an empty conversion, or an operational bound publishes no partial Work. Administrators can correct
+  any published imported Work in the shared rich editor. This is still an **uncertified preview**:
+  the complete private-corpus run in #705 has not yet established the measured support rate or bounds,
+  and that run is only meaningful once the gate measures coverage, furniture contamination, and
+  outline usability rather than fallback-block ratios alone.
+  #705 alone authorizes replacing this preview copy with the measured supported-PDF claim.
+- **Recorded direction, not scheduled work: one canonical mapper.** EPUB's `htmlToDocument` is the
+  mature mapper (h1–h6, table spans, callouts, footnote identity, code language, figures, links,
+  evidence, guarded by ingestion-fidelity invariants); the PDF mapper is a weaker bespoke second
+  implementation of the same job. Because the pinned converter's structured HTML export measures at or
+  above 100% of the text layer, the intended convergence is to route PDF through a
+  structured-semantic-HTML intermediate into that proven mapper and delete the bespoke one, carrying
+  page number, bounding box, and confidence as sidecar attributes so provenance, correction, and the
+  coverage gate survive. This is explicitly **not** a Markdown or EPUB file hop: Markdown is strictly
+  narrower than the canonical schema and would destroy exactly that provenance. It is a multi-day
+  refactor with figure-regression risk, so it stays recorded intent until the mapping defects above
+  are closed and the corpus gate is trustworthy.
 - A manual Work is learner-owned, editable source material whose canonical content is its
   ProseMirror blocks. It writes those blocks through the same shared editable-Work storage boundary
   the authored path uses — one reading unit plus an empty block on create, stable-id reconcile on
@@ -402,9 +441,10 @@ The Reader is reading-unit scoped and TOC driven:
 
 - Render one ReadingUnit at a time; scroll within it and use Previous/Next between units.
 - Use the authored hierarchical TOC where present; normalize structural Part → Chapter nesting.
-  Manual and Markdown Works project the same Reader tree from canonical heading levels. Content
-  before the first heading is **Start** when later headings make navigation necessary; a headingless
-  single-unit Work needs no TOC.
+  Manual, Markdown, and PDF Works project the same Reader tree from canonical heading levels — a
+  chapter-scale unit is a root entry and its in-unit sub-headings are its children, targeted by block
+  anchor. Content before the first heading is **Start** when later headings make navigation necessary;
+  a headingless single-unit Work needs no TOC.
 - Remember server-side reading position (unit + best-effort block anchor) and preferences.
 - Keep one stable-width, single-column reading surface; text size reflows within it.
 - Desktop tools live in a persistent bottom-right rail; mobile chrome recedes and returns from a
@@ -421,7 +461,10 @@ underline is reserved for personal note marks.
 
 Reader readability is book-like: language-aware serif body, clear headings, lists with markers,
 cohesive code blocks, readable tables, blockquotes, footnotes, and explicit empty/loading/error
-states. Target body size is about 18px, line height at least 1.5, and Latin measure about 66ch.
+states. Target body size is about 18px, line height at least 1.5, and Latin measure about 66ch. Code
+blocks wrap inside the reading measure at every width instead of scrolling horizontally: this is a
+reader, not an editor, and extracted PDF code commonly arrives as one long line with its source line
+breaks lost, so horizontal overflow hides content behind a scrollbar the reader never sees.
 
 ### Notes
 

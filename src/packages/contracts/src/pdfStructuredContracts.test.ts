@@ -131,6 +131,31 @@ describe("parseRangeConversion", () => {
     const result = parseRangeConversion(rangePayload({ metadata: { title: "A Title" } }));
     expect(result.status).toBe("malformed");
   });
+
+  it("accepts a payload carrying the PDF's bookmark outline", () => {
+    const result = parseRangeConversion(
+      rangePayload({ outline: [{ title: "Chapter 1: Clean Code", level: 1, pageNumber: 31 }] })
+    );
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") throw new Error("expected ok");
+    expect(result.value.outline).toEqual([
+      { title: "Chapter 1: Clean Code", level: 1, pageNumber: 31 }
+    ]);
+  });
+
+  it("accepts a payload with no outline at all (committed before outlines were read)", () => {
+    const result = parseRangeConversion(rangePayload());
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") throw new Error("expected ok");
+    expect(result.value.outline).toBeUndefined();
+  });
+
+  it("rejects an outline entry with a non-positive page", () => {
+    const result = parseRangeConversion(
+      rangePayload({ outline: [{ title: "Chapter 1", level: 1, pageNumber: 0 }] })
+    );
+    expect(result.status).toBe("malformed");
+  });
 });
 
 describe("parseProbeClassification", () => {
@@ -244,6 +269,33 @@ describe("validateStructuredDocument", () => {
     if (result.ok) throw new Error("expected failure");
     expect(result.detail.length).toBeGreaterThan(0);
   });
+
+  it("round-trips an embedded bookmark outline", () => {
+    const outline = [
+      { title: "Chapter 6: Objects and Data Structures", level: 1, pageNumber: 124 },
+      { title: "Data Abstraction", level: 2, pageNumber: 124 }
+    ];
+    const result = validateStructuredDocument({ ...document, outline });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected success");
+    expect(result.document.outline).toEqual(outline);
+  });
+
+  it("still accepts a document committed before outlines were read", () => {
+    expect(validateStructuredDocument(document).ok).toBe(true);
+    expect(validateStructuredDocument({ ...document, outline: [] }).ok).toBe(true);
+  });
+
+  it.each([
+    ["an empty title", { title: "", level: 1, pageNumber: 1 }],
+    ["an over-long title", { title: "x".repeat(513), level: 1, pageNumber: 1 }],
+    ["a zero level", { title: "Chapter", level: 0, pageNumber: 1 }],
+    ["a fractional level", { title: "Chapter", level: 1.5, pageNumber: 1 }],
+    ["a zero page", { title: "Chapter", level: 1, pageNumber: 0 }],
+    ["an unknown field", { title: "Chapter", level: 1, pageNumber: 1, dest: "x" }]
+  ])("rejects an outline entry with %s", (_case, entry) => {
+    expect(validateStructuredDocument({ ...document, outline: [entry] }).ok).toBe(false);
+  });
 });
 
 describe("concatenateRanges", () => {
@@ -291,6 +343,25 @@ describe("concatenateRanges", () => {
       { ...range([1]), metadata: { title: "Only A Title", author: null } }
     ]);
     expect(document.metadata).toEqual({ title: "Only A Title", author: null });
+  });
+
+  it("omits the bookmark outline when no range carried one", () => {
+    const document = concatenateRanges(source, [range([1]), range([2])]);
+    expect(document.outline).toBeUndefined();
+  });
+
+  it("takes the first NON-EMPTY outline, skipping an absent or empty one", () => {
+    const outline = [
+      { title: "Chapter 1", level: 1, pageNumber: 1 },
+      { title: "Section 1.1", level: 2, pageNumber: 2 }
+    ];
+    const document = concatenateRanges(source, [
+      range([1]),
+      { ...range([2]), outline: [] },
+      { ...range([3]), outline },
+      { ...range([3]), outline: [{ title: "Late duplicate", level: 1, pageNumber: 3 }] }
+    ]);
+    expect(document.outline).toEqual(outline);
   });
 });
 

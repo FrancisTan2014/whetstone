@@ -1,7 +1,13 @@
-import type { StructuredDocItem, StructuredDocument, StructuredPage } from "@whetstone/contracts";
+import type {
+  PdfOutlineEntry,
+  StructuredDocItem,
+  StructuredDocument,
+  StructuredPage
+} from "@whetstone/contracts";
 import { STRUCTURED_DOCUMENT_SCHEMA_VERSION } from "@whetstone/contracts";
 import { parseDocument, type DocumentNodeJSON } from "@whetstone/document";
 import {
+  buildHeadingOutline,
   classifyExtractionConfidence,
   isUnmappedBlockType,
   PDF_EXTRACTION_CONFIDENCE_THRESHOLD,
@@ -32,7 +38,8 @@ function item(partial: Partial<StructuredDocItem> & { label: string }): Structur
 
 function doc(
   body: readonly StructuredDocItem[],
-  pages: readonly StructuredPage[] = [{ hasNativeText: true, pageNumber: 1 }]
+  pages: readonly StructuredPage[] = [{ hasNativeText: true, pageNumber: 1 }],
+  outline?: readonly PdfOutlineEntry[]
 ): StructuredDocument {
   return {
     body,
@@ -40,7 +47,8 @@ function doc(
     furniture: [],
     pages,
     schemaVersion: STRUCTURED_DOCUMENT_SCHEMA_VERSION,
-    source: { byteLength: 10, pageCount: pages.length, sha256: "a".repeat(64) }
+    source: { byteLength: 10, pageCount: pages.length, sha256: "a".repeat(64) },
+    ...(outline === undefined ? {} : { outline })
   };
 }
 
@@ -79,6 +87,8 @@ describe("mapStructuredDocument", () => {
   });
 
   it("projects title to a level-1 heading and section_header to a level-2 heading", () => {
+    // The label table is the LAST-RESORT fallback (#815): with no outline to derive depth from, a
+    // document keeps the flat label-derived levels and says so in `headingLevelSources`.
     const result = mapped(
       mapEn(
         doc([
@@ -96,6 +106,7 @@ describe("mapStructuredDocument", () => {
     expect((section.attrs as { level: number }).level).toBe(2);
     expect(result.units[0]!.title).toBe("The Work");
     expect(result.units[1]!.title).toBe("First Section");
+    expect(result.headingLevelSources).toEqual({ label: 2, outline: 0 });
   });
 
   it("projects text, paragraph, and top-level caption labels to paragraphs", () => {
@@ -488,6 +499,215 @@ describe("mapStructuredDocument", () => {
   });
 });
 
+// Page furniture (#811): docling emits running heads, running feet, and folios INSIDE `doc.body`, and its
+// own `furniture` group is deprecated and arrives empty, so the mapper is the only place that can keep
+// layout debris out of the readable hierarchy — and the only place that can account for what it removed.
+describe("mapStructuredDocument page-furniture exclusion", () => {
+  const pages: readonly StructuredPage[] = [
+    { hasNativeText: true, pageNumber: 1 },
+    { hasNativeText: true, pageNumber: 2 },
+    { hasNativeText: true, pageNumber: 3 }
+  ];
+
+  it("excludes folios and running heads from the body and reports them as evidence", () => {
+    const result = mapped(
+      mapEn(
+        doc(
+          [
+            item({ label: "page_header", pageNumber: 1, text: "Chapter 5: Formatting" }),
+            item({ label: "page_footer", pageNumber: 1, text: "\u2014 89 \u2014" }),
+            item({ label: "text", pageNumber: 1, text: "Readable prose." }),
+            item({ label: "page_header", pageNumber: 2, text: "Chapter 5: Formatting" }),
+            item({ label: "page_footer", pageNumber: 2, text: "90" }),
+            item({ label: "text", pageNumber: 2, text: "More prose." })
+          ],
+          pages
+        )
+      )
+    );
+
+    // Only the two readable paragraphs became blocks; no furniture block, and none on the unknown path.
+    expect(unitTypes(result, 0)).toEqual(["paragraph", "paragraph"]);
+    expect(result.unmappedLabels).toEqual([]);
+    expect(result.evidence.map((row) => row.label)).toEqual(["text", "text"]);
+
+    expect(result.excludedFurniture).toEqual([
+      {
+        label: "page_header",
+        normalizedText: "chapter 5: formatting",
+        page: 1,
+        rule: "repeated-across-pages"
+      },
+      { label: "page_footer", normalizedText: "89", page: 1, rule: "folio" },
+      {
+        label: "page_header",
+        normalizedText: "chapter 5: formatting",
+        page: 2,
+        rule: "repeated-across-pages"
+      },
+      { label: "page_footer", normalizedText: "90", page: 2, rule: "folio" }
+    ]);
+    expect(result.excludedFurnitureCount).toBe(4);
+    // Excluded characters count the RAW source text (not the normalized form), so the caller can measure
+    // what share of the text layer left the body.
+    expect(result.excludedFurnitureCharacters).toBe(
+      "Chapter 5: Formatting".length +
+        "\u2014 89 \u2014".length +
+        "Chapter 5: Formatting".length +
+        2
+    );
+  });
+
+  it("excludes a running head that repeats across page ranges of one document", () => {
+    // The mapper sees the WHOLE document (every committed range concatenated), so a head printed once per
+    // range is still detectable as repetition — a per-range view could never see it.
+    const result = mapped(
+      mapEn(
+        doc(
+          [
+            item({ label: "page_header", pageNumber: 1, text: "Clean Code" }),
+            item({ label: "text", pageNumber: 1, text: "Range one prose." }),
+            item({ label: "page_header", pageNumber: 3, text: "Clean Code" }),
+            item({ label: "text", pageNumber: 3, text: "Range two prose." })
+          ],
+          pages
+        )
+      )
+    );
+    expect(unitTypes(result, 0)).toEqual(["paragraph", "paragraph"]);
+    expect(result.excludedFurniture.map((row) => row.rule)).toEqual([
+      "repeated-across-pages",
+      "repeated-across-pages"
+    ]);
+  });
+
+  it("excludes a one-off running head that restates a heading the document carries", () => {
+    const result = mapped(
+      mapEn(
+        doc(
+          [
+            item({ label: "page_header", pageNumber: 2, text: "The Law of Demeter" }),
+            item({ label: "section_header", pageNumber: 2, text: "The Law of Demeter" }),
+            item({ label: "text", pageNumber: 2, text: "Prose." })
+          ],
+          pages
+        )
+      )
+    );
+    expect(unitTypes(result, 0)).toEqual(["heading", "paragraph"]);
+    expect(result.excludedFurniture).toEqual([
+      {
+        label: "page_header",
+        normalizedText: "the law of demeter",
+        page: 2,
+        rule: "matches-heading"
+      }
+    ]);
+  });
+
+  it("keeps a unique page_header as a readable paragraph instead of an unknown block", () => {
+    // Docling labels some chapter openers `page_header`. Silently discarding a unique candidate would
+    // destroy content, and the old `unknown` fallback rendered it as dashed debris.
+    const result = mapped(
+      mapEn(
+        doc(
+          [
+            item({ label: "page_header", pageNumber: 1, text: "Chapter 3: Functions" }),
+            item({ label: "text", pageNumber: 1, text: "Prose." }),
+            item({ label: "page_footer", pageNumber: 2, text: "1. [Martin]." })
+          ],
+          pages
+        )
+      )
+    );
+    expect(unitTypes(result, 0)).toEqual(["paragraph", "paragraph", "paragraph"]);
+    const kept = result.units[0]!.docBlocks[0]!.node;
+    expect(kept.content).toEqual([{ text: "Chapter 3: Functions", type: "text" }]);
+    // Neither kept label reaches the unknown/fallback path, so neither is reported as unmapped.
+    expect(result.unmappedLabels).toEqual([]);
+    expect(result.excludedFurniture).toEqual([]);
+    expect(result.excludedFurnitureCount).toBe(0);
+    expect(result.excludedFurnitureCharacters).toBe(0);
+  });
+
+  it("keeps surviving blocks in source order with their own page, geometry, and confidence", () => {
+    const result = mapped(
+      mapEn(
+        doc(
+          [
+            item({ label: "page_header", pageNumber: 1, text: "1" }),
+            item({
+              boundingBox: { bottom: 30, left: 5, right: 95, top: 10 },
+              charSpan: [4, 20],
+              confidence: 0.71,
+              label: "text",
+              pageNumber: 1,
+              text: "First."
+            }),
+            item({ label: "page_footer", pageNumber: 1, text: "Running foot" }),
+            item({ label: "section_header", pageNumber: 2, text: "Second Section" }),
+            item({ label: "page_footer", pageNumber: 2, text: "Running foot" }),
+            item({
+              boundingBox: { bottom: 60, left: 6, right: 96, top: 40 },
+              charSpan: [30, 44],
+              confidence: 0.55,
+              label: "text",
+              pageNumber: 2,
+              text: "Second."
+            })
+          ],
+          pages
+        )
+      )
+    );
+
+    expect(unitTypes(result, 0)).toEqual(["paragraph"]);
+    expect(unitTypes(result, 1)).toEqual(["heading", "paragraph"]);
+    // Evidence still describes the surviving blocks only, in source order, each with its own geometry.
+    expect(
+      result.evidence.map((row) => ({
+        confidence: row.confidence,
+        label: row.label,
+        page: row.page,
+        top: row.boundingBox.top
+      }))
+    ).toEqual([
+      { confidence: 0.71, label: "text", page: 1, top: 10 },
+      { confidence: 0.9, label: "section_header", page: 2, top: 0 },
+      { confidence: 0.55, label: "text", page: 2, top: 40 }
+    ]);
+    expect(result.excludedFurniture.map((row) => [row.page, row.rule])).toEqual([
+      [1, "folio"],
+      [1, "repeated-across-pages"],
+      [2, "repeated-across-pages"]
+    ]);
+  });
+
+  it("refuses a document whose body is entirely furniture as no_content, never a new refusal kind", () => {
+    // Exclusion is not a refusal reason: a furniture-only body simply has no readable content, so it
+    // takes the SAME typed `no_content` outcome an empty body does — no empty-shell Work either way.
+    const result = mapEn(
+      doc(
+        [
+          item({ label: "page_header", pageNumber: 1, text: "Clean Code" }),
+          item({ label: "page_footer", pageNumber: 1, text: "12" }),
+          item({ label: "page_header", pageNumber: 2, text: "Clean Code" }),
+          item({ label: "page_footer", pageNumber: 2, text: "13" })
+        ],
+        pages
+      )
+    );
+    expect(result).toEqual({ status: "no_content" });
+  });
+
+  it("reports no furniture for a document that has none", () => {
+    const result = mapped(mapEn(doc([item({ label: "text", text: "Just prose." })])));
+    expect(result.excludedFurniture).toEqual([]);
+    expect(result.excludedFurnitureCount).toBe(0);
+    expect(result.excludedFurnitureCharacters).toBe(0);
+  });
+});
+
 // The shared `needs review` policy (#763) is the SAME pure function the editor's evidence query uses, so
 // asserting it here over the mapper's own output proves the two never diverge: a block's review suggestion
 // is derived from the mapper's node type (`unknown` = the unknown/fallback path) and its retained
@@ -544,5 +764,235 @@ describe("shared extraction-review policy over the mapper's output", () => {
         unmapped: isUnmappedBlockType(typeById.get(lowRow.blockId) ?? "")
       })
     ).toBe(true);
+  });
+});
+
+// #815: heading DEPTH comes from the PDF's own bookmark outline, not from the docling label. The fixture
+// mirrors the measured reality of a real book: docling labels every heading `section_header` (measured
+// `title` count across four ranges of two real books: zero), so without an outline the whole book is a
+// flat wall of H2s.
+describe("outline-derived heading depth", () => {
+  // The real Clean Code bookmarks for pp.124-129, measured with pypdfium2 against the shipped PDF.
+  const cleanCodeOutline: readonly PdfOutlineEntry[] = [
+    { level: 1, pageNumber: 124, title: "Chapter 6: Objects and Data Structures" },
+    { level: 2, pageNumber: 124, title: "Data Abstraction" },
+    { level: 2, pageNumber: 126, title: "Data/Object Anti-Symmetry" },
+    { level: 2, pageNumber: 128, title: "The Law of Demeter" },
+    { level: 3, pageNumber: 129, title: "Train Wrecks" }
+  ];
+
+  // The headings docling actually emitted for that range, all with the same `section_header` label.
+  const cleanCodeHeadings: readonly StructuredDocItem[] = [
+    item({ label: "section_header", pageNumber: 124, text: "Objects and Data Structures" }),
+    item({ label: "section_header", pageNumber: 124, text: "Data Abstraction" }),
+    item({ label: "section_header", pageNumber: 126, text: "Data/Object Anti-Symmetry" }),
+    item({ label: "section_header", pageNumber: 128, text: "The Law of Demeter" }),
+    item({ label: "section_header", pageNumber: 129, text: "Train Wrecks" })
+  ];
+
+  const cleanCodePages: readonly StructuredPage[] = [124, 125, 126, 127, 128, 129].map(
+    (pageNumber) => ({ hasNativeText: true, pageNumber })
+  );
+
+  function headingLevels(
+    result: Extract<PdfCanonicalMappingResult, { status: "mapped" }>
+  ): number[] {
+    return result.units
+      .map((unit) => unit.docBlocks[0]!.node)
+      .filter((node) => node.type === "heading")
+      .map((node) => (node.attrs as { level: number }).level);
+  }
+
+  it("derives 1/2/2/2/3 for a real book range that the label alone would flatten to all-H2", () => {
+    const flat = mapped(mapEn(doc(cleanCodeHeadings, cleanCodePages)));
+    expect(headingLevels(flat)).toEqual([2, 2, 2, 2, 2]);
+    expect(flat.headingLevelSources).toEqual({ label: 5, outline: 0 });
+
+    const derived = mapped(mapEn(doc(cleanCodeHeadings, cleanCodePages, cleanCodeOutline)));
+    expect(headingLevels(derived)).toEqual([1, 2, 2, 2, 3]);
+    expect(derived.headingLevelSources).toEqual({ label: 0, outline: 5 });
+  });
+
+  it("turns the same units into a NESTED reader outline with no Reader change", () => {
+    // `buildHeadingOutline` already nests by heading level, so correct levels alone convert the flat
+    // sidebar into Chapter -> Section. This asserts that end to end over the mapper's own output.
+    function outlineDepths(document: StructuredDocument): number[] {
+      const result = mapped(mapEn(document));
+      return buildHeadingOutline(
+        result.units.map((unit, index) => {
+          const node = unit.docBlocks[0]!.node;
+          const level =
+            node.type === "heading" ? (node.attrs as { level: number }).level : undefined;
+          return {
+            entryId: `u${index}`,
+            ...(level === undefined ? {} : { headingLevel: level }),
+            ...(unit.title === undefined ? {} : { title: unit.title })
+          };
+        })
+      ).map((entry) => entry.depth);
+    }
+
+    expect(outlineDepths(doc(cleanCodeHeadings, cleanCodePages))).toEqual([0, 0, 0, 0, 0]);
+    expect(outlineDepths(doc(cleanCodeHeadings, cleanCodePages, cleanCodeOutline))).toEqual([
+      0, 1, 1, 1, 2
+    ]);
+  });
+
+  it("falls back to the label for a heading the outline does not name", () => {
+    const result = mapped(
+      mapEn(
+        doc(
+          [
+            item({ label: "section_header", pageNumber: 124, text: "Data Abstraction" }),
+            item({ label: "section_header", pageNumber: 124, text: "Not In The Outline" }),
+            item({ label: "title", pageNumber: 125, text: "Also Not In The Outline" })
+          ],
+          cleanCodePages,
+          cleanCodeOutline
+        )
+      )
+    );
+    expect(headingLevels(result)).toEqual([2, 2, 1]);
+    expect(result.headingLevelSources).toEqual({ label: 2, outline: 1 });
+  });
+
+  it("promotes a KEPT page_header that the outline names into a heading at the matched level", () => {
+    // Docling routinely mislabels a chapter opener `page_header`. When the document's own outline names
+    // that exact text on that exact page, the item IS the chapter heading — it starts its own unit at
+    // the declared level instead of trailing along as body text.
+    const result = mapped(
+      mapEn(
+        doc(
+          [
+            item({ label: "text", pageNumber: 124, text: "Preamble." }),
+            item({ label: "page_header", pageNumber: 124, text: "Objects and Data Structures" }),
+            item({ label: "text", pageNumber: 124, text: "Chapter body." })
+          ],
+          cleanCodePages,
+          cleanCodeOutline
+        )
+      )
+    );
+    expect(result.units).toHaveLength(2);
+    expect(unitTypes(result, 0)).toEqual(["paragraph"]);
+    expect(unitTypes(result, 1)).toEqual(["heading", "paragraph"]);
+    expect(headingLevels(result)).toEqual([1]);
+    expect(result.units[1]!.title).toBe("Objects and Data Structures");
+    expect(result.headingLevelSources).toEqual({ label: 0, outline: 1 });
+  });
+
+  it("refuses to promote the real running heads that repeat an already-claimed bookmark", () => {
+    // Measured on the real Clean Code pp.124-129 payload: docling labels the running head at the top of
+    // each verso/recto `page_header`, restating the chapter or section title the page belongs to. Those
+    // restatements match the SAME bookmarks the printed headings already matched. A bookmark names one
+    // heading, so they must stay furniture — promoting them would duplicate every real heading in the
+    // sidebar, which is worse than the flat list this issue set out to fix.
+    const body: readonly StructuredDocItem[] = [
+      item({ label: "section_header", pageNumber: 124, text: "Objects and Data Structures" }),
+      item({ label: "section_header", pageNumber: 124, text: "Data Abstraction" }),
+      item({ label: "text", pageNumber: 124, text: "Body." }),
+      item({
+        label: "page_header",
+        pageNumber: 125,
+        text: "Chapter 6: Objects and Data Structures"
+      }),
+      item({ label: "section_header", pageNumber: 126, text: "Data/Object Anti-Symmetry" }),
+      item({ label: "page_header", pageNumber: 126, text: "Data/Object Anti-Symmetry" }),
+      item({ label: "section_header", pageNumber: 128, text: "The Law of Demeter" }),
+      item({ label: "page_header", pageNumber: 128, text: "The Law of Demeter" }),
+      item({ label: "page_footer", pageNumber: 128, text: "97" }),
+      item({ label: "section_header", pageNumber: 129, text: "Train Wrecks" })
+    ];
+    const result = mapped(mapEn(doc(body, cleanCodePages, cleanCodeOutline)));
+
+    // Exactly the five printed headings, at their real declared depth — no duplicates from the four
+    // furniture items.
+    expect(headingLevels(result)).toEqual([1, 2, 2, 2, 3]);
+    expect(result.headingLevelSources).toEqual({ label: 0, outline: 5 });
+    expect(result.units.map((unit) => unit.title)).toEqual([
+      "Objects and Data Structures",
+      "Data Abstraction",
+      "Data/Object Anti-Symmetry",
+      "The Law of Demeter",
+      "Train Wrecks"
+    ]);
+  });
+
+  it("promotes a mislabelled opener whose bookmark no real heading claimed, beside claimed ones", () => {
+    // The other half of the claim rule: when docling emits NO heading for a bookmark, the furniture item
+    // that names it is the only candidate, so it is promoted. Ordering matters — the claimed entries are
+    // resolved first, so this promotion cannot steal one of them.
+    const result = mapped(
+      mapEn(
+        doc(
+          [
+            item({ label: "section_header", pageNumber: 124, text: "Data Abstraction" }),
+            item({ label: "page_header", pageNumber: 124, text: "Data Abstraction" }),
+            item({ label: "page_header", pageNumber: 128, text: "The Law of Demeter" }),
+            item({ label: "text", pageNumber: 128, text: "Body." })
+          ],
+          cleanCodePages,
+          cleanCodeOutline
+        )
+      )
+    );
+    expect(headingLevels(result)).toEqual([2, 2]);
+    expect(result.units.map((unit) => unit.title)).toEqual([
+      "Data Abstraction",
+      "The Law of Demeter"
+    ]);
+    expect(result.headingLevelSources).toEqual({ label: 0, outline: 2 });
+  });
+
+  it("leaves an unnamed page_header on its ordinary mapping — a label alone never promotes", () => {
+    const result = mapped(
+      mapEn(
+        doc(
+          [item({ label: "page_header", pageNumber: 124, text: "Clean Code" })],
+          cleanCodePages,
+          cleanCodeOutline
+        )
+      )
+    );
+    expect(unitTypes(result, 0)).not.toContain("heading");
+    expect(result.headingLevelSources).toEqual({ label: 0, outline: 0 });
+  });
+
+  it("does not promote a body paragraph even when the outline names it", () => {
+    // Only heading-labelled and furniture-labelled items are candidates: a running sentence that happens
+    // to repeat a bookmark title must stay a paragraph.
+    const result = mapped(
+      mapEn(
+        doc(
+          [item({ label: "text", pageNumber: 124, text: "Data Abstraction" })],
+          cleanCodePages,
+          cleanCodeOutline
+        )
+      )
+    );
+    expect(unitTypes(result, 0)).toEqual(["paragraph"]);
+    expect(result.headingLevelSources).toEqual({ label: 0, outline: 0 });
+  });
+
+  it("clamps an outline level deeper than the canonical model", () => {
+    const result = mapped(
+      mapEn(
+        doc(
+          [item({ label: "section_header", pageNumber: 1, text: "Very Deep" })],
+          [{ hasNativeText: true, pageNumber: 1 }],
+          [{ level: 9, pageNumber: 1, title: "Very Deep" }]
+        )
+      )
+    );
+    expect(headingLevels(result)).toEqual([6]);
+    expect(result.headingLevelSources).toEqual({ label: 0, outline: 1 });
+  });
+
+  it("reports an all-label document distinctly from an all-outline one", () => {
+    // The counts are the falsifiable record that depth was really derived: an empty outline can never
+    // report an `outline` level, so a regression that stops matching shows up here.
+    const empty = mapped(mapEn(doc(cleanCodeHeadings, cleanCodePages, [])));
+    expect(empty.headingLevelSources).toEqual({ label: 5, outline: 0 });
+    expect(headingLevels(empty)).toEqual([2, 2, 2, 2, 2]);
   });
 });

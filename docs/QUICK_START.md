@@ -64,24 +64,24 @@ Pick a different model with `WHISPER_MODEL` (default `small`, multilingual): e.g
 and voice diary yields a real transcript. Details and the STT contract:
 [docs/SPEECH.md](./SPEECH.md).
 
-### PDF ingestion (born-digital preview)
+### PDF ingestion (uncertified preview)
 
-Uploading a `.pdf` now imports it as a **born-digital preview**: a PDF whose pages all carry usable
-native text is mapped straight into the same canonical ProseMirror `Work -> ReadingUnit -> Block`
-model (never through Markdown) and opens in the existing Reader, searchable and annotatable like any
-other Work. Identical bytes re-uploaded reopen the existing Work instead of duplicating it. The import
-runs as a background job with upload/queued/processing/failed states; navigating away does not cancel
-it, and the Library can reopen its status.
+Uploading a `.pdf` now runs the canonical structured/OCR pipeline for born-digital, scanned, and mixed
+English/Chinese inputs. A passing import maps text and extractable figures straight into the same
+ProseMirror `Work -> ReadingUnit -> Block` model (never through Markdown) and opens in the existing
+Reader, searchable and annotatable like any other Work. An unresolved figure becomes a visible,
+correctable placeholder instead of discarding the readable Work. OCR validation failure, an empty
+conversion, or an operational bound publishes no partial Work. Identical bytes re-uploaded reopen the
+existing Work instead of duplicating it. The import runs as a background job with
+upload/queued/processing/failed states; navigating away does not cancel it, and the Library can reopen
+its status.
 
-**Sequenced limitation (OCR).** Language-aware OCR for scanned or mixed pages is not available yet
-(#704). Until it lands, a PDF with any page lacking native text returns a typed **OCR required**
-outcome and publishes **no** partial Work — the app reports **"OCR support is not available yet."**
-rather than falling back to the legacy Markdown lane or persisting incomplete content. In-editor
-correction tooling (#703) and the measured "supported PDF" claim (#705) are likewise still pending;
-this lane is a preview until they arrive.
+This lane remains an **uncertified preview** until the complete private-corpus gate in #705 records
+the measured support rate and bounds. The shared editor can correct any published imported Work, but
+that fallback does not turn a failed or partial conversion into a supported success.
 
 > The legacy Docling→Markdown persistence route (`POST …/content/pdf`) has been **removed** (#783);
-> this canonical `/api/pdf-imports` lane is the only PDF path. Born-digital import
+> this canonical `/api/pdf-imports` lane is the only PDF path. PDF import
 > converts the uploaded bytes with the **real Docling runner**, so the `pnpm setup:pdf` toolchain (Python
 > / Docling) **is** required to import a PDF on a supported host; without it — or on a platform that cannot
 > enforce the converter's memory ceiling — an upload **fails visibly** (`tool_missing`) rather than
@@ -90,7 +90,7 @@ this lane is a preview until they arrive.
 > pinned `pywin32==312` — so on Windows `pnpm setup:pdf` additionally installs and pin-verifies `pywin32`
 > and runs the worker's ceiling-capability probe; the default ceiling is 2,048 MiB on POSIX and 6,144 MiB
 > on Windows (`PDF_STRUCTURED_MEMORY_MIB` overrides it on every platform). `pnpm setup:doctor` reports that
-> toolchain (and the future OCR lane's OCRmyPDF / Tesseract).
+> toolchain, including OCRmyPDF / Tesseract.
 
 No separate database server is required: v0 uses an embedded PostgreSQL engine
 ([PGlite](https://github.com/electric-sql/pglite)) that runs in-process, so `setup` provisions no
