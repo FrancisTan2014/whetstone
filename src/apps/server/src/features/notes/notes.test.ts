@@ -392,7 +392,10 @@ describe("create note route", () => {
 
     expect(response.statusCode).toBe(201);
     const note = response.json() as NoteDto;
-    expect(note.anchor.startOffset).toBeUndefined();
+    // `anchor` is nullable on the DTO; assert it resolved before reading the offsets, otherwise a
+    // dropped anchor would satisfy the `toBeUndefined` assertions vacuously.
+    expect(note.anchor).not.toBeNull();
+    expect(note.anchor?.startOffset).toBeUndefined();
 
     const anchorRows = await context.db
       .select()
@@ -508,15 +511,15 @@ describe("create note route", () => {
 
     expect(response.statusCode).toBe(201);
     const note = response.json() as NoteDto;
-    expect(note.anchor.blockEntryId).toBe(startBlockEntryId);
-    expect(note.anchor.endBlockEntryId).toBe(endBlockEntryId);
-    expect(note.anchor.startOffset).toBe(16);
-    expect(note.anchor.endOffset).toBe(5);
+    expect(note.anchor?.blockEntryId).toBe(startBlockEntryId);
+    expect(note.anchor?.endBlockEntryId).toBe(endBlockEntryId);
+    expect(note.anchor?.startOffset).toBe(16);
+    expect(note.anchor?.endOffset).toBe(5);
 
     // Round-trips through the list with both block ids intact.
     const listed = (await listNotes(workEntryId)).json() as NoteListDto;
     const served = listed.notes.find((item) => item.entryId === note.entryId);
-    expect(served?.anchor.endBlockEntryId).toBe(endBlockEntryId);
+    expect(served?.anchor?.endBlockEntryId).toBe(endBlockEntryId);
     // A sanity check on the fixtures: the offsets sit within their own blocks.
     expect(startPlaintext.length).toBeGreaterThanOrEqual(16);
     expect(endPlaintext.length).toBeGreaterThanOrEqual(5);
@@ -633,7 +636,7 @@ describe("create mark route", () => {
     expect(mark.kind).toBe("mark");
     expect(mark.bodyDoc).toBeNull();
     expect(mark.bodyText).toBeNull();
-    expect(mark.anchor.selectedTextSnapshot).toBe("brown fox");
+    expect(mark.anchor?.selectedTextSnapshot).toBe("brown fox");
 
     const markRows = await context.db.select().from(notes).where(eq(notes.entryId, mark.entryId));
     expect(markRows[0]?.kind).toBe("mark");
@@ -755,8 +758,11 @@ describe("list notes route", () => {
     expect(sub?.bodyText).toBe("to outwit");
 
     const whole = body.notes.find((note) => note.entryId === wholeBlock.entryId);
-    expect(whole?.anchor.startOffset).toBeUndefined();
-    expect(whole?.anchor.endOffset).toBeUndefined();
+    // `anchor` is nullable on the DTO; assert it resolved before reading the offsets, otherwise a
+    // dropped anchor would satisfy the `toBeUndefined` assertions vacuously.
+    expect(whole?.anchor).not.toBeNull();
+    expect(whole?.anchor?.startOffset).toBeUndefined();
+    expect(whole?.anchor?.endOffset).toBeUndefined();
     expect(whole?.kind).toBe("note");
   });
 

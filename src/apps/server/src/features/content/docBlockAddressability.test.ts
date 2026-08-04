@@ -41,7 +41,13 @@ type TestContext = Readonly<{
 // the Markdown path writes none, so an EPUB is the substrate that exercises the doc_block anchor path.
 function singleChapterEpub(): ParsedEpub {
   return {
-    chapters: [{ html: "<h1>Chapter One</h1><p>The quick brown fox.</p>", images: [] }],
+    chapters: [
+      {
+        html: "<h1>Chapter One</h1><p>The quick brown fox.</p>",
+        images: [],
+        sourceFile: "text/ch01.xhtml"
+      }
+    ],
     metadata: { author: "Aesop", language: "en", title: "Fables" }
   };
 }
@@ -58,7 +64,8 @@ function ddiaStyleChapterEpub(): ParsedEpub {
           "<p>Section body one.</p></div>" +
           '<div class="sect1" id="sec_introduction_scalability"><h1>Scalability</h1>' +
           "<p>Section body two.</p></div>",
-        images: []
+        images: [],
+        sourceFile: "text/ch01.xhtml"
       }
     ],
     metadata: { author: "Author", language: "en", title: "Data Systems" }
@@ -91,19 +98,12 @@ async function buildContext(epub: ParsedEpub = singleChapterEpub()): Promise<Tes
     now: () => new Date()
   };
   const content: ContentDependencies = {
-    createAuthorId: () => `content-author-${(authorSequence += 1)}`,
     createAuthorId: () => `epub-author-${(authorSequence += 1)}`,
     createEntryId: () => `entry-${(entrySequence += 1)}`,
     createSourceId: () => `source-${(sourceSequence += 1)}`,
     db,
-    // These tests never ingest an EPUB; the parser, upload limit, and image store exist only to
-    // satisfy the content route wiring, and fail loudly rather than silently no-op if reached.
-    epubParser: () => Promise.reject(new Error("unexpected epubParser")),
-    epubUploadLimitBytes: 50 * 1024 * 1024,
-    imageResourceStore: {
-      store: () => Promise.reject(new Error("unexpected imageResourceStore.store"))
-    },
     epubParser: async () => epub,
+    epubUploadLimitBytes: 50 * 1024 * 1024,
     imageResourceStore: createImageResourceStore(imagesDir),
     ingestionLogger: () => {},
     sourceFileStore: createSourceFileStore(sourcesDir)
@@ -115,7 +115,14 @@ async function buildContext(epub: ParsedEpub = singleChapterEpub()): Promise<Tes
     createAttemptId: () => `attempt-${(sourceSequence += 1)}`,
     createStageId: () => `stage-${(sourceSequence += 1)}`,
     log: { info: () => undefined },
-    now: () => new Date()
+    now: () => new Date(),
+    // These tests upload EPUBs only; the PDF review collaborators mirror content.test.ts so the
+    // work-creation boundary is wired the same way, and answer "nothing staged" for every call.
+    pdf: {
+      discard: async () => {},
+      loadForReview: async () => ({ status: "not_awaiting" }),
+      publish: async () => ({ status: "skipped" })
+    }
   };
 
   return {
@@ -208,8 +215,8 @@ describe("PM doc_block ids are first-class addressable anchors (#312 regression)
     const listed = (list.json() as NoteListDto).notes;
     expect(listed).toHaveLength(1);
     expect(listed[0]?.entryId).toBe(note.entryId);
-    expect(listed[0]?.anchor.blockEntryId).toBe(docBlockId);
-    expect(listed[0]?.anchor.contextSnapshot).toBe(plaintext);
+    expect(listed[0]?.anchor?.blockEntryId).toBe(docBlockId);
+    expect(listed[0]?.anchor?.contextSnapshot).toBe(plaintext);
 
     // The cross-work Notes overview resolves the doc_block anchor too (work title + author).
     const overview = await context.server.inject({ method: "GET", url: "/api/notes" });

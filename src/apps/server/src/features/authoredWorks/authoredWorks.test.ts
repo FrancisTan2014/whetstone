@@ -522,8 +522,8 @@ describe("authored Works are first-class in the shared reader (#576)", () => {
     // the PM nodes (toReaderBlocks prefers docBlocks). The block ids match the saved document so notes
     // anchor to them.
     expect(unit?.blocks).toEqual([]);
-    expect(unit?.docBlocks.map((block) => block.entryId)).toEqual([blockId(document, 0)]);
-    expect(unit?.docBlocks[0]?.type).toBe("paragraph");
+    expect(unit?.docBlocks?.map((block) => block.entryId)).toEqual([blockId(document, 0)]);
+    expect(unit?.docBlocks?.[0]?.type).toBe("paragraph");
   });
 
   it("still surfaces a brand-new empty authored Work, marking its empty unit non-substantive", async () => {
