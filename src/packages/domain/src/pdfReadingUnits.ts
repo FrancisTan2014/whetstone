@@ -93,6 +93,10 @@ function outlineDivisions(
     if (heading === null || heading.outlineEntry === null || heading.level !== TOP_OUTLINE_LEVEL) {
       return;
     }
+    // Keyed on the ENTRY, never on its title: two bookmarks may share a title (`Introduction`,
+    // `Summary`) and must stay two divisions. Over-merging is bounded because every matcher rung is
+    // page-anchored (rungs 1–2 same page, rung 3 within one page), so two entries can only collapse
+    // when they sit on one page — `Clean Code` (p2) and `Chapter 1: Clean Code` (p32) never do.
     if (opened.has(heading.outlineEntry.index)) {
       return;
     }

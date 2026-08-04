@@ -114,6 +114,23 @@ describe("decidePdfReadingUnits", () => {
       expect(unitSizes(starts, 5)).toEqual([5]);
     });
 
+    it("keeps two identically titled bookmarks as two divisions", () => {
+      // Identity is the ENTRY, not its text. `Introduction` is a chapter name real books reuse — here
+      // bookmark 3 points at p10 and bookmark 12 at p200, so each names its own division and the second
+      // must not be swallowed by the first. Keying the dedupe on the title instead would merge them,
+      // silently gluing 190 pages into one unit.
+      const starts = decidePdfReadingUnits([
+        authored(1, 3, "Introduction"),
+        BODY,
+        authored(2, 4, "Why Read This"),
+        BODY,
+        authored(1, 12, "Introduction"),
+        BODY
+      ]);
+      expect(titles(starts)).toEqual(["Introduction", "Introduction"]);
+      expect(unitSizes(starts, 6)).toEqual([4, 2]);
+    });
+
     it("keeps a leading run before the first division as one neutral unit", () => {
       const starts = decidePdfReadingUnits([
         BODY,
