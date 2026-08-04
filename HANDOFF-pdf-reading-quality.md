@@ -990,3 +990,123 @@ now.
 lives in **`plaintext`**, not `text`. The PGlite store is at `src/apps/server/.data/db` — **copy it
 and query the copy**, never the live directory. Run the query from `src/apps/server`, where
 `@electric-sql/pglite` resolves.
+
+---
+
+## 13. The reading experience: what is actually still wrong, measured
+
+Ingestion completeness is fixed and hardened. The *reading* quality is a separate axis, and this is
+where the remaining value is. I read the repaired data as a reader would rather than inferring from
+counts, and the picture is sharper than the original screenshot suggested.
+
+### The dominant defect is structural fragmentation, not bad text
+
+| work | source | pages | reading units |
+|---|---|---|---|
+| Designing Data-Intensive Applications | EPUB | ~600 | **25** |
+| Clean Code | PDF | 462 | **525** |
+
+The EPUB path lands at chapter scale. The PDF path creates a unit at essentially every heading, so a
+462-page book becomes 525 fragments — roughly one per page. **This is almost certainly the real reason
+the PDF reading experience looked unusable next to a plain PDF viewer.** The text is largely fine; the
+book has no spine. You cannot read a chapter because there is no chapter.
+
+The unit titles corroborate it: `String Arguments` (a sub-section), `Args.java (After first
+refactoring)` (a code-listing caption), `Ron Jeffries, author of Extreme Programming Installed…` (a
+cover endorsement), `The Object Mentors:`. Front matter, captions and sub-sections are all being
+promoted to top-level units.
+
+This is **#816**, already `ready-for-dev`, now carrying the measurement. **If you only have time for one
+more thing, do #816.** #828 (use the PDF bookmark outline) is plausibly its deterministic mechanism.
+
+### Block-level census, Clean Code
+
+| type | n | avg chars |
+|---|---|---|
+| paragraph | 1741 | 255 |
+| heading | 524 | 27 |
+| codeBlock | 520 | 580 |
+| footnoteTarget | 100 | 86 |
+| figure | 55 | 9 |
+| bulletList | 51 | 257 |
+| **unknown** | **39** | **0** |
+| table | 8 | 599 |
+
+Structurally healthy for a code-heavy book, with two defects visible:
+
+- **39 empty `unknown` blocks** — `{"tag":"key_value_area","html":""}` and
+  `{"tag":"document_index","html":""}`. Two ordinary constructs reach the mapper unmapped and their
+  descendants are lost. `document_index` is the book's own table of contents. This is **#812** (evidence
+  posted); note the empty block is arguably worse than no block, because it still occupies an order slot.
+- **One heading of 2,594 characters** — an entire numbered Java listing absorbed into the heading that
+  introduced it (`Listing B-6 RelativeDayOfWeekRule.java`). Filed as **#856**. Only 22 headings across
+  the whole library exceed 120 chars, so this is inside the ≥95% target and is a quality issue, not a
+  stability one — but severity is not proportional to count: one 2,594-character heading visibly wrecks
+  a page.
+
+### A false alarm I chased so you do not have to
+
+I suspected PDF text extraction was dropping inter-word spaces (`WeAre Authors`). Measured against EPUB
+as a control:
+
+| work | source | paragraphs with `[a-z][A-Z]` | headings with `[a-z][A-Z]` |
+|---|---|---|---|
+| Clean Code | PDF | 21.5% | 10.9% |
+| DDIA | EPUB | 13.7% | 2.3% |
+
+A 4.7× elevation in headings looks damning. **It is not real.** Sampling the matching headings shows
+almost all are legitimate Java class names — `SpreadsheetDate.java`, `BoldWidget.java`, `ArgsTest.java`.
+Out of 23 sampled, exactly one (`WeAre Authors`) was a genuine lost space.
+
+> **The PDF text extraction is not systematically dropping spaces.** Do not start a de-hyphenation or
+> space-repair pass on the strength of the aggregate percentages; they are explained by the subject
+> matter.
+
+This is the second time today an aggregate nearly produced a bogus defect (the first was the
+dual-substrate trap in §12). Both times the fix was the same: **look at the rows, and find a control.**
+
+### How to re-run any of this
+
+```powershell
+# copy the live DB first; never query it in place
+Copy-Item Q:\src\whetstone\src\apps\server\.data\db <snap> -Recurse
+# the query script must live INSIDE src/apps/server so @electric-sql/pglite resolves
+cd Q:\src\whetstone\src\apps\server; node _dbq.mjs <snap> "<sql>"
+```
+
+Schema names that cost time: `doc_blocks` (not `blocks`), `work_meta` (not `works`), joins on
+`work_entry_id` / `reading_unit_entry_id` (not `work_id`), content in `plaintext` (not `text`), and the
+block kind column is **`type`**, not `kind`.
+
+---
+
+## 14. Final state of the delivery loop
+
+**Merged today (10):** #835, #838, #836, #839, #844, #848, #846, #852, #849, **#854**.
+
+#854 deserves a note: the reviewer proved the `instanceof HTMLElement` guard was **dead code** by
+running the whole web suite with the guard deleted (161 files / 1,967 tests, 46 live presses through
+the handler, zero disagreements between the old class check and the new identity check). The reachable
+non-element target in production was SVG — toolbar icons — not text, and `classList` is an `Element`
+API, so the class check already rejected it.
+
+**Open at handoff:** **#855** (per-page completeness evidence, in review). I verified its riskiest
+property myself, because a completeness gate that is too strict refuses *every* import — far worse than
+the bug it fixes. Against the real book with the pinned converter:
+
+| requested | status | pages_len | page_no values | both gates |
+|---|---|---|---|---|
+| 1–50 (real production range size) | `SUCCESS` | 50 | `1..50` | **ACCEPT** |
+| 451–462 (real clamped final range) | `SUCCESS` | 12 | `451..462` | **ACCEPT** |
+
+The second row is the one that mattered: `pageRangesFor` clamps the tail, so every book ends with a
+short range. Had docling numbered a clamped window relatively (`1..12`), the gate would have refused the
+final range of every book while looking perfectly correct. It numbers absolutely.
+
+**Filed this segment:** #856 (oversized heading), **#857** (the durable review rules, written out in
+full in the issue body so the knowledge survives even if no PR lands).
+
+**Read #857 before touching a flaky test.** Its first rule is the most expensive lesson of the day: my
+own "fix" for a caret race made the suite green by *removing the assertion*, and only an independent
+reviewer's planted mutation caught it. "Fails before, passes after" cannot distinguish a repaired test
+from a disarmed one.
