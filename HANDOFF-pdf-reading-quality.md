@@ -2,8 +2,8 @@
 
 > ## STATE AT HANDOFF — everything below is landed unless marked otherwise
 >
-> `main` is at **`0b72a3fc`**. Merged on 2026-08-04, in order:
-> **#835, #838, #836, #839, #844, #848, #846, #852.**
+> `main` is at **`db42326c`**. Merged on 2026-08-04, in order:
+> **#835, #838, #836, #839, #844, #848, #846, #852, #849.**
 >
 > | PR | What it did |
 > |---|---|
@@ -12,17 +12,17 @@
 > | #848 | stop note re-application dismissing the selection toolbar; barrier the caret test (#825) |
 > | #846 | gate the 132→145-test Python worker suite in `validate` and CI |
 > | #852 | kill the second caret race — await Tiptap's deferred frame instead of out-running it (§10) |
+> | #849 | pin the worker exit-code wire integers and `USABILITY_REASONS` so they cannot drift silently |
 >
 > **The merge gate now requires four checks**, not three — `Quality`, `Runtime`, `Isolated contracts`,
 > and the new **`Python worker tests`**. Any branch cut before #846 must be refreshed before it can
 > merge; see §9.
 >
-> **Still open:** **#849** (pin the exit-code wire integers and `USABILITY_REASONS`) is **approved**,
-> refreshed onto `main`, and awaiting its re-run — its only red was the caret flake that #852 has now
-> fixed; see §11. **#840** is `ready-for-dev` with its premise measured and corrected (§8). **#847**
-> has a recorded design decision on it (on-demand Windows job + a decision record, not a required
-> lane). **#850** (typecheck is blind to every test file) and **#853** (a test that asserts something
-> React never delivers) are filed and `ready-for-dev`.
+> **The approved queue is empty — every PR opened today is merged.** What remains is `ready-for-dev`
+> work, none of it blocking the app: **#840** (back the completeness rule with per-page evidence;
+> premise measured and corrected — §8), **#847** (a design decision is recorded on it: an on-demand
+> Windows job plus a decision record, **not** a required lane), **#850** (typecheck is blind to every
+> test file), **#853** (a test asserting something React never delivers — §10).
 >
 > The user-visible defect is fixed and verified against the live database: **Clean Code holds 3,038
 > blocks / 786,475 characters**, up from 335 / 87,359. The whole library was swept, not just that
@@ -915,21 +915,27 @@ Every other `user.type(textbox, ...)` in `RichContentEditor.test.tsx` (lines ~24
 result. Line ~854 is shape A and is barriered. **If you add a test that types after a mousedown
 and expects a prepend, you are re-creating shape B** — focus explicitly and skip the click.
 
-## 11. Where #849 stands
+## 11. #849 landed — and what its story proves about the gate
 
-**#849** (`dev/issue-842-pin-exit-codes-and-reasons`) pins the exit-code wire integers and
-`USABILITY_REASONS` so they cannot drift silently. It has been **approved by the reviewer**, and
-four of its five lanes are green; its **Quality lane failed on shape B above**, not on anything in
-its own diff.
+**#849 is merged** (`db42326c`). It pins the exit-code wire integers and `USABILITY_REASONS` so they
+cannot drift silently.
 
-Because #852 lands the flake fix on `main`, #849 becomes `BEHIND` and must be refreshed
-(`gh pr update-branch`) — and that refresh re-runs its Quality lane **with the fix present**. So
-the flake fix and #849's re-run cost one cycle between them, not two. Refresh it, prove the diff
-is byte-identical (§9), re-post the approval marker against the new head, and merge.
+Its route is worth remembering, because it is the cheapest way to clear a PR blocked by a flake that
+is **not in its own diff**. #849's Quality lane failed on shape B above. Rather than re-running it
+and hoping:
 
-The reviewer's two original findings on #849 are already fixed: the `satisfies` guard that never
-ran (all tsconfigs exclude test files — filed separately as **#850**), and the wider-than-
-documented undetected shape.
+1. Land the flake fix on `main` first (#852).
+2. #849 is then `BEHIND`, so it **must** be refreshed anyway (`mergeGateFailures` accepts only
+   `CLEAN`/`UNSTABLE`, §9).
+3. That mandatory refresh re-runs Quality **with the fix present**.
+
+So the flake fix and the re-run cost **one cycle between them, not two**, and — the part that
+matters — the re-run became a real signal instead of another coin flip. All four required lanes then
+passed on the first attempt, which is itself the evidence that the flake was #849's only problem.
+
+The reviewer's two original findings had already been fixed: the `satisfies` guard that never ran
+(root cause — every tsconfig excludes test files — filed as **#850**) and the wider-than-documented
+undetected shape.
 
 ---
 
