@@ -798,3 +798,95 @@ in the comment that carries the new marker, and link the original review.
 locale codepage and mangles em dashes, so a string match against an issue body silently fails to
 find its anchor. Always pass `encoding="utf-8"`.
 
+
+---
+
+## 10. The caret race has two shapes, not one (#825 → #848, then #851 → #852)
+
+`RichContentEditor.tsx` (~L317) claims a mousedown that lands on the blank paper margin and puts
+the caret at the document end:
+
+```ts
+if (isBlankSurfacePress(event.target)) {
+  requestAnimationFrame(() => editor.commands.focus("end"));
+}
+```
+
+The focus lands **one frame later**. Every test that types near that press is racing that frame.
+Three separate CI failures came from this one deferred step, and they look different enough that
+fixing one does not suggest the others exist. **The product code is correct in all three cases —
+a human cannot type within one frame of a mousedown. Do not "fix" `RichContentEditor.tsx`.**
+
+### Shape A — the positive test (fixed by #848)
+
+`claims a press on the blank margin` presses the margin, expects the caret at the end, types `!`
+and asserts `Hello!`. If the keystroke beats the frame the caret is still at the start and it
+prepends. Fixed with an explicit barrier before typing:
+
+```ts
+await waitFor(() => expect(document.activeElement).toBe(textbox));
+```
+
+### Shape B — the negative tests (fixed by #852)
+
+`ignores a press that lands on inner content rather than the blank margin` and `ignores a press
+whose target is a text node, not an element` press *inner content*, which the handler correctly
+ignores, and prove it by typing `!` and expecting `!Hello`.
+
+The trap: they typed with `await user.type(textbox, "!")`, and **`user.type` clicks its target
+first**. `textbox` *is* the blank surface, so the typing armed the very handler the test asserted
+was not armed. The failure signature is the mirror image of shape A:
+
+```
+AssertionError: expected 'Hello!' to be '!Hello'
+```
+
+Fixed by focusing directly and suppressing that click:
+
+```ts
+textbox.focus();
+await user.type(textbox, "!", { skipClick: true });
+```
+
+**`{ skipClick: true }` alone is wrong** — it also skips focusing, so the keystroke never reaches
+the editor and the test dies with `Expected the document listener to have been called.` The
+explicit `focus()` is load-bearing; the committed comments say so, because the obvious
+"simplification" is to delete it.
+
+### How to prove a caret race — do not use repetition
+
+Repetition is the wrong instrument: the buggy versions pass on an idle runner essentially always,
+so a green re-run proves nothing. Force the deferred step to win instead:
+
+```ts
+vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+  cb(performance.now());
+  return 0;
+});
+```
+
+Under that stub the broken tests failed **100%** with the exact CI signature, and the fixed ones
+pass. The stub is a diagnostic — it is never committed.
+
+### The rest of the file is clean
+
+Every other `user.type(textbox, ...)` in `RichContentEditor.test.tsx` (lines ~245, 252, 268, 474,
+558) types into an empty or already-at-end document, where `focus("end")` cannot change the
+result. Line ~854 is shape A and is barriered. **If you add a test that types after a mousedown
+and expects a prepend, you are re-creating shape B** — focus explicitly and skip the click.
+
+## 11. Where #849 stands
+
+**#849** (`dev/issue-842-pin-exit-codes-and-reasons`) pins the exit-code wire integers and
+`USABILITY_REASONS` so they cannot drift silently. It has been **approved by the reviewer**, and
+four of its five lanes are green; its **Quality lane failed on shape B above**, not on anything in
+its own diff.
+
+Because #852 lands the flake fix on `main`, #849 becomes `BEHIND` and must be refreshed
+(`gh pr update-branch`) — and that refresh re-runs its Quality lane **with the fix present**. So
+the flake fix and #849's re-run cost one cycle between them, not two. Refresh it, prove the diff
+is byte-identical (§9), re-post the approval marker against the new head, and merge.
+
+The reviewer's two original findings on #849 are already fixed: the `satisfies` guard that never
+ran (all tsconfigs exclude test files — filed separately as **#850**), and the wider-than-
+documented undetected shape.
