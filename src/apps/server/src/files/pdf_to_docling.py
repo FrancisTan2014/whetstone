@@ -32,14 +32,25 @@ Reliability contract (mirrors the #403 markdown worker, kept in LOCKSTEP with pd
   payload, which is later committed and published as a whole book. So the
   status IS the contract here: anything other than ``SUCCESS`` exits ``EXIT_CONVERSION_INCOMPLETE`` with
   the failed page numbers and Docling's own reason on stderr, and no payload at all. Standing behind that
-  single channel, ``ConversionResult.pages`` records what the converter actually PROCESSED, page by page,
-  independently of the status it reports about itself: a requested page absent from it is a lost page and
-  refuses the range with the same exit code, so a future converter that claims success while silently
+  status, ``ConversionResult.pages`` records what the converter actually PROCESSED, page by page. It is
+  NOT an independent channel: in pinned docling the status is DERIVED from that same list (a failed page
+  is dropped from ``pages`` and appended to ``errors``, and any error downgrades ``SUCCESS``), so for
+  in-document page loss the two agree by construction. What the record adds is that it is checked against
+  the window this range REQUESTED, which the status cannot see — asked for pages 461-470 of the real
+  462-page book, docling clamps to 461-462 and still reports ``SUCCESS`` with zero errors (measured), and
+  only the record catches it — and that a future converter that claims success while silently
   under-producing cannot publish a fragment either. Both gates FAIL CLOSED: a result that reports no
   status, and a result carrying no per-page record, are refused too, because a conversion whose
   completeness cannot be checked is not a complete conversion. Neither judges completeness from what a
   page PRODUCED — an item count was measured to be zero for pages that converted perfectly
   (``docs/DECISIONS.md`` D8).
+- Two page-count authorities exist for one file and are never reconciled: ``count_pages`` (and so every
+  range this worker is asked for) counts with pypdfium2, ``len(PdfDocument)``, while docling clamps a
+  requested range with its own document backend's ``page_count()`` — a docling-parse count, which that
+  backend logs as "Inconsistent number of pages" when it disagrees with pypdfium2's. They agree on the
+  real book (462 both ways). If they ever diverge, the last range overshoots what docling will convert
+  and the per-page gate above refuses the import: the product-correct outcome under "complete or
+  refused", and the first place to look if a whole book starts refusing on its final range.
 - The per-child memory ceiling is ENFORCED, not best-effort, through ONE worker-owned memory-boundary
   contract with a per-platform implementation (#782): POSIX applies an address-space ``RLIMIT_AS``; a
   supported Windows host applies a native Job Object memory limit (``JOB_OBJECT_LIMIT_PROCESS_MEMORY`` +
@@ -1133,14 +1144,20 @@ def processed_page_numbers(result: Any) -> set[int]:
     """The pages Docling's OWN per-page record says it processed: the ``page_no``s on ``result.pages``.
 
     ``ConversionResult.pages`` holds one entry per page the converter actually processed, so it records
-    what the converter DID rather than what it emitted — a channel independent of ``status``/``errors``,
-    which is the point of #840: the hypothesized future failure is a converter that reports ``SUCCESS``
-    while under-producing, and that failure cannot be seen from the status it reports about itself.
+    what the converter DID rather than what it emitted. It is NOT independent of ``status``/``errors``:
+    in pinned docling (2.114.0) the status is derived from this very list — each failed page is dropped
+    from it and appended to ``errors``, success is ``len(pages) == total_expected``, and a non-empty
+    ``errors`` downgrades ``SUCCESS`` — so today ``status == SUCCESS`` already implies the list is as
+    long as the converter EXPECTED. Reading the list directly buys two things the status cannot give:
+    ``ensure_pages_processed`` compares it with the window this range REQUESTED, which the status never
+    sees (docling clamps an over-long window and still reports an unqualified success), and it pins the
+    page-count invariant for a converter version whose status stops standing for one.
 
     Measured on the real 462-page book with the pinned converter: a healthy 10-page range produced ten
     entries, ``page_no`` 21..30; the reproduced #843 degradation produced 6 entries for 50 requested
-    pages, and the 44 absent pages matched Docling's own error records element for element. A lost page
-    is therefore ABSENT here, never present-and-empty.
+    pages, and the 44 absent pages matched Docling's own error records element for element. That match
+    shows the two channels AGREE — as the shared derivation above says they must — which is what makes
+    absence here a faithful record of loss. A lost page is ABSENT, never present-and-empty.
 
     Presence is the evidence, deliberately NOT the state hanging off an entry. Docling RELEASES per-page
     state after assembly: ``parsed_page`` is ``None`` on every perfectly converted page, so a check
@@ -1159,10 +1176,14 @@ def processed_page_numbers(result: Any) -> set[int]:
 def ensure_pages_processed(result: Any, start_page: int, end_page: int) -> None:
     """Refuse the range unless the converter's per-page record covers EVERY requested page (#840).
 
-    The backstop behind ``ensure_conversion_complete``. The status gate (#832) closed the reproduced
-    hole — a ``PARTIAL_SUCCESS`` fragment published as a whole book — but it trusts one channel: the
-    converter's own report about itself. This asserts completeness from what was actually processed, so
-    a converter that reports an unqualified ``SUCCESS`` while silently dropping pages is still refused.
+    The backstop behind ``ensure_conversion_complete``, and the one check that sees the window the range
+    ASKED for. The status gate (#832) closed the reproduced hole — a ``PARTIAL_SUCCESS`` fragment
+    published as a whole book — but it can only speak for the pages the converter decided to attempt: in
+    pinned docling the status is derived from this very record (see ``processed_page_numbers``), so for
+    in-document page loss the two fire together. They part where the converter narrows the window itself
+    — asked for pages 461-470 of the real 462-page book it clamps to 461-462 and reports an unqualified
+    ``SUCCESS`` with zero errors, which this refuses — and they would part again for a converter version
+    whose status stops standing for a page count.
 
     FAILS CLOSED in the same shape as the status gate: a missing page, an unusable ``page_no``, or a
     result with no per-page record at all is evidence NOT of processing, and no payload is built. It is

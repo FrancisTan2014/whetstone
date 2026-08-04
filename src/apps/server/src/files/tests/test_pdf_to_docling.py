@@ -1511,13 +1511,15 @@ BLANK_PAGE_NOTICE = "This page intentionally left blank "
 
 
 class PageProcessingEvidenceTests(unittest.TestCase):
-    """The completeness rule stops resting on the converter's report about ITSELF (#840).
+    """Completeness is checked against the pages the range REQUESTED (#840).
 
     ``ConversionResult.pages`` carries one entry per page the converter actually processed. Measured on
     the real book: a healthy 10-page range produced ten entries (``page_no`` 21..30), and the reproduced
     #843 degradation produced 6 entries for 50 requested pages whose 44 absentees matched docling's own
-    error records element for element. So the signal is set equality — the page numbers present must be
-    the page numbers requested — and a page is refused for being ABSENT, never for producing nothing.
+    error records element for element — the record and the reported status AGREE there, because pinned
+    docling derives the status from this very list. They part where the converter narrows the window
+    itself, which the status cannot see. So the signal is set equality — the page numbers present must
+    be the page numbers requested — and a page is refused for being ABSENT, never for producing nothing.
     """
 
     def test_the_per_page_record_yields_the_pages_the_converter_processed(self):
@@ -1565,9 +1567,10 @@ class PageProcessingEvidenceTests(unittest.TestCase):
         ensure_pages_processed(types.SimpleNamespace(pages=[released]), 21, 21)
 
     def test_the_reproduced_fragment_shape_is_refused_even_when_the_status_claims_success(self):
-        # The #843 degradation, reshaped into the failure this backstop exists for: a converter that
-        # reports an unqualified SUCCESS while its own record shows it processed 6 of 50 pages. The
-        # status gate sees nothing wrong; this one refuses, so the backstop is not vacuous.
+        # A converter that reports an unqualified SUCCESS while its own record shows it processed 6 of
+        # 50 requested pages. This is not hypothetical: asked for pages 461-470 of the real 462-page
+        # book, docling clamps the window to 461-462 and reports SUCCESS with zero errors, so the status
+        # gate sees nothing wrong and only a check against the REQUESTED window refuses.
         result = types.SimpleNamespace(
             status=FakeConversionStatus.SUCCESS,
             errors=[],
