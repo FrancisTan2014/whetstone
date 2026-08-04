@@ -77,9 +77,9 @@ test("uploads a born-digital PDF, publishes it, then reads, searches, annotates,
   expect(workEntryId).not.toBeNull();
 
   // The structured body mapped to canonical blocks across THREE ordered ReadingUnits — the mapping
-  // starts a new unit at each heading (work title, then each section header), exactly as the acceptance
-  // criteria derive units from the heading tree. The existing Reader renders one unit at a time; unit 1 is
-  // the work title + intro paragraph.
+  // divides the work at the PDF's own top-level bookmarks (#816), the same authored navigation the EPUB
+  // path splits on. The existing Reader renders one unit at a time; unit 1 is the work title + intro
+  // paragraph.
   const reading = page.locator(READING);
   await expect(reading.getByText("Born-Digital Preview", { exact: false })).toBeVisible();
   await expect(
@@ -122,7 +122,7 @@ test("uploads a born-digital PDF, publishes it, then reads, searches, annotates,
   await expect(page.getByRole("button", { name: `Open mark on '${word}'` })).toBeVisible();
 
   // The remaining ReadingUnits are reachable through the Reader's ordinary chapter pager (no PDF-specific
-  // surface): each section header started its own unit, carrying its list and table blocks as canonical
+  // surface): each top-level bookmark opened its own unit, carrying its list and table blocks as canonical
   // content — proving multiple ordered units mapped and render like any multi-chapter Work.
   const pager = page.locator('nav[aria-label="Chapter navigation"]');
   await pager.getByRole("button", { name: /Next/ }).click();

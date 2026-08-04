@@ -7,7 +7,6 @@ import type {
 import { STRUCTURED_DOCUMENT_SCHEMA_VERSION } from "@whetstone/contracts";
 import { parseDocument, type DocumentNodeJSON } from "@whetstone/document";
 import {
-  buildHeadingOutline,
   classifyExtractionConfidence,
   isUnmappedBlockType,
   PDF_EXTRACTION_CONFIDENCE_THRESHOLD,
@@ -69,6 +68,33 @@ function unitTypes(
   return result.units[index]!.docBlocks.map((block) => block.type);
 }
 
+// Every heading BLOCK in the work, in order — not one per unit: since #816 a reading unit is a
+// chapter-scale division, so a chapter's sections are heading blocks INSIDE it rather than units.
+function headingNodes(
+  result: Extract<PdfCanonicalMappingResult, { status: "mapped" }>
+): DocumentNodeJSON[] {
+  return result.units
+    .flatMap((unit) => unit.docBlocks)
+    .map((block) => block.node)
+    .filter((node) => node.type === "heading");
+}
+
+function headingLevels(
+  result: Extract<PdfCanonicalMappingResult, { status: "mapped" }>
+): number[] {
+  return headingNodes(result).map((node) => (node.attrs as { level: number }).level);
+}
+
+// The text of each heading block, so a test can assert WHICH headings survived (and that no running head
+// was duplicated into one) independently of how the work is divided into units.
+function headingTexts(
+  result: Extract<PdfCanonicalMappingResult, { status: "mapped" }>
+): string[] {
+  return headingNodes(result).map((node) =>
+    (node.content ?? []).map((inline) => inline.text ?? "").join("")
+  );
+}
+
 describe("mapStructuredDocument", () => {
   it("refuses a text-less document as ocr_validation_failed and maps no content", () => {
     // Text-less pages surviving to mapping mean the OCR pass and the full conversion disagreed, or OCR was
@@ -97,15 +123,14 @@ describe("mapStructuredDocument", () => {
         ])
       )
     );
-    // Each heading starts its own unit.
-    expect(result.units).toHaveLength(2);
-    const title = result.units[0]!.docBlocks[0]!.node;
-    const section = result.units[1]!.docBlocks[0]!.node;
-    expect(title.type).toBe("heading");
-    expect((title.attrs as { level: number }).level).toBe(1);
-    expect((section.attrs as { level: number }).level).toBe(2);
+    // No authored outline, so the fallback divides at the shallowest level present (#816): the `title`
+    // opens the only unit and the deeper section stays a heading block inside it.
+    expect(result.units).toHaveLength(1);
+    const [title, section] = result.units[0]!.docBlocks.map((block) => block.node);
+    expect(title!.type).toBe("heading");
+    expect((title!.attrs as { level: number }).level).toBe(1);
+    expect((section!.attrs as { level: number }).level).toBe(2);
     expect(result.units[0]!.title).toBe("The Work");
-    expect(result.units[1]!.title).toBe("First Section");
     expect(result.headingLevelSources).toEqual({ label: 2, outline: 0 });
   });
 
@@ -1256,15 +1281,6 @@ describe("outline-derived heading depth", () => {
     (pageNumber) => ({ hasNativeText: true, pageNumber })
   );
 
-  function headingLevels(
-    result: Extract<PdfCanonicalMappingResult, { status: "mapped" }>
-  ): number[] {
-    return result.units
-      .map((unit) => unit.docBlocks[0]!.node)
-      .filter((node) => node.type === "heading")
-      .map((node) => (node.attrs as { level: number }).level);
-  }
-
   it("derives 1/2/2/2/3 for a real book range that the label alone would flatten to all-H2", () => {
     const flat = mapped(mapEn(doc(cleanCodeHeadings, cleanCodePages)));
     expect(headingLevels(flat)).toEqual([2, 2, 2, 2, 2]);
@@ -1275,29 +1291,13 @@ describe("outline-derived heading depth", () => {
     expect(derived.headingLevelSources).toEqual({ label: 0, outline: 5 });
   });
 
-  it("turns the same units into a NESTED reader outline with no Reader change", () => {
-    // `buildHeadingOutline` already nests by heading level, so correct levels alone convert the flat
-    // sidebar into Chapter -> Section. This asserts that end to end over the mapper's own output.
-    function outlineDepths(document: StructuredDocument): number[] {
-      const result = mapped(mapEn(document));
-      return buildHeadingOutline(
-        result.units.map((unit, index) => {
-          const node = unit.docBlocks[0]!.node;
-          const level =
-            node.type === "heading" ? (node.attrs as { level: number }).level : undefined;
-          return {
-            entryId: `u${index}`,
-            ...(level === undefined ? {} : { headingLevel: level }),
-            ...(unit.title === undefined ? {} : { title: unit.title })
-          };
-        })
-      ).map((entry) => entry.depth);
-    }
-
-    expect(outlineDepths(doc(cleanCodeHeadings, cleanCodePages))).toEqual([0, 0, 0, 0, 0]);
-    expect(outlineDepths(doc(cleanCodeHeadings, cleanCodePages, cleanCodeOutline))).toEqual([
-      0, 1, 1, 1, 2
-    ]);
+  it("keeps the derived depths intact when the chapter becomes one reading unit", () => {
+    // #816 changed only where units BEGIN, never the resolved depths: the same range now reads as one
+    // chapter-scale unit whose sections are heading blocks inside it, at exactly the levels #815 derived.
+    const derived = mapped(mapEn(doc(cleanCodeHeadings, cleanCodePages, cleanCodeOutline)));
+    expect(derived.units).toHaveLength(1);
+    expect(unitTypes(derived, 0)).toEqual(["heading", "heading", "heading", "heading", "heading"]);
+    expect(headingLevels(derived)).toEqual([1, 2, 2, 2, 3]);
   });
 
   it("falls back to the label for a heading the outline does not name", () => {
@@ -1339,7 +1339,8 @@ describe("outline-derived heading depth", () => {
     expect(unitTypes(result, 0)).toEqual(["paragraph"]);
     expect(unitTypes(result, 1)).toEqual(["heading", "paragraph"]);
     expect(headingLevels(result)).toEqual([1]);
-    expect(result.units[1]!.title).toBe("Objects and Data Structures");
+    // The promoted opener is a level-1 bookmark, so it opens a chapter titled as the publisher named it.
+    expect(result.units[1]!.title).toBe("Chapter 6: Objects and Data Structures");
     expect(result.headingLevelSources).toEqual({ label: 0, outline: 1 });
   });
 
@@ -1371,7 +1372,7 @@ describe("outline-derived heading depth", () => {
     // furniture items.
     expect(headingLevels(result)).toEqual([1, 2, 2, 2, 3]);
     expect(result.headingLevelSources).toEqual({ label: 0, outline: 5 });
-    expect(result.units.map((unit) => unit.title)).toEqual([
+    expect(headingTexts(result)).toEqual([
       "Objects and Data Structures",
       "Data Abstraction",
       "Data/Object Anti-Symmetry",
@@ -1456,5 +1457,140 @@ describe("outline-derived heading depth", () => {
     const empty = mapped(mapEn(doc(cleanCodeHeadings, cleanCodePages, [])));
     expect(empty.headingLevelSources).toEqual({ label: 5, outline: 0 });
     expect(headingLevels(empty)).toEqual([2, 2, 2, 2, 2]);
+  });
+});
+
+// #816: a ReadingUnit is a CHAPTER, not a heading. Measured on the real Clean Code (462pp) import:
+// starting a unit at every heading produced 525 units for a book whose own bookmarks declare 27
+// top-level divisions, so the reader paged through fragments. The fixtures below are the real book's
+// measured bookmarks and docling headings for two chapter openers (pp.124-136 and pp.166-167), read out
+// of the published import's stored range payloads.
+describe("chapter-scale reading units", () => {
+  const chapterPages: readonly StructuredPage[] = [
+    124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136
+  ].map((pageNumber) => ({ hasNativeText: true, pageNumber }));
+
+  // Two adjacent real chapters: their level-1 bookmarks are the divisions; everything else is inside.
+  const chapterOutline: readonly PdfOutlineEntry[] = [
+    { level: 1, pageNumber: 124, title: "Chapter 6: Objects and Data Structures" },
+    { level: 2, pageNumber: 124, title: "Data Abstraction" },
+    { level: 2, pageNumber: 128, title: "The Law of Demeter" },
+    { level: 3, pageNumber: 129, title: "Train Wrecks" },
+    { level: 1, pageNumber: 134, title: "Chapter 7: Error Handling" },
+    { level: 2, pageNumber: 135, title: "Use Exceptions Rather Than Return Codes" }
+  ];
+
+  const chapterBody: readonly StructuredDocItem[] = [
+    item({ label: "section_header", pageNumber: 124, text: "Objects and Data Structures" }),
+    item({ label: "text", pageNumber: 124, text: "Chapter six opens." }),
+    item({ label: "section_header", pageNumber: 124, text: "Data Abstraction" }),
+    item({ label: "text", pageNumber: 125, text: "Abstraction prose." }),
+    item({ label: "section_header", pageNumber: 128, text: "The Law of Demeter" }),
+    item({ label: "section_header", pageNumber: 129, text: "Train Wrecks" }),
+    item({ label: "text", pageNumber: 129, text: "Train wreck prose." }),
+    item({ label: "section_header", pageNumber: 134, text: "Error Handling" }),
+    item({ label: "text", pageNumber: 134, text: "Chapter seven opens." }),
+    item({ label: "section_header", pageNumber: 135, text: "Use Exceptions Rather Than Return Codes" }),
+    item({ label: "text", pageNumber: 135, text: "Exception prose." })
+  ];
+
+  // The real Chapter 10 opener: docling emitted the chapter NUMBER and its TITLE as two separate
+  // headings on p166, and both resolve to the one `Chapter 10: Classes` bookmark.
+  const classesOutline: readonly PdfOutlineEntry[] = [
+    { level: 1, pageNumber: 166, title: "Chapter 10: Classes" },
+    { level: 2, pageNumber: 167, title: "Class Organization" },
+    { level: 3, pageNumber: 167, title: "Encapsulation" },
+    { level: 2, pageNumber: 167, title: "Classes Should Be Small!" }
+  ];
+
+  const classesBody: readonly StructuredDocItem[] = [
+    item({ label: "section_header", pageNumber: 166, text: "10" }),
+    item({ label: "section_header", pageNumber: 166, text: "Classes" }),
+    item({ label: "text", pageNumber: 166, text: "Chapter ten opens." }),
+    item({ label: "section_header", pageNumber: 167, text: "Class Organization" }),
+    item({ label: "section_header", pageNumber: 167, text: "Encapsulation" }),
+    item({ label: "text", pageNumber: 167, text: "Encapsulation prose." }),
+    item({ label: "section_header", pageNumber: 167, text: "Classes Should Be Small!" })
+  ];
+
+  const classesPages: readonly StructuredPage[] = [166, 167].map((pageNumber) => ({
+    hasNativeText: true,
+    pageNumber
+  }));
+
+  // Every mapped block, unit by unit — the invariant a boundary change is most likely to break silently.
+  function blockIds(
+    result: Extract<PdfCanonicalMappingResult, { status: "mapped" }>
+  ): string[] {
+    return result.units.flatMap((unit) => unit.docBlocks.map((block) => block.id));
+  }
+
+  it("starts a unit at each top-level bookmark and keeps the chapter's sections inside it", () => {
+    const result = mapped(mapEn(doc(chapterBody, chapterPages, chapterOutline)));
+
+    expect(result.units.map((unit) => unit.title)).toEqual([
+      "Chapter 6: Objects and Data Structures",
+      "Chapter 7: Error Handling"
+    ]);
+    // Sections stay heading BLOCKS inside their chapter rather than becoming units of their own.
+    expect(unitTypes(result, 0)).toEqual([
+      "heading",
+      "paragraph",
+      "heading",
+      "paragraph",
+      "heading",
+      "heading",
+      "paragraph"
+    ]);
+    expect(unitTypes(result, 1)).toEqual(["heading", "paragraph", "heading", "paragraph"]);
+    // #815's derived depths are untouched: only where units BEGIN changed.
+    expect(headingLevels(result)).toEqual([1, 2, 2, 3, 1, 2]);
+    expect(result.headingLevelSources).toEqual({ label: 0, outline: 6 });
+  });
+
+  it("places every mapped block in exactly one unit", () => {
+    // Each of the eleven items maps to one block, each block appears once, and every block carries
+    // evidence: no block can be dropped between units or duplicated into two.
+    const result = mapped(mapEn(doc(chapterBody, chapterPages, chapterOutline)));
+    const ids = blockIds(result);
+    expect(ids).toHaveLength(chapterBody.length);
+    expect(new Set(ids).size).toBe(chapterBody.length);
+    expect(result.evidence.map((row) => row.blockId)).toEqual(ids);
+  });
+
+  it("opens ONE unit when docling split the chapter opener into a number and a title", () => {
+    // Measured: `10` and `Classes` are two level-1 headings resolving to the SAME bookmark. A bookmark
+    // names one division, so the second joins the first's unit — 27 chapters, not 39 fragments.
+    const result = mapped(mapEn(doc(classesBody, classesPages, classesOutline)));
+
+    expect(result.units.map((unit) => unit.title)).toEqual(["Chapter 10: Classes"]);
+    // The unit is titled from the bookmark, so no unit is called `10` even though its first block is.
+    expect(headingTexts(result)).toEqual([
+      "10",
+      "Classes",
+      "Class Organization",
+      "Encapsulation",
+      "Classes Should Be Small!"
+    ]);
+    expect(headingLevels(result)).toEqual([1, 1, 2, 3, 2]);
+    expect(blockIds(result)).toHaveLength(classesBody.length);
+  });
+
+  it("divides an outline-less PDF at its shallowest heading level, joining a bare chapter label", () => {
+    // The same range with no embedded outline: every heading falls back to its docling label (all H2),
+    // so the shallowest level present divides the work — and the `10` label joins the title that names
+    // it rather than becoming a unit called `10`.
+    const result = mapped(mapEn(doc(classesBody, classesPages)));
+
+    expect(result.units.map((unit) => unit.title)).toEqual([
+      "10 Classes",
+      "Class Organization",
+      "Encapsulation",
+      "Classes Should Be Small!"
+    ]);
+    expect(unitTypes(result, 0)).toEqual(["heading", "heading", "paragraph"]);
+    expect(headingLevels(result)).toEqual([2, 2, 2, 2, 2]);
+    expect(result.headingLevelSources).toEqual({ label: 5, outline: 0 });
+    expect(blockIds(result)).toHaveLength(classesBody.length);
   });
 });
