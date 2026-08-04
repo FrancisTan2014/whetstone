@@ -90,7 +90,8 @@ test("required merge checks are named, present, and successful", () => {
   assert.deepEqual(requiredMergeCheckFailures(), [
     'required check "Quality (typecheck, lint, 100% coverage)" is missing',
     'required check "Runtime (build, size, smoke, E2E)" is missing',
-    'required check "Isolated contracts" is missing'
+    'required check "Isolated contracts" is missing',
+    'required check "Python worker tests" is missing'
   ]);
   assert.deepEqual(
     requiredMergeCheckFailures([
@@ -108,6 +109,10 @@ test("required merge checks are named, present, and successful", () => {
         ...passingCheck,
         name: "Isolated contracts",
         conclusion: "SKIPPED"
+      },
+      {
+        ...passingCheck,
+        name: "Python worker tests"
       }
     ]),
     [
@@ -119,7 +124,8 @@ test("required merge checks are named, present, and successful", () => {
     requiredMergeCheckFailures([
       requiredPassingChecks[0],
       { ...requiredPassingChecks[1], status: "IN_PROGRESS", conclusion: null },
-      requiredPassingChecks[2]
+      requiredPassingChecks[2],
+      requiredPassingChecks[3]
     ]),
     ['required check "Runtime (build, size, smoke, E2E)" is IN_PROGRESS']
   );

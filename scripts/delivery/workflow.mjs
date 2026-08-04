@@ -2,7 +2,8 @@ export const PASSING_CHECK_CONCLUSIONS = new Set(["SUCCESS", "NEUTRAL", "SKIPPED
 export const REQUIRED_MERGE_CHECK_NAMES = Object.freeze([
   "Quality (typecheck, lint, 100% coverage)",
   "Runtime (build, size, smoke, E2E)",
-  "Isolated contracts"
+  "Isolated contracts",
+  "Python worker tests"
 ]);
 
 export function labelNames(item) {

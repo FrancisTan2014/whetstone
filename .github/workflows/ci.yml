@@ -131,3 +131,24 @@ jobs:
 
       - name: Delivery workflow contracts
         run: pnpm test:workflow
+
+  python:
+    name: Python worker tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # The PDF worker suite mocks docling/torch (via sys.modules) and drives the
+      # probe/convert/mapping paths through injected fakes, so it runs on the standard
+      # library alone — no heavy doc-AI install. The Windows-only Job Object real-process
+      # test skips cleanly on Linux; -v makes that skip (and its count) visible, so the
+      # lane can never look green while silently covering nothing.
+      - name: PDF worker unit tests
+        run: python -m unittest discover -s src/apps/server/src/files/tests -v
