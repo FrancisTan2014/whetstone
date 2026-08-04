@@ -329,6 +329,17 @@ owning source flow:
   - **Nothing below an unmapped construct is dropped.** An item whose label has no canonical node is
     still walked into its children, so descendants become real blocks; only a genuinely
     unrepresentable leaf becomes a visible `unknown`.
+- **A conversion is complete or it is refused.** Bounding the conversion job is fail-closed by
+  contract, but the converter itself does not fail when it hits a bound: it drops the pages it could
+  not process, returns the ones it managed, and reports the run as only partially successful. A
+  converter result is therefore untrusted evidence, not a source of truth. A result that does not
+  report unqualified success is refused, and — independently of what the converter reports — every
+  page the source shows as carrying native text must contribute at least one body item, or the import
+  is refused and reports how many pages were lost. A partially converted book is never published: it
+  passes the empty-shell and OCR refusals, looks like a real import, and is discovered only while
+  reading, which serves the learner worse than a visible failure. Resource ceilings are calibrated
+  against what the pinned converter actually commits on the host, and a ceiling that throttles a
+  supported book is a defect of the ceiling, never an acceptable degradation.
 - The product target is usable automatic ingestion for at least 95% of the deduplicated supported PDF
   pressure corpus. "Usable" means the current Reader can present materially complete body content in
   readable order, with a workable heading/block hierarchy for search, selection, notes, and editing.
