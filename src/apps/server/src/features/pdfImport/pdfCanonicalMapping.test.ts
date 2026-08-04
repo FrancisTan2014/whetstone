@@ -5,7 +5,7 @@ import type {
   StructuredPage
 } from "@whetstone/contracts";
 import { STRUCTURED_DOCUMENT_SCHEMA_VERSION } from "@whetstone/contracts";
-import { parseDocument, type DocumentNodeJSON } from "@whetstone/document";
+import { documentText, parseDocument, type DocumentNodeJSON } from "@whetstone/document";
 import {
   buildHeadingOutline,
   classifyExtractionConfidence,
@@ -949,26 +949,35 @@ describe("unrecognized containers keep their descendants (#812)", () => {
     expect(result.unmappedLabels).toEqual(["key_value_area"]);
   });
 
-  it("recovers a real document_index's table cells in source order instead of dropping the contents", () => {
-    // The book's own table of contents. Its cells are unrecognized as body items, so they stay on the
-    // visible `unknown` path — but they now carry their text instead of vanishing.
+  it("maps a real document_index to the canonical table it always was, keeping every cell's text", () => {
+    // The book's own table of contents. Until #859 this construct was unrecognized, so #812 expanded it
+    // and each cell became its own `unknown` block: the text was reachable, but only through an
+    // `unknown`'s opaque `html` attr, which `documentText` — and therefore the persisted `plaintext`
+    // search and note anchors read — does not see. Docling ships it in the `_table_rows` shape, so it
+    // now maps to a table and the same characters land in real text nodes.
     const result = mapped(mapEn(doc([REAL_DOCUMENT_INDEX])));
 
-    expect(unitTypes(result, 0)).toEqual(["unknown", "unknown", "unknown"]);
-    expect(blockTexts(result)).toEqual(["Foreword......", "xix", "Introduction ......xxv"]);
-    // No block is spent on the index, nor on either row: neither carries text of its own.
-    expect(result.unmappedLabels).toEqual(["document_index", "table_row", "table_cell"]);
-    // Every recovered block keys the CELL's page and geometry, never the ancestor index's.
-    expect(result.evidence.map((row) => row.label)).toEqual([
-      "table_cell",
-      "table_cell",
-      "table_cell"
+    expect(unitTypes(result, 0)).toEqual(["table"]);
+    const table = result.units[0]!.docBlocks[0]!.node;
+    expect(table.content?.map((row) => row.content?.map((cell) => cell.type))).toEqual([
+      ["tableCell", "tableCell"],
+      ["tableCell"]
     ]);
-    expect(result.evidence[1]!.boundingBox).toEqual({
-      bottom: 192.647044092219,
-      left: 423.68899999999996,
-      right: 439.025,
-      top: 182.26489999999995
+    // Every cell's text survives, in source order — the #812 guarantee, now in the readable projection
+    // rather than in an attribute.
+    expect(documentText(table)).toBe("Foreword......xixIntroduction ......xxv");
+    // Nothing under a mapped construct is unrecognized any more: the container, its rows and its cells
+    // are all consumed by the table, so the fail-loud list goes quiet for this shape.
+    expect(result.unmappedLabels).toEqual([]);
+    // A table-shaped construct now keys ONE evidence row from the container, exactly as a `label: "table"`
+    // construct always has — per-cell geometry is not retained for a table by any path, so this is the
+    // existing table contract applied to a construct that turned out to be one.
+    expect(result.evidence.map((row) => row.label)).toEqual(["document_index"]);
+    expect(result.evidence[0]!.boundingBox).toEqual({
+      bottom: 81.68646240234375,
+      left: 77.95601654052734,
+      right: 439.6841125488281,
+      top: 486.7313537597656
     });
   });
 
@@ -1166,6 +1175,157 @@ describe("unrecognized containers keep their descendants (#812)", () => {
     expect(result.unmappedLabels).toEqual(
       Array.from({ length: 17 }, (_unused, level) => `wrapper_${level}`)
     );
+  });
+});
+
+// Build a table-shaped container under `label`: docling's `_table_rows` projection is label-agnostic, so
+// this is the exact shape a `table`, a `document_index`, or any future grid construct arrives in.
+function tableShaped(label: string, rows: readonly (readonly StructuredDocItem[])[]) {
+  return item({
+    children: rows.map((cells) => item({ children: [...cells], label: "table_row" })),
+    label
+  });
+}
+
+// The persisted plaintext of every mapped block, concatenated — derived with the SAME function
+// `blockWriter` writes to `doc_blocks.plaintext` (#312), so this is literally the text that reaches
+// search, note anchors, and the reader's character stream. Deliberately NOT `blockTexts`, which also
+// counts an `unknown` node's `html` attr: that attr is exactly the place text goes to be unreadable, so
+// counting it would hide the loss these tests exist to catch.
+function persistedPlaintext(
+  result: Extract<PdfCanonicalMappingResult, { status: "mapped" }>
+): string {
+  return result.units
+    .flatMap((unit) => unit.docBlocks)
+    .map((block) => documentText(block.node))
+    .join("");
+}
+
+// Docling's table shape is label-agnostic (#859): `_table_rows` arrive under whatever label the layout
+// model chose, so `canonicalBodyNode`'s default branch decides by SHAPE rather than by name. One rule
+// therefore maps every table-ish construct docling emits — `document_index` above all, a book's printed
+// contents and index — with no vocabulary list to maintain, while a construct with no table shape keeps
+// the unchanged `unknown`/expansion path (#812).
+describe("table-shaped constructs map by shape, not by label (#859)", () => {
+  it("maps a table-shaped container under a label the mapper has never seen", () => {
+    // The anti-rot property: nothing here names `document_index`, so a construct docling starts emitting
+    // tomorrow is mapped the day it appears rather than fragmenting until someone extends a list.
+    const result = mapped(
+      mapEn(
+        doc([
+          tableShaped("some_future_grid", [
+            [
+              item({ label: "table_cell", text: "left" }),
+              item({ label: "table_cell", text: "right" })
+            ]
+          ])
+        ])
+      )
+    );
+
+    expect(unitTypes(result, 0)).toEqual(["table"]);
+    expect(persistedPlaintext(result)).toBe("leftright");
+    expect(result.unmappedLabels).toEqual([]);
+  });
+
+  it("consumes every table-ish label docling nests inside the container, header cells included", () => {
+    // `table_row`, `table_cell`, `row_header` and `column_header` were four of the seven labels Clean
+    // Code reported as unmapped. None of them is mapped by name even now — they stop being reported
+    // because the container that holds them maps, so the whole subtree is consumed as one table.
+    const result = mapped(
+      mapEn(
+        doc([
+          tableShaped("document_index", [
+            [
+              item({ label: "column_header", text: "Chapter" }),
+              item({ label: "column_header", text: "Page" })
+            ],
+            [
+              item({ label: "row_header", text: "Foreword" }),
+              item({ label: "table_cell", text: "xix" })
+            ]
+          ])
+        ])
+      )
+    );
+
+    const table = result.units[0]!.docBlocks[0]!.node;
+    expect(table.content?.map((row) => row.content?.map((cell) => cell.type))).toEqual([
+      ["tableHeader", "tableHeader"],
+      ["tableHeader", "tableCell"]
+    ]);
+    expect(persistedPlaintext(result)).toBe("ChapterPageForewordxix");
+    expect(result.unmappedLabels).toEqual([]);
+  });
+
+  it("adds a table-shaped container's cell text to the persisted plaintext instead of dropping it", () => {
+    // The regression guard for the tempting wrong fix. A table-shaped container carries NO text of its
+    // own — every character is in its cells — so "just stop expanding table-shaped containers" emits no
+    // block and loses all of it, and the pre-#859 `unknown` fallback parked it in an `html` attr that
+    // never reaches `plaintext`. Both wrong shapes score zero here; only mapping the container to a
+    // table carries the text through.
+    const cells = ["Foreword......", "xix", "Introduction ......xxv"];
+    const result = mapped(
+      mapEn(
+        doc([
+          tableShaped("document_index", [
+            [
+              item({ label: "table_cell", text: cells[0]! }),
+              item({ label: "table_cell", text: cells[1]! })
+            ],
+            [item({ label: "table_cell", text: cells[2]! })]
+          ])
+        ])
+      )
+    );
+
+    const sourceCharacters = cells.join("").length;
+    expect(persistedPlaintext(result)).toBe(cells.join(""));
+    // Stated as the invariant the fix must hold, not just as the string it happens to produce: mapping
+    // may re-shape a container's blocks, but it may never lose characters doing so.
+    expect(persistedPlaintext(result).length).toBeGreaterThanOrEqual(sourceCharacters);
+  });
+
+  it("keeps the unknown/expansion path for a construct with no table shape", () => {
+    // A loose `table_row` — cells, but no `table_row` children of its own — is not a table, so
+    // `tableNode` still returns null and #812's guarantee is untouched: the container is walked into and
+    // every cell survives as a visible block, with the label still reported.
+    const result = mapped(
+      mapEn(
+        doc([
+          item({
+            children: [
+              item({ label: "table_cell", text: "orphaned left" }),
+              item({ label: "table_cell", text: "orphaned right" })
+            ],
+            label: "table_row"
+          })
+        ])
+      )
+    );
+
+    expect(unitTypes(result, 0)).toEqual(["unknown", "unknown"]);
+    expect(blockTexts(result)).toEqual(["orphaned left", "orphaned right"]);
+    expect(result.unmappedLabels).toEqual(["table_row", "table_cell"]);
+  });
+
+  it("still reports key_value_area and form_area, the two labels that are genuinely unmapped", () => {
+    // Neither is table-shaped, so neither is silenced by the shape rule. They must keep arriving through
+    // the fail-loud path: that list is how an unrepresented construct stays visible instead of becoming
+    // an assumption, and widening what maps must never quieten it.
+    const result = mapped(
+      mapEn(
+        doc([
+          item({ children: [item({ label: "text", text: "ISBN-13:" })], label: "key_value_area" }),
+          item({ children: [item({ label: "text", text: "Signature:" })], label: "form_area" })
+        ])
+      )
+    );
+
+    expect(result.unmappedLabels).toEqual(["key_value_area", "form_area"]);
+    // Still expanded, so their children remain readable — the shape rule changed nothing for them.
+    expect(unitTypes(result, 0)).toEqual(["paragraph", "paragraph"]);
+    expect(persistedPlaintext(result)).toBe("ISBN-13:Signature:");
   });
 });
 
