@@ -13,7 +13,8 @@ import type {
   CorpusCaseInput,
   CorpusCaseResult,
   MappedWorkSummary,
-  PdfCaseMetrics
+  PdfCaseMetrics,
+  PdfUsabilityReason
 } from "./pdfUsability.js";
 
 const BOUNDS: CorpusBounds = { maxBytes: 128 * 1024 * 1024, maxPages: 3000 };
@@ -369,4 +370,116 @@ describe("regression fixtures", () => {
       expect(classifyPdfUsability(fixture.observation)).toEqual(fixture.expected);
     });
   }
+});
+
+// #832/#839. summarizeCorpus pre-seeds a zero counter for every reason in the module-private
+// USABILITY_REASONS list (reasonCounts = zeroed(USABILITY_REASONS)), so a reason no case hit still
+// appears in the aggregate as 0 instead of vanishing. That safety net only holds if USABILITY_REASONS
+// carries EXACTLY the reasons classifyPdfUsability can return: a reason the mapping produces but the
+// list omits is under-counted to invisibility (the corpus run silently under-reports the very thing it
+// measures — the defect the #839 harness fix was written to prevent), and a reason the list carries but
+// the mapping can never produce shows a permanent phantom 0. This block pins USABILITY_REASONS to the
+// mapping's real output in BOTH directions, observed through the report itself rather than by exporting
+// the private list only to restate it.
+describe("USABILITY_REASONS matches the reasons the canonical mapping can produce", () => {
+  // The canonical mapping is classifyPdfUsability over every ClassifiableObservation. Typing this table
+  // as a TOTAL record over the observation discriminant makes TypeScript reject a newly added
+  // observation kind until its verdict is represented here, so the producible set below cannot silently
+  // fall behind the mapping. The `mapped` kind fans out into each threshold branch of its helper; the
+  // "matrix exercises every declared reason" test at the end guards that this hand-written fan-out stays
+  // complete.
+  const observationsByKind: Record<
+    ClassifiableObservation["kind"],
+    readonly ClassifiableObservation[]
+  > = {
+    mapped: [
+      // clean-canonical-work
+      { kind: "mapped", summary: cleanSummary() },
+      // unmapped-constructs, via a mapped-but-textless shell
+      { kind: "mapped", summary: cleanSummary({ plainTextLength: 0 }) },
+      // unmapped-constructs, via too many fallback blocks (100/20 well over the 10% ceiling)
+      { kind: "mapped", summary: cleanSummary({ unknownBlockCount: 100 }) },
+      // low-confidence-extraction (100/20 well over the 25% ceiling)
+      { kind: "mapped", summary: cleanSummary({ lowConfidenceBlockCount: 100 }) },
+      // image-unsupported, via an unresolved figure placeholder (#806)
+      { kind: "mapped", summary: cleanSummary({ unresolvedFigureCount: 1 }) }
+    ],
+    ocr_required: [{ kind: "ocr_required", pagesNeedingOcr: 3 }], // ocr-required
+    no_content: [{ kind: "no_content" }], // empty-body
+    conversion_failed: [{ kind: "conversion_failed", detail: "x" }], // conversion-failed
+    incomplete_conversion: [{ kind: "incomplete_conversion" }], // incomplete-conversion
+    timeout: [{ kind: "timeout" }], // timed-out
+    memory: [{ kind: "memory" }] // memory-exhausted
+  };
+
+  const producibleReasons = new Set<PdfUsabilityReason>();
+  for (const observations of Object.values(observationsByKind)) {
+    for (const observation of observations) {
+      producibleReasons.add(classifyPdfUsability(observation).reason);
+    }
+  }
+
+  // The reasons the committed report actually pre-seeds: summarizeCorpus([]) returns
+  // reasonCounts = zeroed(USABILITY_REASONS), so its keys ARE USABILITY_REASONS — read through the
+  // report (the thing that under-counts on drift), which keeps the list encapsulated in the module.
+  const registeredReasons = new Set(
+    Object.keys(summarizeCorpus([]).reasonCounts) as PdfUsabilityReason[]
+  );
+
+  it("registers every reason the mapping can produce, so the corpus report can never silently drop one", () => {
+    const producedButUnregistered = [...producibleReasons]
+      .filter((reason) => !registeredReasons.has(reason))
+      .sort();
+    expect(
+      producedButUnregistered,
+      `The canonical mapping can return ${JSON.stringify(producedButUnregistered)}, but ` +
+        `USABILITY_REASONS does not list that reason. summarizeCorpus seeds reasonCounts from ` +
+        `USABILITY_REASONS, so an unregistered reason with a zero count is dropped from the corpus ` +
+        `report and the run silently under-reports it (#832/#839). Add it to USABILITY_REASONS in ` +
+        `pdfUsability.ts.`
+    ).toEqual([]);
+  });
+
+  it("registers no reason the mapping can never produce, so the report carries no permanent phantom 0", () => {
+    const registeredButUnproducible = [...registeredReasons]
+      .filter((reason) => !producibleReasons.has(reason))
+      .sort();
+    expect(
+      registeredButUnproducible,
+      `USABILITY_REASONS lists ${JSON.stringify(registeredButUnproducible)}, but the canonical mapping ` +
+        `never returns that reason across any ClassifiableObservation, so the corpus report would carry ` +
+        `a row no case can ever fill. Either it is a stale entry (remove it from USABILITY_REASONS), or ` +
+        `the observation table in this block no longer reaches it (the next test guards that case).`
+    ).toEqual([]);
+  });
+
+  it("exercises every declared PdfUsabilityReason, so the producible set above is trustworthy", () => {
+    // A self-check on the table, not a restatement of USABILITY_REASONS: enumerating the union through a
+    // `satisfies Record<PdfUsabilityReason, true>` forces a newly added reason to be listed here (compile
+    // error otherwise), which then forces a covering observation in the table above (this assertion).
+    // That closes the gap where a new mapped-work branch and its reason are added without any test
+    // noticing — the reason would flow into producibleReasons and the two pins above would catch whether
+    // USABILITY_REASONS was updated with it.
+    const declaredReasons = Object.keys({
+      "clean-canonical-work": true,
+      "unmapped-constructs": true,
+      "low-confidence-extraction": true,
+      "ocr-required": true,
+      "empty-body": true,
+      "image-unsupported": true,
+      "conversion-failed": true,
+      "incomplete-conversion": true,
+      "timed-out": true,
+      "memory-exhausted": true
+    } satisfies Record<PdfUsabilityReason, true>) as PdfUsabilityReason[];
+    const declaredButNotExercised = declaredReasons
+      .filter((reason) => !producibleReasons.has(reason))
+      .sort();
+    expect(
+      declaredButNotExercised,
+      `These declared PdfUsabilityReason values are never produced by the observation table in this ` +
+        `block: ${JSON.stringify(declaredButNotExercised)}. Extend observationsByKind with an input ` +
+        `that reaches each, so the USABILITY_REASONS pins above stay complete.`
+    ).toEqual([]);
+  });
 });

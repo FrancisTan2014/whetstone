@@ -23,6 +23,7 @@ from pdf_to_docling import (  # noqa: E402  (path set above)
     DOCLING_SCHEMA_NAME,
     EXIT_CONVERSION_FAILED,
     EXIT_CONVERSION_INCOMPLETE,
+    EXIT_MEMORY,
     EXIT_MEMORY_CEILING_UNSUPPORTED,
     EXIT_MISSING_DEPENDENCY,
     EXIT_OK,
@@ -2267,6 +2268,63 @@ class MainRangeArtifactDispatchTests(unittest.TestCase):
             # The default image reader seam calls item.get_image(doc), which the fake picture exposes.
             self.assertEqual(payload["body"][0]["imageArtifact"]["path"], "fig-0.png")
             self.assertEqual(os.listdir(directory), ["fig-0.png"])
+
+
+class ExitCodeWireContractTests(unittest.TestCase):
+    """The worker's exit codes are a cross-LANGUAGE wire contract, not a private enum.
+
+    ``pdf_to_docling.py`` calls ``sys.exit(EXIT_*)`` and the TypeScript adapter's ``classifyWorkerExit``
+    (``src/apps/server/src/files/pdfStructuredErrors.ts``) switches on those same integers to decide
+    which ``PdfStructuredFailure`` an import reports -- so a refused, incomplete conversion (exit 9) is
+    told apart from a malformed file (exit 4), an encrypted PDF (exit 5), a missing toolchain (exit 3),
+    and so on. The two sides are different languages, so no shared constant can bind them: the integers
+    themselves ARE the contract, mirrored by ``WORKER_EXIT_*`` on the TypeScript side.
+
+    Every other test in this suite compares an outcome against the ``EXIT_*`` *symbol*, so renumbering
+    the integer a symbol carries keeps the whole suite green while silently breaking classification --
+    the exact gap mutation testing surfaced in the #839 review, and the same class of defect #843/#844
+    fixed (a Windows Job Object was collapsing these very codes to 0, so a refused conversion was read
+    as a malformed one). This test pins the literal integers so a change fails loudly here and forces
+    the matching, deliberate edit to ``WORKER_EXIT_*`` on the TypeScript side.
+    """
+
+    def test_exit_codes_match_their_pinned_wire_integers(self):
+        # Codes 3-9 are the failures the worker self-classifies and the adapter branches on; 0 is
+        # success and 2 is a usage error. To change one, change the matching WORKER_EXIT_* in
+        # pdfStructuredErrors.ts in the SAME commit and then update this pin -- never renumber "to tidy
+        # up", because these integers cross the process boundary on the wire.
+        self.assertEqual(
+            {
+                "EXIT_OK": EXIT_OK,
+                "EXIT_USAGE": EXIT_USAGE,
+                "EXIT_MISSING_DEPENDENCY": EXIT_MISSING_DEPENDENCY,
+                "EXIT_CONVERSION_FAILED": EXIT_CONVERSION_FAILED,
+                "EXIT_PASSWORD_REQUIRED": EXIT_PASSWORD_REQUIRED,
+                "EXIT_UNSUPPORTED_SCHEMA": EXIT_UNSUPPORTED_SCHEMA,
+                "EXIT_MEMORY": EXIT_MEMORY,
+                "EXIT_MEMORY_CEILING_UNSUPPORTED": EXIT_MEMORY_CEILING_UNSUPPORTED,
+                "EXIT_CONVERSION_INCOMPLETE": EXIT_CONVERSION_INCOMPLETE,
+            },
+            {
+                "EXIT_OK": 0,
+                "EXIT_USAGE": 2,
+                "EXIT_MISSING_DEPENDENCY": 3,
+                "EXIT_CONVERSION_FAILED": 4,
+                "EXIT_PASSWORD_REQUIRED": 5,
+                "EXIT_UNSUPPORTED_SCHEMA": 6,
+                "EXIT_MEMORY": 7,
+                "EXIT_MEMORY_CEILING_UNSUPPORTED": 8,
+                "EXIT_CONVERSION_INCOMPLETE": 9,
+            },
+            msg=(
+                "PDF worker exit-code WIRE CONTRACT drift: a worker exit code no longer carries its "
+                "pinned integer. These values are shared verbatim with WORKER_EXIT_* in "
+                "src/apps/server/src/files/pdfStructuredErrors.ts, where classifyWorkerExit maps each "
+                "integer to an import failure. Change BOTH sides in the same commit, or the adapter "
+                "will misclassify a real worker outcome (e.g. read a refused, incomplete conversion as "
+                "a malformed file). Codes 3-9 are the self-classified failures; 0=success, 2=usage."
+            ),
+        )
 
 
 if __name__ == "__main__":

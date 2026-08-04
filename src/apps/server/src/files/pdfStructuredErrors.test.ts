@@ -118,3 +118,45 @@ describe("classifyWorkerExit", () => {
     expect(failure.what).toContain("SIGSEGV");
   });
 });
+
+// The worker exit codes are a cross-LANGUAGE wire contract, mirrored verbatim by EXIT_* in the Python
+// worker (src/apps/server/src/files/pdf_to_docling.py), which reports an outcome via sys.exit(EXIT_*).
+// classifyWorkerExit above switches on these integers, so the NUMBER each constant carries — not the
+// symbol — is what crosses the process boundary. Every test above routes an outcome through the
+// WORKER_EXIT_* symbols, so changing the integer a symbol carries leaves them all green while silently
+// breaking classification (the gap mutation testing surfaced in the #839 review). This pins the literal
+// integers so a divergence introduced on the TypeScript side fails here and forces the matching,
+// deliberate edit to EXIT_* in the worker.
+describe("worker exit-code wire contract", () => {
+  it("pins each WORKER_EXIT_* to the integer the Python worker emits", () => {
+    // Codes 3–9 are the failures the worker self-classifies (branched on above); 2 is a usage error.
+    // To change one, change the matching EXIT_* in pdf_to_docling.py in the SAME commit, then update
+    // this pin — never renumber to "tidy up", because these integers travel on the wire.
+    expect(
+      {
+        WORKER_EXIT_USAGE,
+        WORKER_EXIT_MISSING_DEPENDENCY,
+        WORKER_EXIT_CONVERSION_FAILED,
+        WORKER_EXIT_PASSWORD_REQUIRED,
+        WORKER_EXIT_UNSUPPORTED_SCHEMA,
+        WORKER_EXIT_MEMORY,
+        WORKER_EXIT_MEMORY_CEILING_UNSUPPORTED,
+        WORKER_EXIT_CONVERSION_INCOMPLETE
+      },
+      "PDF worker exit-code wire contract drift: a WORKER_EXIT_* constant no longer matches the integer " +
+        "pdf_to_docling.py emits via sys.exit(EXIT_*). classifyWorkerExit switches on these numbers, so " +
+        "changing one side alone makes the adapter misclassify a real worker outcome (e.g. read a " +
+        "refused, incomplete conversion as a malformed file). Change BOTH sides in the same commit: " +
+        "EXIT_* in src/apps/server/src/files/pdf_to_docling.py and WORKER_EXIT_* here."
+    ).toEqual({
+      WORKER_EXIT_USAGE: 2,
+      WORKER_EXIT_MISSING_DEPENDENCY: 3,
+      WORKER_EXIT_CONVERSION_FAILED: 4,
+      WORKER_EXIT_PASSWORD_REQUIRED: 5,
+      WORKER_EXIT_UNSUPPORTED_SCHEMA: 6,
+      WORKER_EXIT_MEMORY: 7,
+      WORKER_EXIT_MEMORY_CEILING_UNSUPPORTED: 8,
+      WORKER_EXIT_CONVERSION_INCOMPLETE: 9
+    });
+  });
+});
