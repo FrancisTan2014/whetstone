@@ -115,7 +115,10 @@ export const EXIT = {
   MEMORY: 7,
   // The worker was asked for a per-child memory ceiling it could not enforce on this platform (POSIX
   // `resource` unavailable, e.g. win32). In LOCKSTEP with WORKER_EXIT_MEMORY_CEILING_UNSUPPORTED.
-  MEMORY_CEILING_UNSUPPORTED: 8
+  MEMORY_CEILING_UNSUPPORTED: 8,
+  // The converter reported a run that was not an unqualified success and returned a TRUNCATED document
+  // (#832). In LOCKSTEP with the worker's EXIT_CONVERSION_INCOMPLETE.
+  CONVERSION_INCOMPLETE: 9
 };
 
 const DEFAULT_RANGE_SIZE = 50;
@@ -400,6 +403,10 @@ function observationForExit(code, stage) {
   if (code === EXIT.MEMORY) return { kind: "memory" };
   if (code === EXIT.UNSUPPORTED_SCHEMA)
     return { kind: "conversion_failed", detail: "unsupported docling schema" };
+  // The worker's own status gate refused a truncated run before emitting a payload (#832). It reports the
+  // failed pages on stderr, not on stdout, so no page count is knowable from the exit code alone.
+  if (code === EXIT.CONVERSION_INCOMPLETE)
+    return { kind: "incomplete_conversion", pagesMissingContent: null };
   if (code === EXIT.CONVERSION_FAILED && stage === "probe") return { kind: "corrupt" };
   return { kind: "conversion_failed", detail: `worker exit ${code}` };
 }
@@ -463,12 +470,27 @@ function summarizeMapped(mapping) {
 
 // Convert a mapping result into a rubric observation. A mapped document carrying unresolved figures (#806)
 // stays a `mapped` observation — the summary's unresolvedFigureCount drives its correctable verdict.
-function observationForMapping(mapping) {
+//
+// Every REFUSAL must be named here before the `default:` branch, because that branch assumes a mapped Work
+// and calls `summarizeMapped`, which iterates `mapping.units` — a field no refusal carries. A refusal that
+// falls through therefore throws `mapping.units is not iterable`, and since `convertOne`/`runCorpus`/`main`
+// use `try`/`finally` without a `catch`, one such file aborts the whole corpus run and discards every
+// result already gathered. Exported so the harness's own tests can pin each refusal directly.
+export function observationForMapping(mapping) {
   switch (mapping.status) {
     case "ocr_validation_failed":
       return { kind: "ocr_required", pagesNeedingOcr: mapping.pagesNeedingOcr };
     case "no_content":
       return { kind: "no_content" };
+    // The conversion covered only part of the book and was refused (#832). Reported as its own rubric
+    // class, not folded into `conversion_failed`: this report is aggregate-only, so truncation would
+    // otherwise vanish into the generic bucket — and truncation is exactly what this instrument exists to
+    // measure, since the books likeliest to trip it are the ones being certified against the 95% claim.
+    case "incomplete_conversion":
+      return {
+        kind: "incomplete_conversion",
+        pagesMissingContent: mapping.pagesMissingContent
+      };
     default:
       return { kind: "mapped", summary: summarizeMapped(mapping) };
   }

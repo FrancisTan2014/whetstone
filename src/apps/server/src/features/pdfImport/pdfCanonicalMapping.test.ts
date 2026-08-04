@@ -553,11 +553,25 @@ describe("mapStructuredDocument", () => {
   it("refuses text-less pages before it looks at conversion coverage", () => {
     // A text-less page is the OCR path's business. Reporting it as a dropped page instead would send
     // the learner to the wrong remedy.
+    //
+    // This fixture is built to DISCRIMINATE, which is harder than it looks. `findPagesMissingConvertedContent`
+    // already filters on `hasNativeText`, and an empty body short-circuits the coverage computation to zero,
+    // so a document that is merely text-less cannot tell the two orderings apart — swap the guards and it
+    // still reports OCR. The orderings diverge only for a document carrying BOTH signals at once: a
+    // text-less page (page 1) AND a native-text page that produced nothing (page 3), with a non-empty body
+    // (page 2) so the coverage check actually runs. OCR-first reports `ocr_validation_failed`;
+    // coverage-first would report `incomplete_conversion`. Verified to bite by temporarily swapping the two
+    // guards in `mapStructuredDocument` and confirming this test — and only this one — fails.
     const pages = [
       { hasNativeText: false, pageNumber: 1 },
-      { hasNativeText: true, pageNumber: 2 }
+      { hasNativeText: true, pageNumber: 2 },
+      { hasNativeText: true, pageNumber: 3 }
     ];
-    expect(mapEn(doc([], pages))).toEqual({ pagesNeedingOcr: 1, status: "ocr_validation_failed" });
+    const body = [item({ label: "text", pageNumber: 2, text: "the one page that converted" })];
+    expect(mapEn(doc(body, pages))).toEqual({
+      pagesNeedingOcr: 1,
+      status: "ocr_validation_failed"
+    });
   });
 
   it("keys additive evidence to each block's stable id with page geometry and confidence", () => {

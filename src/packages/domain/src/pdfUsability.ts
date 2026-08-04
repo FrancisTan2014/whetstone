@@ -38,6 +38,11 @@ export type PdfUsabilityReason =
   | "empty-body"
   | "image-unsupported"
   | "conversion-failed"
+  // The converter returned a TRUNCATED book rather than failing: pages were dropped and the import was
+  // refused (#832). Kept distinct from `conversion-failed` on purpose — this report is aggregate-only, so a
+  // reason folded into the generic bucket is invisible, and truncation is precisely the shape a resource
+  // ceiling produces and the one worth converting into a fixture.
+  | "incomplete-conversion"
   | "timed-out"
   | "memory-exhausted";
 
@@ -70,6 +75,11 @@ export type ClassifiableObservation =
   | Readonly<{ kind: "ocr_required"; pagesNeedingOcr: number }>
   | Readonly<{ kind: "no_content" }>
   | Readonly<{ kind: "conversion_failed"; detail: string }>
+  // The conversion produced a fragment of the book rather than the book (#832). `pagesMissingContent` is
+  // how many pages were lost when that is knowable — the coverage backstop counts them from the payload —
+  // and `null` when the converter's own status gate refused BEFORE a payload existed, so the harness has an
+  // exit code and no page list. The rubric never reads the number; it is carried for the diagnosis.
+  | Readonly<{ kind: "incomplete_conversion"; pagesMissingContent: number | null }>
   | Readonly<{ kind: "timeout" }>
   | Readonly<{ kind: "memory" }>;
 
@@ -97,6 +107,8 @@ export function classifyPdfUsability(observation: ClassifiableObservation): PdfU
       return { class: "unsupported", reason: "empty-body" };
     case "conversion_failed":
       return { class: "unsupported", reason: "conversion-failed" };
+    case "incomplete_conversion":
+      return { class: "unsupported", reason: "incomplete-conversion" };
     case "timeout":
       return { class: "unsupported", reason: "timed-out" };
     case "memory":
@@ -236,6 +248,7 @@ const USABILITY_REASONS: readonly PdfUsabilityReason[] = [
   "empty-body",
   "image-unsupported",
   "conversion-failed",
+  "incomplete-conversion",
   "timed-out",
   "memory-exhausted"
 ];

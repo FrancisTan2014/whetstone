@@ -19,6 +19,7 @@ import {
   EXIT,
   interpretWorkerRun,
   MAX_WORKER_OUTPUT_BYTES,
+  observationForMapping,
   runWorker
 } from "./pdfUsabilityHarness.mjs";
 
@@ -168,6 +169,74 @@ describe("interpretWorkerRun", () => {
     expect(interpretWorkerRun({ ...clean, code: EXIT.CONVERSION_FAILED }, "range").observation.kind).toBe(
       "conversion_failed"
     );
+  });
+
+  // #832: the worker's status gate has its own exit code, so a truncated run must be NAMED rather than
+  // degrading to the generic `worker exit ${code}` fallback that every unmapped code lands in.
+  it("names the worker's incomplete-conversion exit instead of the generic fallback", () => {
+    const observation = interpretWorkerRun(
+      { ...clean, code: EXIT.CONVERSION_INCOMPLETE },
+      "range"
+    ).observation;
+    // The gate refuses before a payload exists and reports the failed pages on stderr, so the count is
+    // genuinely unknown here — `null` says so rather than claiming a false zero.
+    expect(observation).toEqual({ kind: "incomplete_conversion", pagesMissingContent: null });
+    expect(observation.detail).toBeUndefined();
+  });
+});
+
+// #832 regression. `observationForMapping`'s `default:` branch assumes a mapped Work and calls
+// `summarizeMapped`, which iterates `mapping.units` — a field no REFUSAL carries. A refusal that reaches
+// that branch throws `mapping.units is not iterable`, and because `convertOne`/`runCorpus`/`main` are all
+// `try`/`finally` with no `catch`, one such PDF aborts the entire corpus run and discards every result
+// already gathered. This harness certifies the >=95% usable-ingestion claim, and the books likeliest to be
+// truncated are exactly the ones it measures, so every refusal status must be an explicit case.
+describe("observationForMapping", () => {
+  it("classifies an incomplete conversion as its own rubric kind, carrying the lost-page count", () => {
+    expect(
+      observationForMapping({ pagesMissingContent: 408, status: "incomplete_conversion" })
+    ).toEqual({ kind: "incomplete_conversion", pagesMissingContent: 408 });
+  });
+
+  it("does not iterate units for any refusal status", () => {
+    // Each refusal is passed WITHOUT a `units` field, exactly as the mapper returns it, so falling
+    // through to the mapped branch would throw rather than silently mis-classify.
+    for (const mapping of [
+      { pagesNeedingOcr: 3, status: "ocr_validation_failed" },
+      { status: "no_content" },
+      { pagesMissingContent: 1, status: "incomplete_conversion" }
+    ]) {
+      expect(() => observationForMapping(mapping)).not.toThrow();
+      expect(observationForMapping(mapping).kind).not.toBe("mapped");
+    }
+  });
+
+  it("still summarizes a mapped Work", () => {
+    const observation = observationForMapping({
+      evidence: [{ confidence: 0.9 }],
+      status: "mapped",
+      units: [
+        {
+          docBlocks: [
+            { node: { content: [{ text: "Clean Code" }], type: "heading" } },
+            { node: { text: "A body paragraph.", type: "paragraph" } }
+          ]
+        }
+      ],
+      unresolvedFigureCount: 0
+    });
+    expect(observation.kind).toBe("mapped");
+    expect(observation.summary.blockCount).toBe(2);
+    expect(observation.summary.headingCount).toBe(1);
+    expect(observation.summary.plainTextLength).toBe("Clean Code".length + "A body paragraph.".length);
+  });
+
+  it("reports OCR and empty-body refusals unchanged", () => {
+    expect(observationForMapping({ pagesNeedingOcr: 3, status: "ocr_validation_failed" })).toEqual({
+      kind: "ocr_required",
+      pagesNeedingOcr: 3
+    });
+    expect(observationForMapping({ status: "no_content" })).toEqual({ kind: "no_content" });
   });
 });
 
