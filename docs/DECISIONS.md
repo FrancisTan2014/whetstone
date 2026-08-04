@@ -16,9 +16,11 @@ it. Newest first.
 **Replaced by:** the "a conversion is complete or it is refused" rule in `PRODUCT.md` →
 "v0 content ingestion".
 
-**What it was.** The worker's hard memory ceiling was treated as a fail-closed bound: a host that
-cannot enforce it refuses the import, and an over-budget conversion was assumed to terminate visibly.
-On that assumption the worker consumed only `result.document` from the pinned converter and never
+**What it was.** An over-budget conversion was assumed to terminate visibly, so the worker's hard
+memory ceiling was read as a bound that could only be respected or hit loudly. (The neighbouring rule
+that a host unable to enforce the ceiling refuses the import was never in doubt and still stands; only
+the assumption about what happens *under* the ceiling was wrong.) On that assumption the worker
+consumed only `result.document` from the pinned converter and never
 inspected the run's reported status, and publication's only content refusals were "a page has no
 native text" (OCR required) and "zero canonical blocks" (no empty shell).
 
@@ -36,15 +38,18 @@ yielding 5 usable pages. The same range converted with the ceiling lifted return
 95,158 characters, so extraction was never the problem.
 
 Measurement also showed the ceiling itself was specified against the wrong quantity. The Windows Job
-Object bounds **committed** memory, but the pinned converter's torch/MKL runtime reserves per-thread
-arenas far beyond what it touches: the same range peaks at **31.78 GiB committed against a 2.48 GiB
-working set**. A 6 GiB commit ceiling therefore throttles a conversion whose real footprint is under
+Object bounds **committed** memory, and the pinned converter's torch/MKL runtime commits far more than
+it ever touches: the same range peaks at **31.78 GiB committed against a 2.48 GiB working set**, a
+ratio of roughly 13x. (Pinning `OMP`/`MKL`/`OPENBLAS` to 4 threads was measured and moves it only to
+30.70 GiB, so thread count is not the cause; the mechanism behind the reservation was not established
+and nothing here depends on it.) A 6 GiB commit ceiling therefore throttles a conversion whose real footprint is under
 2.5 GiB, and no commit ceiling can both admit the converter and bound real memory pressure.
 
 **What replaced it.** A converter result is untrusted evidence, not a source of truth. Any result not
-reporting unqualified success is refused, and an independent coverage invariant — every page the
-source reports as carrying native text must contribute at least one body item — refuses a fragment
-even from a converter that claims success. Ceilings are calibrated against what the pinned converter
+reporting unqualified success is refused, and an independent coverage invariant refuses a fragment
+even from a converter that claims success: every page the source reports as carrying native text must
+be accounted for, either by a body item or by having yielded only page furniture, and a page that
+yields neither is counted as lost. Ceilings are calibrated against what the pinned converter
 actually commits on the host, and a ceiling that throttles a supported book is a defect of the
 ceiling rather than an acceptable degradation.
 

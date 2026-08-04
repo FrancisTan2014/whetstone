@@ -334,8 +334,11 @@ owning source flow:
   not process, returns the ones it managed, and reports the run as only partially successful. A
   converter result is therefore untrusted evidence, not a source of truth. A result that does not
   report unqualified success is refused, and — independently of what the converter reports — every
-  page the source shows as carrying native text must contribute at least one body item, or the import
-  is refused and reports how many pages were lost. A partially converted book is never published: it
+  page the source shows as carrying native text must be accounted for: it contributes a body item, or
+  everything the converter recognised on it was page furniture. A page that yields nothing at all is
+  counted as lost, and a book that loses pages is refused with the count reported. Accounting for
+  furniture-only pages is not a loophole but the point: a numbered blank page and a page dropped by a
+  failed conversion are different events, and only the second is a defect. A partially converted book is never published: it
   passes the empty-shell and OCR refusals, looks like a real import, and is discovered only while
   reading, which serves the learner worse than a visible failure. Resource ceilings are calibrated
   against what the pinned converter actually commits on the host, and a ceiling that throttles a
