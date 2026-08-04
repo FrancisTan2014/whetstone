@@ -4,7 +4,9 @@
 // staged upload. This keeps the journey honest end to end — the published Work is derived from these bytes,
 // not a canned server-side document — while needing no Python/Docling worker in CI. The embedded document
 // is a native-text (born-digital) multi-section structure: a title, two section headers, paragraphs, a
-// bullet list, and a table, so publication maps it to three ordered ReadingUnits of canonical blocks.
+// bullet list, and a table, plus the embedded bookmark outline a real born-digital PDF carries. Reading
+// units divide at that authored navigation (#816), so publication maps it to three ordered ReadingUnits
+// of canonical blocks.
 
 // Kept in sync with the runner's marker (pdfStructuredAdapter.ts). Duplicated here so the E2E loader has no
 // dependency on server internals.
@@ -85,6 +87,13 @@ const conversion = {
   body,
   doclingSchema: { name: "DoclingDocument", version: "1.10.0" },
   furniture: [],
+  // The document's own bookmark outline — what a born-digital PDF's producer writes and what the reader
+  // divides on (#816). Three top-level entries, so the journey reads as three chapter-scale units.
+  outline: [
+    { level: 1, pageNumber: 1, title: "Born-Digital Preview" },
+    { level: 1, pageNumber: 1, title: "How Import Works" },
+    { level: 1, pageNumber: 1, title: "What Remains" }
+  ],
   pages: [{ hasNativeText: true, pageNumber: 1 }],
   schemaVersion: RANGE_CONVERSION_SCHEMA_VERSION
 };
