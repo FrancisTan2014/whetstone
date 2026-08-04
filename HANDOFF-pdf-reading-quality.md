@@ -163,6 +163,19 @@
 > Only a real process under the real Job Object shows it. Anything that crosses a real OS boundary
 > needs at least one real run before you believe the suite.
 >
+> **#843 is fixed, merged (PR #844), and verified against the real worker on merged `main`
+> (`6be356c3`)** — not against a fake, and with a control in the same batch:
+>
+> | run | result |
+> |---|---|
+> | 6144 MiB, `--range clean-code.pdf 21 70` | **exit 9**, stdout 0 bytes, stderr names `PARTIAL_SUCCESS`, 48 failed pages, `std::bad_alloc`, "pipeline terminated early" |
+> | control, same batch: `python -c "import sys; sys.exit(7)"` | exit 7 |
+> | 40960 MiB, `--range clean-code.pdf 21 26` | exit 0, 45,954-byte payload, 6 pages, 34 body text nodes, **12,003 chars** |
+>
+> Before #844 that first run exited **0**. The whole chain now holds end to end: docling drops pages →
+> the #839 gate refuses and returns 9 with empty stdout → the job stand-down lets the 9 reach the OS →
+> the adapter sees a real failure code instead of a silent, success-shaped empty result.
+>
 > ### And the soil it grew in: the worker's tests are not gated at all
 >
 > `src/apps/server/src/files/tests/test_pdf_to_docling.py` holds **132 tests** and runs in **neither
@@ -179,6 +192,46 @@
 > exit-code contract, and the payload builder — the most failure-prone component in ingestion, and the
 > only part of it with no automated gate. A contributor can break the completeness gate, push, watch
 > every required lane go green, and merge.
+>
+> ### The Quality lane's flake, and the general way to pin a race down (#825)
+>
+> The `Quality (typecheck, lint, 100% coverage)` lane failed on **five** unrelated branches, twice on
+> 2026-08-04 alone (#839, then #844 run `30884634318`). At ~25 minutes per CI cycle this was the single
+> largest tax on delivery — it makes the merge gate a coin flip and trains everyone to re-run red
+> rather than read it.
+>
+> Signature: `RichContentEditor.test.tsx > claims the blank paper margin press so the caret lands at the
+> document end`, `AssertionError: expected '!Hello' to be 'Hello!'`, 1 failure out of ~400 files.
+>
+> **Repetition is the wrong instrument for a race.** 12 consecutive runs of the single test and 5 of
+> the whole file were green locally. The failure is not random — it is a lost race against one
+> specific asynchronous step, so the way to reproduce it is to *delay that step*, not to run more.
+>
+> `RichContentEditor.tsx` (~L315-327) handles the margin press with `editor.commands.focus("end")`.
+> Tiptap's `focus` sets the ProseMirror selection **synchronously** but defers the real DOM focus to a
+> `requestAnimationFrame`. Until that frame runs the DOM selection is still the untouched document
+> start, and the test types straight into that gap, so the keystroke applies against the stale start
+> selection and prepends. Stubbing the frame to arrive late reproduces it **100% of the time**:
+>
+> ```ts
+> vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) =>
+>   setTimeout(() => cb(performance.now()), 120) as unknown as number);
+> ```
+>
+> | shape, under the delayed frame | result |
+> |---|---|
+> | current test (types straight after `dispatchEvent`) | `"!Hello"` — the exact CI signature |
+> | with `await waitFor(() => expect(document.activeElement).toBe(textbox))` before typing | `"Hello!"` |
+>
+> The barrier weakens nothing: it **adds** the assertion the production comment already claims (the
+> handler deliberately does not `preventDefault`, so native focus proceeds) and only then makes the
+> caret claim. This is a test race, not a product defect — a human cannot type within one frame of a
+> mousedown. Note there is **no `@testing-library/jest-dom`** here; use
+> `expect(document.activeElement).toBe(...)`, never `toHaveFocus()`.
+>
+> #825 also carries a genuine product defect (Race 1: re-applying note decorations destroys the
+> learner's live selection, dismissing the selection toolbar mid-action). Both halves are specified in
+> the issue.
 >
 > ### Two traps that cost real time — do not repeat them
 >
