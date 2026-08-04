@@ -869,10 +869,11 @@ describe("RichContentEditor work presentation", () => {
     const press = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
     (paragraph as HTMLElement).dispatchEvent(press);
 
-    // Focus the surface directly instead of letting `user.type` click it. That click would land on the
-    // content root — the blank margin — and arm the very handler this test asserts was NOT armed, whose
-    // `focus("end")` resolves a frame later. The assertion would then race that frame: the keystroke wins
-    // on an idle runner and prepends, the frame wins on a loaded one and appends (#825's second shape).
+    // Let any frame the handler might have scheduled land first. Tiptap's `focus()` defers only the DOM
+    // focus by one frame, so out-running it (typing immediately) would hide a wrongly-claimed press: the
+    // keystroke would win and prepend either way. Awaiting the frame makes the opposite true — had this
+    // press been claimed, `focus("end")` would have moved the caret and the prepend below would fail.
+    await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)));
     textbox.focus();
     await user.type(textbox, "!", { skipClick: true });
     await waitFor(() => expect(documentText(lastDocument(onChange))).toBe("!Hello"));
@@ -891,8 +892,9 @@ describe("RichContentEditor work presentation", () => {
     const press = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
     (textNode as ChildNode).dispatchEvent(press);
 
-    // Same reason as the test above: `user.type`'s own click would land on the blank margin and arm the
-    // deferred `focus("end")`, so focus the surface directly and skip that click.
+    // Same as the test above: await the frame so a wrongly-claimed press would move the caret and redden
+    // the prepend, rather than being out-run by the keystroke.
+    await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)));
     textbox.focus();
     await user.type(textbox, "!", { skipClick: true });
     await waitFor(() => expect(documentText(lastDocument(onChange))).toBe("!Hello"));
