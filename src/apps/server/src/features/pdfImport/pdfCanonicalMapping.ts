@@ -199,6 +199,12 @@ function listItemNode(child: StructuredDocItem): DocumentNodeJSON {
 
 // Build a table from a docling table's `table_row` children (each row's children become cells), or null
 // when no row yields a cell so the caller can fall back to an `unknown` node rather than an empty table.
+//
+// This keys on the `_table_rows` SHAPE, never on `label === "table"`, which is why `canonicalBodyNode`
+// can route its whole default branch here (#859): docling's table shape is label-agnostic, so a
+// `document_index` (a printed table of contents or index) arrives as `table_row`s of cells exactly like
+// a `table` does. Any construct that is really a table is therefore mapped as one whatever docling
+// called it, and one that is not still returns null and keeps the `unknown` fallback.
 function tableNode(item: StructuredDocItem): DocumentNodeJSON | null {
   const rows: DocumentNodeJSON[] = [];
   for (const rowItem of item.children) {
@@ -265,13 +271,14 @@ function figureNode(item: StructuredDocItem): DocumentNodeJSON {
 }
 
 // Project one body item to its canonical block node, or null when the canonical schema has NO
-// representation for it — an unrecognized docling label, or a table/list construct that yielded no row or
-// item. Null is the `unknown`/fallback path, which the caller resolves (#812): a container is walked into
-// so its descendants survive, and only a construct with something of its own to show becomes an `unknown`
-// node. A picture/figure becomes a canonical `figure` placeholder (#806) whose image is unresolved, so the
-// readable document publishes with the figure visible for correction rather than the whole document being
-// refused. `heading` is the already-resolved depth (#815) — outline-derived where the document declared
-// one — so this projection never re-decides it.
+// representation for it — a construct that is neither a recognized label nor table-shaped, or a
+// table/list construct that yielded no row or item. Null is the `unknown`/fallback path, which the
+// caller resolves (#812): a container is walked into so its descendants survive, and only a construct
+// with something of its own to show becomes an `unknown` node. A picture/figure becomes a canonical
+// `figure` placeholder (#806) whose image is unresolved, so the readable document publishes with the
+// figure visible for correction rather than the whole document being refused. `heading` is the
+// already-resolved depth (#815) — outline-derived where the document declared one — so this projection
+// never re-decides it.
 function canonicalBodyNode(
   item: StructuredDocItem,
   heading: ResolvedHeading | null
@@ -305,8 +312,17 @@ function canonicalBodyNode(
     case "ordered_list":
     case "unordered_list":
       return listNode(item);
+    // Every remaining label is decided by SHAPE, not by name (#859). `tableNode` reads the item's
+    // `_table_rows` children, so a construct docling delivers in table shape under any other label —
+    // `document_index` above all, the printed contents/index of a book — becomes the canonical table it
+    // actually is. Routing them here is what stops their cell text being lost: an `unknown` node carries
+    // its text only in an opaque `html` attr, which `documentText` does not read, so a fragmented index
+    // contributed nothing to any block's `plaintext` (measured on Clean Code: 1,243 `unknown` cells, and
+    // 70,103 characters absent from the text stream, both recovered by this branch). A construct with no
+    // table shape still returns null and takes the unchanged `unknown`/expansion path (#812), so this
+    // widens what maps without ever narrowing what survives.
     default:
-      return null;
+      return tableNode(item);
   }
 }
 
