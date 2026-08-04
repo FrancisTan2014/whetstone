@@ -147,6 +147,23 @@
 > Only a real process under the real Job Object shows it. Anything that crosses a real OS boundary
 > needs at least one real run before you believe the suite.
 >
+> ### And the soil it grew in: the worker's tests are not gated at all
+>
+> `src/apps/server/src/files/tests/test_pdf_to_docling.py` holds **132 tests** and runs in **neither
+> `pnpm validate` nor CI**. Verified: no `package.json` script invokes `python`/`unittest`/`pytest`, and
+> `.github/workflows/` contains no match for any of them. Filed as **#845**.
+>
+> Run them by hand after touching the worker — nothing else will:
+>
+> ```
+> python -m unittest discover -s src/apps/server/src/files/tests
+> ```
+>
+> This matters because `pdf_to_docling.py` owns the memory boundary, the #832 completeness gate, the
+> exit-code contract, and the payload builder — the most failure-prone component in ingestion, and the
+> only part of it with no automated gate. A contributor can break the completeness gate, push, watch
+> every required lane go green, and merge.
+>
 > ### Two traps that cost real time — do not repeat them
 >
 > - **There are two block tables.** `blocks` is the legacy mdast table (superseded by D1) and is
