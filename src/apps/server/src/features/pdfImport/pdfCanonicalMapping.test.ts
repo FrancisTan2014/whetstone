@@ -79,17 +79,13 @@ function headingNodes(
     .filter((node) => node.type === "heading");
 }
 
-function headingLevels(
-  result: Extract<PdfCanonicalMappingResult, { status: "mapped" }>
-): number[] {
+function headingLevels(result: Extract<PdfCanonicalMappingResult, { status: "mapped" }>): number[] {
   return headingNodes(result).map((node) => (node.attrs as { level: number }).level);
 }
 
 // The text of each heading block, so a test can assert WHICH headings survived (and that no running head
 // was duplicated into one) independently of how the work is divided into units.
-function headingTexts(
-  result: Extract<PdfCanonicalMappingResult, { status: "mapped" }>
-): string[] {
+function headingTexts(result: Extract<PdfCanonicalMappingResult, { status: "mapped" }>): string[] {
   return headingNodes(result).map((node) =>
     (node.content ?? []).map((inline) => inline.text ?? "").join("")
   );
@@ -1490,7 +1486,11 @@ describe("chapter-scale reading units", () => {
     item({ label: "text", pageNumber: 129, text: "Train wreck prose." }),
     item({ label: "section_header", pageNumber: 134, text: "Error Handling" }),
     item({ label: "text", pageNumber: 134, text: "Chapter seven opens." }),
-    item({ label: "section_header", pageNumber: 135, text: "Use Exceptions Rather Than Return Codes" }),
+    item({
+      label: "section_header",
+      pageNumber: 135,
+      text: "Use Exceptions Rather Than Return Codes"
+    }),
     item({ label: "text", pageNumber: 135, text: "Exception prose." })
   ];
 
@@ -1519,9 +1519,7 @@ describe("chapter-scale reading units", () => {
   }));
 
   // Every mapped block, unit by unit — the invariant a boundary change is most likely to break silently.
-  function blockIds(
-    result: Extract<PdfCanonicalMappingResult, { status: "mapped" }>
-  ): string[] {
+  function blockIds(result: Extract<PdfCanonicalMappingResult, { status: "mapped" }>): string[] {
     return result.units.flatMap((unit) => unit.docBlocks.map((block) => block.id));
   }
 
