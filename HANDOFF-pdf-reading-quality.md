@@ -2,8 +2,8 @@
 
 > ## STATE AT HANDOFF — everything below is landed unless marked otherwise
 >
-> `main` is at **`f0784c8e`**. Merged on 2026-08-04, in order:
-> **#835, #838, #836, #839, #844, #848, #846.**
+> `main` is at **`0b72a3fc`**. Merged on 2026-08-04, in order:
+> **#835, #838, #836, #839, #844, #848, #846, #852.**
 >
 > | PR | What it did |
 > |---|---|
@@ -11,17 +11,22 @@
 > | #844 | release `KILL_ON_JOB_CLOSE` so the Windows worker's exit code survives the Job Object |
 > | #848 | stop note re-application dismissing the selection toolbar; barrier the caret test (#825) |
 > | #846 | gate the 132→145-test Python worker suite in `validate` and CI |
+> | #852 | kill the second caret race — await Tiptap's deferred frame instead of out-running it (§10) |
 >
 > **The merge gate now requires four checks**, not three — `Quality`, `Runtime`, `Isolated contracts`,
 > and the new **`Python worker tests`**. Any branch cut before #846 must be refreshed before it can
 > merge; see §9.
 >
-> **Still open:** **#849** (pin the exit-code wire integers and `USABILITY_REASONS`) was sent back by
-> the reviewer for two real findings — see §10. **#847** is now unblocked. **#840** is `ready-for-dev`
-> and its premise has been measured and corrected — see §8.
+> **Still open:** **#849** (pin the exit-code wire integers and `USABILITY_REASONS`) is **approved**,
+> refreshed onto `main`, and awaiting its re-run — its only red was the caret flake that #852 has now
+> fixed; see §11. **#840** is `ready-for-dev` with its premise measured and corrected (§8). **#847**
+> has a recorded design decision on it (on-demand Windows job + a decision record, not a required
+> lane). **#850** (typecheck is blind to every test file) and **#853** (a test that asserts something
+> React never delivers) are filed and `ready-for-dev`.
 >
 > The user-visible defect is fixed and verified against the live database: **Clean Code holds 3,038
-> blocks / 786,475 characters**, up from 335 / 87,359.
+> blocks / 786,475 characters**, up from 335 / 87,359. The whole library was swept, not just that
+> book — see §12; nothing else is silently truncated.
 
 > ## READ THIS FIRST — 2026-08-04
 >
@@ -925,3 +930,57 @@ is byte-identical (§9), re-post the approval marker against the new head, and m
 The reviewer's two original findings on #849 are already fixed: the `satisfies` guard that never
 ran (all tsconfigs exclude test files — filed separately as **#850**), and the wider-than-
 documented undetected shape.
+
+---
+
+## 12. The whole library was swept, not just Clean Code
+
+Fixing one book does not prove the app is healthy, so every Work in the live database was checked for
+the same symptom (content present in the import record but missing from the readable substrate).
+
+| Work | `doc_blocks` | chars | legacy `blocks` | verdict |
+|---|---|---|---|---|
+| Clean Code | **3,038** | **786,475** | 0 | fixed — was 335 / 87,359 |
+| Designing Data-Intensive Applications | 4,413 | 1,450,326 | 5,120 | healthy (EPUB dual-writes both) |
+| baby_english_core_script | **0** | 0 | 35 | **healthy — see below** |
+| Never Let Me Go | 5 | 6 | 0 | hand-made stub (`origin='manual'`, no source) |
+| 兰亭集序 | 4 | 390 | 0 | hand-made stub |
+| 岳阳楼记 | 1 | 24 | 0 | hand-made stub |
+
+### The trap in that table: zero `doc_blocks` is not necessarily a defect
+
+`baby_english_core_script` has **14 reading units, 0 `doc_blocks`, and 35 legacy `blocks`**, which
+reads exactly like a silently-empty import. It is not. The two substrates are a **deliberate,
+documented design** (#312, #762):
+
+- The Reader renders a unit's `doc_blocks` **if it has any**, else the legacy mdast `blocks`.
+- `searchQueries.ts` unions both halves, and the legacy half excludes any unit that has `doc_blocks`,
+  so a unit appears exactly once and a hit deep-links to the id the Reader actually stamps.
+- `correctableImportedWorkSql` requires a **fully** canonical hierarchy, so a Markdown-only Work is
+  read-only and exposes no correction action — by design.
+
+EPUB dual-writes both forms; PDF writes only `doc_blocks`; Markdown writes only legacy `blocks`. All
+three render.
+
+**So before reporting "a book has no blocks", check the other table.** The query that distinguishes a
+real defect from this design:
+
+```sql
+select w.title,
+  (select count(*) from doc_blocks d where d.work_entry_id = w.entry_id) as canonical,
+  (select count(*) from blocks b
+     where b.work_entry_id = w.entry_id and b.deleted_at is null) as legacy
+from work_meta w order by canonical;
+```
+
+A Work is genuinely broken only when **both** columns are ~0 while its import claims success — which
+is precisely what Clean Code looked like before the fix, and what nothing in the library looks like
+now.
+
+### Schema names that cost time
+
+`doc_blocks` (not `blocks`) is the canonical substrate; `work_meta` (not `works`) holds titles and
+`origin`. `doc_blocks` joins on **`work_entry_id`/`reading_unit_entry_id`**, not `work_id`. Content
+lives in **`plaintext`**, not `text`. The PGlite store is at `src/apps/server/.data/db` — **copy it
+and query the copy**, never the live directory. Run the query from `src/apps/server`, where
+`@electric-sql/pglite` resolves.
