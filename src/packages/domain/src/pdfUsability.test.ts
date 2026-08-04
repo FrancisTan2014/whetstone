@@ -130,6 +130,16 @@ describe("classifyPdfUsability", () => {
     });
   });
 
+  // #832. A truncated conversion is deliberately NOT folded into `conversion-failed`: the corpus report
+  // is aggregate-only (no per-file rows), so a reason that shares a bucket is invisible in the evidence —
+  // and truncation is both the shape a resource ceiling produces and the one worth turning into a fixture.
+  it("counts an incomplete conversion as unsupported, under its own reason", () => {
+    expect(classifyPdfUsability({ kind: "incomplete_conversion" })).toEqual({
+      class: "unsupported",
+      reason: "incomplete-conversion"
+    });
+  });
+
   it("counts a timeout as unsupported", () => {
     expect(classifyPdfUsability({ kind: "timeout" })).toEqual({
       class: "unsupported",

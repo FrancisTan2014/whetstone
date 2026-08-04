@@ -10,7 +10,63 @@ it. Newest first.
 
 ---
 
+## D8 — Page coverage as completeness evidence → the converter's own status, fail-closed
+
+**Status:** Superseded 2026-08-04, before shipping, by direct measurement on a real book.
+**Replaced by:** the "a conversion is complete or it is refused" rule in `PRODUCT.md` →
+"v0 content ingestion", now resting on the converter's reported status alone.
+
+**What it was.** D7 established that a converter result is untrusted evidence and must be refused
+unless it reports unqualified success. Alongside that status gate, #834/#835 added a second,
+independent invariant intended as defence in depth for the case where a converter reports success but
+silently under-produces: every page the source's text layer reports as carrying native text had to be
+accounted for by at least one item the converter emitted for that page. #837/#838 refined it once
+already, after review found the first form counted only **body** items and would therefore refuse a
+healthy book on its running heads, folios, and numbered blank pages; the refinement widened the
+accounting to include page furniture, so a page satisfied the invariant if everything recognised on it
+was furniture. Both forms shared one premise: that a page which produced no item had not been
+processed.
+
+**Why superseded.** That premise is false, and measurement falsified it before the invariant shipped.
+Running the production worker over pages 21–30 of the same 462-page Clean Code PDF that motivated
+#832, the converter reported `SUCCESS` and page 25 produced **zero items of any kind** — neither body
+nor furniture. Page 25 and page 29 of that book carry byte-identical native text, the 35-character
+string `'This page intentionally left blank '`, on identically sized 518x666 pages, with an identical
+text bounding box of (181,494)-(342,505). In the *same* run, page 29 produced one text item and page
+25 produced none. Re-running the identical range reproduced the split exactly, so this is deterministic
+context sensitivity in the converter's layout model, not flakiness. Item production is therefore a
+function of the batch a page is converted in, not of whether the page was converted at all.
+
+The exposure was structural rather than incidental: 15 of the book's 462 pages carry that notice
+(7, 19, 25, 29, 31, 47, 133, 165, 183, 223, 297, 347, 379, 439, 443). Running the real mapper over the
+real payload confirmed the outcome — `incomplete_conversion`, one page reported lost — so the
+invariant would have refused a book we had just proven converts completely, 461 of 462 pages and
+3,038 blocks. Refusing a good book loudly is a worse failure than the silent partial import #832 set
+out to fix, and no adjustment to *which* item groups count can repair a proxy that is zero for a page
+that converted perfectly. A proportional tolerance was rejected with it: "complete or refused, unless
+fewer than N% of pages are missing" is a different and weaker rule, and the threshold would have been
+unprincipled.
+
+**What replaced it.** Nothing was added in its place, and the completeness rule itself did not change
+— what narrowed is the **evidence** admitted to decide it, not the standard. Completeness is now
+judged solely from the converter's own record of what it did: the status gate, hardened to fail
+closed, so a result that does not report unqualified success is refused and a result that cannot
+report a status at all is refused with it. Closing that seam matters more now that the gate stands
+alone: the converter version is pinned, so an absent status is not an expected shape, and a future
+upgrade that changes the reporting contract fails loudly at the boundary instead of silently
+reopening #832. The gate refuses on status alone; the converter's `errors` are read only to describe
+the failure to an operator.
+
+Real per-page processing evidence — `ConversionResult.pages`, which records what the converter
+actually did to each page independently of what that page yielded — is the correct backstop and is
+filed as follow-up work with this measurement attached. It was not adopted here: its marginal value
+over the status gate is currently hypothetical, it changes the payload contract, and a new evidence
+channel should not be designed and validated alongside the half that actually fixes the defect.
+
+---
+
 ## D7 — Memory ceiling assumed to fail loudly → converter results are untrusted evidence
+
 
 **Status:** Superseded 2026-08-04 by a reproduced silent-truncation failure.
 **Replaced by:** the "a conversion is complete or it is refused" rule in `PRODUCT.md` →
@@ -49,7 +105,9 @@ and nothing here depends on it.) A 6 GiB commit ceiling therefore throttles a co
 reporting unqualified success is refused, and an independent coverage invariant refuses a fragment
 even from a converter that claims success: every page the source reports as carrying native text must
 be accounted for, either by a body item or by having yielded only page furniture, and a page that
-yields neither is counted as lost. Ceilings are calibrated against what the pinned converter
+yields neither is counted as lost. (**Superseded in part by D8:** the coverage invariant was falsified
+by measurement before it shipped and removed; the untrusted-evidence rule stands, now carried by the
+status gate alone, made fail-closed.) Ceilings are calibrated against what the pinned converter
 actually commits on the host, and a ceiling that throttles a supported book is a defect of the
 ceiling rather than an acceptable degradation.
 

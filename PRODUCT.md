@@ -333,14 +333,14 @@ owning source flow:
   contract, but the converter itself does not fail when it hits a bound: it drops the pages it could
   not process, returns the ones it managed, and reports the run as only partially successful. A
   converter result is therefore untrusted evidence, not a source of truth. A result that does not
-  report unqualified success is refused, and — independently of what the converter reports — every
-  page the source shows as carrying native text must be accounted for: it contributes a body item, or
-  everything the converter recognised on it was page furniture. A page that yields nothing at all is
-  counted as lost, and a book that loses pages is refused with the count reported. Accounting for
-  furniture-only pages is not a loophole but the point: a numbered blank page and a page dropped by a
-  failed conversion are different events, and only the second is a defect. A partially converted book is never published: it
-  passes the empty-shell and OCR refusals, looks like a real import, and is discovered only while
-  reading, which serves the learner worse than a visible failure. Resource ceilings are calibrated
+  report unqualified success is refused, and a result that cannot report its status at all is refused
+  with it, because a conversion whose completeness cannot be checked is not a complete one. A
+  partially converted book is never published: it passes the empty-shell and OCR refusals, looks like
+  a real import, and is discovered only while reading, which serves the learner worse than a visible
+  failure. Completeness is judged from the converter's own record of what it did, never from what a
+  page produced: measured on a real book, two pages with byte-identical text and identical geometry
+  yielded one item and zero items in the same run, so an item count carries no information about
+  whether a page was converted and must never be used to decide it. Resource ceilings are calibrated
   against what the pinned converter actually commits on the host, and a ceiling that throttles a
   supported book is a defect of the ceiling, never an acceptable degradation.
 - The product target is usable automatic ingestion for at least 95% of the deduplicated supported PDF

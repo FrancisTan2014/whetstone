@@ -169,6 +169,19 @@ describe("interpretWorkerRun", () => {
       "conversion_failed"
     );
   });
+
+  // #832: the worker's status gate has its own exit code, so a truncated run must be NAMED rather than
+  // degrading to the generic `worker exit ${code}` fallback that every unmapped code lands in.
+  it("names the worker's incomplete-conversion exit instead of the generic fallback", () => {
+    const observation = interpretWorkerRun(
+      { ...clean, code: EXIT.CONVERSION_INCOMPLETE },
+      "range"
+    ).observation;
+    // The gate refuses before a payload exists and reports the failed pages on stderr, so no page count
+    // travels with the refusal — and completeness is never inferred from what pages produced (D8).
+    expect(observation).toEqual({ kind: "incomplete_conversion" });
+    expect(observation.detail).toBeUndefined();
+  });
 });
 
 // Regression for #787: the gate-producing worker timeout must be the SAME bound the live import lane

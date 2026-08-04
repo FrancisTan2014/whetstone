@@ -115,7 +115,10 @@ export const EXIT = {
   MEMORY: 7,
   // The worker was asked for a per-child memory ceiling it could not enforce on this platform (POSIX
   // `resource` unavailable, e.g. win32). In LOCKSTEP with WORKER_EXIT_MEMORY_CEILING_UNSUPPORTED.
-  MEMORY_CEILING_UNSUPPORTED: 8
+  MEMORY_CEILING_UNSUPPORTED: 8,
+  // The converter reported a run that was not an unqualified success and returned a TRUNCATED document
+  // (#832). In LOCKSTEP with the worker's EXIT_CONVERSION_INCOMPLETE.
+  CONVERSION_INCOMPLETE: 9
 };
 
 const DEFAULT_RANGE_SIZE = 50;
@@ -400,6 +403,9 @@ function observationForExit(code, stage) {
   if (code === EXIT.MEMORY) return { kind: "memory" };
   if (code === EXIT.UNSUPPORTED_SCHEMA)
     return { kind: "conversion_failed", detail: "unsupported docling schema" };
+  // The worker's own status gate refused a truncated run before emitting a payload (#832). It reports the
+  // failed pages on stderr, not on stdout, so no page count is knowable from the exit code alone.
+  if (code === EXIT.CONVERSION_INCOMPLETE) return { kind: "incomplete_conversion" };
   if (code === EXIT.CONVERSION_FAILED && stage === "probe") return { kind: "corrupt" };
   return { kind: "conversion_failed", detail: `worker exit ${code}` };
 }

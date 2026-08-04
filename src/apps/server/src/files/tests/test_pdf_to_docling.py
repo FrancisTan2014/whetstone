@@ -6,6 +6,8 @@ No real Docling models or network: ``build_converter``'s docling imports are moc
 
 Run with ``python -m unittest`` from this folder.
 """
+import contextlib
+import enum
 import hashlib
 import io
 import json
@@ -20,6 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from pdf_to_docling import (  # noqa: E402  (path set above)
     DOCLING_SCHEMA_NAME,
     EXIT_CONVERSION_FAILED,
+    EXIT_CONVERSION_INCOMPLETE,
     EXIT_MEMORY_CEILING_UNSUPPORTED,
     EXIT_MISSING_DEPENDENCY,
     EXIT_OK,
@@ -33,10 +36,13 @@ from pdf_to_docling import (  # noqa: E402  (path set above)
     MAX_OUTLINE_DEPTH,
     MAX_OUTLINE_ENTRIES,
     MAX_OUTLINE_TITLE_CHARS,
+    MAX_REPORTED_CONVERSION_ERRORS,
+    MAX_REPORTED_FAILED_PAGES,
     PICTURE_LABELS,
     RANGE_SCHEMA_VERSION,
     SUPPORTED_SCHEMA_VERSIONS,
     ConversionFailed,
+    ConversionIncomplete,
     MemoryCeilingUnsupported,
     PasswordRequired,
     UnsupportedSchema,
@@ -56,7 +62,9 @@ from pdf_to_docling import (  # noqa: E402  (path set above)
     clean_metadata_value,
     convert_range,
     count_pages,
+    ensure_conversion_complete,
     extract_picture_artifact,
+    load_conversion_status,
     main,
     map_group,
     map_item,
@@ -157,7 +165,12 @@ class FakeConverter:
 
     def convert(self, pdf_path, page_range=None):
         self.calls.append((pdf_path, page_range))
-        return types.SimpleNamespace(document=self._doc)
+        # A healthy conversion REPORTS that it is healthy. Since the completeness gate fails closed
+        # (#832, D8), a fake standing in for a good range must report success exactly as the real
+        # docling result does; a fake that reported nothing would model a refused conversion.
+        return types.SimpleNamespace(
+            document=self._doc, status=FakeConversionStatus.SUCCESS, errors=[]
+        )
 
 
 class FakeBackendPage:
@@ -1071,6 +1084,273 @@ class MetricsSidecarTests(unittest.TestCase):
         # Must not raise — metrics are diagnostics, never a reason to fail a good conversion.
         write_metrics_sidecar("/tmp/m.json", boundary, opener=failing_opener)
 
+
+
+# --- Conversion completeness (#832: a degraded docling result is never a payload) --------------
+
+
+class FakeConversionStatus(str, enum.Enum):
+    """Stands in for docling's ``ConversionStatus`` (also a ``str`` enum) with the members we branch on."""
+
+    SUCCESS = "success"
+    PARTIAL_SUCCESS = "partial_success"
+    FAILURE = "failure"
+
+
+class FakeError:
+    """One docling ``ErrorItem``: the page it failed on and the converter's own message."""
+
+    def __init__(self, page_no=None, error_message="std::bad_alloc"):
+        self.page_no = page_no
+        self.error_message = error_message
+
+
+class FakeStatusConverter:
+    """A converter whose result reports a status and errors, as the real docling result does."""
+
+    def __init__(self, doc, status, errors=()):
+        self._doc = doc
+        self._status = status
+        self._errors = list(errors)
+        self.calls = []
+
+    def convert(self, pdf_path, page_range=None):
+        self.calls.append((pdf_path, page_range))
+        return types.SimpleNamespace(document=self._doc, status=self._status, errors=self._errors)
+
+
+@contextlib.contextmanager
+def fake_docling_conversion_status():
+    """Install a fake ``docling.datamodel.base_models`` exposing ``ConversionStatus``.
+
+    Mirrors how the build_converter test mocks docling: no real models, no network, and the lazy import
+    inside ``load_conversion_status`` resolves to the fake enum.
+    """
+    docling = types.ModuleType("docling")
+    datamodel = types.ModuleType("docling.datamodel")
+    base_models = types.ModuleType("docling.datamodel.base_models")
+    base_models.ConversionStatus = FakeConversionStatus
+    docling.datamodel = datamodel
+    datamodel.base_models = base_models
+    modules = {
+        "docling": docling,
+        "docling.datamodel": datamodel,
+        "docling.datamodel.base_models": base_models,
+    }
+    saved = {name: sys.modules.get(name) for name in modules}
+    sys.modules.update(modules)
+    try:
+        yield
+    finally:
+        for name, prior in saved.items():
+            if prior is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = prior
+
+
+_MODULE_CONVERSION_STATUS = None
+
+
+def setUpModule():
+    """Install the fake ``ConversionStatus`` for the whole module, as its header promises.
+
+    Every fake converter here now reports a status, because the completeness gate fails closed. The
+    lazy ``load_conversion_status`` import must therefore resolve for ordinary range tests too — and it
+    resolves to the fake, never to a real docling install, so these stay pure unit tests. Tests that
+    care about the import itself still enter ``fake_docling_conversion_status`` explicitly.
+    """
+    global _MODULE_CONVERSION_STATUS
+    _MODULE_CONVERSION_STATUS = fake_docling_conversion_status()
+    _MODULE_CONVERSION_STATUS.__enter__()
+
+
+def tearDownModule():
+    _MODULE_CONVERSION_STATUS.__exit__(None, None, None)
+
+
+class ConversionCompletenessTests(unittest.TestCase):
+    def test_load_conversion_status_imports_the_docling_enum_lazily(self):
+        with fake_docling_conversion_status():
+            self.assertIs(load_conversion_status(), FakeConversionStatus)
+
+    def test_a_result_reporting_no_status_is_refused(self):
+        # FAIL CLOSED (D8). This gate is the only completeness guard, so its one permissive seam is
+        # closed: a converter that cannot report its own status makes a claim we cannot check, and an
+        # unverifiable conversion is not a complete one. No docling import is needed to reach this.
+        with self.assertRaises(ConversionIncomplete) as caught:
+            ensure_conversion_complete(types.SimpleNamespace(document=FakeDoc()))
+        self.assertEqual(caught.exception.status, "unreported")
+        self.assertEqual(caught.exception.failed_pages, [])
+        self.assertIn("no conversion status", caught.exception.reason)
+
+    def test_an_explicitly_null_status_is_refused(self):
+        with self.assertRaises(ConversionIncomplete) as caught:
+            ensure_conversion_complete(types.SimpleNamespace(document=FakeDoc(), status=None))
+        self.assertEqual(caught.exception.status, "unreported")
+
+    def test_success_is_accepted(self):
+        with fake_docling_conversion_status():
+            ensure_conversion_complete(
+                types.SimpleNamespace(status=FakeConversionStatus.SUCCESS, errors=[])
+            )
+
+    def test_partial_success_is_refused_with_its_failed_pages_and_reason(self):
+        errors = [
+            FakeError(page_no=159, error_message="std::bad_alloc"),
+            FakeError(page_no=160, error_message="std::bad_alloc"),
+            FakeError(page_no=159, error_message="std::bad_alloc"),
+        ]
+        with fake_docling_conversion_status():
+            with self.assertRaises(ConversionIncomplete) as caught:
+                ensure_conversion_complete(
+                    types.SimpleNamespace(
+                        status=FakeConversionStatus.PARTIAL_SUCCESS, errors=errors
+                    )
+                )
+        # Distinct pages, ascending; docling's own message quoted once.
+        self.assertEqual(caught.exception.failed_pages, [159, 160])
+        self.assertEqual(caught.exception.reason, "std::bad_alloc")
+        self.assertIn("PARTIAL_SUCCESS", caught.exception.status)
+        self.assertIn("2 page(s) failed to convert", str(caught.exception))
+
+    def test_failure_is_refused(self):
+        with fake_docling_conversion_status():
+            with self.assertRaises(ConversionIncomplete) as caught:
+                ensure_conversion_complete(
+                    types.SimpleNamespace(
+                        status=FakeConversionStatus.FAILURE, errors=[FakeError(page_no=4)]
+                    )
+                )
+        self.assertIn("FAILURE", caught.exception.status)
+        self.assertEqual(caught.exception.failed_pages, [4])
+
+    def test_a_refusal_without_error_detail_still_names_the_status(self):
+        with fake_docling_conversion_status():
+            with self.assertRaises(ConversionIncomplete) as caught:
+                ensure_conversion_complete(
+                    types.SimpleNamespace(status=FakeConversionStatus.FAILURE, errors=None)
+                )
+        self.assertEqual(caught.exception.failed_pages, [])
+        self.assertIn("no error detail", caught.exception.reason)
+
+    def test_unusable_page_numbers_are_ignored_rather_than_reported_as_pages(self):
+        # A missing page_no, a null one, and a bool (which is an int in Python) are not page numbers.
+        with fake_docling_conversion_status():
+            with self.assertRaises(ConversionIncomplete) as caught:
+                ensure_conversion_complete(
+                    types.SimpleNamespace(
+                        status=FakeConversionStatus.PARTIAL_SUCCESS,
+                        errors=[
+                            types.SimpleNamespace(error_message="no page attribute at all"),
+                            FakeError(page_no=None),
+                            FakeError(page_no=True),
+                            FakeError(page_no=7),
+                        ],
+                    )
+                )
+        self.assertEqual(caught.exception.failed_pages, [7])
+
+    def test_the_quoted_reason_is_bounded(self):
+        errors = [FakeError(page_no=page, error_message=f"e{page}") for page in range(1, 8)]
+        with fake_docling_conversion_status():
+            with self.assertRaises(ConversionIncomplete) as caught:
+                ensure_conversion_complete(
+                    types.SimpleNamespace(
+                        status=FakeConversionStatus.PARTIAL_SUCCESS, errors=errors
+                    )
+                )
+        reason = caught.exception.reason
+        self.assertEqual(reason.count(";"), MAX_REPORTED_CONVERSION_ERRORS)
+        self.assertIn(f"and {7 - MAX_REPORTED_CONVERSION_ERRORS} more", reason)
+        self.assertNotIn("e7", reason)
+
+    def test_convert_range_builds_no_payload_from_a_degraded_conversion(self):
+        converter = FakeStatusConverter(
+            FakeDoc(body=FakeGroup([FakeItem(text="the one page that survived")])),
+            FakeConversionStatus.PARTIAL_SUCCESS,
+            [FakeError(page_no=2)],
+        )
+        with fake_docling_conversion_status():
+            with self.assertRaises(ConversionIncomplete):
+                convert_range("/tmp/a.pdf", 1, 3, lambda: converter, native_text=lambda _p: True)
+
+    def test_convert_range_accepts_a_success_status(self):
+        converter = FakeStatusConverter(
+            FakeDoc(body=FakeGroup([FakeItem(text="x")])), FakeConversionStatus.SUCCESS
+        )
+        with fake_docling_conversion_status():
+            payload = convert_range(
+                "/tmp/a.pdf", 1, 2, lambda: converter, native_text=lambda _p: True
+            )
+        self.assertEqual(payload["body"][0]["text"], "x")
+        self.assertEqual(converter.calls, [("/tmp/a.pdf", (1, 2))])
+
+    def test_run_range_classifies_an_incomplete_conversion_and_emits_no_payload(self):
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        converter = FakeStatusConverter(
+            FakeDoc(body=FakeGroup([FakeItem(text="fragment")])),
+            FakeConversionStatus.PARTIAL_SUCCESS,
+            [FakeError(page_no=159, error_message="std::bad_alloc")],
+        )
+        with fake_docling_conversion_status():
+            code = run_range(
+                "/tmp/a.pdf",
+                151,
+                200,
+                lambda: converter,
+                native_text_factory(lambda _p: True),
+                stdout,
+                stderr,
+            )
+        self.assertEqual(code, EXIT_CONVERSION_INCOMPLETE)
+        self.assertEqual(stdout.getvalue(), "")
+        message = stderr.getvalue()
+        self.assertIn("pages 151-200", message)
+        self.assertIn("PARTIAL_SUCCESS", message)
+        self.assertIn("1 failed page(s) [159]", message)
+        self.assertIn("std::bad_alloc", message)
+
+    def test_run_range_bounds_the_reported_page_list(self):
+        stderr = io.StringIO()
+        failed = list(range(1, MAX_REPORTED_FAILED_PAGES + 4))
+        converter = FakeStatusConverter(
+            FakeDoc(),
+            FakeConversionStatus.PARTIAL_SUCCESS,
+            [FakeError(page_no=page) for page in failed],
+        )
+        with fake_docling_conversion_status():
+            code = run_range(
+                "/tmp/a.pdf",
+                1,
+                50,
+                lambda: converter,
+                native_text_factory(lambda _p: True),
+                io.StringIO(),
+                stderr,
+            )
+        self.assertEqual(code, EXIT_CONVERSION_INCOMPLETE)
+        message = stderr.getvalue()
+        self.assertIn(f"{len(failed)} failed page(s)", message)
+        self.assertIn("and 3 more", message)
+        self.assertNotIn(str(MAX_REPORTED_FAILED_PAGES + 1), message.split("]")[0])
+
+    def test_run_range_reports_an_unreported_page_list_as_such(self):
+        stderr = io.StringIO()
+        converter = FakeStatusConverter(FakeDoc(), FakeConversionStatus.FAILURE, [FakeError()])
+        with fake_docling_conversion_status():
+            code = run_range(
+                "/tmp/a.pdf",
+                1,
+                2,
+                lambda: converter,
+                native_text_factory(lambda _p: True),
+                io.StringIO(),
+                stderr,
+            )
+        self.assertEqual(code, EXIT_CONVERSION_INCOMPLETE)
+        self.assertIn("[not reported]", stderr.getvalue())
 
 
 # --- build_converter (docling imports mocked) --------------------------------------------------

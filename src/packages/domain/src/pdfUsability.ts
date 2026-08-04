@@ -38,6 +38,11 @@ export type PdfUsabilityReason =
   | "empty-body"
   | "image-unsupported"
   | "conversion-failed"
+  // The converter returned a TRUNCATED book rather than failing: pages were dropped and the import was
+  // refused (#832). Kept distinct from `conversion-failed` on purpose — this report is aggregate-only, so a
+  // reason folded into the generic bucket is invisible, and truncation is precisely the shape a resource
+  // ceiling produces and the one worth converting into a fixture.
+  | "incomplete-conversion"
   | "timed-out"
   | "memory-exhausted";
 
@@ -70,6 +75,11 @@ export type ClassifiableObservation =
   | Readonly<{ kind: "ocr_required"; pagesNeedingOcr: number }>
   | Readonly<{ kind: "no_content" }>
   | Readonly<{ kind: "conversion_failed"; detail: string }>
+  // The converter refused a run that returned a fragment of the book rather than the book (#832). No page
+  // count travels with it: the worker's status gate refuses BEFORE a payload exists, so all the harness
+  // has is the exit code — and completeness is never inferred from what pages produced (`docs/DECISIONS.md`
+  // D8), so no count could be derived here either.
+  | Readonly<{ kind: "incomplete_conversion" }>
   | Readonly<{ kind: "timeout" }>
   | Readonly<{ kind: "memory" }>;
 
@@ -97,6 +107,8 @@ export function classifyPdfUsability(observation: ClassifiableObservation): PdfU
       return { class: "unsupported", reason: "empty-body" };
     case "conversion_failed":
       return { class: "unsupported", reason: "conversion-failed" };
+    case "incomplete_conversion":
+      return { class: "unsupported", reason: "incomplete-conversion" };
     case "timeout":
       return { class: "unsupported", reason: "timed-out" };
     case "memory":
@@ -236,6 +248,7 @@ const USABILITY_REASONS: readonly PdfUsabilityReason[] = [
   "empty-body",
   "image-unsupported",
   "conversion-failed",
+  "incomplete-conversion",
   "timed-out",
   "memory-exhausted"
 ];
