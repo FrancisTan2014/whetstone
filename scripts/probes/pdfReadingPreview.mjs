@@ -54,10 +54,26 @@ const text = (node) => {
 // Returns an exit code rather than calling process.exit, so the caller's `finally` always removes the
 // converted artifacts — those hold extracted book text and must not be left behind on any path.
 const run = async (artifactDir) => {
+  // The per-child memory ceiling comes from the SINGLE production owner (serverConfig
+  // `resolveStructuredPdfMemoryMib`: platform-aware default, PDF_STRUCTURED_MEMORY_MIB overrides it),
+  // never a number duplicated here. The Windows boundary bounds COMMITTED memory, so a probe pinned
+  // below the production ceiling drops the pages it cannot allocate for and previews a fraction of the
+  // range (#833) — which would silently answer a different question than the import lane's.
+  const { resolveStructuredPdfMemoryMib } = await import(
+    "../../src/apps/server/src/config/serverConfig.js"
+  );
+  const memoryMib = resolveStructuredPdfMemoryMib(
+    process.env.PDF_STRUCTURED_MEMORY_MIB,
+    process.platform
+  );
   const worker = spawnSync(
     "python",
     [WORKER, "--range", pdfPath, startArg, endArg, artifactDir],
-    { encoding: "utf-8", maxBuffer: 64 * 1024 * 1024, env: { ...process.env, WHETSTONE_PDF_MEMORY_MIB: "6144" } }
+    {
+      encoding: "utf-8",
+      maxBuffer: 64 * 1024 * 1024,
+      env: { ...process.env, WHETSTONE_PDF_MEMORY_MIB: String(memoryMib) }
+    }
   );
   if (worker.status !== 0) {
     console.error(`worker exit ${worker.status}\n${(worker.stderr ?? "").slice(0, 4000)}`);
