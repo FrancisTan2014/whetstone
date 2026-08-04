@@ -10,6 +10,52 @@ it. Newest first.
 
 ---
 
+## D7 — Memory ceiling assumed to fail loudly → converter results are untrusted evidence
+
+**Status:** Superseded 2026-08-04 by a reproduced silent-truncation failure.
+**Replaced by:** the "a conversion is complete or it is refused" rule in `PRODUCT.md` →
+"v0 content ingestion".
+
+**What it was.** The worker's hard memory ceiling was treated as a fail-closed bound: a host that
+cannot enforce it refuses the import, and an over-budget conversion was assumed to terminate visibly.
+On that assumption the worker consumed only `result.document` from the pinned converter and never
+inspected the run's reported status, and publication's only content refusals were "a page has no
+native text" (OCR required) and "zero canonical blocks" (no empty shell).
+
+**Why superseded.** A bounded conversion does not fail loudly — it degrades quietly. Docling catches a
+per-page allocation failure, drops that page, continues, and returns a document containing only the
+pages that survived, reporting the run as `PARTIAL_SUCCESS`. Because the worker read only the
+document, the fragment was committed as a good range and published as a whole book. A real 462-page
+import published **335 blocks / 87,359 characters (~9% of the book) across 54 of its 462 pages**,
+while the attempt recorded `state='converted'`, `failure=null`, and `completed_pages=462/462`. Both
+existing refusals passed: the dropped pages *did* have native text, and the block count was not zero.
+
+Reproduced deterministically with the production worker code and the production ceiling: status
+`PARTIAL_SUCCESS`, 45 of 50 pages failed with `std::bad_alloc` in the converter's preprocess model,
+yielding 5 usable pages. The same range converted with the ceiling lifted returns all 50 pages and
+95,158 characters, so extraction was never the problem.
+
+Measurement also showed the ceiling itself was specified against the wrong quantity. The Windows Job
+Object bounds **committed** memory, but the pinned converter's torch/MKL runtime reserves per-thread
+arenas far beyond what it touches: the same range peaks at **31.78 GiB committed against a 2.48 GiB
+working set**. A 6 GiB commit ceiling therefore throttles a conversion whose real footprint is under
+2.5 GiB, and no commit ceiling can both admit the converter and bound real memory pressure.
+
+**What replaced it.** A converter result is untrusted evidence, not a source of truth. Any result not
+reporting unqualified success is refused, and an independent coverage invariant — every page the
+source reports as carrying native text must contribute at least one body item — refuses a fragment
+even from a converter that claims success. Ceilings are calibrated against what the pinned converter
+actually commits on the host, and a ceiling that throttles a supported book is a defect of the
+ceiling rather than an acceptable degradation.
+
+**Rejected alternatives (still rejected).** Publishing the fragment with a warning, auto-retrying a
+degraded range, or lowering the refusal to an advisory: a partial book passes every existing gate,
+looks like a real import, and is discovered only while reading — worse for the learner than a visible
+failure. Replacing the converter remains rejected by D6: extraction is reliable when it is allowed to
+finish.
+
+---
+
 ## D6 — "PDF extraction loses the text" → measured extraction reliability; the defect is our mapping
 
 **Status:** Superseded 2026-08-03 by direct measurement.
