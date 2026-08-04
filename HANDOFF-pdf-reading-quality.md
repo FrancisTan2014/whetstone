@@ -112,8 +112,16 @@
 > applied**, which is exactly how the server spawns it. Filed as **#843**.
 >
 > `_WindowsMemoryBoundary.apply` sets `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` and retains the job handle
-> for the worker's lifetime. At interpreter shutdown the handle is released, the job terminates the
-> process still assigned to it, and that kill overwrites the status `sys.exit(code)` had just set.
+> for the worker's lifetime. When that handle is released the job terminates the process still assigned
+> to it, and that kill overwrites the status `sys.exit(code)` had just set.
+>
+> **The precise trigger is narrower than "interpreter shutdown", and the difference is load-bearing.**
+> My first diagnosis said the handle is released at shutdown. The reviewer disproved that: under the
+> pre-fix worker, a marker file written *after* `main` returned but *before* `sys.exit` never appeared
+> at all. The kill lands when `main`'s local `boundary` goes out of scope — earlier than shutdown, and
+> earlier than anything at module level could intercept. That is why the stand-down has to live
+> *inside* `main` (in a `finally`), not in `_entrypoint` or an `atexit` hook. If you ever move it, that
+> is the constraint you will violate.
 >
 > Reduced to the flag alone (same job, same memory limits, `sys.exit(9)`):
 >
@@ -123,6 +131,14 @@
 > | Job Object + memory limits, **without** `KILL_ON_JOB_CLOSE` | **9** |
 > | Job Object + memory limits, **with** `KILL_ON_JOB_CLOSE` | **0** |
 > | **clear the flag just before the orderly exit** | **9** ← the fix |
+>
+> The fix (#844) keeps `KILL_ON_JOB_CLOSE` set for the whole run and clears **only that bit** on the
+> exit path — verified at the OS level, `LimitFlags` `0x2300` → `0x0300`, with the memory ceiling still
+> biting afterwards (a 768 MiB allocation under a 512 MiB ceiling still raises `MemoryError`). The
+> handle is not closed, so the `PeakJobMemoryUsed` sidecar still works. **Known trade, accepted:**
+> between the release and process exit a descendant that outlives the worker is no longer killed by job
+> close, though the memory limits still bind it. That window is inherent to the remedy and is already as
+> narrow as it can be inside `main`.
 >
 > This arrived with #782, not with #832, and it has been disarming the worker's failure reporting on
 > Windows ever since. `classifyWorkerExit` is a correct function that has been receiving a constant.
