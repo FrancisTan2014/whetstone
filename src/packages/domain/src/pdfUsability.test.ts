@@ -382,41 +382,60 @@ describe("regression fixtures", () => {
 // mapping's real output in BOTH directions, observed through the report itself rather than by exporting
 // the private list only to restate it.
 describe("USABILITY_REASONS matches the reasons the canonical mapping can produce", () => {
-  // The canonical mapping is classifyPdfUsability over every ClassifiableObservation. Typing this table
-  // as a TOTAL record over the observation discriminant makes TypeScript reject a newly added
-  // observation kind until its verdict is represented here, so the producible set below cannot silently
-  // fall behind the mapping. The `mapped` kind fans out into each threshold branch of its helper; the
-  // "matrix exercises every declared reason" test at the end guards that this hand-written fan-out stays
-  // complete.
-  const observationsByKind: Record<
-    ClassifiableObservation["kind"],
-    readonly ClassifiableObservation[]
-  > = {
-    mapped: [
-      // clean-canonical-work
-      { kind: "mapped", summary: cleanSummary() },
-      // unmapped-constructs, via a mapped-but-textless shell
-      { kind: "mapped", summary: cleanSummary({ plainTextLength: 0 }) },
-      // unmapped-constructs, via too many fallback blocks (100/20 well over the 10% ceiling)
-      { kind: "mapped", summary: cleanSummary({ unknownBlockCount: 100 }) },
-      // low-confidence-extraction (100/20 well over the 25% ceiling)
-      { kind: "mapped", summary: cleanSummary({ lowConfidenceBlockCount: 100 }) },
-      // image-unsupported, via an unresolved figure placeholder (#806)
-      { kind: "mapped", summary: cleanSummary({ unresolvedFigureCount: 1 }) }
-    ],
-    ocr_required: [{ kind: "ocr_required", pagesNeedingOcr: 3 }], // ocr-required
-    no_content: [{ kind: "no_content" }], // empty-body
-    conversion_failed: [{ kind: "conversion_failed", detail: "x" }], // conversion-failed
-    incomplete_conversion: [{ kind: "incomplete_conversion" }], // incomplete-conversion
-    timeout: [{ kind: "timeout" }], // timed-out
-    memory: [{ kind: "memory" }] // memory-exhausted
-  };
+  // The producible set is the reasons classifyPdfUsability ACTUALLY returns, derived by driving the
+  // mapping over its input space rather than by hand-listing outputs (which is what let a new mapped
+  // sub-branch slip past this pin during review). It has two parts.
+  //
+  // Part 1 -- every non-`mapped` observation kind. Each is a distinct top-level union variant that maps
+  // 1:1 to a fixed reason with no sub-branches, and the production switch in classifyPdfUsability
+  // already forces exhaustive handling of the kinds, so a brand-new *kind* is a visible production
+  // change that must also be added to this short list (see the residual-gap note on the first test).
+  const nonMappedObservations: readonly ClassifiableObservation[] = [
+    { kind: "ocr_required", pagesNeedingOcr: 3 },
+    { kind: "no_content" },
+    { kind: "conversion_failed", detail: "x" },
+    { kind: "incomplete_conversion" },
+    { kind: "timeout" },
+    { kind: "memory" }
+  ];
+
+  // Part 2 -- a sweep of `mapped` over representative boundary values of EVERY MappedWorkSummary field,
+  // including headingCount, which classifyMappedWork does not read today. The values span the
+  // boundaries the current thresholds turn on (0; one; a count that crosses the 10% unknown / 25%
+  // low-confidence ceilings against the swept block counts) plus a 0/positive split for the fields the
+  // rubric does not read yet. Sweeping the INPUT space (the Cartesian product below) instead of
+  // hand-picking outputs is what makes this pin robust to future edits: a newly added mapped sub-branch
+  // keyed on an existing field -- e.g. a `headingCount === 0` rule producing a new reason -- is
+  // exercised automatically, so that reason lands in producibleReasons and the direction-A test below
+  // catches it if USABILITY_REASONS was not updated to match.
+  const mappedSweep: MappedWorkSummary[] = [];
+  for (const blockCount of [1, 10]) {
+    for (const headingCount of [0, 1, 3]) {
+      for (const unknownBlockCount of [0, 1, 2]) {
+        for (const lowConfidenceBlockCount of [0, 1, 3]) {
+          for (const unresolvedFigureCount of [0, 2]) {
+            for (const plainTextLength of [0, 500]) {
+              mappedSweep.push({
+                blockCount,
+                headingCount,
+                lowConfidenceBlockCount,
+                plainTextLength,
+                unknownBlockCount,
+                unresolvedFigureCount
+              });
+            }
+          }
+        }
+      }
+    }
+  }
 
   const producibleReasons = new Set<PdfUsabilityReason>();
-  for (const observations of Object.values(observationsByKind)) {
-    for (const observation of observations) {
-      producibleReasons.add(classifyPdfUsability(observation).reason);
-    }
+  for (const observation of nonMappedObservations) {
+    producibleReasons.add(classifyPdfUsability(observation).reason);
+  }
+  for (const summary of mappedSweep) {
+    producibleReasons.add(classifyPdfUsability({ kind: "mapped", summary }).reason);
   }
 
   // The reasons the committed report actually pre-seeds: summarizeCorpus([]) returns
@@ -426,6 +445,19 @@ describe("USABILITY_REASONS matches the reasons the canonical mapping can produc
     Object.keys(summarizeCorpus([]).reasonCounts) as PdfUsabilityReason[]
   );
 
+  // Residual gap, stated precisely so no one over-trusts this pin. The sweep varies EVERY current
+  // MappedWorkSummary field, so the exact shape #842 was reopened for -- a new `mapped` sub-branch
+  // keyed on an existing field, including headingCount which the rubric ignores today -- IS caught: the
+  // reason it produces lands in producibleReasons and direction-A below goes red if it is unregistered.
+  // NOT caught automatically, and each requires a visible production change that lands the developer
+  // here: (1) a brand-new observation *kind* -- classifyPdfUsability's switch is exhaustive, so adding a
+  // kind is a compile-forced production edit, but this pin only sees it once the kind is added to
+  // nonMappedObservations above; (2) a brand-new MappedWorkSummary *field* with a branch keyed on it --
+  // the sweep cannot vary a field that does not exist yet, so the loop must be extended when the field
+  // and its rule are added; (3) a reason produced ONLY at a field value outside the representative
+  // boundary set below -- mitigated by picking values on each active threshold, not exhaustive over all
+  // integers. This is strictly narrower than the hand-picked table it replaced, which missed ANY new
+  // sub-branch, not just these three.
   it("registers every reason the mapping can produce, so the corpus report can never silently drop one", () => {
     const producedButUnregistered = [...producibleReasons]
       .filter((reason) => !registeredReasons.has(reason))
@@ -447,39 +479,10 @@ describe("USABILITY_REASONS matches the reasons the canonical mapping can produc
     expect(
       registeredButUnproducible,
       `USABILITY_REASONS lists ${JSON.stringify(registeredButUnproducible)}, but the canonical mapping ` +
-        `never returns that reason across any ClassifiableObservation, so the corpus report would carry ` +
-        `a row no case can ever fill. Either it is a stale entry (remove it from USABILITY_REASONS), or ` +
-        `the observation table in this block no longer reaches it (the next test guards that case).`
-    ).toEqual([]);
-  });
-
-  it("exercises every declared PdfUsabilityReason, so the producible set above is trustworthy", () => {
-    // A self-check on the table, not a restatement of USABILITY_REASONS: enumerating the union through a
-    // `satisfies Record<PdfUsabilityReason, true>` forces a newly added reason to be listed here (compile
-    // error otherwise), which then forces a covering observation in the table above (this assertion).
-    // That closes the gap where a new mapped-work branch and its reason are added without any test
-    // noticing — the reason would flow into producibleReasons and the two pins above would catch whether
-    // USABILITY_REASONS was updated with it.
-    const declaredReasons = Object.keys({
-      "clean-canonical-work": true,
-      "unmapped-constructs": true,
-      "low-confidence-extraction": true,
-      "ocr-required": true,
-      "empty-body": true,
-      "image-unsupported": true,
-      "conversion-failed": true,
-      "incomplete-conversion": true,
-      "timed-out": true,
-      "memory-exhausted": true
-    } satisfies Record<PdfUsabilityReason, true>) as PdfUsabilityReason[];
-    const declaredButNotExercised = declaredReasons
-      .filter((reason) => !producibleReasons.has(reason))
-      .sort();
-    expect(
-      declaredButNotExercised,
-      `These declared PdfUsabilityReason values are never produced by the observation table in this ` +
-        `block: ${JSON.stringify(declaredButNotExercised)}. Extend observationsByKind with an input ` +
-        `that reaches each, so the USABILITY_REASONS pins above stay complete.`
+        `never returns that reason across the non-mapped kinds or the MappedWorkSummary sweep above, ` +
+        `so the corpus report would carry a row no case can ever fill. Either it is a stale entry ` +
+        `(remove it from USABILITY_REASONS), or the sweep above no longer reaches it (widen the ` +
+        `boundary values it varies).`
     ).toEqual([]);
   });
 });

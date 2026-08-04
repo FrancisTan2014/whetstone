@@ -26,6 +26,7 @@ import {
   WORKER_EXIT_UNSUPPORTED_SCHEMA,
   WORKER_EXIT_USAGE
 } from "./pdfStructuredErrors.js";
+import * as pdfStructuredErrors from "./pdfStructuredErrors.js";
 
 describe("named failure constructors", () => {
   it("each carries its kind, a specific `what`, and an actionable `remedy`", () => {
@@ -158,5 +159,32 @@ describe("worker exit-code wire contract", () => {
       WORKER_EXIT_MEMORY_CEILING_UNSUPPORTED: 8,
       WORKER_EXIT_CONVERSION_INCOMPLETE: 9
     });
+  });
+
+  it("pins the COMPLETE set of wire codes, so a new WORKER_EXIT_* cannot ship unpinned", () => {
+    // Totality guard for the value pin above: the pin lists a FIXED set of names, so a newly added
+    // WORKER_EXIT_* (and its matching EXIT_* in the worker) would cross the wire while no test asserts
+    // its integer -- reopening the exact gap #842 closes. Enumerate the exported names at runtime and
+    // require the pinned set to stay complete.
+    const pinnedWireCodeNames = [
+      "WORKER_EXIT_USAGE",
+      "WORKER_EXIT_MISSING_DEPENDENCY",
+      "WORKER_EXIT_CONVERSION_FAILED",
+      "WORKER_EXIT_PASSWORD_REQUIRED",
+      "WORKER_EXIT_UNSUPPORTED_SCHEMA",
+      "WORKER_EXIT_MEMORY",
+      "WORKER_EXIT_MEMORY_CEILING_UNSUPPORTED",
+      "WORKER_EXIT_CONVERSION_INCOMPLETE"
+    ].sort();
+    const exportedWireCodeNames = Object.keys(pdfStructuredErrors)
+      .filter((name) => name.startsWith("WORKER_EXIT_"))
+      .sort();
+    expect(
+      exportedWireCodeNames,
+      "A WORKER_EXIT_* constant was added to or removed from pdfStructuredErrors.ts without updating " +
+        "the wire-contract pin above. Every worker exit code must be pinned to its integer here (and " +
+        "mirror an EXIT_* in pdf_to_docling.py), so add the new code to the pin -- an unpinned wire " +
+        "code is the exact drift #842 closes."
+    ).toEqual(pinnedWireCodeNames);
   });
 });

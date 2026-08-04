@@ -19,6 +19,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import pdf_to_docling  # noqa: E402  (path set above)
 from pdf_to_docling import (  # noqa: E402  (path set above)
     DOCLING_SCHEMA_NAME,
     EXIT_CONVERSION_FAILED,
@@ -2323,6 +2324,39 @@ class ExitCodeWireContractTests(unittest.TestCase):
                 "integer to an import failure. Change BOTH sides in the same commit, or the adapter "
                 "will misclassify a real worker outcome (e.g. read a refused, incomplete conversion as "
                 "a malformed file). Codes 3-9 are the self-classified failures; 0=success, 2=usage."
+            ),
+        )
+
+    def test_no_exit_code_is_left_unpinned(self):
+        # Totality guard for the pin above: that pin lists a FIXED set of names, so a newly added EXIT_*
+        # (e.g. EXIT_SOMETHING = 10, with its WORKER_EXIT_SOMETHING on the TypeScript side) would cross
+        # the wire while no test asserts its integer -- reopening the exact gap this class closes.
+        # Enumerate the module's EXIT_* integer constants at runtime and require the pinned set to stay
+        # complete; a new one must be added to the pin above and mirrored by WORKER_EXIT_*.
+        exit_constant_names = {
+            name
+            for name, value in vars(pdf_to_docling).items()
+            if name.startswith("EXIT_") and isinstance(value, int)
+        }
+        self.assertEqual(
+            exit_constant_names,
+            {
+                "EXIT_OK",
+                "EXIT_USAGE",
+                "EXIT_MISSING_DEPENDENCY",
+                "EXIT_CONVERSION_FAILED",
+                "EXIT_PASSWORD_REQUIRED",
+                "EXIT_UNSUPPORTED_SCHEMA",
+                "EXIT_MEMORY",
+                "EXIT_MEMORY_CEILING_UNSUPPORTED",
+                "EXIT_CONVERSION_INCOMPLETE",
+            },
+            msg=(
+                "A worker EXIT_* constant in pdf_to_docling.py is not pinned to its integer by "
+                "test_exit_codes_match_their_pinned_wire_integers above. Every exit code crosses the "
+                "process boundary to WORKER_EXIT_* in pdfStructuredErrors.ts, so add the new code to "
+                "that pin and mirror it on the TypeScript side -- an unpinned wire code is the exact "
+                "gap #842 closes."
             ),
         )
 
