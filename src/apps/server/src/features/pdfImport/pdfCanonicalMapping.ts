@@ -13,8 +13,10 @@ import {
 import {
   MAX_PDF_HEADING_LEVEL,
   decidePageFurniture,
+  decidePdfReadingUnits,
   matchOutlineHeading,
-  type PageFurnitureExclusionRule
+  type PageFurnitureExclusionRule,
+  type PdfOutlineHeadingMatch
 } from "@whetstone/domain";
 
 import type { PersistableReadingUnit } from "../content/blockWriter.js";
@@ -105,14 +107,29 @@ export type PdfCanonicalMappingResult =
     }>;
 
 // A body item paired with the canonical block node it projected to, carrying the source item so the
-// block's evidence (page/geometry/confidence/label) can be keyed once the node has a stable id.
-type MappedBlock = Readonly<{ node: DocumentNodeJSON; source: StructuredDocItem; label: string }>;
+// block's evidence (page/geometry/confidence/label) can be keyed once the node has a stable id, and the
+// heading resolution (#815) so the unit boundary rule (#816) can read the authored navigation without
+// re-deciding depth.
+type MappedBlock = Readonly<{
+  node: DocumentNodeJSON;
+  source: StructuredDocItem;
+  label: string;
+  heading: ResolvedHeading | null;
+}>;
 
 type DraftUnit = { title: string | null; blocks: MappedBlock[] };
 
 // Where one heading's level came from: the document's own bookmark outline (real, declared depth) or the
-// docling label (a flat default). Reported so an undeserved level is never claimed silently.
-type ResolvedHeading = Readonly<{ level: number; source: keyof PdfHeadingLevelSources }>;
+// docling label (a flat default). An outline-derived heading carries the ENTRY that named it — its index
+// and title — because a bookmark names ONE heading (#815): the index tells the unit boundary rule (#816)
+// that a division is already open (docling splits a chapter opener into `10` + `Classes`, and both halves
+// resolve to the same bookmark), and the title is the publisher's own chapter name, which titles the unit
+// where the printed heading is a bare label. `null` means the level came from the label table alone, so
+// nothing was derived and `headingLevelSources` counts it as assumed.
+type ResolvedHeading = Readonly<{
+  level: number;
+  outlineEntry: Readonly<{ index: number; title: string }> | null;
+}>;
 
 // The heading level each heading label starts at when — and ONLY when — the PDF's outline cannot justify
 // a real one. A `title` is the work-level heading (level 1) and a `section_header` is a section (level 2).
@@ -345,11 +362,14 @@ function resolveHeadingLevels(
     }
     const match = matchOutlineHeading({ pageNumber: item.pageNumber, text: item.text }, outline);
     if (match === null) {
-      resolved[index] = { level: Math.min(labelLevel, MAX_PDF_HEADING_LEVEL), source: "label" };
+      resolved[index] = {
+        level: Math.min(labelLevel, MAX_PDF_HEADING_LEVEL),
+        outlineEntry: null
+      };
       return;
     }
     claimedEntries.add(match.entryIndex);
-    resolved[index] = { level: match.level, source: "outline" };
+    resolved[index] = { level: match.level, outlineEntry: matchedEntry(match, outline) };
   });
 
   body.forEach((item, index) => {
@@ -361,10 +381,18 @@ function resolveHeadingLevels(
       return;
     }
     claimedEntries.add(match.entryIndex);
-    resolved[index] = { level: match.level, source: "outline" };
+    resolved[index] = { level: match.level, outlineEntry: matchedEntry(match, outline) };
   });
 
   return resolved;
+}
+
+// The outline entry a match names, reduced to the identity + title the boundary rule reads.
+function matchedEntry(
+  match: PdfOutlineHeadingMatch,
+  outline: readonly PdfOutlineEntry[]
+): Readonly<{ index: number; title: string }> {
+  return { index: match.entryIndex, title: outline[match.entryIndex]!.title };
 }
 
 // Expand every unrecognized CONTAINER in a body run into its children, in source order (#812). Failing to
@@ -431,6 +459,7 @@ function walkBody(
         index += 1;
       }
       out.push({
+        heading: null,
         label: "list",
         node: { content: run.map((child) => listItemNode(child)), type: "bulletList" },
         source: run[0]!
@@ -439,11 +468,12 @@ function walkBody(
     }
     const heading = headings[index]!;
     if (heading !== null) {
-      sources[heading.source] += 1;
+      sources[heading.outlineEntry === null ? "label" : "outline"] += 1;
     }
     // Expansion already decided that an item reaching the fallback path here is one that SHOULD show as
     // an `unknown` node: a leaf carrying its own text, or a container held back at the depth bound.
     out.push({
+      heading,
       label: item.label,
       node: canonicalBodyNode(item, heading) ?? unknownNode(item),
       source: item
@@ -453,26 +483,27 @@ function walkBody(
   return { blocks: out, headingLevelSources: sources };
 }
 
-// Split the walked blocks into reading units: each heading starts a new unit (so the unit's first block
-// is its heading and the Reader derives the outline from it), and any leading run before the first
-// heading becomes one neutral (null-title) "Start" unit.
+// Split the walked blocks into reading units at the document's AUTHORED top-level divisions (#816): the
+// rule itself is the pure `decidePdfReadingUnits` (domain), which reads each block's heading resolution
+// and returns the ascending first-block index and title of every unit. Slicing between consecutive starts
+// is what guarantees the property the Reader depends on — every block lands in exactly one unit, in source
+// order — and the run before the first division stays one neutral (null-title) "Start" unit.
 function splitIntoUnits(blocks: readonly MappedBlock[]): DraftUnit[] {
-  const units: DraftUnit[] = [];
-  let current: DraftUnit | null = null;
-  for (const block of blocks) {
-    if (block.node.type === "heading") {
-      const title = block.source.text.trim();
-      current = { blocks: [block], title: title.length > 0 ? title : null };
-      units.push(current);
-      continue;
-    }
-    if (current === null) {
-      current = { blocks: [], title: null };
-      units.push(current);
-    }
-    current.blocks.push(block);
-  }
-  return units;
+  const starts = decidePdfReadingUnits(
+    blocks.map((block) =>
+      block.heading === null
+        ? null
+        : {
+            level: block.heading.level,
+            outlineEntry: block.heading.outlineEntry,
+            text: block.source.text
+          }
+    )
+  );
+  return starts.map((start, index) => ({
+    blocks: blocks.slice(start.blockIndex, starts[index + 1]?.blockIndex ?? blocks.length),
+    title: start.title
+  }));
 }
 
 // Assign stable node ids to a unit's blocks and decompose them into persistable `doc_blocks`, collecting

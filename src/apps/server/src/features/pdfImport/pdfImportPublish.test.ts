@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   RANGE_CONVERSION_SCHEMA_VERSION,
+  type PdfOutlineEntry,
   type RangeConversion,
   type StructuredDocItem
 } from "@whetstone/contracts";
@@ -132,7 +133,8 @@ function pngBytes(width: number, height: number, tail: number): Uint8Array {
 
 function rangePayload(
   body: readonly StructuredDocItem[],
-  nativeTextPages: readonly boolean[]
+  nativeTextPages: readonly boolean[],
+  outline?: readonly PdfOutlineEntry[]
 ): RangeConversion {
   return {
     schemaVersion: RANGE_CONVERSION_SCHEMA_VERSION,
@@ -142,7 +144,8 @@ function rangePayload(
       pageNumber: index + 1
     })),
     body: body as StructuredDocItem[],
-    furniture: []
+    furniture: [],
+    ...(outline === undefined ? {} : { outline: outline as PdfOutlineEntry[] })
   };
 }
 
@@ -265,7 +268,9 @@ describe("publishConvertedPdfImport", () => {
     const content = await loadWorkContent(db, result.work.entryId);
     expect(content).not.toBeNull();
     const units = content!.readingUnits;
-    expect(units.length).toBeGreaterThanOrEqual(2);
+    // A sample with no embedded outline divides at its shallowest heading level (#816): the `title`
+    // opens the work's one unit, and every mapped block is persisted under it.
+    expect(units).toHaveLength(1);
     const totalDocBlocks = units.reduce((total, unit) => total + (unit.docBlocks?.length ?? 0), 0);
     expect(totalDocBlocks).toBe(4);
 
@@ -940,9 +945,9 @@ describe("publishConvertedPdfImport", () => {
   }
 
   it("publishes a multi-section native-text document into an ordered multi-unit Reader Work", async () => {
-    // A multi-section born-digital payload (a title plus two section headers) maps to three ordered
-    // ReadingUnits, proving publication reconstructs the canonical Work directly from the converted
-    // structured bytes rather than any fixed sample.
+    // A multi-section born-digital payload whose embedded outline declares three top-level divisions
+    // maps to three ordered ReadingUnits, proving publication reconstructs the canonical Work directly
+    // from the converted structured bytes rather than any fixed sample.
     const payload = rangePayload(
       [
         item({ label: "title", text: "Born-Digital Preview" }),
@@ -952,7 +957,12 @@ describe("publishConvertedPdfImport", () => {
         item({ label: "section_header", text: "What Remains" }),
         item({ label: "text", text: "OCR and correction are still pending." })
       ],
-      [true]
+      [true],
+      [
+        { level: 1, pageNumber: 1, title: "Born-Digital Preview" },
+        { level: 1, pageNumber: 1, title: "How Import Works" },
+        { level: 1, pageNumber: 1, title: "What Remains" }
+      ]
     );
     await driveToAwaitingReview(db, {
       id: "att-sample",
@@ -971,7 +981,7 @@ describe("publishConvertedPdfImport", () => {
     const result = published(await publishConvertedPdfImport(publishDeps(db), "att-sample"));
     const content = await loadWorkContent(db, result.work.entryId);
     const titles = content!.readingUnits.map((unit) => unit.title);
-    // Title heading opens the first unit; each section_header starts another — three units in order.
+    // Each top-level bookmark opens a unit, titled as the publisher named it — three units in order.
     expect(titles).toEqual(["Born-Digital Preview", "How Import Works", "What Remains"]);
     const publication = await getPublication(db, "att-sample");
     expect(publication?.ocrValidationFailedPages).toBeNull();
@@ -1062,7 +1072,7 @@ describe("publishConvertedPdfImport", () => {
     const result = published(await publishConvertedPdfImport(publishDeps(db), "att-nullcols"));
     expect(result.work.title).toBe("Recovered");
     const content = await loadWorkContent(db, result.work.entryId);
-    expect(content!.readingUnits.length).toBeGreaterThanOrEqual(2);
+    expect(content!.readingUnits[0]?.docBlocks?.length).toBe(SAMPLE_BODY.length);
   });
 });
 

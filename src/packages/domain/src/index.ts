@@ -200,6 +200,8 @@ export type {
   PageFurnitureExclusionRule,
   PageFurnitureItem
 } from "./pdfPageFurniture.js";
+export { decidePdfReadingUnits } from "./pdfReadingUnits.js";
+export type { PdfReadingUnitHeading, PdfReadingUnitStart } from "./pdfReadingUnits.js";
 export {
   assessCorpusEligibility,
   classifyPdfUsability,
