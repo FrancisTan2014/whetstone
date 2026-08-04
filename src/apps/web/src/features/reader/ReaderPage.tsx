@@ -37,7 +37,7 @@ import {
   eventTargetClosest,
   snapSelectionToWord
 } from "./selectionCapture";
-import { useNoteHighlights } from "./useNoteHighlights";
+import { useNoteHighlights, type NoteReapplyGuard } from "./useNoteHighlights";
 import { type NoteActivation } from "./noteActivation";
 import {
   buildReaderStructure,
@@ -912,6 +912,35 @@ export function ReaderPage({
     };
   }, [selectionContext, readerLanguage]);
 
+  // Re-applying note highlights unwraps and re-wraps the `.noteMark` spans, which collapses any live
+  // selection sitting inside one. That collapse schedules an async `selectionchange`, so a background
+  // notes refresh — or a jump that borns a block and bumps the render key — would otherwise silently
+  // dismiss an open selection toolbar mid-action (#825). This guard lets `onSelectionCleared` tell a
+  // reader-driven collapse from a genuine one: `useNoteHighlights` arms it around the surgery
+  // (`begin`) and releases it after (`end`). The release is DEFERRED to the next task on purpose — the
+  // collapse's `selectionchange` fires as a later task, so a synchronous release would already be off
+  // by the time it arrives — and each `begin` cancels a pending release so a burst of re-applications
+  // stays covered until the last one settles.
+  const suppressSelectionClearRef = useRef(false);
+  const suppressSelectionClearTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined
+  );
+  const noteReapplyGuard = useMemo<NoteReapplyGuard>(
+    () => ({
+      begin() {
+        suppressSelectionClearRef.current = true;
+        clearTimeout(suppressSelectionClearTimerRef.current);
+      },
+      end() {
+        suppressSelectionClearTimerRef.current = setTimeout(() => {
+          suppressSelectionClearRef.current = false;
+          suppressSelectionClearTimerRef.current = undefined;
+        }, 0);
+      }
+    }),
+    []
+  );
+
   // Dismiss the toolbar across its whole lifecycle: a pointer press anywhere outside the toolbar
   // closes it, as does clearing the selection. The explicit close / confirm / lookup still close it.
   useEffect(() => {
@@ -928,6 +957,13 @@ export function ReaderPage({
     }
 
     function onSelectionCleared(): void {
+      // A collapse the reader itself caused by re-applying note highlights is not the learner
+      // clearing their selection, so it must not dismiss the toolbar (#825). A genuine collapse,
+      // outside that armed window, still dismisses.
+      if (suppressSelectionClearRef.current) {
+        return;
+      }
+
       const selection = window.getSelection();
 
       if (selection === null || selection.isCollapsed || selection.toString().trim().length === 0) {
@@ -1114,7 +1150,7 @@ export function ReaderPage({
     [selectionContext, onEditNote]
   );
 
-  useNoteHighlights(notes, highlightRenderKey, onActivateNote);
+  useNoteHighlights(notes, highlightRenderKey, onActivateNote, noteReapplyGuard);
 
   const handlers: ReaderHandlers = {
     bornBlockEntryId,
