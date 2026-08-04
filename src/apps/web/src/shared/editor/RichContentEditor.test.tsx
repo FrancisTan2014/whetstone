@@ -869,7 +869,12 @@ describe("RichContentEditor work presentation", () => {
     const press = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
     (paragraph as HTMLElement).dispatchEvent(press);
 
-    await user.type(textbox, "!");
+    // Focus the surface directly instead of letting `user.type` click it. That click would land on the
+    // content root — the blank margin — and arm the very handler this test asserts was NOT armed, whose
+    // `focus("end")` resolves a frame later. The assertion would then race that frame: the keystroke wins
+    // on an idle runner and prepends, the frame wins on a loaded one and appends (#825's second shape).
+    textbox.focus();
+    await user.type(textbox, "!", { skipClick: true });
     await waitFor(() => expect(documentText(lastDocument(onChange))).toBe("!Hello"));
   });
 
@@ -886,7 +891,10 @@ describe("RichContentEditor work presentation", () => {
     const press = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
     (textNode as ChildNode).dispatchEvent(press);
 
-    await user.type(textbox, "!");
+    // Same reason as the test above: `user.type`'s own click would land on the blank margin and arm the
+    // deferred `focus("end")`, so focus the surface directly and skip that click.
+    textbox.focus();
+    await user.type(textbox, "!", { skipClick: true });
     await waitFor(() => expect(documentText(lastDocument(onChange))).toBe("!Hello"));
   });
 
