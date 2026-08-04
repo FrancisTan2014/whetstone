@@ -1624,3 +1624,130 @@ Two durable lessons:
 The same instinct found #871. The reviewer did not read `workRepartition.ts` more carefully — that
 module is correct, commented, and tested. It asked a different question: **which callers reach this
 rule?** The defect lived entirely in who was allowed to call it.
+
+---
+
+## 27. The live database, and exactly how to get a readable Clean Code at home
+
+This section exists because the environment holding the database goes away at 17:00 on 2026-08-05.
+Everything here was read from a copy of the live PGlite store at `src/apps/server/.data/db`, not
+inferred from the schema files.
+
+### 27.1 The schema is not what the code reading suggests
+
+Three names cost me cycles. Write them down before querying:
+
+| You will reach for | The table is actually |
+|---|---|
+| `works` | **`work_meta`** (`entry_id, author_id, language, title, work_type, origin, title_key, content_revision, manual_corrections_at`) |
+| `pdf_import_attempts.status` | **`state`** |
+| `blocks` | **`doc_blocks`** for anything the PDF path wrote (`node_json, order_index, reading_unit_entry_id, type, work_entry_id, plaintext, anchor_id, anchors, corrected_at`) |
+
+A legacy **`blocks`** table (mdast, superseded per `docs/DECISIONS.md` D1) still coexists with
+`doc_blocks`, and **older works still live in it**. A `doc_blocks`-only join therefore reports a
+healthy Markdown work as having zero content. I made exactly that mistake and nearly filed a bug for
+it — see §28. Count both tables or you will misread the library:
+
+```
+work                                     doc_blocks   legacy blocks
+Clean Code                                    3,038             0
+Designing Data-Intensive Applications         4,413         5,120
+baby_english_core_script                          0            35
+```
+
+**Operational trap:** PGlite dumps its entire minified bundle to stderr on any query error. Always
+write results to a file and read the file; otherwise the actual error is unfindable.
+
+### 27.2 What the live database holds
+
+```
+7b9b5e8f-5965-4895-882b-aa13dc137ac1   Clean Code …   origin=imported   content_revision=0
+    units=525   blocks=3,038   chars=786,475            <- broken, pre-#862 division
+```
+
+`content_revision=0` matters: the work has **never been corrected**, so the #871 repartition bomb has
+not been triggered on it. The 525 units are the original import, not correction damage.
+
+Its retained conversion payload is **present and complete**:
+
+```
+attempt 0e2292ab-644f-46ae-9ee3-70f94568bbe3
+    ranges=10   payloadBytes=2,520,494   pages=462   state=converted   stagePath=null
+    hash=034292d5e0a2e27bc3444ff41216139537b4e0729661c79ee0a8ad3298db3857
+```
+
+`stagePath=null` means the staged PDF was freed at publication, by design. The 2.5 MB of
+`pdf_import_ranges.payload` survived it. **That payload is the whole recovery story.**
+
+### 27.3 The two recovery paths, and why one is much safer than the other
+
+**Path A — re-import the PDF.** Requires the Python/Docling worker installed and working at home,
+plus `clean-code.pdf`. On a `main` carrying #862 and #868 this produces the good result directly.
+But it depends on an environment you have not yet built.
+
+**Path B — re-map from the retained payload (#861).** Requires **only the database file**. No Python,
+no Docling, no PDF, no re-conversion. The bytes are already in `pdf_import_ranges`.
+
+Path B is strictly more robust, and it is the reason #861 is the highest-value open item rather than
+a convenience. If the worker install at home is fiddly — and on Windows it has been — Path B is the
+one that still works.
+
+**So: copy `src/apps/server/.data/db` before you leave.** It is gitignored and it is not in any
+branch. It is 2.5 MB of converted Clean Code that took a 462-page Docling run to produce.
+
+### 27.4 The number you should expect
+
+The harness fixture used for every measurement in this handoff reports attempt id
+`0e2292ab-644f-46ae-9ee3-70f94568bbe3`, hash `034292d5…`, 462 pages — **identical to the live row on
+all three fields.** The measurements are not a lab analogue that ought to transfer; they were taken
+on your actual book.
+
+```
+today, in the live DB:   525 units   3,038 blocks     786,475 chars
+after #862 + #868:        28 units   3,054 blocks     857,985 chars   (1% empty blocks)
+```
+
+If you re-import or re-map and do not land near **28 / 3,054 / 857,985**, something regressed — that
+triple is the acceptance check, and `harness/usability.harness.test.ts` prints it.
+
+### 27.5 Only one work is broken
+
+DDIA did not come through the PDF path (no publication row) and is healthy at 25 units / 4,413
+blocks / 1,450,326 chars. The Markdown and manual works are fine. **The PDF damage is confined to
+Clean Code**, and it is repairable without re-conversion.
+---
+
+## 28. The instrument's blind spot, inherited as a fact
+
+§26 recorded that I stated absolutes from code I had read rather than behavior I had measured, and
+that the tell is a quantifier. That framing was incomplete. The failure recurred once more after I
+wrote it, in a form the quantifier rule does not catch, and the sharper statement is this:
+
+> **A partial instrument, reported as a whole-system fact.**
+
+Four instances, same shape:
+
+| Instrument | Its blind spot | The false fact it produced |
+|---|---|---|
+| `blockText` | reads `attrs.html` first | the index "has text" — it did, but only where the reader could not see it (#859) |
+| block counts / `unknown` counts | count nodes, not characters | a fix that deletes 70,103 characters looks like an improvement |
+| a `doc_blocks`-only join | legacy works live in `blocks` | "an entire work with no content at all" — it has 35 blocks |
+| `git diff` of source files | says nothing about behavior | "content-neutral refresh" (true here, but only because I then re-measured) |
+
+The last one is the point. In every case the number was real and the query ran correctly. What was
+wrong was the **scope claim silently attached to it** — the assumption that the instrument sees
+everything the sentence talks about.
+
+I caught the third one only because I went to file it as an issue and checked first. Three sentences
+earlier in the same comment I had written that I query the live database "rather than reasoning about
+what it probably contains" — and then read one table and generalised to *no content at all*. The
+retraction is at issue #861.
+
+**The working rule, replacing §26's:** before writing a sentence about the system, name the
+instrument that produced it and ask *what would this instrument fail to see?* If the answer is
+"nothing", that is the answer to distrust. Two instruments that fail differently, or the claim
+narrows to what the one instrument actually covers.
+
+This is also why the harness measures **characters that reach the reader** and not block counts: it
+was chosen after the second instance, specifically because the counting instruments had already lied
+once.
