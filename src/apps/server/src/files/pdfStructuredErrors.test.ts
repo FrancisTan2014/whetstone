@@ -6,6 +6,7 @@ import {
   childCrashFailure,
   classifyWorkerExit,
   cleanupFailure,
+  conversionIncompleteFailure,
   forbiddenHandleFailure,
   malformedFailure,
   memoryCeilingUnsupportedFailure,
@@ -17,6 +18,7 @@ import {
   tooManyPagesFailure,
   unsupportedSchemaFailure,
   WORKER_EXIT_CONVERSION_FAILED,
+  WORKER_EXIT_CONVERSION_INCOMPLETE,
   WORKER_EXIT_MEMORY,
   WORKER_EXIT_MEMORY_CEILING_UNSUPPORTED,
   WORKER_EXIT_MISSING_DEPENDENCY,
@@ -41,6 +43,7 @@ describe("named failure constructors", () => {
       childCrashFailure("segfault"),
       cancelledFailure(),
       cleanupFailure("EACCES"),
+      conversionIncompleteFailure(),
       artifactIntegrityFailure("sha256 mismatch")
     ];
     for (const failure of failures) {
@@ -91,6 +94,11 @@ describe("classifyWorkerExit", () => {
     expect(classifyWorkerExit({ ...base, code: WORKER_EXIT_MEMORY }).kind).toBe("memory");
     expect(classifyWorkerExit({ ...base, code: WORKER_EXIT_MEMORY_CEILING_UNSUPPORTED }).kind).toBe(
       "memory_ceiling_unsupported"
+    );
+    // A degraded conversion is its OWN kind (#832), never folded into `malformed`: the file parsed
+    // fine, the run lost pages, and an operator must be able to tell those apart.
+    expect(classifyWorkerExit({ ...base, code: WORKER_EXIT_CONVERSION_INCOMPLETE }).kind).toBe(
+      "conversion_incomplete"
     );
     expect(classifyWorkerExit({ ...base, code: WORKER_EXIT_CONVERSION_FAILED }).kind).toBe(
       "malformed"

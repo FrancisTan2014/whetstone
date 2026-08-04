@@ -467,6 +467,48 @@ describe("publishConvertedPdfImport", () => {
     });
   });
 
+  it("refuses a converted PDF whose native-text pages produced no items as incomplete_conversion, creating no Work", async () => {
+    // #832: the converter reported SUCCESS for all three pages but returned items for page 1 only. That
+    // fragment must never become a Work — the published book would look real and be ~a third of the
+    // content, discovered only while reading. The refusal reports how many pages were lost.
+    await driveToAwaitingReview(db, {
+      id: "att-partial",
+      sourceHash: "c".repeat(64),
+      payload: rangePayload(
+        [item({ label: "text", text: "only the first page survived conversion" })],
+        [true, true, true]
+      ),
+      totalPages: 3
+    });
+    await insertPublicationIntent(db, {
+      attemptId: "att-partial",
+      enteredTitle: null,
+      enteredAuthor: null,
+      enteredLanguage: null,
+      fileName: "fragment.pdf"
+    });
+
+    const result = await publishConvertedPdfImport(publishDeps(db), "att-partial");
+    expect(result).toEqual({ pagesMissingContent: 2, status: "incomplete_conversion" });
+    const publication = await getPublication(db, "att-partial");
+    expect(publication?.incompleteConversionPages).toBe(2);
+    expect(publication?.workEntryId).toBeNull();
+    expect(publication?.noContent).toBeNull();
+    expect(publication?.ocrValidationFailedPages).toBeNull();
+    // No Work, no source, no claim: nothing was committed before the refusal.
+    expect(await db.select().from(workSources)).toHaveLength(0);
+    expect(await db.select().from(uploadedSourceClaims)).toHaveLength(0);
+    expect(await db.select().from(workMeta)).toHaveLength(0);
+    // The retained stage is freed cleanly and its binding cleared, exactly like the other refusals.
+    await expect(stat(stageStore.openStage("att-partial").path)).rejects.toThrow();
+    expect(cleanupFailures).toEqual([]);
+    expect((await getAttemptById(db, "att-partial"))?.stagePath).toBeNull();
+    // The refusal is terminal: a second publish is an idempotent no-op, not a retry.
+    expect(await publishConvertedPdfImport(publishDeps(db), "att-partial")).toEqual({
+      status: "already_published"
+    });
+  });
+
   it("publishes an image-bearing PDF as a correctable Work carrying an unresolved-figure placeholder (#806)", async () => {
     // Synthetic regression fixture: substantial readable text plus one unresolved picture on a later page.
     // The whole readable hierarchy must publish as a canonical Work; the picture becomes a visible,

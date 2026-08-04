@@ -481,7 +481,14 @@ export function mapStructuredDocument(document: StructuredDocument): PdfCanonica
   // already refuses a range docling reported as degraded; this catches the same loss from the payload
   // itself, so a converter that claims SUCCESS while dropping pages cannot publish a fragment as a whole
   // book. It is a refusal, not a warning: the defect being fixed is a 9%-complete book that looked real.
-  const pagesMissingContent = findPagesMissingBodyContent(document.pages, document.body).length;
+  //
+  // Only a PARTIAL conversion is this outcome. A document that produced no body items at all extracted
+  // nothing anywhere, which is indistinguishable from a genuinely contentless PDF from the payload alone
+  // and is already the `no_content` refusal below — both create no Work, so nothing escapes either way.
+  const pagesMissingContent =
+    document.body.length === 0
+      ? 0
+      : findPagesMissingBodyContent(document.pages, document.body).length;
   if (pagesMissingContent > 0) {
     return { pagesMissingContent, status: "incomplete_conversion" };
   }

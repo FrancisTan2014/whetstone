@@ -36,9 +36,34 @@ function item(partial: Partial<StructuredDocItem> & { label: string }): Structur
   };
 }
 
+// A real payload's page list and its body describe the SAME converted range, so a fixture's default page
+// list is derived from the pages its body items actually occupy. Before #832 the default was a fixed page
+// 1, which silently modelled a range that reported native text on a page it never converted — exactly the
+// loss mapping now refuses. Tests about page coverage, OCR routing, or page counts pass `pages` explicitly.
+function nativePages(...pageNumbers: readonly number[]): readonly StructuredPage[] {
+  return pageNumbers.map((pageNumber) => ({ hasNativeText: true, pageNumber }));
+}
+
+function pagesCoveringBody(body: readonly StructuredDocItem[]): readonly StructuredPage[] {
+  const pageNumbers = new Set<number>();
+  const visit = (items: readonly StructuredDocItem[]): void => {
+    for (const entry of items) {
+      pageNumbers.add(entry.pageNumber);
+      visit(entry.children);
+    }
+  };
+  visit(body);
+  if (pageNumbers.size === 0) {
+    return [{ hasNativeText: true, pageNumber: 1 }];
+  }
+  return [...pageNumbers]
+    .sort((left, right) => left - right)
+    .map((pageNumber) => ({ hasNativeText: true, pageNumber }));
+}
+
 function doc(
   body: readonly StructuredDocItem[],
-  pages: readonly StructuredPage[] = [{ hasNativeText: true, pageNumber: 1 }],
+  pages: readonly StructuredPage[] = pagesCoveringBody(body),
   outline?: readonly PdfOutlineEntry[]
 ): StructuredDocument {
   return {
@@ -452,6 +477,73 @@ describe("mapStructuredDocument", () => {
     expect(mapEn(doc([]))).toEqual({ status: "no_content" });
   });
 
+  it("still reports a body that converted nothing anywhere as no_content, not incomplete", () => {
+    // A payload that produced NO items extracted nothing anywhere, which the payload alone cannot tell
+    // apart from a genuinely contentless PDF — that is the long-standing `no_content` refusal, and the
+    // worker's own status check is what catches a range docling dropped entirely. Both create no Work.
+    const pages = [
+      { hasNativeText: true, pageNumber: 1 },
+      { hasNativeText: true, pageNumber: 2 }
+    ];
+    expect(mapEn(doc([], pages))).toEqual({ status: "no_content" });
+  });
+
+  it("refuses a SUCCESS payload whose native-text pages produced no items as incomplete_conversion", () => {
+    // #832's independent invariant: the converter reported these pages as carrying native text, so a
+    // payload covering only page 1 means pages 2 and 3 were silently DROPPED. Publishing that fragment
+    // as a whole book is the defect being fixed, so the whole document is refused and the number of
+    // lost pages is reported — never a partial Work, never a warning.
+    const pages = [
+      { hasNativeText: true, pageNumber: 1 },
+      { hasNativeText: true, pageNumber: 2 },
+      { hasNativeText: true, pageNumber: 3 }
+    ];
+    const result = mapEn(doc([item({ label: "text", text: "only page one survived" })], pages));
+    expect(result).toEqual({ pagesMissingContent: 2, status: "incomplete_conversion" });
+  });
+
+  it("accepts a document whose pages are all covered by nested body items", () => {
+    // A page whose only contribution is a nested list item is fully converted; the invariant walks the
+    // whole tree, so it must not refuse a healthy document.
+    const pages = [
+      { hasNativeText: true, pageNumber: 1 },
+      { hasNativeText: true, pageNumber: 2 }
+    ];
+    const body = [
+      item({
+        children: [item({ label: "list_item", pageNumber: 2, text: "nested on page two" })],
+        label: "list",
+        text: ""
+      })
+    ];
+    expect(mapped(mapEn(doc(body, pages))).units.length).toBeGreaterThan(0);
+  });
+
+  it("does not treat an excluded-furniture page as a dropped page", () => {
+    // Page furniture (#811) is removed for READABILITY after this check; a page whose only item is a
+    // running head was still converted, so the two rules must not be conflated into a false refusal.
+    const pages = [
+      { hasNativeText: true, pageNumber: 1 },
+      { hasNativeText: true, pageNumber: 2 }
+    ];
+    const body = [
+      item({ label: "text", pageNumber: 1, text: "real content" }),
+      item({ label: "page_header", pageNumber: 2, text: "12" })
+    ];
+    const result = mapEn(doc(body, pages));
+    expect(result.status).toBe("mapped");
+  });
+
+  it("refuses text-less pages before it looks at conversion coverage", () => {
+    // A text-less page is the OCR path's business. Reporting it as a dropped page instead would send
+    // the learner to the wrong remedy.
+    const pages = [
+      { hasNativeText: false, pageNumber: 1 },
+      { hasNativeText: true, pageNumber: 2 }
+    ];
+    expect(mapEn(doc([], pages))).toEqual({ pagesNeedingOcr: 1, status: "ocr_validation_failed" });
+  });
+
   it("keys additive evidence to each block's stable id with page geometry and confidence", () => {
     const result = mapped(
       mapEn(
@@ -503,26 +595,17 @@ describe("mapStructuredDocument", () => {
 // own `furniture` group is deprecated and arrives empty, so the mapper is the only place that can keep
 // layout debris out of the readable hierarchy — and the only place that can account for what it removed.
 describe("mapStructuredDocument page-furniture exclusion", () => {
-  const pages: readonly StructuredPage[] = [
-    { hasNativeText: true, pageNumber: 1 },
-    { hasNativeText: true, pageNumber: 2 },
-    { hasNativeText: true, pageNumber: 3 }
-  ];
-
   it("excludes folios and running heads from the body and reports them as evidence", () => {
     const result = mapped(
       mapEn(
-        doc(
-          [
-            item({ label: "page_header", pageNumber: 1, text: "Chapter 5: Formatting" }),
-            item({ label: "page_footer", pageNumber: 1, text: "\u2014 89 \u2014" }),
-            item({ label: "text", pageNumber: 1, text: "Readable prose." }),
-            item({ label: "page_header", pageNumber: 2, text: "Chapter 5: Formatting" }),
-            item({ label: "page_footer", pageNumber: 2, text: "90" }),
-            item({ label: "text", pageNumber: 2, text: "More prose." })
-          ],
-          pages
-        )
+        doc([
+          item({ label: "page_header", pageNumber: 1, text: "Chapter 5: Formatting" }),
+          item({ label: "page_footer", pageNumber: 1, text: "\u2014 89 \u2014" }),
+          item({ label: "text", pageNumber: 1, text: "Readable prose." }),
+          item({ label: "page_header", pageNumber: 2, text: "Chapter 5: Formatting" }),
+          item({ label: "page_footer", pageNumber: 2, text: "90" }),
+          item({ label: "text", pageNumber: 2, text: "More prose." })
+        ])
       )
     );
 
@@ -563,15 +646,12 @@ describe("mapStructuredDocument page-furniture exclusion", () => {
     // range is still detectable as repetition — a per-range view could never see it.
     const result = mapped(
       mapEn(
-        doc(
-          [
-            item({ label: "page_header", pageNumber: 1, text: "Clean Code" }),
-            item({ label: "text", pageNumber: 1, text: "Range one prose." }),
-            item({ label: "page_header", pageNumber: 3, text: "Clean Code" }),
-            item({ label: "text", pageNumber: 3, text: "Range two prose." })
-          ],
-          pages
-        )
+        doc([
+          item({ label: "page_header", pageNumber: 1, text: "Clean Code" }),
+          item({ label: "text", pageNumber: 1, text: "Range one prose." }),
+          item({ label: "page_header", pageNumber: 3, text: "Clean Code" }),
+          item({ label: "text", pageNumber: 3, text: "Range two prose." })
+        ])
       )
     );
     expect(unitTypes(result, 0)).toEqual(["paragraph", "paragraph"]);
@@ -584,14 +664,11 @@ describe("mapStructuredDocument page-furniture exclusion", () => {
   it("excludes a one-off running head that restates a heading the document carries", () => {
     const result = mapped(
       mapEn(
-        doc(
-          [
-            item({ label: "page_header", pageNumber: 2, text: "The Law of Demeter" }),
-            item({ label: "section_header", pageNumber: 2, text: "The Law of Demeter" }),
-            item({ label: "text", pageNumber: 2, text: "Prose." })
-          ],
-          pages
-        )
+        doc([
+          item({ label: "page_header", pageNumber: 2, text: "The Law of Demeter" }),
+          item({ label: "section_header", pageNumber: 2, text: "The Law of Demeter" }),
+          item({ label: "text", pageNumber: 2, text: "Prose." })
+        ])
       )
     );
     expect(unitTypes(result, 0)).toEqual(["heading", "paragraph"]);
@@ -610,14 +687,11 @@ describe("mapStructuredDocument page-furniture exclusion", () => {
     // destroy content, and the old `unknown` fallback rendered it as dashed debris.
     const result = mapped(
       mapEn(
-        doc(
-          [
-            item({ label: "page_header", pageNumber: 1, text: "Chapter 3: Functions" }),
-            item({ label: "text", pageNumber: 1, text: "Prose." }),
-            item({ label: "page_footer", pageNumber: 2, text: "1. [Martin]." })
-          ],
-          pages
-        )
+        doc([
+          item({ label: "page_header", pageNumber: 1, text: "Chapter 3: Functions" }),
+          item({ label: "text", pageNumber: 1, text: "Prose." }),
+          item({ label: "page_footer", pageNumber: 2, text: "1. [Martin]." })
+        ])
       )
     );
     expect(unitTypes(result, 0)).toEqual(["paragraph", "paragraph", "paragraph"]);
@@ -633,31 +707,28 @@ describe("mapStructuredDocument page-furniture exclusion", () => {
   it("keeps surviving blocks in source order with their own page, geometry, and confidence", () => {
     const result = mapped(
       mapEn(
-        doc(
-          [
-            item({ label: "page_header", pageNumber: 1, text: "1" }),
-            item({
-              boundingBox: { bottom: 30, left: 5, right: 95, top: 10 },
-              charSpan: [4, 20],
-              confidence: 0.71,
-              label: "text",
-              pageNumber: 1,
-              text: "First."
-            }),
-            item({ label: "page_footer", pageNumber: 1, text: "Running foot" }),
-            item({ label: "section_header", pageNumber: 2, text: "Second Section" }),
-            item({ label: "page_footer", pageNumber: 2, text: "Running foot" }),
-            item({
-              boundingBox: { bottom: 60, left: 6, right: 96, top: 40 },
-              charSpan: [30, 44],
-              confidence: 0.55,
-              label: "text",
-              pageNumber: 2,
-              text: "Second."
-            })
-          ],
-          pages
-        )
+        doc([
+          item({ label: "page_header", pageNumber: 1, text: "1" }),
+          item({
+            boundingBox: { bottom: 30, left: 5, right: 95, top: 10 },
+            charSpan: [4, 20],
+            confidence: 0.71,
+            label: "text",
+            pageNumber: 1,
+            text: "First."
+          }),
+          item({ label: "page_footer", pageNumber: 1, text: "Running foot" }),
+          item({ label: "section_header", pageNumber: 2, text: "Second Section" }),
+          item({ label: "page_footer", pageNumber: 2, text: "Running foot" }),
+          item({
+            boundingBox: { bottom: 60, left: 6, right: 96, top: 40 },
+            charSpan: [30, 44],
+            confidence: 0.55,
+            label: "text",
+            pageNumber: 2,
+            text: "Second."
+          })
+        ])
       )
     );
 
@@ -687,15 +758,12 @@ describe("mapStructuredDocument page-furniture exclusion", () => {
     // Exclusion is not a refusal reason: a furniture-only body simply has no readable content, so it
     // takes the SAME typed `no_content` outcome an empty body does — no empty-shell Work either way.
     const result = mapEn(
-      doc(
-        [
-          item({ label: "page_header", pageNumber: 1, text: "Clean Code" }),
-          item({ label: "page_footer", pageNumber: 1, text: "12" }),
-          item({ label: "page_header", pageNumber: 2, text: "Clean Code" }),
-          item({ label: "page_footer", pageNumber: 2, text: "13" })
-        ],
-        pages
-      )
+      doc([
+        item({ label: "page_header", pageNumber: 1, text: "Clean Code" }),
+        item({ label: "page_footer", pageNumber: 1, text: "12" }),
+        item({ label: "page_header", pageNumber: 2, text: "Clean Code" }),
+        item({ label: "page_footer", pageNumber: 2, text: "13" })
+      ])
     );
     expect(result).toEqual({ status: "no_content" });
   });
@@ -790,9 +858,12 @@ describe("outline-derived heading depth", () => {
     item({ label: "section_header", pageNumber: 129, text: "Train Wrecks" })
   ];
 
-  const cleanCodePages: readonly StructuredPage[] = [124, 125, 126, 127, 128, 129].map(
-    (pageNumber) => ({ hasNativeText: true, pageNumber })
-  );
+  // The pages that fixture body occupies. The real range is pp.124-129, but the fixture deliberately
+  // carries only the headings docling emitted — the prose on 125 and 127 is irrelevant to heading depth —
+  // so the declared page list matches the fixture's own body rather than claiming native text on pages
+  // this document never supplies content for (#832 refuses exactly that shape). Tests below that carry a
+  // smaller body likewise declare only the pages they converted.
+  const cleanCodePages = nativePages(124, 126, 128, 129);
 
   function headingLevels(
     result: Extract<PdfCanonicalMappingResult, { status: "mapped" }>
@@ -847,7 +918,7 @@ describe("outline-derived heading depth", () => {
             item({ label: "section_header", pageNumber: 124, text: "Not In The Outline" }),
             item({ label: "title", pageNumber: 125, text: "Also Not In The Outline" })
           ],
-          cleanCodePages,
+          nativePages(124, 125),
           cleanCodeOutline
         )
       )
@@ -868,7 +939,7 @@ describe("outline-derived heading depth", () => {
             item({ label: "page_header", pageNumber: 124, text: "Objects and Data Structures" }),
             item({ label: "text", pageNumber: 124, text: "Chapter body." })
           ],
-          cleanCodePages,
+          nativePages(124),
           cleanCodeOutline
         )
       )
@@ -931,7 +1002,7 @@ describe("outline-derived heading depth", () => {
             item({ label: "page_header", pageNumber: 128, text: "The Law of Demeter" }),
             item({ label: "text", pageNumber: 128, text: "Body." })
           ],
-          cleanCodePages,
+          nativePages(124, 128),
           cleanCodeOutline
         )
       )
@@ -949,7 +1020,7 @@ describe("outline-derived heading depth", () => {
       mapEn(
         doc(
           [item({ label: "page_header", pageNumber: 124, text: "Clean Code" })],
-          cleanCodePages,
+          nativePages(124),
           cleanCodeOutline
         )
       )
@@ -965,7 +1036,7 @@ describe("outline-derived heading depth", () => {
       mapEn(
         doc(
           [item({ label: "text", pageNumber: 124, text: "Data Abstraction" })],
-          cleanCodePages,
+          nativePages(124),
           cleanCodeOutline
         )
       )

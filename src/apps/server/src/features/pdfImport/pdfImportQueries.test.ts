@@ -16,6 +16,7 @@ import {
   insertQueuedAttempt,
   markFailed,
   markPublicationImagesUnsupported,
+  markPublicationIncompleteConversion,
   markPublicationNoContent,
   markPublicationOcrValidationFailed,
   setProbeResult
@@ -212,6 +213,23 @@ describe("buildPdfImportPublicationOutcome", () => {
     await markPublicationNoContent(db, "a1", new Date());
 
     expect(await buildPdfImportPublicationOutcome(db, "a1")).toEqual({ status: "no_content" });
+  });
+
+  it("reports `incomplete_conversion` with the lost page count once a dropped-pages refusal is recorded", async () => {
+    await seedQueued("a1");
+    await insertPublicationIntent(db, {
+      attemptId: "a1",
+      enteredTitle: null,
+      enteredAuthor: null,
+      enteredLanguage: null,
+      fileName: "fragment.pdf"
+    });
+    await markPublicationIncompleteConversion(db, "a1", 408, new Date());
+
+    expect(await buildPdfImportPublicationOutcome(db, "a1")).toEqual({
+      pagesMissingContent: 408,
+      status: "incomplete_conversion"
+    });
   });
 
   it("reports `image_unsupported` with the image count once an unsupported-image refusal is recorded", async () => {
