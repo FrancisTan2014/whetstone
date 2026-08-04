@@ -88,8 +88,10 @@ that fallback does not turn a failed or partial conversion into a supported succ
 > publishing any canned content. The converter always runs under a hard, single-admission memory ceiling
 > enforced by the platform's native controller — POSIX `RLIMIT_AS` and, on Windows, an OS Job Object via
 > pinned `pywin32==312` — so on Windows `pnpm setup:pdf` additionally installs and pin-verifies `pywin32`
-> and runs the worker's ceiling-capability probe; the default ceiling is 2,048 MiB on POSIX and 6,144 MiB
-> on Windows (`PDF_STRUCTURED_MEMORY_MIB` overrides it on every platform). `pnpm setup:doctor` reports that
+> and runs the worker's ceiling-capability probe; the default ceiling is 2,048 MiB on POSIX and 40,960 MiB
+> on Windows — the Windows Job Object bounds *committed* memory, which the converter reserves roughly an
+> order of magnitude above what it ever resides in, so the number is far larger than its real footprint
+> (`PDF_STRUCTURED_MEMORY_MIB` overrides it on every platform). `pnpm setup:doctor` reports that
 > toolchain, including OCRmyPDF / Tesseract.
 
 No separate database server is required: v0 uses an embedded PostgreSQL engine

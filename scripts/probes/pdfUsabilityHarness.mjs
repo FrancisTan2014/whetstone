@@ -37,9 +37,9 @@
 // POSIX RLIMIT_AS) actually holds on THIS host, aborting with an actionable `pnpm setup:pdf` remedy
 // otherwise rather than measuring Docling memory-unbounded; (2) resolves the per-child ceiling from the
 // single production owner (serverConfig `resolveStructuredPdfMemoryMib`: platform-aware default —
-// 2,048 MiB POSIX / 6,144 MiB Windows — unless PDF_STRUCTURED_MEMORY_MIB / --memory-mib overrides it) and
-// sets `WHETSTONE_PDF_MEMORY_MIB` on every worker child, so an over-ceiling conversion is killed here
-// (worker exit 7 -> `memory`, counted against the gate) just as it would be in production; and (3)
+// 2,048 MiB POSIX / 40,960 MiB Windows — unless PDF_STRUCTURED_MEMORY_MIB / --memory-mib overrides it)
+// and sets `WHETSTONE_PDF_MEMORY_MIB` on every worker child, so an over-ceiling conversion is killed
+// here (worker exit 7 -> `memory`, counted against the gate) just as it would be in production; and (3)
 // treats worker exit 8 (`memory_ceiling_unsupported`) as a fatal environment error that aborts the whole
 // run — if the ceiling could not be enforced, the numbers are not falsifiable against production, so the
 // harness must refuse rather than emit a report that would look passable while production would refuse.
@@ -134,7 +134,7 @@ const DEFAULT_TESSERACT_BINARY = "tesseract";
 // Resolve the per-child memory ceiling and the worker timeout through the SAME production owners the server
 // config uses (resolveStructuredPdfMemoryMib / resolveStructuredPdfTimeoutMs). For memory: a positive-integer
 // PDF_STRUCTURED_MEMORY_MIB / --memory-mib override wins on every platform, otherwise the platform-aware
-// default applies (2,048 MiB POSIX, 6,144 MiB Windows). For the timeout: the live import lane resolves it
+// default applies (2,048 MiB POSIX, 40,960 MiB Windows). For the timeout: the live import lane resolves it
 // from PDF_TIMEOUT_MS (else the 600000 ms production default); the harness holds only the raw `--timeout-ms`
 // override here and resolves both once the workspace is loaded, so it bounds each conversion exactly as the
 // real import lane does and never duplicates a longer default. A `--timeout-ms` differing from the
@@ -705,9 +705,9 @@ async function loadTypeScriptDeps() {
     const structuredResolution =
       await import("../../src/apps/server/src/files/pdfStructuredRunnerResolution.js");
     const ocrResolution = await import("../../src/apps/server/src/files/pdfOcrRunnerResolution.js");
-    // The single production owner of the per-child memory default (2,048 MiB POSIX, 6,144 MiB Windows) and
-    // the worker timeout default (600000 ms), plus their override precedence, so the harness resolves the
-    // SAME ceiling and timeout the server does without duplicating those numbers here.
+    // The single production owner of the per-child memory default (2,048 MiB POSIX, 40,960 MiB Windows)
+    // and the worker timeout default (600000 ms), plus their override precedence, so the harness resolves
+    // the SAME ceiling and timeout the server does without duplicating those numbers here.
     const serverConfig = await import("../../src/apps/server/src/config/serverConfig.js");
     return {
       contracts,
@@ -761,7 +761,7 @@ async function main() {
   }
 
   // Resolve the per-child ceiling from the SINGLE production owner (serverConfig): platform-aware default
-  // (2,048 MiB POSIX / 6,144 MiB Windows) unless --memory-mib / PDF_STRUCTURED_MEMORY_MIB overrides it.
+  // (2,048 MiB POSIX / 40,960 MiB Windows) unless --memory-mib / PDF_STRUCTURED_MEMORY_MIB overrides it.
   // The resolver rejects a non-positive / non-integer override, which is an operator error, not a run.
   try {
     args.memoryMib = deps.resolveStructuredPdfMemoryMib(args.memoryMibOverride, process.platform);

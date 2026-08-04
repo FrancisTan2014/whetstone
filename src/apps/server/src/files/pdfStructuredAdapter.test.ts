@@ -535,10 +535,11 @@ describe("structured PDF adapter — shared validated-JSON contract", () => {
           pythonBinary: realLane!.python,
           scriptPath: workerScriptPath,
           perRangeTimeoutMs: 120_000,
-          // Use the platform-calibrated production default (2,048 MiB POSIX / 6,144 MiB Windows) so the
-          // real Docling conversion runs under the SAME hard ceiling production applies. The Windows
-          // worker peaks well above 2 GiB even for this small fixture (#782), so a hardcoded 2,048 would
-          // be killed by the Job Object here; the config owner is the single source of that number.
+          // Use the platform-calibrated production default (2,048 MiB POSIX / 40,960 MiB Windows) so the
+          // real Docling conversion runs under the SAME hard ceiling production applies. The Windows Job
+          // Object bounds committed memory, which this converter reserves far above its resident
+          // footprint (#833), so a hardcoded working-set-scale number would be killed here; the config
+          // owner is the single source of that number.
           memoryMib: defaultStructuredPdfMemoryMib(process.platform)
         }),
         tempDir: await makeTempDir("whetstone-real-temp-")

@@ -35,6 +35,11 @@ describe("readServerConfig PDF upload limit", () => {
 });
 
 describe("readServerConfig structured PDF memory ceiling", () => {
+  // The pinned converter's measured peak COMMITTED memory on Windows for a 50-page range of a real book:
+  // 34,121,527,296 bytes (31.78 GiB), against a 2.48 GiB working set (#833). The Windows boundary is a
+  // ceiling on committed memory, so only a default above this figure admits a supported book.
+  const MEASURED_WINDOWS_COMMIT_PEAK_MIB = Math.ceil(34_121_527_296 / (1024 * 1024));
+
   it("defaults to 2,048 MiB on POSIX", () => {
     // Docling's POSIX-calibrated committed footprint fits the historical 2 GiB address-space ceiling.
     expect(readServerConfig({}, "linux").pdfStructuredMemoryMib).toBe(2048);
@@ -42,11 +47,18 @@ describe("readServerConfig structured PDF memory ceiling", () => {
     expect(defaultStructuredPdfMemoryMib("linux")).toBe(2048);
   });
 
-  it("defaults to 6,144 MiB on Windows", () => {
-    // Docling's torch/MKL runtime commits ~2x on Windows (measured ~3.9 GiB peak, #782); 6 GiB is a hard
-    // single-admission bound with headroom above that floor, never the survival-threshold 4 GiB.
-    expect(readServerConfig({}, "win32").pdfStructuredMemoryMib).toBe(6144);
-    expect(defaultStructuredPdfMemoryMib("win32")).toBe(6144);
+  it("defaults on Windows to a ceiling above the converter's measured committed-memory peak", () => {
+    // The Windows Job Object bounds COMMITTED memory, and Docling's torch/MKL runtime commits roughly an
+    // order of magnitude above its working set (31.78 GiB committed / 2.48 GiB resident, #833). A
+    // working-set-scale ceiling does not fail loudly: Docling drops the pages it cannot allocate for and
+    // reports PARTIAL_SUCCESS, so an under-calibrated default silently publishes a fraction of a book
+    // (#832). The default must therefore clear the measured commit peak, never be tuned back toward
+    // observed resident usage.
+    expect(readServerConfig({}, "win32").pdfStructuredMemoryMib).toBe(40_960);
+    expect(defaultStructuredPdfMemoryMib("win32")).toBe(40_960);
+    expect(defaultStructuredPdfMemoryMib("win32")).toBeGreaterThan(
+      MEASURED_WINDOWS_COMMIT_PEAK_MIB
+    );
   });
 
   it("honors an explicit PDF_STRUCTURED_MEMORY_MIB override on every platform", () => {
@@ -58,7 +70,7 @@ describe("readServerConfig structured PDF memory ceiling", () => {
     ).toBe(4096);
     // The pure resolver is the single owner both production and the #779 harness consume.
     expect(resolveStructuredPdfMemoryMib("3072", "win32")).toBe(3072);
-    expect(resolveStructuredPdfMemoryMib(undefined, "win32")).toBe(6144);
+    expect(resolveStructuredPdfMemoryMib(undefined, "win32")).toBe(40_960);
     expect(resolveStructuredPdfMemoryMib(undefined, "linux")).toBe(2048);
   });
 

@@ -5,12 +5,22 @@ import { MAX_STAGED_BYTES } from "@whetstone/contracts";
 export type ServerLogLevel = "fatal" | "error" | "warn" | "info" | "debug" | "trace" | "silent";
 
 // The structured PDF worker (#701/#782) enforces one worker-owned memory-boundary contract on every
-// supported host, but the committed-memory floor differs by platform: Docling's torch/MKL layout+table
-// runtime commits roughly twice as much on Windows as on POSIX, so a POSIX-calibrated 2 GiB ceiling
-// hard-fails every real Windows conversion (measured ~3.9 GiB peak, #782). These are the two platform
-// defaults; PDF_STRUCTURED_MEMORY_MIB overrides either on every platform.
+// supported host, but the two platform defaults are calibrated against different runtimes and are not
+// interchangeable. Both boundaries — POSIX RLIMIT_AS, and on Windows a Job Object with
+// JOB_OBJECT_LIMIT_PROCESS_MEMORY | JOB_OBJECT_LIMIT_JOB_MEMORY — bound COMMITTED memory, not resident
+// memory, and Docling's pinned torch/MKL runtime reserves address space it never touches: on Windows a
+// 50-page range of a real book peaked at 31.78 GiB committed against a 2.48 GiB working set (#833), so
+// commit runs roughly an order of magnitude above working set. The Windows number is therefore a
+// commit-scale figure by construction and must never be "corrected" down to a working-set-scale one,
+// however oversized it looks beside observed usage. Nor is it a budget worth trimming: Docling does not
+// fail loudly when the ceiling is hit, it drops the pages it cannot allocate for and reports
+// PARTIAL_SUCCESS, so a ceiling that throttles a supported book silently publishes a fraction of it
+// (#832) — a defect of the ceiling, not of the book. 40960 MiB admits the measured peak with ~8 GiB of
+// headroom; do not pick a value in between, because 16384 MiB neither succeeded nor degraded, it killed
+// the worker outright with an access violation (#833). These are the two platform defaults;
+// PDF_STRUCTURED_MEMORY_MIB overrides either on every platform.
 export const POSIX_STRUCTURED_PDF_MEMORY_MIB = 2048;
-export const WINDOWS_STRUCTURED_PDF_MEMORY_MIB = 6144;
+export const WINDOWS_STRUCTURED_PDF_MEMORY_MIB = 40_960;
 
 // The single owner of the structured PDF worker's wall-clock timeout. Production kills a slow spawn here
 // (422) and the #779 corpus harness must gate on the SAME bound, so neither duplicates the number: both
@@ -136,8 +146,8 @@ const defaultServerConfig: ServerConfig = {
   // ingest request. v0 targets born-digital, reasonably-sized PDFs (#403). Env-overridable.
   pdfTimeoutMs: DEFAULT_PDF_TIMEOUT_MS,
   // Nominal POSIX baseline; the real per-child ceiling is resolved platform-aware in readServerConfig
-  // (POSIX 2 GiB, Windows 6 GiB — see resolveStructuredPdfMemoryMib). Env-overridable
-  // (PDF_STRUCTURED_MEMORY_MIB) on every platform.
+  // (POSIX 2 GiB, Windows 40 GiB of COMMITTED memory — see resolveStructuredPdfMemoryMib).
+  // Env-overridable (PDF_STRUCTURED_MEMORY_MIB) on every platform.
   pdfStructuredMemoryMib: POSIX_STRUCTURED_PDF_MEMORY_MIB,
   // Off by default: production converts with the real Docling worker (or fails visibly), never a fixture.
   pdfImportFixtureConversion: false,
