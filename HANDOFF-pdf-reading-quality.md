@@ -1,7 +1,89 @@
-# Handoff — PDF reading quality (2026-08-03)
+# Handoff — PDF reading quality (2026-08-03) + PDF ingestion completeness (2026-08-04)
 
-**Status: landed.** Everything described here is merged to `main` (`c57be64c`). Nothing important
-lives only on this machine.
+> ## READ THIS FIRST — 2026-08-04
+>
+> The 2026-08-03 work below is correct and still stands, but **it was not the whole story**. After it
+> landed, PDF import still produced an unusable book. A live-database investigation found a second,
+> far more severe defect that had been masked all along, and it — not the mapping quality — was the
+> real reason Clean Code was unreadable.
+>
+> **Clean Code published 335 blocks / 87,359 characters across 54 of its 462 pages — about 9% of the
+> book — while the import attempt recorded `state='converted'`, `failure=null`, and
+> `completed_pages=462/462`.** A ~91% loss reported as a complete success.
+>
+> ### The bug chain, fully reproduced
+>
+> 1. The Windows worker ceiling is 6144 MiB, applied through a Job Object with
+>    `JOB_OBJECT_LIMIT_PROCESS_MEMORY | JOB_OBJECT_LIMIT_JOB_MEMORY`. Those bound **committed**
+>    memory, not resident memory.
+> 2. The pinned Docling/torch/MKL runtime commits **31.78 GiB against a 2.48 GiB working set** —
+>    roughly 13x. So the 6 GiB ceiling is hit on every real book, no matter how small its true
+>    footprint.
+> 3. Docling **does not fail** when it hits the bound. It catches the per-page `std::bad_alloc`, drops
+>    that page, continues, and returns `ConversionStatus.PARTIAL_SUCCESS`.
+> 4. `pdf_to_docling.py::convert_range` reads **only `result.document`**. `result.status` and
+>    `result.errors` are never inspected anywhere in the file.
+> 5. `run_range` is all-or-nothing, so the truncated payload exits 0 and commits as a good range.
+> 6. Publication's only content refusals are `ocr_validation_failed` and `no_content`. A 9% book
+>    passes both: the dropped pages *do* have native text, and the block count is not zero.
+>
+> ### Measurements (same book, same 50-page range, production worker code, 64 GiB host)
+>
+> | condition | status | pages | chars | peak |
+> |---|---|---|---|---|
+> | 6144 MiB (production) | PARTIAL_SUCCESS, 45 failures | 5/50 | 5,704 | capped ~6.1 GiB |
+> | 6144 MiB, 25-page range | PARTIAL_SUCCESS, 21 failures | 4/25 | 4,738 | capped ~6.1 GiB |
+> | 16384 MiB | **crash, access violation `0xC0000005`** | — | — | — |
+> | 40960 MiB | **SUCCESS, 0 errors** | **50/50** | **95,158** | 31.78 GiB |
+> | unbounded | SUCCESS | 50/50 | 95,158 | commit 31.78 / WS 2.48 GiB |
+> | unbounded, threads=4 | SUCCESS | 50/50 | 95,158 | commit 30.70 GiB |
+>
+> **An intermediate ceiling is worse than either extreme.** 16384 MiB kills the worker outright with
+> an access violation. Never pick a value between 6144 and 40960.
+>
+> ### What was done about it
+>
+> - **#834 / PR #835 — merged.** Product rule in `PRODUCT.md`: *"A conversion is complete or it is
+>   refused."* Decision record **D7** in `docs/DECISIONS.md` archives the superseded assumption that a
+>   memory ceiling fails loudly.
+> - **#837 / PR #838.** Makes the completeness invariant precise about furniture-only pages, so it
+>   cannot false-refuse healthy books (a numbered blank page has native text but no body item).
+> - **#833 / PR #836.** Raises `WINDOWS_STRUCTURED_PDF_MEMORY_MIB` 6144 → 40960, calibrated against
+>   measured commit, and removes the stale "~3.9 GiB peak" justification.
+> - **#832.** Refuses a conversion whose reported status is not unqualified success, plus an
+>   independent page-coverage backstop.
+>
+> ### Two traps that cost real time — do not repeat them
+>
+> - **There are two block tables.** `blocks` is the legacy mdast table (superseded by D1) and is
+>   legitimately **0** for PDF imports. `doc_blocks` is the ProseMirror table the Reader actually
+>   renders. `blockWriter.ts:62` keeps a unit when either is non-empty. **Always query `doc_blocks`** —
+>   querying `blocks` looks like total failure and is meaningless.
+> - **`pages[]` in the payload is not evidence of conversion.** It comes from a separate pypdfium2
+>   probe, so it listed all 462 pages with `hasNativeText: true` while `body` held only ~6 pages per
+>   50-page range. The payload looked healthy at a glance.
+>
+> ### Still to do when you return
+>
+> The broken Clean Code Work is **still in the database** and nothing migrates it. Delete and
+> re-import it: `DELETE /api/works/575f0cfc-c3cc-43cc-a209-5ac3cd40ab60` (the cascade from #541), then
+> import again. The immutable source PDF is preserved at
+> `src/apps/server/.data/sources/c232d244-4c05-4171-9f4b-17c8b4fea22b.pdf` (462 pages), with a copy in
+> this session's `files/clean-code.pdf`. Expect roughly 40 minutes plus OCR.
+>
+> Also note: this host's commit limit is **74.3 GiB** with about **40.9 GiB already charged**, so a
+> 31.78 GiB conversion fits with little to spare. On a busier or smaller host it can still be starved —
+> which now surfaces as a visible refusal rather than a silent 9% book. A commit-scale ceiling cannot
+> bound real pressure; that is recorded in D7 as unfinished business.
+>
+> The reusable diagnostic is `files/diag_prod.py` — it runs the production worker under the real Job
+> Object and prints `result.status`, `result.errors`, page/char counts and peak bytes:
+> `python diag_prod.py "<pdf>" <start> <end> [mib]`.
+
+---
+
+**Status of the 2026-08-03 work: landed.** Everything described below is merged to `main`
+(`c57be64c`). Nothing important lives only on this machine.
 
 Merged: **#819, #820, #821, #822, #824, #827, #831**. Closed: **#811, #813, #814, #815, #826, #830**.
 Open and now unblocked (`ready-for-dev`): **#816, #817, #828**, plus **#825** raised from the
