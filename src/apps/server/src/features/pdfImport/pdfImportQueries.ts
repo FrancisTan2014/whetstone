@@ -69,6 +69,12 @@ export async function buildPdfImportPublicationOutcome(
     return {
       status: "published",
       unresolvedFigureCount: publication.unresolvedFigureCount ?? 0,
+      // The outline-gap review warning (#870): heading depths from labels (the gap) and from the
+      // embedded outline. Both are 0 when the Work carries no gap.
+      headingLevelSources: {
+        label: publication.outlineGapHeadings ?? 0,
+        outline: publication.outlineResolvedHeadings ?? 0
+      },
       workEntryId: publication.workEntryId
     };
   }

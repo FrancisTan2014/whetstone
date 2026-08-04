@@ -165,7 +165,18 @@ export const pdfImportPublicationOutcomeDtoSchema = z.discriminatedUnion("status
     .object({
       status: z.literal("published"),
       workEntryId: z.string().min(1),
-      unresolvedFigureCount: z.number().int().nonnegative()
+      unresolvedFigureCount: z.number().int().nonnegative(),
+      // The outline-gap review warning (#870): `label` is how many heading depths came from labels
+      // rather than the embedded outline (the gap); `outline` is how many came from the outline. Both
+      // are 0 when the Work carries no gap. `label > 0` with `outline === 0` means the book has no
+      // outline at all; `label > 0` with `outline > 0` means an outline exists but some headings were
+      // unmatched.
+      headingLevelSources: z
+        .object({
+          label: z.number().int().nonnegative(),
+          outline: z.number().int().nonnegative()
+        })
+        .strict()
     })
     .strict(),
   z

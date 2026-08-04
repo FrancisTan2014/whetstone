@@ -1142,7 +1142,12 @@ describe("AdminLibraryPage", () => {
       status: pdfStatus()
     });
     mockedFetchPdfImportView.mockResolvedValue(
-      pdfView({ status: "published", unresolvedFigureCount: 0, workEntryId: "work-1" })
+      pdfView({
+        status: "published",
+        unresolvedFigureCount: 0,
+        headingLevelSources: { label: 0, outline: 0 },
+        workEntryId: "work-1"
+      })
     );
     mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
     const user = await renderReady(onManageContent);
@@ -1186,7 +1191,12 @@ describe("AdminLibraryPage", () => {
       status: pdfStatus()
     });
     mockedFetchPdfImportView.mockResolvedValue(
-      pdfView({ status: "published", unresolvedFigureCount: 2, workEntryId: "work-1" })
+      pdfView({
+        status: "published",
+        unresolvedFigureCount: 2,
+        headingLevelSources: { label: 0, outline: 0 },
+        workEntryId: "work-1"
+      })
     );
     mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
     const user = await renderReady();
@@ -1203,6 +1213,38 @@ describe("AdminLibraryPage", () => {
     expect(await screen.findByText("Imported with 2 figures to review.")).toBeDefined();
   });
 
+  it("reports the outline-gap warning on a published PDF whose headings came from labels (#870)", async () => {
+    mockedBeginPdfImport.mockResolvedValue({
+      attemptId: "attempt-1",
+      outcome: "queued",
+      status: pdfStatus()
+    });
+    mockedFetchPdfImportView.mockResolvedValue(
+      pdfView({
+        status: "published",
+        unresolvedFigureCount: 0,
+        headingLevelSources: { label: 2, outline: 0 },
+        workEntryId: "work-gap"
+      })
+    );
+    mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
+    const user = await renderReady();
+
+    const file = new File([new Uint8Array([1, 2, 3])], "Report.pdf", { type: "application/pdf" });
+    await user.upload(screen.getByLabelText("Upload"), file);
+    await user.type(screen.getByLabelText("New author or source name"), "Nobody");
+    await user.click(screen.getByRole("button", { name: "Create work" }));
+
+    // The book still publishes and opens; the toast warns that the headings came from labels because
+    // the PDF carried no outline, so an administrator knows the structure will need manual correction.
+    await waitFor(() => {
+      expect(navigateSpy).toHaveBeenCalledWith("/reader?work=work-gap");
+    });
+    expect(
+      await screen.findByText("Imported with 2 headings from labels (no outline).")
+    ).toBeDefined();
+  });
+
   it("sends the chosen scanned-text language as the OCR override for a held PDF (#746)", async () => {
     mockedBeginPdfImport.mockResolvedValue({
       attemptId: "attempt-1",
@@ -1210,7 +1252,12 @@ describe("AdminLibraryPage", () => {
       status: pdfStatus()
     });
     mockedFetchPdfImportView.mockResolvedValue(
-      pdfView({ status: "published", unresolvedFigureCount: 0, workEntryId: "work-1" })
+      pdfView({
+        status: "published",
+        unresolvedFigureCount: 0,
+        headingLevelSources: { label: 0, outline: 0 },
+        workEntryId: "work-1"
+      })
     );
     mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
     const user = await renderReady();
@@ -1932,7 +1979,12 @@ describe("AdminLibraryPage", () => {
     // A remembered attempt id (from a prior navigation) re-enters the poll loop on mount and completes.
     mockedReadActivePdfImport.mockReturnValue("attempt-1");
     mockedFetchPdfImportView.mockResolvedValue(
-      pdfView({ status: "published", unresolvedFigureCount: 0, workEntryId: "work-1" })
+      pdfView({
+        status: "published",
+        unresolvedFigureCount: 0,
+        headingLevelSources: { label: 0, outline: 0 },
+        workEntryId: "work-1"
+      })
     );
     mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });
     await renderReady();
@@ -1952,7 +2004,12 @@ describe("AdminLibraryPage", () => {
     mockedFetchPdfImportView
       .mockResolvedValueOnce(pdfView({ status: "pending" }, { state: "interrupted" }))
       .mockResolvedValue(
-        pdfView({ status: "published", unresolvedFigureCount: 0, workEntryId: "work-1" })
+        pdfView({
+          status: "published",
+          unresolvedFigureCount: 0,
+          headingLevelSources: { label: 0, outline: 0 },
+          workEntryId: "work-1"
+        })
       );
     mockedRetryPdfImport.mockResolvedValue(pdfView({ status: "pending" }, { state: "queued" }));
     mockedFetchWorks.mockResolvedValue({ works: [essayWorkItem] });

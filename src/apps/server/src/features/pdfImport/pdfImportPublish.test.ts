@@ -531,9 +531,16 @@ describe("publishConvertedPdfImport", () => {
     expect(publication?.unresolvedFigureCount).toBe(1);
     expect(publication?.unpreservableImages).toBeNull();
     expect(publication?.noContent).toBeNull();
+    // The outline-gap warning (#870) is persisted the same way as the figure warning: heading depths
+    // derived from labels (2: title + section_header in this fixture, no embedded outline) travel from
+    // the mapper through the publication into the stored record. A regression that drops this report
+    // fails here and in the DTO equality below.
+    expect(publication?.outlineGapHeadings).toBe(2);
+    expect(publication?.outlineResolvedHeadings).toBeNull();
     expect(await buildPdfImportPublicationOutcome(db, "att-figure")).toEqual({
       status: "published",
       unresolvedFigureCount: 1,
+      headingLevelSources: { label: 2, outline: 0 },
       workEntryId: result.work.entryId
     });
 
@@ -696,6 +703,7 @@ describe("publishConvertedPdfImport", () => {
     expect(await buildPdfImportPublicationOutcome(db, "att-nofig")).toEqual({
       status: "published",
       unresolvedFigureCount: 0,
+      headingLevelSources: { label: 2, outline: 0 },
       workEntryId: result.work.entryId
     });
   });
