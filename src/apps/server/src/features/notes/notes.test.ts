@@ -607,10 +607,7 @@ describe("create note route", () => {
 });
 
 describe("create mark route", () => {
-  function postMark(
-    workEntryId: string,
-    payload: InjectPayload
-  ): Promise<LightMyRequestResponse> {
+  function postMark(workEntryId: string, payload: InjectPayload): Promise<LightMyRequestResponse> {
     return context.server.inject({
       method: "POST",
       payload,
@@ -933,10 +930,7 @@ describe("delete note route", () => {
 });
 
 describe("notes anchored to soft-deleted blocks (re-ingestion)", () => {
-  function reingest(
-    workEntryId: string,
-    markdown: string
-  ): Promise<LightMyRequestResponse> {
+  function reingest(workEntryId: string, markdown: string): Promise<LightMyRequestResponse> {
     return context.server.inject({
       method: "POST",
       payload: { kind: "manual", markdown },

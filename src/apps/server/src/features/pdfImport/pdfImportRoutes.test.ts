@@ -125,10 +125,7 @@ function metadataHeader(
   return Buffer.from(JSON.stringify(metadata), "utf8").toString("base64");
 }
 
-function beginUpload(
-  bytes: Buffer,
-  header: string | undefined
-): Promise<LightMyRequestResponse> {
+function beginUpload(bytes: Buffer, header: string | undefined): Promise<LightMyRequestResponse> {
   return context.server.inject({
     headers: {
       "content-type": pdfContentType,

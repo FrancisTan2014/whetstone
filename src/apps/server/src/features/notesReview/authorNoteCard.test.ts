@@ -27,11 +27,7 @@ import { createServer } from "../../http/createServer.js";
 import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
 import type { ContentDependencies } from "../content/contentCommands.js";
 import type { LibraryRouteDependencies } from "../library/libraryRoutes.js";
-import {
-  deleteNoteInTx,
-  insertNoteInTx,
-  type NotesDependencies
-} from "../notes/noteCommands.js";
+import { deleteNoteInTx, insertNoteInTx, type NotesDependencies } from "../notes/noteCommands.js";
 import { deleteReviewCard } from "../review/reviewCardCommands.js";
 import { authorNoteCard, type AuthorNoteCardDependencies } from "./authorNoteCard.js";
 import type { NotesReviewRouteDependencies } from "./notesReviewRoutes.js";

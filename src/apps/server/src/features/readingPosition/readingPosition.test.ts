@@ -141,10 +141,7 @@ function getPosition(workEntryId: string): Promise<LightMyRequestResponse> {
   });
 }
 
-function putPosition(
-  workEntryId: string,
-  payload: InjectPayload
-): Promise<LightMyRequestResponse> {
+function putPosition(workEntryId: string, payload: InjectPayload): Promise<LightMyRequestResponse> {
   return context.server.inject({
     method: "PUT",
     payload,

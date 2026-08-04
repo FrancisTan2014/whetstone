@@ -269,9 +269,7 @@ async function beginManualNeedsReview(): Promise<{ attemptId: string; candidateI
   return { attemptId: body.review.attemptId as string, candidateId };
 }
 
-function beginEpub(
-  bytes: Uint8Array = new Uint8Array([1, 2, 3])
-): Promise<LightMyRequestResponse> {
+function beginEpub(bytes: Uint8Array = new Uint8Array([1, 2, 3])): Promise<LightMyRequestResponse> {
   return h.server.inject({
     headers: { "content-type": epubContentType },
     method: "POST",

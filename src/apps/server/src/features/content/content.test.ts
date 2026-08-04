@@ -710,13 +710,21 @@ describe("EPUB ingestion routes", () => {
   it("trims publisher boilerplate units at ingest, leaving the actual work intact (#275)", async () => {
     epubResponder = async () => ({
       chapters: [
-        { html: "<h1>关于我们</h1><p>本书由 7sbook 制作。</p>", images: [], sourceFile: "text/ch01.xhtml" },
+        {
+          html: "<h1>关于我们</h1><p>本书由 7sbook 制作。</p>",
+          images: [],
+          sourceFile: "text/ch01.xhtml"
+        },
         {
           html: "<h1>世说新语·德行</h1><p>陈仲举言为士则。</p>",
           images: [],
           sourceFile: "text/ch02.xhtml"
         },
-        { html: "<h1>制作说明</h1><p>排版与校对说明。</p>", images: [], sourceFile: "text/ch03.xhtml" },
+        {
+          html: "<h1>制作说明</h1><p>排版与校对说明。</p>",
+          images: [],
+          sourceFile: "text/ch03.xhtml"
+        },
         {
           html: "<h1>世说新语·言语</h1><p>边文礼见袁奉高。</p>",
           images: [],
