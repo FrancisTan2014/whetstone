@@ -27,9 +27,9 @@ Reliability contract (mirrors the #403 markdown worker, kept in LOCKSTEP with pd
   the only signal.
 - A conversion is trusted ONLY when Docling reports an unqualified ``SUCCESS`` (#832) AND its own per-page
   record covers every requested page (#840). Docling keeps going when individual pages fail: it returns
-  ``PARTIAL_SUCCESS`` with a document holding only the pages that
-  survived, and reports the rest on ``result.errors``. Reading just ``result.document`` therefore emits a
-  fragment as an ordinary range payload, which is later committed and published as a whole book. So the
+  ``PARTIAL_SUCCESS`` with a document holding only the pages that survived, and reports the rest on
+  ``result.errors``. Reading just ``result.document`` therefore emits a fragment as an ordinary range
+  payload, which is later committed and published as a whole book. So the
   status IS the contract here: anything other than ``SUCCESS`` exits ``EXIT_CONVERSION_INCOMPLETE`` with
   the failed page numbers and Docling's own reason on stderr, and no payload at all. Standing behind that
   single channel, ``ConversionResult.pages`` records what the converter actually PROCESSED, page by page,

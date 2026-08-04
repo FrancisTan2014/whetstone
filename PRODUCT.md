@@ -337,8 +337,11 @@ owning source flow:
   with it, because a conversion whose completeness cannot be checked is not a complete one. A
   partially converted book is never published: it passes the empty-shell and OCR refusals, looks like
   a real import, and is discovered only while reading, which serves the learner worse than a visible
-  failure. Completeness is judged from the converter's own record of what it did, never from what a
-  page produced: measured on a real book, two pages with byte-identical text and identical geometry
+  failure. Completeness is judged from the converter's own per-page record of what it processed — a
+  page that record does not account for is a lost page, and a range that lost one is refused whatever
+  the run reported about itself, because the two are independent channels and a converter that claims
+  success while silently dropping pages must still be caught. It is never judged from what a page
+  produced: measured on a real book, two pages with byte-identical text and identical geometry
   yielded one item and zero items in the same run, so an item count carries no information about
   whether a page was converted and must never be used to decide it. Resource ceilings are calibrated
   against what the pinned converter actually commits on the host, and a ceiling that throttles a
