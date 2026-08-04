@@ -106,7 +106,6 @@ function item(partial: Partial<StructuredDocItem> & { label: string }): Structur
     charSpan: [0, 5],
     children: [],
     confidence: 0.9,
-    label: partial.label,
     pageNumber: 1,
     text: "",
     ...partial
@@ -196,6 +195,7 @@ async function driveToAwaitingReview(
     userId: DEFAULT_USER_ID,
     sourceHash: input.sourceHash,
     stagePath,
+    ocrLanguage: "en",
     now: NOW
   });
   await driveQueuedToAwaitingReview(db, {
@@ -645,7 +645,9 @@ describe("publishConvertedPdfImport", () => {
     });
     // Write DIFFERENT bytes than the manifest claims (same declared length, different content).
     const tampered = pngBytes(64, 48, 8);
-    tampered[tampered.byteLength - 1] ^= 0xff;
+    const lastIndex = tampered.byteLength - 1;
+    // pngBytes always yields a non-empty buffer, so the last byte is present.
+    tampered[lastIndex] = tampered[lastIndex]! ^ 0xff;
     const artifactDir = await stageStore.prepareRangeArtifactDir("att-corrupt", 0);
     await writeFile(join(artifactDir, "fig-0.png"), tampered);
     await insertPublicationIntent(db, {
@@ -761,6 +763,7 @@ describe("publishConvertedPdfImport", () => {
       userId: DEFAULT_USER_ID,
       sourceHash: "0".repeat(64),
       stagePath: "stage-att-7",
+      ocrLanguage: "en",
       now: NOW
     });
     await insertPublicationIntent(db, {
@@ -1182,6 +1185,7 @@ describe("loadPdfReviewSource", () => {
       userId: DEFAULT_USER_ID,
       sourceHash: "f".repeat(64),
       stagePath,
+      ocrLanguage: "en",
       now: NOW
     });
 

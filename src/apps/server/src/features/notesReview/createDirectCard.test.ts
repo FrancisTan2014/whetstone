@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import type { PgTable } from "drizzle-orm/pg-core";
+import type { InjectOptions } from "fastify";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { CreateDirectCardRequest } from "@whetstone/contracts";
@@ -25,7 +26,7 @@ import { createSourceFileStore } from "../../files/sourceFileStore.js";
 import { createServer } from "../../http/createServer.js";
 import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
 import type { ContentDependencies } from "../content/contentCommands.js";
-import type { LibraryDependencies } from "../library/libraryCommands.js";
+import type { LibraryRouteDependencies } from "../library/libraryRoutes.js";
 import { deleteNoteInTx } from "../notes/noteCommands.js";
 import type { NotesDependencies } from "../notes/noteCommands.js";
 import { deleteReviewCard } from "../review/reviewCardCommands.js";
@@ -37,6 +38,10 @@ import {
 } from "./createDirectCard.js";
 import { useExistingMaterial } from "./reviewMaterialCommands.js";
 import type { NotesReviewRouteDependencies } from "./notesReviewRoutes.js";
+
+// What a test may send as a request body -- including shapes the route must reject. `NonNullable`
+// because `exactOptionalPropertyTypes` forbids handing `inject` an explicitly `undefined` payload.
+type InjectPayload = NonNullable<InjectOptions["payload"]>;
 
 const now = new Date("2026-03-01T08:00:00.000Z");
 const later = new Date("2026-03-05T09:30:00.000Z");
@@ -60,16 +65,30 @@ async function buildContext(): Promise<TestContext> {
 
   let clock = now;
   const createId = (): string => `id-${(sequence += 1)}`;
-  const library: LibraryDependencies = {
+  const library: LibraryRouteDependencies = {
     createAuthorId: () => `author-${(sequence += 1)}`,
     createEntryId: () => `work-${(sequence += 1)}`,
     db,
+    // Work deletion is exercised in library.test.ts; these tests never call DELETE /api/works/:id,
+    // so the file-side collaborators fail loudly rather than silently no-op.
+    deleteSourceFile: () => Promise.reject(new Error("unexpected deleteSourceFile")),
+    logSourceUnlinkFailure: () => {
+      throw new Error("unexpected logSourceUnlinkFailure");
+    },
     now: () => new Date()
   };
   const content: ContentDependencies = {
+    createAuthorId: () => `content-author-${(sequence += 1)}`,
     createEntryId: () => `content-${(sequence += 1)}`,
     createSourceId: () => `source-${(sequence += 1)}`,
     db,
+    // These tests never ingest an EPUB; the parser, upload limit, and image store exist only to
+    // satisfy the content route wiring, and fail loudly rather than silently no-op if reached.
+    epubParser: () => Promise.reject(new Error("unexpected epubParser")),
+    epubUploadLimitBytes: 50 * 1024 * 1024,
+    imageResourceStore: {
+      store: () => Promise.reject(new Error("unexpected imageResourceStore.store"))
+    },
     ingestionLogger: () => {},
     sourceFileStore: createSourceFileStore(sourcesDir)
   };
@@ -455,7 +474,7 @@ describe("createDirectCard", () => {
 });
 
 describe("POST /api/notes/review/direct-cards", () => {
-  const post = (payload: unknown) =>
+  const post = (payload: InjectPayload) =>
     context.server.inject({ method: "POST", payload, url: "/api/notes/review/direct-cards" });
 
   it("creates a card and returns the result for a current-note target", async () => {
@@ -555,6 +574,8 @@ describe("writeDirectCardInTx receipt replay", () => {
     const draft = prepared();
     const first = await context.db.transaction((tx) =>
       writeDirectCardInTx(tx, {
+        attemptId: null,
+        channel: "ui",
         draft,
         noteEntryId: toEntryId("note-replay-a"),
         now,
@@ -565,6 +586,8 @@ describe("writeDirectCardInTx receipt replay", () => {
     );
     const second = await context.db.transaction((tx) =>
       writeDirectCardInTx(tx, {
+        attemptId: null,
+        channel: "ui",
         draft,
         noteEntryId: toEntryId("note-replay-b"),
         now,
@@ -593,6 +616,8 @@ describe("writeDirectCardInTx receipt replay", () => {
 
     await context.db.transaction((tx) =>
       writeDirectCardInTx(tx, {
+        attemptId: null,
+        channel: "ui",
         draft: firstDraft,
         noteEntryId: toEntryId("note-conflict-a"),
         now,
@@ -603,6 +628,8 @@ describe("writeDirectCardInTx receipt replay", () => {
     );
     const second = await context.db.transaction((tx) =>
       writeDirectCardInTx(tx, {
+        attemptId: null,
+        channel: "ui",
         draft: changed.draft,
         noteEntryId: toEntryId("note-conflict-b"),
         now,

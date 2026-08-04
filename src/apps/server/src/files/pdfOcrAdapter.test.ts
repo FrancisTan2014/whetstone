@@ -211,7 +211,11 @@ describe("createOcrmypdfPass", () => {
   });
 
   it("omits the signal when none is supplied", async () => {
-    const run = vi.fn((): Promise<OcrmypdfRunResult> => Promise.resolve({ status: "ok" }));
+    const invocations: OcrmypdfInvocation[] = [];
+    const run = vi.fn((invocation: OcrmypdfInvocation): Promise<OcrmypdfRunResult> => {
+      invocations.push(invocation);
+      return Promise.resolve({ status: "ok" });
+    });
     const pass = createOcrmypdfPass("ocrmypdf", run);
     await pass({
       inputPath: "/in.pdf",
@@ -220,7 +224,8 @@ describe("createOcrmypdfPass", () => {
       pageNumbersNeedingOcr: [1],
       timeoutMs: 1000
     });
-    expect(run.mock.calls[0][0]).not.toHaveProperty("signal");
+    expect(invocations).toHaveLength(1);
+    expect(invocations[0]).not.toHaveProperty("signal");
   });
 });
 

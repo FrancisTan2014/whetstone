@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { isValidDocument, parseDocument, type DocumentNodeJSON } from "@whetstone/document";
 
-import { htmlToDocument } from "./htmlToDocument.js";
+import { htmlToDocument, type IngestedBlock } from "./htmlToDocument.js";
 import { resolveRelativeHref } from "./resolveRelativeHref.js";
 
 // Synthetic, structurally-faithful O'Reilly HTMLBook fixtures with neutral placeholder text. The real
@@ -19,10 +19,7 @@ function textOf(node: DocumentNodeJSON): string {
   return (node.content ?? []).map(textOf).join("");
 }
 
-function blocksOfType(
-  blocks: ReadonlyArray<{ type: string; node: DocumentNodeJSON }>,
-  type: string
-) {
+function blocksOfType(blocks: ReadonlyArray<IngestedBlock>, type: string): IngestedBlock[] {
   return blocks.filter((block) => block.type === type);
 }
 
@@ -262,10 +259,7 @@ describe("htmlToDocument", () => {
     const html = '<ul id="list-1"><li><p id="item-para">Nested paragraph.</p></li></ul>';
 
     const { blocks } = htmlToDocument(html);
-    const list = blocksOfType(blocks, "bulletList")[0] as {
-      anchorId: string | null;
-      node: DocumentNodeJSON;
-    };
+    const list = blocksOfType(blocks, "bulletList")[0]!;
 
     expect(list.anchorId).toBe("list-1");
 
@@ -281,12 +275,7 @@ describe("htmlToDocument", () => {
     const html = '<ul id="list-1"><li><p id="item-para">Nested paragraph.</p></li></ul>';
 
     const { blocks } = htmlToDocument(html);
-    const list = blocksOfType(blocks, "bulletList")[0] as {
-      anchorId: string | null;
-      anchors: Array<{ anchor: string; nodeId: string }>;
-      id: string;
-      node: DocumentNodeJSON;
-    };
+    const list = blocksOfType(blocks, "bulletList")[0]!;
 
     // The block's own id comes first, with nodeId === the block's PM id; the nested paragraph's id —
     // the one ingestion used to lose — follows, keyed to the nested node's assigned PM id.
@@ -306,11 +295,7 @@ describe("htmlToDocument", () => {
       '<blockquote id="q-1"><h3 id="q-head">Quoted heading</h3><p>Body.</p></blockquote>';
 
     const { blocks } = htmlToDocument(html);
-    const quote = blocksOfType(blocks, "blockquote")[0] as {
-      anchors: Array<{ anchor: string; nodeId: string }>;
-      id: string;
-      node: DocumentNodeJSON;
-    };
+    const quote = blocksOfType(blocks, "blockquote")[0]!;
 
     const nestedHeading = findDescendant(quote.node, "heading")!;
     const headingId = (nestedHeading.attrs ?? {})["id"] as string;
@@ -387,7 +372,7 @@ describe("htmlToDocument", () => {
     const { blocks, evidence } = htmlToDocument(
       '<section id="empty"></section><p id="after">After.</p>'
     );
-    const paragraph = blocksOfType(blocks, "paragraph")[0] as { anchorId: string | null };
+    const paragraph = blocksOfType(blocks, "paragraph")[0]!;
 
     // The empty wrapper drops silently (it addresses nothing); the real block keeps its own id, and
     // nothing throws. An EMPTY anchored wrapper is not a content loss, so it emits no evidence (#523).
@@ -407,7 +392,7 @@ describe("htmlToDocument", () => {
     // A `<div data-type="note" id>` is itself a block (it captures its own id); it is not a hoistable
     // structural wrapper.
     const { blocks } = htmlToDocument('<div data-type="note" id="cal"><p>Heads up.</p></div>');
-    const callout = blocksOfType(blocks, "callout")[0] as { anchorId: string | null };
+    const callout = blocksOfType(blocks, "callout")[0]!;
 
     expect(callout.anchorId).toBe("cal");
   });

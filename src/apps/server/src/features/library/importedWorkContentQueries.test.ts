@@ -309,8 +309,8 @@ describe("listWorks — correctable projection", () => {
     const { works } = await listWorks(db);
     const byId = new Map(works.map((item) => [item.work.entryId, item.correctable]));
 
-    expect(byId.get("canonical")).toBe(true);
-    expect(byId.get("manual")).toBe(false);
-    expect(byId.get("markdown")).toBe(false);
+    expect(byId.get(toEntryId("canonical"))).toBe(true);
+    expect(byId.get(toEntryId("manual"))).toBe(false);
+    expect(byId.get(toEntryId("markdown"))).toBe(false);
   });
 });

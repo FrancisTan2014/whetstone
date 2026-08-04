@@ -1,7 +1,7 @@
 import { voiceCaptureFailureCodes } from "@whetstone/contracts";
 import { describe, expect, it } from "vitest";
 
-import { resolveVoiceCaptureFailure } from "./voiceCaptureFailure";
+import { resolveVoiceCaptureFailure } from "./voiceCaptureFailure.js";
 
 describe("resolveVoiceCaptureFailure", () => {
   it("resolves a non-failed capture (null reason) to no failure", () => {

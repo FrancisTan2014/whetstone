@@ -61,6 +61,7 @@ async function seedQueued(
     userId: overrides.userId ?? DEFAULT_USER_ID,
     sourceHash: "a".repeat(64),
     stagePath: overrides.stagePath ?? `stage-${id}`,
+    ocrLanguage: "en",
     now: overrides.now ?? new Date("2026-01-01T00:00:00.000Z")
   });
 }

@@ -60,6 +60,7 @@ describe("getPdfImportStatus", () => {
       userId: DEFAULT_USER_ID,
       sourceHash: "a".repeat(64),
       stagePath: id,
+      ocrLanguage: "en",
       now: new Date()
     });
   }
@@ -174,6 +175,7 @@ describe("buildPdfImportPublicationOutcome", () => {
       userId: DEFAULT_USER_ID,
       sourceHash: "a".repeat(64),
       stagePath: id,
+      ocrLanguage: "en",
       now: new Date()
     });
   }

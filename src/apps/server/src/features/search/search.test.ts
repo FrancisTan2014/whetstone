@@ -14,7 +14,7 @@ import { createSourceFileStore } from "../../files/sourceFileStore.js";
 import type { ParsedEpub } from "../../files/epubSource.js";
 import { createServer } from "../../http/createServer.js";
 import type { ContentDependencies } from "../content/contentCommands.js";
-import type { LibraryDependencies } from "../library/libraryCommands.js";
+import type { LibraryRouteDependencies } from "../library/libraryRoutes.js";
 import type { WorkCreationDependencies } from "../workCreation/workCreationCommands.js";
 import { escapeLikePattern, searchBlocks } from "./searchQueries.js";
 
@@ -349,7 +349,8 @@ describe("searchBlocks over PM-backed (EPUB) units", () => {
             "<h1>Chapter One</h1><p>The quick brown fox.</p>" +
             "<ul><li>A falcon glides above the valley.</li>" +
             "<li>A turtle walks the sandy shore.</li></ul>",
-          images: []
+          images: [],
+          sourceFile: "text/ch01.xhtml"
         }
       ],
       metadata: { author: "Aesop", language: "en", title: "Fables" }
@@ -367,10 +368,16 @@ describe("searchBlocks over PM-backed (EPUB) units", () => {
     let entrySequence = 0;
     let sourceSequence = 0;
     let authorSequence = 0;
-    const library: LibraryDependencies = {
+    const library: LibraryRouteDependencies = {
       createAuthorId: () => `author-${(workSequence += 1)}`,
       createEntryId: () => `work-${workSequence}`,
       db: database,
+      // Work deletion is exercised in library.test.ts; these tests never call DELETE /api/works/:id,
+      // so the file-side collaborators fail loudly rather than silently no-op.
+      deleteSourceFile: () => Promise.reject(new Error("unexpected deleteSourceFile")),
+      logSourceUnlinkFailure: () => {
+        throw new Error("unexpected logSourceUnlinkFailure");
+      },
       now: () => new Date()
     };
     const content: ContentDependencies = {
@@ -379,6 +386,7 @@ describe("searchBlocks over PM-backed (EPUB) units", () => {
       createSourceId: () => `source-${(sourceSequence += 1)}`,
       db: database,
       epubParser: async () => brownFoxEpub(),
+      epubUploadLimitBytes: 50 * 1024 * 1024,
       imageResourceStore: createImageResourceStore(imagesDir),
       ingestionLogger: () => {},
       sourceFileStore: createSourceFileStore(sourcesDir)
@@ -390,7 +398,14 @@ describe("searchBlocks over PM-backed (EPUB) units", () => {
       createAttemptId: () => `attempt-${(sourceSequence += 1)}`,
       createStageId: () => `stage-${(sourceSequence += 1)}`,
       log: { info: () => undefined },
-      now: () => new Date()
+      now: () => new Date(),
+      // These tests upload EPUBs only; the PDF review collaborators answer "nothing staged" for every
+      // call, mirroring the other content-route suites.
+      pdf: {
+        discard: async () => {},
+        loadForReview: async () => ({ status: "not_awaiting" }),
+        publish: async () => ({ status: "skipped" })
+      }
     };
 
     return {

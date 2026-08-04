@@ -175,6 +175,7 @@ describe("processNextPdfImport", () => {
       userId: DEFAULT_USER_ID,
       sourceHash: "a".repeat(64),
       stagePath,
+      ocrLanguage: "en",
       now: new Date()
     });
   }
@@ -189,7 +190,9 @@ describe("processNextPdfImport", () => {
       db,
       logCleanupFailure: overrides.logCleanupFailure ?? (() => undefined),
       now: overrides.now ?? (() => new Date()),
-      pageRangeSize: overrides.pageRangeSize,
+      // `pageRangeSize` is optional on the dependency type: under exactOptionalPropertyTypes an absent
+      // override must omit the key entirely rather than pass `undefined`.
+      ...(overrides.pageRangeSize === undefined ? {} : { pageRangeSize: overrides.pageRangeSize }),
       ocrAdapter:
         overrides.ocrAdapter ??
         createFixturePdfOcrAdapter({ outputStageRoot: join(rootDir, "ocr-out") }),
@@ -311,7 +314,7 @@ describe("processNextPdfImport", () => {
       ["tool missing", { status: "tool_missing" }, "tool_missing"],
       ["password required", { status: "password_required" }, "password_required"],
       ["malformed source", { status: "malformed", detail: "bad header" }, "malformed"],
-      ["too many pages", { status: "ok", pageCount: MAX_PAGE_COUNT + 1 }, "too_many_pages"]
+      ["too many pages", nativeProbe(MAX_PAGE_COUNT + 1), "too_many_pages"]
     ];
 
     for (const [name, probe, kind] of cases) {
@@ -719,6 +722,7 @@ describe("processNextPdfImport", () => {
       userId: DEFAULT_USER_ID,
       sourceHash: "a".repeat(64),
       stagePath: "bad/id",
+      ocrLanguage: "en",
       now: new Date()
     });
     const result = await processNextPdfImport(buildDeps());
@@ -733,6 +737,7 @@ describe("processNextPdfImport", () => {
       userId: DEFAULT_USER_ID,
       sourceHash: "a".repeat(64),
       stagePath: "a1",
+      ocrLanguage: "en",
       now: new Date()
     });
     const result = await processNextPdfImport(buildDeps());
@@ -755,10 +760,7 @@ describe("processNextPdfImport", () => {
     const handlePath = stageStore.openStage("a1").path;
     const logCleanupFailure = vi.fn();
     const failingStore: PdfImportStageStore = {
-      createStage: stageStore.createStage,
-      createStageFromStream: stageStore.createStageFromStream,
-      openStage: stageStore.openStage,
-      readStage: stageStore.readStage,
+      ...stageStore,
       // A non-Error rejection also exercises the String(cause) fallback in the cleanup log.
       removeStage: () => Promise.reject("stage locked")
     };

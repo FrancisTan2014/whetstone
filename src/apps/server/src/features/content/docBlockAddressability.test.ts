@@ -2,6 +2,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { InjectOptions, LightMyRequestResponse } from "fastify";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type {
@@ -22,8 +23,12 @@ import { createSourceFileStore } from "../../files/sourceFileStore.js";
 import type { ParsedEpub } from "../../files/epubSource.js";
 import { createServer } from "../../http/createServer.js";
 import type { ContentDependencies } from "./contentCommands.js";
-import type { LibraryDependencies } from "../library/libraryCommands.js";
+import type { LibraryRouteDependencies } from "../library/libraryRoutes.js";
 import type { WorkCreationDependencies } from "../workCreation/workCreationCommands.js";
+
+// What a test may send as a request body -- including shapes the route must reject. `NonNullable`
+// because `exactOptionalPropertyTypes` forbids handing `inject` an explicitly `undefined` payload.
+type InjectPayload = NonNullable<InjectOptions["payload"]>;
 
 type TestContext = Readonly<{
   db: DbClient;
@@ -36,7 +41,13 @@ type TestContext = Readonly<{
 // the Markdown path writes none, so an EPUB is the substrate that exercises the doc_block anchor path.
 function singleChapterEpub(): ParsedEpub {
   return {
-    chapters: [{ html: "<h1>Chapter One</h1><p>The quick brown fox.</p>", images: [] }],
+    chapters: [
+      {
+        html: "<h1>Chapter One</h1><p>The quick brown fox.</p>",
+        images: [],
+        sourceFile: "text/ch01.xhtml"
+      }
+    ],
     metadata: { author: "Aesop", language: "en", title: "Fables" }
   };
 }
@@ -53,7 +64,8 @@ function ddiaStyleChapterEpub(): ParsedEpub {
           "<p>Section body one.</p></div>" +
           '<div class="sect1" id="sec_introduction_scalability"><h1>Scalability</h1>' +
           "<p>Section body two.</p></div>",
-        images: []
+        images: [],
+        sourceFile: "text/ch01.xhtml"
       }
     ],
     metadata: { author: "Author", language: "en", title: "Data Systems" }
@@ -73,10 +85,16 @@ async function buildContext(epub: ParsedEpub = singleChapterEpub()): Promise<Tes
   let entrySequence = 0;
   let sourceSequence = 0;
   let authorSequence = 0;
-  const library: LibraryDependencies = {
+  const library: LibraryRouteDependencies = {
     createAuthorId: () => `author-${(workSequence += 1)}`,
     createEntryId: () => `work-${workSequence}`,
     db,
+    // Work deletion is exercised in library.test.ts; these tests never call DELETE /api/works/:id,
+    // so the file-side collaborators fail loudly rather than silently no-op.
+    deleteSourceFile: () => Promise.reject(new Error("unexpected deleteSourceFile")),
+    logSourceUnlinkFailure: () => {
+      throw new Error("unexpected logSourceUnlinkFailure");
+    },
     now: () => new Date()
   };
   const content: ContentDependencies = {
@@ -85,6 +103,7 @@ async function buildContext(epub: ParsedEpub = singleChapterEpub()): Promise<Tes
     createSourceId: () => `source-${(sourceSequence += 1)}`,
     db,
     epubParser: async () => epub,
+    epubUploadLimitBytes: 50 * 1024 * 1024,
     imageResourceStore: createImageResourceStore(imagesDir),
     ingestionLogger: () => {},
     sourceFileStore: createSourceFileStore(sourcesDir)
@@ -96,7 +115,14 @@ async function buildContext(epub: ParsedEpub = singleChapterEpub()): Promise<Tes
     createAttemptId: () => `attempt-${(sourceSequence += 1)}`,
     createStageId: () => `stage-${(sourceSequence += 1)}`,
     log: { info: () => undefined },
-    now: () => new Date()
+    now: () => new Date(),
+    // These tests upload EPUBs only; the PDF review collaborators mirror content.test.ts so the
+    // work-creation boundary is wired the same way, and answer "nothing staged" for every call.
+    pdf: {
+      discard: async () => {},
+      loadForReview: async () => ({ status: "not_awaiting" }),
+      publish: async () => ({ status: "skipped" })
+    }
   };
 
   return {
@@ -142,7 +168,7 @@ async function ingestEpubWithDocBlock(): Promise<{
   };
 }
 
-function postNote(workEntryId: string, payload: unknown): ReturnType<typeof context.server.inject> {
+function postNote(workEntryId: string, payload: InjectPayload): Promise<LightMyRequestResponse> {
   return context.server.inject({ method: "POST", payload, url: `/api/works/${workEntryId}/notes` });
 }
 
@@ -189,8 +215,8 @@ describe("PM doc_block ids are first-class addressable anchors (#312 regression)
     const listed = (list.json() as NoteListDto).notes;
     expect(listed).toHaveLength(1);
     expect(listed[0]?.entryId).toBe(note.entryId);
-    expect(listed[0]?.anchor.blockEntryId).toBe(docBlockId);
-    expect(listed[0]?.anchor.contextSnapshot).toBe(plaintext);
+    expect(listed[0]?.anchor?.blockEntryId).toBe(docBlockId);
+    expect(listed[0]?.anchor?.contextSnapshot).toBe(plaintext);
 
     // The cross-work Notes overview resolves the doc_block anchor too (work title + author).
     const overview = await context.server.inject({ method: "GET", url: "/api/notes" });

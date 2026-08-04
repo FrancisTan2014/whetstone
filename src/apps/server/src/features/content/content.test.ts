@@ -3,6 +3,7 @@ import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
+import type { InjectOptions, LightMyRequestResponse } from "fastify";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -14,7 +15,13 @@ import {
   type WorkContentDto,
   type WorkStructureDto
 } from "@whetstone/contracts";
-import { decomposeHtmlChapter, decomposeMarkdown, toEntryId } from "@whetstone/domain";
+import {
+  decomposeHtmlChapter,
+  decomposeMarkdown,
+  toAuthorId,
+  toEntryId,
+  type AuthorId
+} from "@whetstone/domain";
 import { isValidDocument, parseDocument, type DocumentNodeJSON } from "@whetstone/document";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
@@ -42,14 +49,18 @@ import { createImportedMarkdownWork, type ContentDependencies } from "./contentC
 import { ingestEpub as ingestEpubCommand } from "./epubCommands.js";
 import type { IngestionEvidence } from "./htmlToDocument.js";
 import { createWork as createWorkCommand } from "../library/libraryCommands.js";
-import type { LibraryDependencies } from "../library/libraryCommands.js";
+import type { LibraryRouteDependencies } from "../library/libraryRoutes.js";
 import type { WorkCreationDependencies } from "../workCreation/workCreationCommands.js";
+
+// What a test may send as a request body -- including shapes the route must reject. `NonNullable`
+// because `exactOptionalPropertyTypes` forbids handing `inject` an explicitly `undefined` payload.
+type InjectPayload = NonNullable<InjectOptions["payload"]>;
 
 type TestContext = Readonly<{
   content: ContentDependencies;
   db: DbClient;
   imagesDir: string;
-  library: LibraryDependencies;
+  library: LibraryRouteDependencies;
   pglite: PGlite;
   server: ReturnType<typeof createServer>;
   sourcesDir: string;
@@ -71,8 +82,8 @@ let loggedEvidence: IngestionEvidence[];
 function twoChapterEpub(): ParsedEpub {
   return {
     chapters: [
-      { html: "<h1>Chapter One</h1><p>First.</p>", images: [] },
-      { html: "<h1>本纪</h1><p>黄帝者。</p>", images: [] }
+      { html: "<h1>Chapter One</h1><p>First.</p>", images: [], sourceFile: "text/ch01.xhtml" },
+      { html: "<h1>本纪</h1><p>黄帝者。</p>", images: [], sourceFile: "text/ch02.xhtml" }
     ],
     metadata: { author: "司马迁", language: "zh-CN", title: "史记选读" }
   };
@@ -92,10 +103,16 @@ async function buildContext(): Promise<TestContext> {
   let contentAuthorSequence = 0;
   let attemptSequence = 0;
   let stageSequence = 0;
-  const library: LibraryDependencies = {
+  const library: LibraryRouteDependencies = {
     createAuthorId: () => `author-${(authorSequence += 1)}`,
     createEntryId: () => `work-${(workSequence += 1)}`,
     db,
+    // Work deletion is exercised in library.test.ts; these content tests never call DELETE
+    // /api/works/:id, so the file-side collaborators fail loudly rather than silently no-op.
+    deleteSourceFile: () => Promise.reject(new Error("unexpected deleteSourceFile")),
+    logSourceUnlinkFailure: () => {
+      throw new Error("unexpected logSourceUnlinkFailure");
+    },
     now: () => new Date()
   };
   const content: ContentDependencies = {
@@ -156,7 +173,7 @@ async function createWork(): Promise<string> {
   return created.work.work.entryId;
 }
 
-function ingest(workEntryId: string, payload: unknown): ReturnType<typeof context.server.inject> {
+function ingest(workEntryId: string, payload: InjectPayload): Promise<LightMyRequestResponse> {
   return context.server.inject({
     method: "POST",
     payload,
@@ -176,7 +193,7 @@ function blockIdByText(content: WorkContentDto): Map<string, string> {
   );
 }
 
-function ingestEpub(bytes: Buffer): ReturnType<typeof context.server.inject> {
+function ingestEpub(bytes: Buffer): Promise<LightMyRequestResponse> {
   return context.server.inject({
     headers: { "content-type": epubContentType },
     method: "POST",
@@ -185,14 +202,14 @@ function ingestEpub(bytes: Buffer): ReturnType<typeof context.server.inject> {
   });
 }
 
-async function createAuthorNamed(name: string): Promise<string> {
+async function createAuthorNamed(name: string): Promise<AuthorId> {
   const response = await context.server.inject({
     method: "POST",
     payload: { name },
     url: "/api/authors"
   });
 
-  return response.json().id as string;
+  return toAuthorId(response.json().id as string);
 }
 
 beforeEach(async () => {
@@ -673,7 +690,9 @@ describe("EPUB ingestion routes", () => {
 
   it("creates an untitled reading unit for an EPUB chapter without a heading", async () => {
     epubResponder = async () => ({
-      chapters: [{ html: "<p>Just a paragraph, no heading.</p>", images: [] }],
+      chapters: [
+        { html: "<p>Just a paragraph, no heading.</p>", images: [], sourceFile: "text/ch01.xhtml" }
+      ],
       metadata: { author: "Anon", language: "en", title: "No headings" }
     });
 
@@ -691,10 +710,26 @@ describe("EPUB ingestion routes", () => {
   it("trims publisher boilerplate units at ingest, leaving the actual work intact (#275)", async () => {
     epubResponder = async () => ({
       chapters: [
-        { html: "<h1>关于我们</h1><p>本书由 7sbook 制作。</p>", images: [] },
-        { html: "<h1>世说新语·德行</h1><p>陈仲举言为士则。</p>", images: [] },
-        { html: "<h1>制作说明</h1><p>排版与校对说明。</p>", images: [] },
-        { html: "<h1>世说新语·言语</h1><p>边文礼见袁奉高。</p>", images: [] }
+        {
+          html: "<h1>关于我们</h1><p>本书由 7sbook 制作。</p>",
+          images: [],
+          sourceFile: "text/ch01.xhtml"
+        },
+        {
+          html: "<h1>世说新语·德行</h1><p>陈仲举言为士则。</p>",
+          images: [],
+          sourceFile: "text/ch02.xhtml"
+        },
+        {
+          html: "<h1>制作说明</h1><p>排版与校对说明。</p>",
+          images: [],
+          sourceFile: "text/ch03.xhtml"
+        },
+        {
+          html: "<h1>世说新语·言语</h1><p>边文礼见袁奉高。</p>",
+          images: [],
+          sourceFile: "text/ch04.xhtml"
+        }
       ],
       metadata: { author: "刘义庆", language: "zh-CN", title: "世说新语" }
     });
@@ -835,7 +870,11 @@ describe("EPUB ingestion routes", () => {
         (_, paragraphIndex) => `<p>Chapter ${chapterIndex} paragraph ${paragraphIndex}.</p>`
       ).join("");
 
-      return { html: `<h1>Chapter ${chapterIndex}</h1>${paragraphs}`, images: [] };
+      return {
+        html: `<h1>Chapter ${chapterIndex}</h1>${paragraphs}`,
+        images: [],
+        sourceFile: `text/ch${chapterIndex}.xhtml`
+      };
     });
     epubResponder = async () => ({
       chapters,
@@ -987,7 +1026,7 @@ describe("EPUB ingestion routes", () => {
     const content = await loadWorkContent(context.db, toEntryId(workEntryId));
 
     expect(content.readingUnits).toHaveLength(1);
-    expect(content.readingUnits[0].blocks).toEqual([
+    expect(content.readingUnits[0]?.blocks).toEqual([
       {
         alt: "River at dusk",
         blockType: "figure",
@@ -1290,13 +1329,16 @@ describe("EPUB ingestion routes", () => {
     expect(served.blocks.length).toBeGreaterThan(0);
 
     // The PM doc blocks are served in reading order, each row's entryId equal to its node's stable id.
-    expect(served.docBlocks.map((block) => block.type)).toEqual(["heading", "figure"]);
-    for (const docBlock of served.docBlocks) {
+    // `docBlocks` is optional on the DTO; defaulting to [] keeps the assertions failing (not throwing)
+    // if the server ever stops serving them.
+    const servedDocBlocks = served.docBlocks ?? [];
+    expect(servedDocBlocks.map((block) => block.type)).toEqual(["heading", "figure"]);
+    for (const docBlock of servedDocBlocks) {
       expect((docBlock.node as PmNode).attrs?.["id"]).toBe(docBlock.entryId);
     }
 
     // The figure's image node carries the stored-image reference the read-only reader serves (#312).
-    const figureNode = served.docBlocks.find((block) => block.type === "figure")?.node as
+    const figureNode = servedDocBlocks.find((block) => block.type === "figure")?.node as
       | PmNode
       | undefined;
     const image = figureNode?.content?.find((child) => child.type === "image");
@@ -1325,6 +1367,7 @@ describe("EPUB ingestion routes", () => {
             ],
             docBlocks: [],
             evidence: [],
+            sourceFile: null,
             title: "Mdast only"
           }
         ],
@@ -1360,7 +1403,7 @@ describe("EPUB ingestion routes", () => {
 
   const structureMarkdown = "Intro.\n\n# Chapter One\n\n- a\n- b\n\n> quote";
 
-  async function getStructure(workEntryId: string): ReturnType<typeof context.server.inject> {
+  async function getStructure(workEntryId: string): Promise<LightMyRequestResponse> {
     return context.server.inject({ method: "GET", url: `/api/works/${workEntryId}/structure` });
   }
 
@@ -1392,9 +1435,14 @@ describe("EPUB ingestion routes", () => {
       chapters: [
         {
           html: '<img src="img/cover.png" alt=""/>',
-          images: [{ bytes: png, contentType: "image/png", src: "img/cover.png" }]
+          images: [{ bytes: png, contentType: "image/png", src: "img/cover.png" }],
+          sourceFile: "text/cover.xhtml"
         },
-        { html: "<h1>Chapter One</h1><p>The body begins here.</p>", images: [] }
+        {
+          html: "<h1>Chapter One</h1><p>The body begins here.</p>",
+          images: [],
+          sourceFile: "text/ch01.xhtml"
+        }
       ],
       metadata: { author: "Anon", language: "en", title: "Cover Then Body" }
     });
@@ -1591,7 +1639,7 @@ describe("imported Markdown front door (#706)", () => {
 
   it("refuses an unknown existing author at the commit boundary before staging a source", async () => {
     const outcome = await createImportedMarkdownWork(context.content, {
-      author: { authorId: "no-such-author", mode: "existing" },
+      author: { authorId: toAuthorId("no-such-author"), mode: "existing" },
       fileName: "missing-author.md",
       language: "en",
       markdown: "# Chapter\n\nA durable paragraph with real content.",

@@ -3,6 +3,7 @@ import { access, mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq, sql } from "drizzle-orm";
+import type { InjectOptions, LightMyRequestResponse } from "fastify";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { IngestEpubResultDto } from "@whetstone/contracts";
@@ -41,6 +42,10 @@ import {
   type WorkCreationDependencies
 } from "./workCreationCommands.js";
 import { beginFinalizeAttempt, detachStagePath } from "./workCreationAttemptStore.js";
+
+// What a test may send as a request body -- including shapes the route must reject. `NonNullable`
+// because `exactOptionalPropertyTypes` forbids handing `inject` an explicitly `undefined` payload.
+type InjectPayload = NonNullable<InjectOptions["payload"]>;
 
 const TTL_MS = 30 * 60 * 1000;
 const TITLE = "Politics and the English Language";
@@ -224,7 +229,7 @@ async function seedCandidateWork(
   return input.entryId;
 }
 
-function begin(overrides: Record<string, unknown> = {}): ReturnType<typeof h.server.inject> {
+function begin(overrides: Record<string, unknown> = {}): Promise<LightMyRequestResponse> {
   return h.server.inject({
     method: "POST",
     payload: { ...VALID, ...overrides },
@@ -244,7 +249,7 @@ const MANUAL = {
   workType: "essay"
 } as const;
 
-function beginManual(overrides: Record<string, unknown> = {}): ReturnType<typeof h.server.inject> {
+function beginManual(overrides: Record<string, unknown> = {}): Promise<LightMyRequestResponse> {
   return h.server.inject({
     method: "POST",
     payload: { ...MANUAL, ...overrides },
@@ -264,9 +269,7 @@ async function beginManualNeedsReview(): Promise<{ attemptId: string; candidateI
   return { attemptId: body.review.attemptId as string, candidateId };
 }
 
-function beginEpub(
-  bytes: Uint8Array = new Uint8Array([1, 2, 3])
-): ReturnType<typeof h.server.inject> {
+function beginEpub(bytes: Uint8Array = new Uint8Array([1, 2, 3])): Promise<LightMyRequestResponse> {
   return h.server.inject({
     headers: { "content-type": epubContentType },
     method: "POST",
@@ -284,11 +287,11 @@ async function seedEpubCandidate(entryId = "epub-candidate-1"): Promise<string> 
   });
 }
 
-function getReview(attemptId: string): ReturnType<typeof h.server.inject> {
+function getReview(attemptId: string): Promise<LightMyRequestResponse> {
   return h.server.inject({ method: "GET", url: `/api/work-creation-attempts/${attemptId}` });
 }
 
-function openExisting(attemptId: string, payload: unknown): ReturnType<typeof h.server.inject> {
+function openExisting(attemptId: string, payload: InjectPayload): Promise<LightMyRequestResponse> {
   return h.server.inject({
     method: "POST",
     payload,
@@ -296,7 +299,7 @@ function openExisting(attemptId: string, payload: unknown): ReturnType<typeof h.
   });
 }
 
-function keepSeparate(attemptId: string, payload: unknown): ReturnType<typeof h.server.inject> {
+function keepSeparate(attemptId: string, payload: InjectPayload): Promise<LightMyRequestResponse> {
   return h.server.inject({
     method: "POST",
     payload,
@@ -304,7 +307,7 @@ function keepSeparate(attemptId: string, payload: unknown): ReturnType<typeof h.
   });
 }
 
-function cancel(attemptId: string): ReturnType<typeof h.server.inject> {
+function cancel(attemptId: string): Promise<LightMyRequestResponse> {
   return h.server.inject({
     method: "POST",
     url: `/api/work-creation-attempts/${attemptId}/cancel`

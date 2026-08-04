@@ -1,5 +1,6 @@
 import { PGlite } from "@electric-sql/pglite";
 import { eq } from "drizzle-orm";
+import type { InjectOptions, LightMyRequestResponse } from "fastify";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type {
@@ -27,6 +28,10 @@ import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
 import { reviewStateColumns } from "../review/reviewCardQueries.js";
 import type { NotesReviewRouteDependencies } from "./notesReviewRoutes.js";
 
+// What a test may send as a request body -- including shapes the route must reject. `NonNullable`
+// because `exactOptionalPropertyTypes` forbids handing `inject` an explicitly `undefined` payload.
+type InjectPayload = NonNullable<InjectOptions["payload"]>;
+
 const otherUser = "user-other";
 const day = 24 * 60 * 60 * 1000;
 const t0 = new Date("2026-01-01T00:00:00.000Z");
@@ -48,7 +53,12 @@ async function buildContext(): Promise<TestContext> {
 
   let now = t0;
   const createId = (): string => `id-${(sequence += 1)}`;
-  const notesReview: NotesReviewRouteDependencies = { createId, db, now: () => now };
+  const notesReview: NotesReviewRouteDependencies = {
+    attemptTtlMs: 30 * 60 * 1000,
+    createId,
+    db,
+    now: () => now
+  };
 
   return {
     db,
@@ -1052,7 +1062,7 @@ describe("POST /api/notes/review/prompts/:id/grading-target", () => {
     return rows[0]?.dueAt;
   }
 
-  async function post(promptId: string, body: unknown): ReturnType<typeof context.server.inject> {
+  async function post(promptId: string, body: InjectPayload): Promise<LightMyRequestResponse> {
     return context.server.inject({
       method: "POST",
       url: `/api/notes/review/prompts/${promptId}/grading-target`,

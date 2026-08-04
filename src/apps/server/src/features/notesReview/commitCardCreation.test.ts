@@ -347,19 +347,21 @@ describe("commitCardCreation", () => {
   it("reports not_found for a malformed mcp attempt missing its staged draft", async () => {
     // A defensive guard: an mcp attempt row without a staged draft can never be committed (the draft is the
     // only content source). Inserted directly since the preview command never produces this shape.
-    await insertPendingCardCreationAttempt(db, {
-      draftFingerprint: "fp",
-      draftPayload: null,
-      exactNoteIds: [],
-      expiresAt: new Date(now.getTime() + ttlMs),
-      id: "mcp-no-draft",
-      nearKeys: [],
-      nearNoteIds: [],
-      now,
-      source: "mcp",
-      submissionId: "req-malformed",
-      userId: DEFAULT_USER_ID
-    });
+    await db.transaction((tx) =>
+      insertPendingCardCreationAttempt(tx, {
+        draftFingerprint: "fp",
+        draftPayload: null,
+        exactNoteIds: [],
+        expiresAt: new Date(now.getTime() + ttlMs),
+        id: "mcp-no-draft",
+        nearKeys: [],
+        nearNoteIds: [],
+        now,
+        source: "mcp",
+        submissionId: "req-malformed",
+        userId: DEFAULT_USER_ID
+      })
+    );
     const result = await commit("mcp-no-draft", { kind: "create" });
     expect(result).toEqual({ status: "not_found" });
   });

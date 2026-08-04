@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
+import type { InjectOptions, LightMyRequestResponse } from "fastify";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type {
@@ -37,11 +38,15 @@ import { newReviewState, RECALL_REQUEST_RETENTION, toEntryId } from "@whetstone/
 import { reviewStateColumns } from "../review/reviewCardQueries.js";
 import type { ContentDependencies } from "../content/contentCommands.js";
 import { createWork as createWorkCommand } from "../library/libraryCommands.js";
-import type { LibraryDependencies } from "../library/libraryCommands.js";
+import type { LibraryRouteDependencies } from "../library/libraryRoutes.js";
+
+// What a test may send as a request body -- including shapes the route must reject. `NonNullable`
+// because `exactOptionalPropertyTypes` forbids handing `inject` an explicitly `undefined` payload.
+type InjectPayload = NonNullable<InjectOptions["payload"]>;
 
 type TestContext = Readonly<{
   db: DbClient;
-  library: LibraryDependencies;
+  library: LibraryRouteDependencies;
   server: ReturnType<typeof createServer>;
   setNow: (iso: string) => void;
   sourcesDir: string;
@@ -59,16 +64,30 @@ async function buildContext(): Promise<TestContext> {
   let contentSequence = 0;
   let noteSequence = 0;
   let sourceSequence = 0;
-  const library: LibraryDependencies = {
+  const library: LibraryRouteDependencies = {
     createAuthorId: () => `author-${(workSequence += 1)}`,
     createEntryId: () => `work-${workSequence}`,
     db,
+    // Work deletion is exercised in library.test.ts; these tests never call DELETE /api/works/:id,
+    // so the file-side collaborators fail loudly rather than silently no-op.
+    deleteSourceFile: () => Promise.reject(new Error("unexpected deleteSourceFile")),
+    logSourceUnlinkFailure: () => {
+      throw new Error("unexpected logSourceUnlinkFailure");
+    },
     now: () => new Date()
   };
   const content: ContentDependencies = {
+    createAuthorId: () => `content-author-${(contentSequence += 1)}`,
     createEntryId: () => `content-${(contentSequence += 1)}`,
     createSourceId: () => `source-${(sourceSequence += 1)}`,
     db,
+    // These tests never ingest an EPUB; the parser, upload limit, and image store exist only to
+    // satisfy the content route wiring, and fail loudly rather than silently no-op if reached.
+    epubParser: () => Promise.reject(new Error("unexpected epubParser")),
+    epubUploadLimitBytes: 50 * 1024 * 1024,
+    imageResourceStore: {
+      store: () => Promise.reject(new Error("unexpected imageResourceStore.store"))
+    },
     ingestionLogger: () => {},
     sourceFileStore: createSourceFileStore(sourcesDir)
   };
@@ -217,7 +236,7 @@ async function createWorkWithTwoUnits(): Promise<{
   };
 }
 
-function postNote(workEntryId: string, payload: unknown): ReturnType<typeof context.server.inject> {
+function postNote(workEntryId: string, payload: InjectPayload): Promise<LightMyRequestResponse> {
   return context.server.inject({ method: "POST", payload, url: `/api/works/${workEntryId}/notes` });
 }
 
@@ -253,7 +272,7 @@ async function createWholeBlockNote(
   return response.json() as NoteDto;
 }
 
-function listNotes(workEntryId: string): ReturnType<typeof context.server.inject> {
+function listNotes(workEntryId: string): Promise<LightMyRequestResponse> {
   return context.server.inject({ method: "GET", url: `/api/works/${workEntryId}/notes` });
 }
 
@@ -281,8 +300,8 @@ async function listContent(workEntryId: string): Promise<WorkContentDto> {
 function patchNote(
   workEntryId: string,
   noteEntryId: string,
-  payload: unknown
-): ReturnType<typeof context.server.inject> {
+  payload: InjectPayload
+): Promise<LightMyRequestResponse> {
   return context.server.inject({
     method: "PATCH",
     payload,
@@ -293,7 +312,7 @@ function patchNote(
 function deleteNoteRequest(
   workEntryId: string,
   noteEntryId: string
-): ReturnType<typeof context.server.inject> {
+): Promise<LightMyRequestResponse> {
   return context.server.inject({
     method: "DELETE",
     url: `/api/works/${workEntryId}/notes/${noteEntryId}`
@@ -373,7 +392,10 @@ describe("create note route", () => {
 
     expect(response.statusCode).toBe(201);
     const note = response.json() as NoteDto;
-    expect(note.anchor.startOffset).toBeUndefined();
+    // `anchor` is nullable on the DTO; assert it resolved before reading the offsets, otherwise a
+    // dropped anchor would satisfy the `toBeUndefined` assertions vacuously.
+    expect(note.anchor).not.toBeNull();
+    expect(note.anchor?.startOffset).toBeUndefined();
 
     const anchorRows = await context.db
       .select()
@@ -489,15 +511,15 @@ describe("create note route", () => {
 
     expect(response.statusCode).toBe(201);
     const note = response.json() as NoteDto;
-    expect(note.anchor.blockEntryId).toBe(startBlockEntryId);
-    expect(note.anchor.endBlockEntryId).toBe(endBlockEntryId);
-    expect(note.anchor.startOffset).toBe(16);
-    expect(note.anchor.endOffset).toBe(5);
+    expect(note.anchor?.blockEntryId).toBe(startBlockEntryId);
+    expect(note.anchor?.endBlockEntryId).toBe(endBlockEntryId);
+    expect(note.anchor?.startOffset).toBe(16);
+    expect(note.anchor?.endOffset).toBe(5);
 
     // Round-trips through the list with both block ids intact.
     const listed = (await listNotes(workEntryId)).json() as NoteListDto;
     const served = listed.notes.find((item) => item.entryId === note.entryId);
-    expect(served?.anchor.endBlockEntryId).toBe(endBlockEntryId);
+    expect(served?.anchor?.endBlockEntryId).toBe(endBlockEntryId);
     // A sanity check on the fixtures: the offsets sit within their own blocks.
     expect(startPlaintext.length).toBeGreaterThanOrEqual(16);
     expect(endPlaintext.length).toBeGreaterThanOrEqual(5);
@@ -585,10 +607,7 @@ describe("create note route", () => {
 });
 
 describe("create mark route", () => {
-  function postMark(
-    workEntryId: string,
-    payload: unknown
-  ): ReturnType<typeof context.server.inject> {
+  function postMark(workEntryId: string, payload: InjectPayload): Promise<LightMyRequestResponse> {
     return context.server.inject({
       method: "POST",
       payload,
@@ -614,7 +633,7 @@ describe("create mark route", () => {
     expect(mark.kind).toBe("mark");
     expect(mark.bodyDoc).toBeNull();
     expect(mark.bodyText).toBeNull();
-    expect(mark.anchor.selectedTextSnapshot).toBe("brown fox");
+    expect(mark.anchor?.selectedTextSnapshot).toBe("brown fox");
 
     const markRows = await context.db.select().from(notes).where(eq(notes.entryId, mark.entryId));
     expect(markRows[0]?.kind).toBe("mark");
@@ -736,8 +755,11 @@ describe("list notes route", () => {
     expect(sub?.bodyText).toBe("to outwit");
 
     const whole = body.notes.find((note) => note.entryId === wholeBlock.entryId);
-    expect(whole?.anchor.startOffset).toBeUndefined();
-    expect(whole?.anchor.endOffset).toBeUndefined();
+    // `anchor` is nullable on the DTO; assert it resolved before reading the offsets, otherwise a
+    // dropped anchor would satisfy the `toBeUndefined` assertions vacuously.
+    expect(whole?.anchor).not.toBeNull();
+    expect(whole?.anchor?.startOffset).toBeUndefined();
+    expect(whole?.anchor?.endOffset).toBeUndefined();
     expect(whole?.kind).toBe("note");
   });
 
@@ -908,10 +930,7 @@ describe("delete note route", () => {
 });
 
 describe("notes anchored to soft-deleted blocks (re-ingestion)", () => {
-  function reingest(
-    workEntryId: string,
-    markdown: string
-  ): ReturnType<typeof context.server.inject> {
+  function reingest(workEntryId: string, markdown: string): Promise<LightMyRequestResponse> {
     return context.server.inject({
       method: "POST",
       payload: { kind: "manual", markdown },
@@ -1192,7 +1211,7 @@ describe("offline-gloss suggestion relocated to Notes (#662)", () => {
 describe("notes home — owner-scoped create, read, edit, delete, filter, and search (#659)", () => {
   let seedSequence = 0;
 
-  function createStandalone(text: string): ReturnType<typeof context.server.inject> {
+  function createStandalone(text: string): Promise<LightMyRequestResponse> {
     return context.server.inject({
       method: "POST",
       payload: { bodyDoc: createTextDocument(text) },
@@ -1200,22 +1219,22 @@ describe("notes home — owner-scoped create, read, edit, delete, filter, and se
     });
   }
 
-  function ownerGet(noteEntryId: string): ReturnType<typeof context.server.inject> {
+  function ownerGet(noteEntryId: string): Promise<LightMyRequestResponse> {
     return context.server.inject({ method: "GET", url: `/api/notes/${noteEntryId}` });
   }
 
-  function ownerList(query = ""): ReturnType<typeof context.server.inject> {
+  function ownerList(query = ""): Promise<LightMyRequestResponse> {
     return context.server.inject({ method: "GET", url: `/api/notes${query}` });
   }
 
   function ownerPatch(
     noteEntryId: string,
-    payload: unknown
-  ): ReturnType<typeof context.server.inject> {
+    payload: InjectPayload
+  ): Promise<LightMyRequestResponse> {
     return context.server.inject({ method: "PATCH", payload, url: `/api/notes/${noteEntryId}` });
   }
 
-  function ownerDelete(noteEntryId: string): ReturnType<typeof context.server.inject> {
+  function ownerDelete(noteEntryId: string): Promise<LightMyRequestResponse> {
     return context.server.inject({ method: "DELETE", url: `/api/notes/${noteEntryId}` });
   }
 
@@ -1555,7 +1574,7 @@ describe("import notebook lists route (#661)", () => {
     return { noteDoc: createTextDocument(note), questionDoc: createTextDocument(question) };
   }
 
-  function postImport(payload: unknown): ReturnType<typeof context.server.inject> {
+  function postImport(payload: InjectPayload): Promise<LightMyRequestResponse> {
     return context.server.inject({ method: "POST", payload, url: "/api/notes/import" });
   }
 
