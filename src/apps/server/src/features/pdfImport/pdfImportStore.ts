@@ -396,8 +396,7 @@ export async function getCommittedRanges(
 
 // The #702 publication record for an attempt: the learner's capture-time intent plus, once published,
 // exactly one resolved outcome (`workEntryId` for a published Work, `ocrValidationFailedPages` for a
-// document still text-less after the OCR pass, `noContent` for the typed empty-document refusal,
-// `incompleteConversionPages` for the typed dropped-pages refusal (#832), or
+// document still text-less after the OCR pass, `noContent` for the typed empty-document refusal, or
 // `unpreservableImages` for the typed unsupported-image refusal). All null means the publication is
 // still pending.
 export type PdfImportPublicationRecord = Readonly<{
@@ -409,7 +408,6 @@ export type PdfImportPublicationRecord = Readonly<{
   workEntryId: string | null;
   ocrValidationFailedPages: number | null;
   noContent: boolean | null;
-  incompleteConversionPages: number | null;
   unpreservableImages: number | null;
   // A warning on a successful publication (#806): unresolved figure placeholders in the published Work,
   // or null when there were none. Positive only alongside a non-null `workEntryId`.
@@ -429,7 +427,6 @@ function toPublicationRecord(row: PublicationRow): PdfImportPublicationRecord {
     workEntryId: row.workEntryId,
     ocrValidationFailedPages: row.ocrValidationFailedPages,
     noContent: row.noContent,
-    incompleteConversionPages: row.incompleteConversionPages,
     unpreservableImages: row.unpreservableImages,
     unresolvedFigureCount: row.unresolvedFigureCount,
     publishedAt: row.publishedAt
@@ -475,21 +472,18 @@ export async function getPublication(
 // transaction so the outcome commits atomically with the Work. Only applies while the publication is
 // still pending (no result yet), so a re-run cannot relink an already-resolved publication.
 // A publication is still pending only while no outcome column is set: no linked Work and none of the
-// typed terminal refusals (OCR-validation-failed, no-content, incomplete-conversion, unsupported-image)
-// recorded.
+// typed terminal refusals (OCR-validation-failed, no-content, unsupported-image) recorded.
 function pendingPublicationCondition(): ReturnType<typeof and> {
   return and(
     sql`${pdfImportPublications.workEntryId} is null`,
     sql`${pdfImportPublications.ocrValidationFailedPages} is null`,
     sql`${pdfImportPublications.noContent} is null`,
-    sql`${pdfImportPublications.incompleteConversionPages} is null`,
     sql`${pdfImportPublications.unpreservableImages} is null`
   );
 }
 
 // Every terminal marker updates under this guard so a re-run can never overwrite an already-resolved
-// outcome (published Work, OCR-validation-failed, no-content, incomplete-conversion, or unsupported-image
-// refusal).
+// outcome (published Work, OCR-validation-failed, no-content, or unsupported-image refusal).
 function pendingPublicationGuard(attemptId: string): ReturnType<typeof and> {
   return and(eq(pdfImportPublications.attemptId, attemptId), pendingPublicationCondition());
 }
@@ -539,22 +533,6 @@ export async function markPublicationNoContent(
   await db
     .update(pdfImportPublications)
     .set({ noContent: true, publishedAt: now })
-    .where(pendingPublicationGuard(attemptId));
-}
-
-// Record the typed incomplete-conversion refusal (no Work) for a pending publication (#832): the converter
-// dropped pages it had itself reported as carrying native text, so publishing would present a fragment as
-// the whole book. The count of lost pages is stored so the learner is told what was missing, not just that
-// something went wrong.
-export async function markPublicationIncompleteConversion(
-  db: DbClient,
-  attemptId: string,
-  pagesMissingContent: number,
-  now: Date
-): Promise<void> {
-  await db
-    .update(pdfImportPublications)
-    .set({ incompleteConversionPages: pagesMissingContent, publishedAt: now })
     .where(pendingPublicationGuard(attemptId));
 }
 

@@ -227,12 +227,6 @@ describe("pdfImportPublicationOutcomeDtoSchema", () => {
     });
     expect(
       pdfImportPublicationOutcomeDtoSchema.parse({
-        pagesMissingContent: 408,
-        status: "incomplete_conversion"
-      })
-    ).toEqual({ pagesMissingContent: 408, status: "incomplete_conversion" });
-    expect(
-      pdfImportPublicationOutcomeDtoSchema.parse({
         status: "image_unsupported",
         unpreservableImages: 2
       })
@@ -244,16 +238,6 @@ describe("pdfImportPublicationOutcomeDtoSchema", () => {
       pdfImportPublicationOutcomeDtoSchema.safeParse({
         pagesNeedingOcr: 0,
         status: "ocr_validation_failed"
-      }).success
-    ).toBe(false);
-  });
-
-  it("rejects a non-positive incomplete-conversion page count", () => {
-    // A refusal that claims zero lost pages is not a refusal; it would report "0 pages were missing".
-    expect(
-      pdfImportPublicationOutcomeDtoSchema.safeParse({
-        pagesMissingContent: 0,
-        status: "incomplete_conversion"
       }).success
     ).toBe(false);
   });

@@ -30,7 +30,10 @@ Reliability contract (mirrors the #403 markdown worker, kept in LOCKSTEP with pd
   survived, and reports the rest on ``result.errors``. Reading just ``result.document`` therefore emits a
   fragment as an ordinary range payload, which is later committed and published as a whole book. So the
   status IS the contract here: anything other than ``SUCCESS`` exits ``EXIT_CONVERSION_INCOMPLETE`` with
-  the failed page numbers and Docling's own reason on stderr, and no payload at all.
+  the failed page numbers and Docling's own reason on stderr, and no payload at all. This gate FAILS
+  CLOSED: a result that reports no status is refused too, because a conversion whose completeness cannot
+  be checked is not a complete conversion. It is the only completeness guard — judging completeness from
+  what a page produced was measured to be unsound and was removed (``docs/DECISIONS.md`` D8).
 - The per-child memory ceiling is ENFORCED, not best-effort, through ONE worker-owned memory-boundary
   contract with a per-platform implementation (#782): POSIX applies an address-space ``RLIMIT_AS``; a
   supported Windows host applies a native Job Object memory limit (``JOB_OBJECT_LIMIT_PROCESS_MEMORY`` +
@@ -1022,13 +1025,25 @@ def ensure_conversion_complete(result: Any) -> None:
     """Refuse a converter result that is anything other than an unqualified ``SUCCESS`` (#832).
 
     This is the trust boundary for one range: it runs BEFORE any payload is built, so a degraded document
-    can never be mistaken for a good range. A result that reports no ``status`` at all is accepted exactly
-    as before — the attribute is docling's, and an older or injected converter that does not report one
-    makes no claim to refuse.
+    can never be mistaken for a good range.
+
+    FAIL CLOSED. A result that reports no ``status`` at all is refused too, not accepted. ``PRODUCT.md``
+    holds that a converter result is untrusted evidence, and a result that cannot report its own status is
+    the purest case of that: a conversion whose completeness cannot be checked is not a complete
+    conversion. This is the ONLY completeness guard — the page-coverage backstop that once stood behind it
+    was removed as unsound (``docs/DECISIONS.md`` D8) — so its permissive seam had to close. The converter
+    version is pinned, so this is deterministic; a future upgrade that changes the reporting contract fails
+    loudly here instead of silently reopening #832.
     """
     status = getattr(result, "status", None)
-    if status is None or status == load_conversion_status().SUCCESS:
+    if status is not None and status == load_conversion_status().SUCCESS:
         return
+    if status is None:
+        raise ConversionIncomplete(
+            "unreported",
+            [],
+            "the converter reported no conversion status, so completeness cannot be verified",
+        )
     errors = list(getattr(result, "errors", None) or [])
     raise ConversionIncomplete(
         str(status), _failed_page_numbers(errors), _conversion_error_reason(status, errors)

@@ -9,7 +9,6 @@ import { describe, expect, it } from "vitest";
 import {
   describePdfImport,
   figuresToReviewMessage,
-  incompleteConversionMessage,
   noReadableContentMessage,
   ocrValidationFailedMessage,
   recognizingTextLabel
@@ -110,32 +109,6 @@ describe("describePdfImport", () => {
       message: noReadableContentMessage,
       terminal: true
     });
-  });
-
-  it("refuses a partially-converted PDF with the dropped-pages copy and the lost page count", () => {
-    // #832: the learner is told pages were LOST and that re-importing usually fixes it — not that the
-    // file is unreadable, which would send them to the wrong remedy.
-    const progress = describePdfImport(
-      view({ pagesMissingContent: 408, status: "incomplete_conversion" })
-    );
-
-    expect(progress.kind).toBe("incomplete_conversion");
-    expect(progress.terminal).toBe(true);
-    if (progress.kind === "incomplete_conversion") {
-      expect(progress.message).toContain(incompleteConversionMessage);
-      expect(progress.message).toContain("408 pages");
-    }
-  });
-
-  it("uses the singular form when a single page was lost", () => {
-    const progress = describePdfImport(
-      view({ pagesMissingContent: 1, status: "incomplete_conversion" })
-    );
-
-    expect(progress.kind).toBe("incomplete_conversion");
-    if (progress.kind === "incomplete_conversion") {
-      expect(progress.message).toContain("1 page of text");
-    }
   });
 
   it("refuses a single unpreservable image with the singular copy", () => {

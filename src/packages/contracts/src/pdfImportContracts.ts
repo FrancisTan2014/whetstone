@@ -154,9 +154,7 @@ export type PdfImportBeginResultDto = z.infer<typeof pdfImportBeginResultDtoSche
 // (0 when the Work has none); `ocr_validation_failed` = a typed refusal (a document still had text-less
 // pages after the OCR pass — a preflight/full-conversion disagreement or incomplete OCR) that publishes no
 // Work and reports the affected page count; `no_content` = a typed refusal (the pages had native text but
-// mapped to zero canonical blocks) that publishes no Work; `incomplete_conversion` = a typed refusal
-// (#832: the converter dropped pages it had itself reported as carrying native text, so the document was a
-// fragment) that publishes no Work and reports how many pages were lost; `image_unsupported` = a LEGACY typed refusal
+// mapped to zero canonical blocks) that publishes no Work; `image_unsupported` = a LEGACY typed refusal
 // (retained so historical attempts stay readable) that published no Work rather than a content-losing
 // placeholder, reporting how many images were affected. New attempts never produce `image_unsupported` —
 // unresolved figures now publish as a correctable Work with an `unresolvedFigureCount` warning instead.
@@ -177,12 +175,6 @@ export const pdfImportPublicationOutcomeDtoSchema = z.discriminatedUnion("status
     })
     .strict(),
   z.object({ status: z.literal("no_content") }).strict(),
-  z
-    .object({
-      pagesMissingContent: z.number().int().positive(),
-      status: z.literal("incomplete_conversion")
-    })
-    .strict(),
   z
     .object({
       status: z.literal("image_unsupported"),

@@ -165,7 +165,12 @@ class FakeConverter:
 
     def convert(self, pdf_path, page_range=None):
         self.calls.append((pdf_path, page_range))
-        return types.SimpleNamespace(document=self._doc)
+        # A healthy conversion REPORTS that it is healthy. Since the completeness gate fails closed
+        # (#832, D8), a fake standing in for a good range must report success exactly as the real
+        # docling result does; a fake that reported nothing would model a refused conversion.
+        return types.SimpleNamespace(
+            document=self._doc, status=FakeConversionStatus.SUCCESS, errors=[]
+        )
 
 
 class FakeBackendPage:
@@ -1144,18 +1149,45 @@ def fake_docling_conversion_status():
                 sys.modules[name] = prior
 
 
+_MODULE_CONVERSION_STATUS = None
+
+
+def setUpModule():
+    """Install the fake ``ConversionStatus`` for the whole module, as its header promises.
+
+    Every fake converter here now reports a status, because the completeness gate fails closed. The
+    lazy ``load_conversion_status`` import must therefore resolve for ordinary range tests too — and it
+    resolves to the fake, never to a real docling install, so these stay pure unit tests. Tests that
+    care about the import itself still enter ``fake_docling_conversion_status`` explicitly.
+    """
+    global _MODULE_CONVERSION_STATUS
+    _MODULE_CONVERSION_STATUS = fake_docling_conversion_status()
+    _MODULE_CONVERSION_STATUS.__enter__()
+
+
+def tearDownModule():
+    _MODULE_CONVERSION_STATUS.__exit__(None, None, None)
+
+
 class ConversionCompletenessTests(unittest.TestCase):
     def test_load_conversion_status_imports_the_docling_enum_lazily(self):
         with fake_docling_conversion_status():
             self.assertIs(load_conversion_status(), FakeConversionStatus)
 
-    def test_a_result_reporting_no_status_is_accepted_unchanged(self):
-        # The attribute is docling's: a converter that makes no claim about completeness is trusted
-        # exactly as before, so every existing seam and fake keeps working. No docling import is needed.
-        ensure_conversion_complete(types.SimpleNamespace(document=FakeDoc()))
+    def test_a_result_reporting_no_status_is_refused(self):
+        # FAIL CLOSED (D8). This gate is the only completeness guard, so its one permissive seam is
+        # closed: a converter that cannot report its own status makes a claim we cannot check, and an
+        # unverifiable conversion is not a complete one. No docling import is needed to reach this.
+        with self.assertRaises(ConversionIncomplete) as caught:
+            ensure_conversion_complete(types.SimpleNamespace(document=FakeDoc()))
+        self.assertEqual(caught.exception.status, "unreported")
+        self.assertEqual(caught.exception.failed_pages, [])
+        self.assertIn("no conversion status", caught.exception.reason)
 
-    def test_an_explicitly_null_status_is_accepted_unchanged(self):
-        ensure_conversion_complete(types.SimpleNamespace(document=FakeDoc(), status=None))
+    def test_an_explicitly_null_status_is_refused(self):
+        with self.assertRaises(ConversionIncomplete) as caught:
+            ensure_conversion_complete(types.SimpleNamespace(document=FakeDoc(), status=None))
+        self.assertEqual(caught.exception.status, "unreported")
 
     def test_success_is_accepted(self):
         with fake_docling_conversion_status():

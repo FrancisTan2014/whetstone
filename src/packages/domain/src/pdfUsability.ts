@@ -75,11 +75,11 @@ export type ClassifiableObservation =
   | Readonly<{ kind: "ocr_required"; pagesNeedingOcr: number }>
   | Readonly<{ kind: "no_content" }>
   | Readonly<{ kind: "conversion_failed"; detail: string }>
-  // The conversion produced a fragment of the book rather than the book (#832). `pagesMissingContent` is
-  // how many pages were lost when that is knowable — the coverage backstop counts them from the payload —
-  // and `null` when the converter's own status gate refused BEFORE a payload existed, so the harness has an
-  // exit code and no page list. The rubric never reads the number; it is carried for the diagnosis.
-  | Readonly<{ kind: "incomplete_conversion"; pagesMissingContent: number | null }>
+  // The converter refused a run that returned a fragment of the book rather than the book (#832). No page
+  // count travels with it: the worker's status gate refuses BEFORE a payload exists, so all the harness
+  // has is the exit code — and completeness is never inferred from what pages produced (`docs/DECISIONS.md`
+  // D8), so no count could be derived here either.
+  | Readonly<{ kind: "incomplete_conversion" }>
   | Readonly<{ kind: "timeout" }>
   | Readonly<{ kind: "memory" }>;
 

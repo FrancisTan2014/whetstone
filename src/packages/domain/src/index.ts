@@ -171,12 +171,6 @@ export {
   pdfImportPhases
 } from "./pdfImportAttempt.js";
 export type { PdfImportAttemptState, PdfImportPhase } from "./pdfImportAttempt.js";
-export { findPagesMissingConvertedContent } from "./pdfConversionCoverage.js";
-export type {
-  PdfConversionCoverageItem,
-  PdfConversionCoveragePage,
-  PdfConversionRecognizedItems
-} from "./pdfConversionCoverage.js";
 export {
   classifyExtractionConfidence,
   isUnmappedBlockType,
