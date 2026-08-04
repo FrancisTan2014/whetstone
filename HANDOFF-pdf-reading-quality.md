@@ -1,5 +1,28 @@
 # Handoff — PDF reading quality (2026-08-03) + PDF ingestion completeness (2026-08-04)
 
+> ## STATE AT HANDOFF — everything below is landed unless marked otherwise
+>
+> `main` is at **`f0784c8e`**. Merged on 2026-08-04, in order:
+> **#835, #838, #836, #839, #844, #848, #846.**
+>
+> | PR | What it did |
+> |---|---|
+> | #839 | refuse any conversion the converter does not call an unqualified `SUCCESS` |
+> | #844 | release `KILL_ON_JOB_CLOSE` so the Windows worker's exit code survives the Job Object |
+> | #848 | stop note re-application dismissing the selection toolbar; barrier the caret test (#825) |
+> | #846 | gate the 132→145-test Python worker suite in `validate` and CI |
+>
+> **The merge gate now requires four checks**, not three — `Quality`, `Runtime`, `Isolated contracts`,
+> and the new **`Python worker tests`**. Any branch cut before #846 must be refreshed before it can
+> merge; see §9.
+>
+> **Still open:** **#849** (pin the exit-code wire integers and `USABILITY_REASONS`) was sent back by
+> the reviewer for two real findings — see §10. **#847** is now unblocked. **#840** is `ready-for-dev`
+> and its premise has been measured and corrected — see §8.
+>
+> The user-visible defect is fixed and verified against the live database: **Clean Code holds 3,038
+> blocks / 786,475 characters**, up from 335 / 87,359.
+
 > ## READ THIS FIRST — 2026-08-04
 >
 > The 2026-08-03 work below is correct and still stands, but **it was not the whole story**. After it
