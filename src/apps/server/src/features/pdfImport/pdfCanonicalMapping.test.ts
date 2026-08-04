@@ -708,6 +708,468 @@ describe("mapStructuredDocument page-furniture exclusion", () => {
   });
 });
 
+// #812 — an unrecognized construct is a CONTAINER, not a leaf. Docling groups carry their text in
+// children, so the pre-#812 fallback (keep the parent's own `text`, drop `children`) erased whole
+// subtrees. Measured on the published Clean Code import (462 pages, the attempt behind work
+// 7b9b5e8f-5965-4895-882b-aa13dc137ac1): 39 `unknown` blocks, EVERY one of them holding zero
+// characters, above 71,510 characters of descendants that reached neither `plaintext` nor `node_json`.
+//
+// The two fixtures below are VERBATIM items from that attempt's stored `pdf_import_ranges.payload` —
+// the immutable provenance the worker actually emitted, not an invented shape — so these tests fail if
+// the mapper stops handling the constructs real books contain.
+const REAL_KEY_VALUE_AREA: StructuredDocItem = {
+  boundingBox: {
+    bottom: 84.06688436942761,
+    left: 35.828912,
+    right: 68.869856,
+    top: 91.41744238671868
+  },
+  charSpan: [0, 25],
+  children: [
+    {
+      boundingBox: {
+        bottom: 84.06688436942761,
+        left: 35.828912,
+        right: 68.869856,
+        top: 91.41744238671868
+      },
+      charSpan: [0, 8],
+      children: [],
+      confidence: 1,
+      label: "text",
+      pageNumber: 5,
+      text: "ISBN-13:"
+    },
+    {
+      boundingBox: {
+        bottom: 84.06688436942761,
+        left: 73.185824,
+        right: 139.726496,
+        top: 91.41744238671868
+      },
+      charSpan: [0, 17],
+      children: [],
+      confidence: 1,
+      label: "text",
+      pageNumber: 5,
+      text: "978-0-13-235088-4"
+    },
+    {
+      boundingBox: {
+        bottom: 75.06962036942764,
+        left: 35.828912,
+        right: 68.8817504,
+        top: 82.4201783867187
+      },
+      charSpan: [0, 8],
+      children: [],
+      confidence: 1,
+      label: "text",
+      pageNumber: 5,
+      text: "ISBN-10:"
+    },
+    {
+      boundingBox: {
+        bottom: 75.06962036942764,
+        left: 73.1994176,
+        right: 139.7961632,
+        top: 82.4201783867187
+      },
+      charSpan: [0, 13],
+      children: [],
+      confidence: 1,
+      label: "text",
+      pageNumber: 5,
+      text: "0-13-235088-2"
+    },
+    {
+      boundingBox: {
+        bottom: 66.07235636942767,
+        left: 35.828912,
+        right: 345.77148799999986,
+        top: 73.42291438671873
+      },
+      charSpan: [0, 91],
+      children: [],
+      confidence: 1,
+      label: "text",
+      pageNumber: 5,
+      text: "Text printed in the United States on recycled paper at Courier in Stoughton, Massachusetts."
+    },
+    {
+      boundingBox: {
+        bottom: 57.07509236942769,
+        left: 35.828912,
+        right: 116.982704,
+        top: 64.42565038671876
+      },
+      charSpan: [0, 25],
+      children: [],
+      confidence: 1,
+      label: "text",
+      pageNumber: 5,
+      text: "First printing July, 2008"
+    }
+  ],
+  confidence: 1,
+  label: "key_value_area",
+  pageNumber: 5,
+  text: ""
+};
+
+// The book's own table of contents. Docling labels it `document_index` and gives it the SAME
+// `table_row` -> cell shape a `table` has, so the pre-#812 mapper dropped every entry.
+const REAL_DOCUMENT_INDEX: StructuredDocItem = {
+  boundingBox: {
+    bottom: 81.68646240234375,
+    left: 77.95601654052734,
+    right: 439.6841125488281,
+    top: 486.7313537597656
+  },
+  charSpan: [0, 0],
+  children: [
+    {
+      boundingBox: { bottom: 0, left: 0, right: 0, top: 0 },
+      charSpan: [0, 0],
+      children: [
+        {
+          boundingBox: {
+            bottom: 193.0534014409222,
+            left: 78.825,
+            right: 420.74299999999994,
+            top: 180.9409
+          },
+          charSpan: [0, 0],
+          children: [],
+          confidence: 1,
+          label: "table_cell",
+          pageNumber: 8,
+          text: "Foreword......"
+        },
+        {
+          boundingBox: {
+            bottom: 192.647044092219,
+            left: 423.68899999999996,
+            right: 439.025,
+            top: 182.26489999999995
+          },
+          charSpan: [0, 0],
+          children: [],
+          confidence: 1,
+          label: "table_cell",
+          pageNumber: 8,
+          text: "xix"
+        }
+      ],
+      confidence: 1,
+      label: "table_row",
+      pageNumber: 8,
+      text: ""
+    },
+    {
+      boundingBox: { bottom: 0, left: 0, right: 0, top: 0 },
+      charSpan: [0, 0],
+      children: [
+        {
+          boundingBox: {
+            bottom: 221.05350144092222,
+            left: 78.82600000000001,
+            right: 439.0118,
+            top: 208.94099999999997
+          },
+          charSpan: [0, 0],
+          children: [],
+          confidence: 1,
+          label: "table_cell",
+          pageNumber: 8,
+          text: "Introduction ......xxv"
+        }
+      ],
+      confidence: 1,
+      label: "table_row",
+      pageNumber: 8,
+      text: ""
+    }
+  ],
+  confidence: 1,
+  label: "document_index",
+  pageNumber: 8,
+  text: ""
+};
+
+// Wrap `leaf` in `levels` nested unrecognized containers, so `wrapper_0` sits at expansion depth 0 and
+// `wrapper_{levels-1}` at depth `levels - 1`.
+function nestUnknownContainers(levels: number, leaf: StructuredDocItem): StructuredDocItem {
+  let current = leaf;
+  for (let level = levels - 1; level >= 0; level -= 1) {
+    current = item({ children: [current], label: `wrapper_${level}` });
+  }
+  return current;
+}
+
+// The plain text a block renders, whatever node type it took: an `unknown` keeps it verbatim in `html`,
+// every other node in its inline content. Asserting on this proves the CONTENT survived, not merely that
+// some block was produced.
+function blockText(node: DocumentNodeJSON): string {
+  const html = (node.attrs as { html?: unknown } | undefined)?.html;
+  if (typeof html === "string") {
+    return html;
+  }
+  const own = typeof node.text === "string" ? node.text : "";
+  return (node.content ?? []).reduce<string>((text, child) => text + blockText(child), own);
+}
+
+function blockTexts(result: Extract<PdfCanonicalMappingResult, { status: "mapped" }>): string[] {
+  return result.units.flatMap((unit) => unit.docBlocks.map((block) => blockText(block.node)));
+}
+
+describe("unrecognized containers keep their descendants (#812)", () => {
+  it("recovers a real key_value_area's children as ordinary paragraphs instead of one empty block", () => {
+    // The verbatim Clean Code p5 construct: a group whose own text is empty and whose six `text`
+    // children carry every character. Pre-#812 this produced ONE block holding `html: ""`.
+    const result = mapped(mapEn(doc([REAL_KEY_VALUE_AREA])));
+
+    expect(unitTypes(result, 0)).toEqual([
+      "paragraph",
+      "paragraph",
+      "paragraph",
+      "paragraph",
+      "paragraph",
+      "paragraph"
+    ]);
+    expect(blockTexts(result)).toEqual([
+      "ISBN-13:",
+      "978-0-13-235088-4",
+      "ISBN-10:",
+      "0-13-235088-2",
+      "Text printed in the United States on recycled paper at Courier in Stoughton, Massachusetts.",
+      "First printing July, 2008"
+    ]);
+    // The construct itself carried nothing to show, so it contributes no block — but the gap is still
+    // reported, so an unrecognized label never becomes invisible.
+    expect(result.unmappedLabels).toEqual(["key_value_area"]);
+  });
+
+  it("recovers a real document_index's table cells in source order instead of dropping the contents", () => {
+    // The book's own table of contents. Its cells are unrecognized as body items, so they stay on the
+    // visible `unknown` path — but they now carry their text instead of vanishing.
+    const result = mapped(mapEn(doc([REAL_DOCUMENT_INDEX])));
+
+    expect(unitTypes(result, 0)).toEqual(["unknown", "unknown", "unknown"]);
+    expect(blockTexts(result)).toEqual(["Foreword......", "xix", "Introduction ......xxv"]);
+    // No block is spent on the index, nor on either row: neither carries text of its own.
+    expect(result.unmappedLabels).toEqual(["document_index", "table_row", "table_cell"]);
+    // Every recovered block keys the CELL's page and geometry, never the ancestor index's.
+    expect(result.evidence.map((row) => row.label)).toEqual([
+      "table_cell",
+      "table_cell",
+      "table_cell"
+    ]);
+    expect(result.evidence[1]!.boundingBox).toEqual({
+      bottom: 192.647044092219,
+      left: 423.68899999999996,
+      right: 439.025,
+      top: 182.26489999999995
+    });
+  });
+
+  it("maps every child of an unrecognized group with the ordinary rules, list-item runs included", () => {
+    const result = mapped(
+      mapEn(
+        doc([
+          item({
+            children: [
+              item({ label: "text", text: "Lead-in." }),
+              item({ label: "code", text: "printf();" }),
+              item({ label: "list_item", text: "first" }),
+              item({ label: "list_item", text: "second" }),
+              item({ label: "text", text: "Tail." })
+            ],
+            label: "comment_section"
+          })
+        ])
+      )
+    );
+
+    // The two `list_item`s are grouped into ONE bullet list exactly as a top-level run would be.
+    expect(unitTypes(result, 0)).toEqual(["paragraph", "codeBlock", "bulletList", "paragraph"]);
+    expect(blockTexts(result)).toEqual(["Lead-in.", "printf();", "firstsecond", "Tail."]);
+  });
+
+  it("emits an unrecognized parent's own text as a visible unknown BEFORE its children", () => {
+    const result = mapped(
+      mapEn(
+        doc([
+          item({
+            children: [item({ label: "text", text: "Inherited." })],
+            label: "sidebar",
+            text: "Parent evidence."
+          })
+        ])
+      )
+    );
+
+    expect(unitTypes(result, 0)).toEqual(["unknown", "paragraph"]);
+    expect(blockTexts(result)).toEqual(["Parent evidence.", "Inherited."]);
+    expect(result.unmappedLabels).toEqual(["sidebar"]);
+  });
+
+  it("keeps an unmapped leaf that carries text exactly as before", () => {
+    const result = mapped(mapEn(doc([item({ label: "sidebar", text: "Nothing beneath me." })])));
+    const node = result.units[0]!.docBlocks[0]!.node;
+    expect(node.type).toBe("unknown");
+    expect(node.attrs).toMatchObject({ html: "Nothing beneath me.", tag: "sidebar" });
+    expect(result.unmappedLabels).toEqual(["sidebar"]);
+  });
+
+  it("emits no block for an unrecognized construct that yields no content, but still reports it", () => {
+    // A construct with no text and no children could only render as a blank gap holding a slot in the
+    // reading order. It produces nothing — and `unmappedLabels` keeps it fail-loud.
+    const result = mapped(
+      mapEn(doc([item({ label: "text", text: "Kept." }), item({ label: "key_value_area" })]))
+    );
+
+    expect(unitTypes(result, 0)).toEqual(["paragraph"]);
+    expect(result.unmappedLabels).toEqual(["key_value_area"]);
+    expect(result.evidence.map((row) => row.label)).toEqual(["text"]);
+  });
+
+  it("refuses a document whose only constructs are content-less unrecognized ones", () => {
+    // No empty-shell Work: nothing renderable was produced, so this is `no_content` rather than a Work
+    // of blank blocks (#702).
+    const result = mapEn(
+      doc([item({ label: "key_value_area" }), item({ children: [], label: "form_area" })])
+    );
+    expect(result).toEqual({ status: "no_content" });
+  });
+
+  it("preserves source order across expanded and ordinary items alike", () => {
+    const result = mapped(
+      mapEn(
+        doc([
+          item({ label: "text", text: "one" }),
+          item({
+            children: [
+              item({ label: "text", text: "two" }),
+              item({ children: [item({ label: "text", text: "three" })], label: "form_area" }),
+              item({ label: "text", text: "four" })
+            ],
+            label: "key_value_area"
+          }),
+          item({ label: "text", text: "five" })
+        ])
+      )
+    );
+
+    expect(blockTexts(result)).toEqual(["one", "two", "three", "four", "five"]);
+  });
+
+  it("keys each recovered block's evidence to its own descendant item, never the ancestor", () => {
+    const result = mapped(
+      mapEn(
+        doc(
+          [
+            item({
+              children: [
+                item({
+                  boundingBox: { bottom: 9, left: 8, right: 7, top: 6 },
+                  charSpan: [11, 22],
+                  confidence: 0.42,
+                  label: "text",
+                  pageNumber: 7,
+                  text: "Deep."
+                })
+              ],
+              // Deliberately contradictory ancestor evidence: nothing below may inherit it.
+              boundingBox: { bottom: 1, left: 1, right: 1, top: 1 },
+              charSpan: [0, 0],
+              confidence: 1,
+              label: "key_value_area",
+              pageNumber: 1
+            })
+          ],
+          [
+            { hasNativeText: true, pageNumber: 1 },
+            { hasNativeText: true, pageNumber: 7 }
+          ]
+        )
+      )
+    );
+
+    expect(result.evidence).toHaveLength(1);
+    expect(result.evidence[0]).toMatchObject({
+      boundingBox: { bottom: 9, left: 8, right: 7, top: 6 },
+      charEnd: 22,
+      charStart: 11,
+      confidence: 0.42,
+      label: "text",
+      page: 7
+    });
+  });
+
+  it("resolves a heading buried in an unrecognized container and starts its reading unit", () => {
+    // Expansion runs BEFORE heading resolution, so a lifted heading claims the outline entry that names
+    // it and splits the body exactly as a top-level heading would.
+    const result = mapped(
+      mapEn(
+        doc(
+          [
+            item({ label: "text", text: "Front matter." }),
+            item({
+              children: [
+                item({ label: "section_header", pageNumber: 2, text: "Chapter 1: Clean Code" }),
+                item({ label: "text", pageNumber: 2, text: "Body." })
+              ],
+              label: "key_value_area",
+              pageNumber: 2
+            })
+          ],
+          [
+            { hasNativeText: true, pageNumber: 1 },
+            { hasNativeText: true, pageNumber: 2 }
+          ],
+          [{ level: 3, pageNumber: 2, title: "Chapter 1: Clean Code" }]
+        )
+      )
+    );
+
+    expect(result.units.map((unit) => unit.title)).toEqual([undefined, "Chapter 1: Clean Code"]);
+    expect(unitTypes(result, 1)).toEqual(["heading", "paragraph"]);
+    expect(result.units[1]!.docBlocks[0]!.node.attrs).toMatchObject({ level: 3 });
+    expect(result.headingLevelSources).toEqual({ label: 0, outline: 1 });
+  });
+
+  it("expands nesting up to the depth bound", () => {
+    // 16 wrappers put the payload at exactly the deepest level the mapper walks.
+    const result = mapped(
+      mapEn(doc([nestUnknownContainers(16, item({ label: "text", text: "Reached." }))]))
+    );
+
+    expect(unitTypes(result, 0)).toEqual(["paragraph"]);
+    expect(blockTexts(result)).toEqual(["Reached."]);
+  });
+
+  it("stops at the depth bound, keeping the held-back container as one visible unknown", () => {
+    // One wrapper deeper: `wrapper_16` sits AT the bound, so the mapper refuses to walk it. It becomes a
+    // visible `unknown` even though it is text-less, because that node is the only remaining trace of
+    // the subtree — and its label is reported, so the stop is auditable rather than silent.
+    const result = mapped(
+      mapEn(doc([nestUnknownContainers(17, item({ label: "text", text: "Unreachable." }))]))
+    );
+
+    expect(unitTypes(result, 0)).toEqual(["unknown"]);
+    expect(result.units[0]!.docBlocks[0]!.node.attrs).toMatchObject({
+      html: "",
+      tag: "wrapper_16"
+    });
+    expect(blockTexts(result)).toEqual([""]);
+    // Nothing below the bound was visited, so no deeper label is claimed to have been handled.
+    expect(result.unmappedLabels).toEqual(
+      Array.from({ length: 17 }, (_unused, level) => `wrapper_${level}`)
+    );
+  });
+});
+
 // The shared `needs review` policy (#763) is the SAME pure function the editor's evidence query uses, so
 // asserting it here over the mapper's own output proves the two never diverge: a block's review suggestion
 // is derived from the mapper's node type (`unknown` = the unknown/fallback path) and its retained

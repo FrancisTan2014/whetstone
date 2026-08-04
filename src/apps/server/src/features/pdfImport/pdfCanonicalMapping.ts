@@ -25,9 +25,11 @@ import type { IngestedBlock } from "../content/htmlToDocument.js";
 // ->Block model, storing content ONLY as ProseMirror/Tiptap `doc_blocks` (never Markdown/mdast). Layout
 // order, labels, tables, and figures are fallible EVIDENCE, so the raw docling label decides the node
 // type, page geometry/confidence are retained additively as block evidence, and a construct the schema
-// cannot represent becomes an explicit `unknown` node (visible, never silently dropped). Heading DEPTH is
-// the one thing the label cannot supply, so it is resolved from the PDF's own bookmark outline (#815)
-// and falls back to the label table only where the document declared nothing.
+// cannot represent is degraded rather than dropped: the mapper walks into its children so each descendant
+// becomes the block it actually is, and the construct itself becomes an explicit `unknown` node wherever
+// it has anything of its own to show (#812). Heading DEPTH is the one thing the label cannot supply, so
+// it is resolved from the PDF's own bookmark outline (#815) and falls back to the label table only where
+// the document declared nothing.
 //
 // It is DOM-free and database-free: it only reads the validated contract shape and builds node JSON with
 // the shared document builders, so every mapping rule is unit-testable without Fastify or PostgreSQL. The
@@ -83,8 +85,10 @@ export type PdfCanonicalMappingResult =
       status: "mapped";
       units: readonly PersistableReadingUnit[];
       evidence: readonly PdfBlockEvidence[];
-      // The distinct docling labels that had no canonical node type and became `unknown` nodes, so the
-      // caller can record the fail-loud gap without re-walking the tree.
+      // The distinct docling labels that had no canonical node type, so the caller can record the
+      // fail-loud gap without re-walking the tree. Reported for every unrecognized construct met — one
+      // that was expanded into its children, and one that rendered nothing, are reported exactly like one
+      // that became a visible `unknown` node (#812).
       unmappedLabels: readonly string[];
       // How many unresolved picture/figure placeholders (#806) were produced. Zero for a document with no
       // pictures; a positive count is a review warning on the successful publication, never a refusal.
@@ -129,6 +133,12 @@ const PICTURE_LABELS = new Set(["picture", "figure"]);
 // A child label that carries a picture's caption text. Docling emits a picture's caption as a `caption`
 // child rather than the picture item's own text, so a placeholder figure adopts it when present.
 const CAPTION_LABEL = "caption";
+// How many levels of NESTED unrecognized containers the mapper walks into before it stops expanding
+// (#812). Only unrecognized nesting counts — a recognized construct ends the descent — so real documents
+// stay far below it (the deepest measured is 2: `document_index` -> `table_row` -> cell). It exists so a
+// pathological or hostile nesting cannot hang or stack-overflow the import; at the bound the container
+// keeps the pre-#812 behavior of one visible `unknown` node, which is reported and therefore auditable.
+const MAX_UNMAPPED_EXPANSION_DEPTH = 16;
 
 function inlineContent(text: string): DocumentNodeJSON[] {
   return text.length === 0 ? [] : [{ text, type: "text" }];
@@ -237,16 +247,18 @@ function figureNode(item: StructuredDocItem): DocumentNodeJSON {
   return { content, type: "figure" };
 }
 
-// Project one top-level body item to its canonical block node. The raw docling label decides the node
-// type; a construct with no canonical representation (or an empty table/list) becomes a visible `unknown`
-// node so nothing a publisher wrote is silently dropped. A picture/figure becomes a canonical `figure`
-// placeholder (#806) whose image is unresolved, so the readable document publishes with the figure
-// visible for correction rather than the whole document being refused. `heading` is the already-resolved
-// depth (#815) — outline-derived where the document declared one — so this projection never re-decides it.
-function bodyItemToBlock(
+// Project one body item to its canonical block node, or null when the canonical schema has NO
+// representation for it — an unrecognized docling label, or a table/list construct that yielded no row or
+// item. Null is the `unknown`/fallback path, which the caller resolves (#812): a container is walked into
+// so its descendants survive, and only a construct with something of its own to show becomes an `unknown`
+// node. A picture/figure becomes a canonical `figure` placeholder (#806) whose image is unresolved, so the
+// readable document publishes with the figure visible for correction rather than the whole document being
+// refused. `heading` is the already-resolved depth (#815) — outline-derived where the document declared
+// one — so this projection never re-decides it.
+function canonicalBodyNode(
   item: StructuredDocItem,
   heading: ResolvedHeading | null
-): DocumentNodeJSON {
+): DocumentNodeJSON | null {
   if (heading !== null) {
     return { attrs: { level: heading.level }, content: inlineContent(item.text), type: "heading" };
   }
@@ -271,14 +283,27 @@ function bodyItemToBlock(
     case "reference":
       return { content: [paragraph(item.text)], type: "footnoteTarget" };
     case "table":
-      return tableNode(item) ?? unknownNode(item);
+      return tableNode(item);
     case "list":
     case "ordered_list":
     case "unordered_list":
-      return listNode(item) ?? unknownNode(item);
+      return listNode(item);
     default:
-      return unknownNode(item);
+      return null;
   }
+}
+
+// Does the mapper have a canonical representation for this item, so that it must be kept whole rather
+// than expanded away (#812)? Two shapes map OUTSIDE `canonicalBodyNode` and are named here: a `list_item`,
+// which `walkBody` groups with its run into one bullet list, and a heading label, whose depth
+// `resolveHeadingLevels` always resolves before the node is built (from the outline, else the label
+// default) — so the depth it will be given never decides whether the item maps.
+function mapsToCanonicalNode(item: StructuredDocItem): boolean {
+  return (
+    item.label === "list_item" ||
+    HEADING_LEVEL_BY_LABEL[item.label] !== undefined ||
+    canonicalBodyNode(item, null) !== null
+  );
 }
 
 // Resolve every top-level body item's heading depth in ONE pass over the document, so a bookmark can name
@@ -326,10 +351,53 @@ function resolveHeadingLevels(
   return resolved;
 }
 
+// Expand every unrecognized CONTAINER in a body run into its children, in source order (#812). Failing to
+// recognize a parent must degrade that ONE node, never disinherit everything beneath it: docling groups
+// routinely carry all their text in children (a `key_value_area` holds `text` items; a `document_index`
+// holds `table_row`s), and the old fallback kept only the parent's own `text` — which for a group is
+// empty — so the whole subtree vanished from `plaintext` and `node_json` alike, unreadable, unsearchable
+// and uncorrectable. Each lifted descendant is then an ordinary body item: it takes the same rules
+// recursively and keys its own page/geometry/confidence evidence, never the ancestor's.
+//
+// What the unrecognized parent itself becomes:
+//   - text of its own  -> a visible `unknown` node BEFORE its children, so evidence of the construct is
+//                         never erased;
+//   - no text, no children -> NO block. It could only ever render as a blank gap holding a slot in the
+//                         reading order, and it is fail-loud through `unmappedLabels` instead;
+//   - held at the depth bound -> a visible `unknown` node even when text-less, because there it is the
+//                         only remaining trace of a subtree the mapper refuses to walk.
+//
+// Every unrecognized label is collected whether or not it produced a block, so the fail-loud gap stays
+// visible in `unmappedLabels` exactly as before.
+function expandUnmappedContainers(
+  body: readonly StructuredDocItem[],
+  unmappedLabels: Set<string>,
+  depth: number
+): StructuredDocItem[] {
+  const expanded: StructuredDocItem[] = [];
+  for (const item of body) {
+    if (mapsToCanonicalNode(item)) {
+      expanded.push(item);
+      continue;
+    }
+    unmappedLabels.add(item.label);
+    const atDepthBound = item.children.length > 0 && depth >= MAX_UNMAPPED_EXPANSION_DEPTH;
+    if (item.text.trim().length > 0 || atDepthBound) {
+      expanded.push(item);
+    }
+    if (item.children.length > 0 && !atDepthBound) {
+      expanded.push(...expandUnmappedContainers(item.children, unmappedLabels, depth + 1));
+    }
+  }
+  return expanded;
+}
+
 // Walk the ordered body into (node, source) pairs, grouping a run of top-level `list_item`s into one
 // bullet list (docling sometimes emits list items without a wrapping group). Heading depth is resolved
 // once for the whole body against the document's own outline (#815) before the walk, and where each level
-// came from is tallied so the caller can report derived-versus-assumed depth.
+// came from is tallied so the caller can report derived-versus-assumed depth. The body it walks is the
+// EXPANDED one (#812), so a descendant lifted out of an unrecognized container is an ordinary body item
+// here: it takes the same rules, joins a neighbouring `list_item` run, and keys its own evidence.
 function walkBody(
   body: readonly StructuredDocItem[],
   outline: readonly PdfOutlineEntry[]
@@ -357,7 +425,13 @@ function walkBody(
     if (heading !== null) {
       sources[heading.source] += 1;
     }
-    out.push({ label: item.label, node: bodyItemToBlock(item, heading), source: item });
+    // Expansion already decided that an item reaching the fallback path here is one that SHOULD show as
+    // an `unknown` node: a leaf carrying its own text, or a container held back at the depth bound.
+    out.push({
+      label: item.label,
+      node: canonicalBodyNode(item, heading) ?? unknownNode(item),
+      source: item
+    });
     index += 1;
   }
   return { blocks: out, headingLevelSources: sources };
@@ -475,6 +549,15 @@ export function mapStructuredDocument(document: StructuredDocument): PdfCanonica
   // docling's own `furniture` group is deprecated and empty, so this result is their only record.
   const furniture = partitionPageFurniture(document.body);
 
+  // A construct the canonical schema cannot name is still a CONTAINER of content (#812), so every
+  // unrecognized parent is expanded into its children before the walk: its descendants become ordinary
+  // body items instead of vanishing behind a parent whose own text is almost always empty. Expansion
+  // runs AFTER furniture partitioning so #811's whole-document rules keep judging exactly the top-level
+  // items they judge today. Every unrecognized label met on the way is collected here, whether or not it
+  // produced a block, so the fail-loud gap is reported even when the construct itself renders nothing.
+  const unmapped = new Set<string>();
+  const expandedBody = expandUnmappedContainers(furniture.readable, unmapped, 0);
+
   // A picture/figure carries an image #701 does not yet extract, but an unresolved leaf must not erase
   // the readable pages (#806). Each maps to a visible `figure` placeholder; the count is reported as a
   // review warning on the successful publication rather than refusing the whole document.
@@ -482,14 +565,10 @@ export function mapStructuredDocument(document: StructuredDocument): PdfCanonica
   // The PDF's own bookmark outline is the ONLY depth evidence the document carries (#815). It arrives
   // already validated on the contract (absent for a bookmark-less PDF, or for a payload committed before
   // the worker read outlines), and an absent one simply leaves every heading on the label fallback.
-  const walked = walkBody(furniture.readable, document.outline ?? []);
+  const walked = walkBody(expandedBody, document.outline ?? []);
 
-  const unmapped = new Set<string>();
   let unresolvedFigureCount = 0;
   for (const block of walked.blocks) {
-    if (block.node.type === "unknown") {
-      unmapped.add(block.label);
-    }
     // Only a figure whose image was NOT preserved (#806 placeholder) is an unresolved-figure review
     // warning. A figure whose artifact was adopted (#807) carries a resolved `imageResourceId`, so it is
     // a fully readable image and must not inflate the warning count.
