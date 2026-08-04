@@ -51,6 +51,60 @@ export type RepartitionPlan = Readonly<{
   units: readonly PlannedUnit[];
 }>;
 
+export type WorkContentReplacementInput = Readonly<{
+  // The Work's current reading units, in reading order. A replacement rebuilds the Work's whole content,
+  // so every one of them is removed.
+  previousUnitEntryIds: readonly string[];
+  // The replacement units in reading order, each with the ordered ids of the blocks it now holds. Always
+  // non-empty: a caller that produced no content refuses the replacement instead of emptying the Work.
+  replacementUnits: readonly RepartitionUnit[];
+}>;
+
+// Plan a WHOLE-Work content replacement (#861): the Work's existing units are all removed and the
+// replacement units take their place. Used when a Work's canonical blocks are rebuilt from a retained
+// source projection rather than edited — the re-mapped blocks carry freshly minted ids, so no existing
+// block survives and no unit identity can be inherited.
+//
+// Its only real decision is where a saved reading position lands. An anchor whose block survives follows
+// that block (the shared `blockUnitEntryId` contract); an anchor that does not survive falls back to its
+// unit's PROPORTIONAL position in the replacement — a reader who was 90% of the way through the old unit
+// sequence resumes 90% of the way through the new one. Proportional, not positional: a re-map exists
+// precisely because unit boundaries changed, so clamping every position past the new unit count onto the
+// last unit would dump most of a shortened book's readers at the end. The same book, re-divided, still
+// reads front to back, so relative progress is the closest honest landing point.
+export function planWorkContentReplacement(input: WorkContentReplacementInput): RepartitionPlan {
+  const units: PlannedUnit[] = input.replacementUnits.map((unit) => ({
+    blockIds: unit.blockIds,
+    entryId: unit.entryId,
+    isNew: true
+  }));
+
+  const blockUnitEntryId = new Map<string, string>();
+  for (const unit of units) {
+    for (const blockId of unit.blockIds) {
+      blockUnitEntryId.set(blockId, unit.entryId);
+    }
+  }
+
+  const previousCount = input.previousUnitEntryIds.length;
+  const removedUnitFallback = new Map<string, string>();
+  input.previousUnitEntryIds.forEach((entryId, index) => {
+    // `floor(index * replacementCount / previousCount)` is always a valid index: `index` is at most
+    // `previousCount - 1`, so the quotient is strictly below `replacementCount`, and the loop body only
+    // runs when `previousCount >= 1`. The caller guarantees a non-empty replacement, so the cast asserts
+    // that invariant rather than adding an unreachable defensive fallback.
+    const target = units[Math.floor((index * units.length) / previousCount)] as PlannedUnit;
+    removedUnitFallback.set(entryId, target.entryId);
+  });
+
+  return {
+    blockUnitEntryId,
+    removedUnitEntryIds: [...input.previousUnitEntryIds],
+    removedUnitFallback,
+    units
+  };
+}
+
 // Split the stream into partitions, each beginning at a heading node. The first block always opens the
 // first partition (a leading run of non-heading blocks before the first heading is that partition — a
 // "Start" the caller only ever produces at the Work's opening).

@@ -9,15 +9,15 @@ import {
 } from "@whetstone/domain";
 
 import type { DbClient } from "../../db/dbClient.js";
-import { entries, pdfBlockEvidence, workMeta, workSources } from "../../db/schema.js";
+import { entries, workMeta, workSources } from "../../db/schema.js";
 import type { ImageResourceStore } from "../../files/imageResourceStore.js";
 import { hashBytes, type SourceFileStore } from "../../files/sourceFileStore.js";
 import { writeReadingUnits } from "../content/blockWriter.js";
-import { insertInBatches } from "../content/insertBatching.js";
 import { claimUploadedSource, findClaimedWork } from "../content/sourceClaims.js";
 import { resolveNamedAuthor } from "../library/authorResolver.js";
 import { collectAdoptedArtifacts } from "./pdfImportArtifacts.js";
-import { mapStructuredDocument, type PdfBlockEvidence } from "./pdfCanonicalMapping.js";
+import { writeBlockEvidence } from "./pdfBlockEvidenceWriter.js";
+import { mapStructuredDocument } from "./pdfCanonicalMapping.js";
 import {
   bindStagedPdfAttempt,
   discardStagedPdfUpload,
@@ -43,8 +43,6 @@ import {
 // ->Block Work (doc_blocks only), or record a typed OCR-required outcome, and reopen identical bytes
 // through #706's exact-source claim. The #721 attempt stays pure execution — this owns the mapping,
 // metadata resolution, atomic commit, and terminal publication state.
-
-type Transaction = Parameters<Parameters<DbClient["transaction"]>[0]>[0];
 
 // What `beginPdfImport` did with an upload: it reopened the Work that already owns the bytes (identical
 // upload), queued a fresh recoverable attempt whose completion the drain loop will publish, or found the
@@ -214,34 +212,6 @@ function resolveAuthorName(
   metadataAuthor: string | null | undefined
 ): string {
   return enteredAuthor ?? normalizeEntered(metadataAuthor) ?? "Unknown";
-}
-
-async function writeBlockEvidence(
-  tx: Transaction,
-  workEntryId: string,
-  evidence: readonly PdfBlockEvidence[],
-  // Attempt-level OCR provenance (#745): the engine fingerprint and Tesseract language every block was
-  // produced under when the attempt adopted a validated OCR stage, or null for a born-digital document
-  // that never went through OCR. The post-conversion projection no longer carries a per-page OCR flag, so
-  // this is recorded uniformly for the attempt's blocks rather than per page.
-  ocrProvenance: Readonly<{ engine: string; language: string }> | null
-): Promise<void> {
-  const rows = evidence.map((item) => ({
-    blockId: item.blockId,
-    workEntryId,
-    page: item.page,
-    left: item.boundingBox.left,
-    top: item.boundingBox.top,
-    right: item.boundingBox.right,
-    bottom: item.boundingBox.bottom,
-    charStart: item.charStart,
-    charEnd: item.charEnd,
-    confidence: item.confidence,
-    label: item.label,
-    ocrEngine: ocrProvenance?.engine ?? null,
-    ocrLanguage: ocrProvenance?.language ?? null
-  }));
-  await insertInBatches(rows, (batch) => tx.insert(pdfBlockEvidence).values(batch));
 }
 
 function describeError(cause: unknown): string {

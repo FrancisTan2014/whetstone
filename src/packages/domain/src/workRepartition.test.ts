@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   planSectionRepartition,
+  planWorkContentReplacement,
   type RepartitionBlock,
   type RepartitionUnit
 } from "./workRepartition.js";
@@ -176,5 +177,73 @@ describe("planSectionRepartition", () => {
     expect(plan.units).toEqual([{ blockIds: ["h1", "a1"], entryId: "u1", isNew: false }]);
     expect(plan.removedUnitEntryIds).toEqual(["u2"]);
     expect(plan.removedUnitFallback.get("u2")).toBe("u1");
+  });
+});
+
+describe("planWorkContentReplacement", () => {
+  it("removes every previous unit and plans the replacement as entirely new units", () => {
+    const plan = planWorkContentReplacement({
+      previousUnitEntryIds: ["old-1", "old-2"],
+      replacementUnits: [unit("fresh-1", "a", "b"), unit("fresh-2", "c")]
+    });
+
+    expect(plan.units).toEqual([
+      { blockIds: ["a", "b"], entryId: "fresh-1", isNew: true },
+      { blockIds: ["c"], entryId: "fresh-2", isNew: true }
+    ]);
+    expect(plan.removedUnitEntryIds).toEqual(["old-1", "old-2"]);
+    // Every replacement block maps to the unit that now holds it, so a surviving anchor follows its block.
+    expect([...plan.blockUnitEntryId]).toEqual([
+      ["a", "fresh-1"],
+      ["b", "fresh-1"],
+      ["c", "fresh-2"]
+    ]);
+  });
+
+  it("lands a reader at the same relative depth when the Work is re-divided into fewer units", () => {
+    // The very case a re-map exists for (#816): the same book, re-divided from four units into two. A
+    // positional clamp would dump the last three readers on the final unit; proportional mapping keeps
+    // each of them where they actually were in the book.
+    const plan = planWorkContentReplacement({
+      previousUnitEntryIds: ["old-1", "old-2", "old-3", "old-4"],
+      replacementUnits: [unit("fresh-1", "a"), unit("fresh-2", "b")]
+    });
+
+    expect([...plan.removedUnitFallback]).toEqual([
+      ["old-1", "fresh-1"],
+      ["old-2", "fresh-1"],
+      ["old-3", "fresh-2"],
+      ["old-4", "fresh-2"]
+    ]);
+  });
+
+  it("spreads readers across a Work re-divided into more units than it had", () => {
+    // Growing the unit count must not pile everyone onto the first unit: each old unit maps to the start
+    // of the stretch of new units that covers it.
+    const plan = planWorkContentReplacement({
+      previousUnitEntryIds: ["old-1", "old-2"],
+      replacementUnits: [
+        unit("fresh-1", "a"),
+        unit("fresh-2", "b"),
+        unit("fresh-3", "c"),
+        unit("fresh-4", "d"),
+        unit("fresh-5", "e")
+      ]
+    });
+
+    expect([...plan.removedUnitFallback]).toEqual([
+      ["old-1", "fresh-1"],
+      ["old-2", "fresh-3"]
+    ]);
+  });
+
+  it("plans a replacement for a Work that had no units at all", () => {
+    const plan = planWorkContentReplacement({
+      previousUnitEntryIds: [],
+      replacementUnits: [unit("fresh-1", "a")]
+    });
+
+    expect(plan.removedUnitEntryIds).toEqual([]);
+    expect([...plan.removedUnitFallback]).toEqual([]);
   });
 });
