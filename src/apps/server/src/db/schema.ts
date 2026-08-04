@@ -1012,7 +1012,10 @@ export const pdfImportRanges = pgTable(
 // `ocr_validation_failed_pages` (a positive page count when a document still had text-less pages after
 // the OCR pass — preflight/full-conversion disagreement or incomplete OCR — so publishing is refused, no
 // Work created), OR `no_content` (the pages carried native text but mapped to zero canonical blocks, so
-// publishing would create an empty-shell Work — refused, no Work created), OR `unpreservable_images` (a
+// publishing would create an empty-shell Work — refused, no Work created), OR
+// `incomplete_conversion_pages` (#832: a positive count of pages the extractor reported as carrying native
+// text that contributed no body item, so the converter silently dropped them and publishing would create a
+// fragment presented as the whole book — refused, no Work created), OR `unpreservable_images` (a
 // positive count of picture/figure constructs whose images #701 cannot extract, so publishing would lose
 // content — refused, no Work created). A row with no result set is a publication still pending; the
 // `result_ck` check forbids ever setting more than one. Deleted with its attempt (cascade) as operational
@@ -1031,6 +1034,7 @@ export const pdfImportPublications = pgTable(
     workEntryId: text("work_entry_id").references(() => entries.id),
     ocrValidationFailedPages: integer("ocr_validation_failed_pages"),
     noContent: boolean("no_content"),
+    incompleteConversionPages: integer("incomplete_conversion_pages"),
     unpreservableImages: integer("unpreservable_images"),
     // A warning on a SUCCESSFUL publication (#806): how many unresolved picture/figure placeholders the
     // published Work carries, so the Library can report "N figures to review". Null when no figures were
@@ -1042,16 +1046,21 @@ export const pdfImportPublications = pgTable(
   },
   (table) => [
     // A publication resolves to at most one outcome: a published Work, an OCR-validation-failed page
-    // count, a no-content refusal, or an unsupported-image refusal — never more than one. (None set =
-    // pending.)
+    // count, a no-content refusal, an incomplete-conversion page count, or an unsupported-image refusal —
+    // never more than one. (None set = pending.)
     check(
       "pdf_import_publications_result_ck",
-      sql`(${table.workEntryId} is not null)::int + (${table.ocrValidationFailedPages} is not null)::int + (${table.noContent} is not null)::int + (${table.unpreservableImages} is not null)::int <= 1`
+      sql`(${table.workEntryId} is not null)::int + (${table.ocrValidationFailedPages} is not null)::int + (${table.noContent} is not null)::int + (${table.incompleteConversionPages} is not null)::int + (${table.unpreservableImages} is not null)::int <= 1`
     ),
     // An OCR-validation-failed marker, when present, is a positive page count.
     check(
       "pdf_import_publications_ocr_validation_pages_ck",
       sql`${table.ocrValidationFailedPages} is null or ${table.ocrValidationFailedPages} > 0`
+    ),
+    // An incomplete-conversion marker, when present, is a positive count of dropped pages (#832).
+    check(
+      "pdf_import_publications_incomplete_conversion_pages_ck",
+      sql`${table.incompleteConversionPages} is null or ${table.incompleteConversionPages} > 0`
     ),
     // An unsupported-image marker, when present, is a positive image count.
     check(

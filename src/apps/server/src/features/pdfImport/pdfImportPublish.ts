@@ -33,6 +33,7 @@ import {
   getPublication,
   insertPublicationIntent,
   linkPublishedWork,
+  markPublicationIncompleteConversion,
   markPublicationNoContent,
   markPublicationOcrValidationFailed,
   markReviewPublished,
@@ -172,6 +173,8 @@ export type PdfImportPublishDependencies = Readonly<{
 // prior tick (idempotent); `not_ready` = the attempt is not `converted`; `ocr_validation_failed` = a
 // typed refusal with no Work (a document still had text-less pages after the OCR pass); `no_content` = a
 // typed refusal with no Work (the pages had native text but mapped to zero canonical blocks);
+// `incomplete_conversion` = a typed refusal with no Work (#832: the converter dropped pages it had
+// reported as carrying native text, so publishing would present a fragment as the whole book);
 // `published` = a canonical Work (freshly created, or reopened for identical bytes). A published Work may
 // carry `unresolvedFigureCount` unresolved figure placeholders (#806) as a non-blocking review warning.
 export type PublishConvertedResult =
@@ -180,6 +183,7 @@ export type PublishConvertedResult =
   | Readonly<{ status: "not_ready" }>
   | Readonly<{ status: "ocr_validation_failed"; pagesNeedingOcr: number }>
   | Readonly<{ status: "no_content" }>
+  | Readonly<{ status: "incomplete_conversion"; pagesMissingContent: number }>
   | Readonly<{
       status: "published";
       work: WorkDto;
@@ -308,6 +312,7 @@ export async function publishConvertedPdfImport(
     publication.workEntryId !== null ||
     publication.ocrValidationFailedPages !== null ||
     publication.noContent !== null ||
+    publication.incompleteConversionPages !== null ||
     publication.unpreservableImages !== null
   ) {
     return { status: "already_published" };
@@ -352,6 +357,21 @@ export async function publishConvertedPdfImport(
     await removeRetainedStage(deps, attemptId, stagePath);
     await markReviewPublished(deps.db, attemptId, deps.now());
     return { status: "ocr_validation_failed", pagesNeedingOcr: mapping.pagesNeedingOcr };
+  }
+  if (mapping.status === "incomplete_conversion") {
+    // The converter reported SUCCESS but dropped pages it had itself classified as carrying native text
+    // (#832): publishing would present a fragment as the whole book, which is worse than an obvious
+    // failure because it is only discovered while reading. Record the typed terminal refusal with the
+    // number of pages lost and free the retained bytes, exactly as the OCR-required path does.
+    await markPublicationIncompleteConversion(
+      deps.db,
+      attemptId,
+      mapping.pagesMissingContent,
+      deps.now()
+    );
+    await removeRetainedStage(deps, attemptId, stagePath);
+    await markReviewPublished(deps.db, attemptId, deps.now());
+    return { pagesMissingContent: mapping.pagesMissingContent, status: "incomplete_conversion" };
   }
   if (mapping.status === "no_content") {
     // The pages had native text but mapped to zero canonical blocks: refuse before claiming/publishing so

@@ -11,6 +11,12 @@ export const ocrValidationFailedMessage =
 export const noReadableContentMessage =
   "This PDF has no readable text content to import, so no book was created.";
 
+// The learner-facing phrase for a PDF whose conversion silently dropped pages (#832). It names the loss
+// rather than blaming the file: extraction works, this run was incomplete, and re-running it is the right
+// next step. A named export so the flow and its tests agree.
+export const incompleteConversionMessage =
+  "Some pages of this PDF were not converted, so no book was created — importing it again usually fixes this.";
+
 // The progress label shown while the durable OCR phase (#745/#746) runs — text is being recognized from
 // scanned/mixed pages before structured conversion. Language-neutral because OCR now runs for every Work
 // language (#746), not English alone. A named export so the flow and its tests agree.
@@ -38,6 +44,11 @@ function ocrValidationFailedPagesMessage(pagesNeedingOcr: number): string {
   return `${ocrValidationFailedMessage} ${pages} still had no readable text after recognition.`;
 }
 
+function incompleteConversionPagesMessage(pagesMissingContent: number): string {
+  const pages = pagesMissingContent === 1 ? "1 page" : `${pagesMissingContent} pages`;
+  return `${incompleteConversionMessage} ${pages} of text were missing.`;
+}
+
 // The learner-facing progress model derived from one poll of an import's view. `in_progress` carries the
 // label to show while polling continues; the terminal kinds end the poll loop and drive navigation
 // or a message. Keeping this a pure projection means the Library flow only wires timers and navigation,
@@ -48,12 +59,14 @@ export type PdfImportProgress =
   | Readonly<{ kind: "needs_review"; review: WorkCreationReviewDto; terminal: true }>
   | Readonly<{ kind: "ocr_validation_failed"; message: string; terminal: true }>
   | Readonly<{ kind: "no_content"; message: string; terminal: true }>
+  | Readonly<{ kind: "incomplete_conversion"; message: string; terminal: true }>
   | Readonly<{ kind: "image_unsupported"; message: string; terminal: true }>
   | Readonly<{ kind: "failed"; message: string; terminal: true }>;
 
 // Project an import view into its progress model. Terminal outcomes win over in-flight labels: a published
 // Work (open the Reader), a validation-failed refusal (no Work; pages still text-less after OCR), a
-// no-content refusal (no Work; empty-document copy), an unsupported-image refusal (no Work;
+// no-content refusal (no Work; empty-document copy), an incomplete-conversion refusal (#832 — no Work;
+// the converter dropped pages), an unsupported-image refusal (no Work;
 // unpreservable-image copy), or a failed conversion (the adapter's named failure). Otherwise the label
 // reflects the #721/#745 execution phase — recognizing text during OCR, reading the source, converting a
 // known page range, resuming after an interruption, or finishing publication. An `interrupted` attempt (a
@@ -80,6 +93,14 @@ export function describePdfImport(view: PdfImportViewDto): PdfImportProgress {
 
   if (view.publication.status === "no_content") {
     return { kind: "no_content", message: noReadableContentMessage, terminal: true };
+  }
+
+  if (view.publication.status === "incomplete_conversion") {
+    return {
+      kind: "incomplete_conversion",
+      message: incompleteConversionPagesMessage(view.publication.pagesMissingContent),
+      terminal: true
+    };
   }
 
   if (view.publication.status === "image_unsupported") {

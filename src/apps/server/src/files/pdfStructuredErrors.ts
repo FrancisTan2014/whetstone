@@ -14,6 +14,7 @@ export const WORKER_EXIT_PASSWORD_REQUIRED = 5;
 export const WORKER_EXIT_UNSUPPORTED_SCHEMA = 6;
 export const WORKER_EXIT_MEMORY = 7;
 export const WORKER_EXIT_MEMORY_CEILING_UNSUPPORTED = 8;
+export const WORKER_EXIT_CONVERSION_INCOMPLETE = 9;
 
 const SETUP_REMEDY = "Run `pnpm setup:pdf` to provision the pinned Docling runtime and models.";
 
@@ -23,6 +24,7 @@ export type PdfStructuredFailureKind =
   | "password_required"
   | "malformed"
   | "unsupported_schema"
+  | "conversion_incomplete"
   | "tool_missing"
   | "forbidden_handle"
   | "timeout"
@@ -76,6 +78,20 @@ export function unsupportedSchemaFailure(version: string): PdfStructuredFailure 
     kind: "unsupported_schema",
     what: `The converter emitted DoclingDocument schema version "${version}", which this adapter does not support.`,
     remedy: SETUP_REMEDY
+  });
+}
+
+// A page range converted, but the converter reported it did NOT complete: docling keeps going when
+// individual pages fail and still returns a document holding only the pages that survived (#832). That is
+// NOT a malformed PDF — extraction is working, this run was degraded — so it stays a distinct kind rather
+// than folding into `malformed`: a fragment must never be committed as a good range and published as a
+// whole book, and the operator needs to see that pages were LOST rather than that the file was bad.
+export function conversionIncompleteFailure(): PdfStructuredFailure {
+  return Object.freeze({
+    kind: "conversion_incomplete",
+    what: "The converter dropped one or more pages of a page range, so the conversion was incomplete and was refused rather than published as a whole document.",
+    remedy:
+      "Check the import's server log for the failed page numbers and the converter's reported reason, then re-run the import; a document that fails repeatedly on the same pages needs those pages repaired or re-exported."
   });
 }
 
@@ -194,6 +210,8 @@ export function classifyWorkerExit(outcome: {
       return memoryFailure();
     case WORKER_EXIT_MEMORY_CEILING_UNSUPPORTED:
       return memoryCeilingUnsupportedFailure();
+    case WORKER_EXIT_CONVERSION_INCOMPLETE:
+      return conversionIncompleteFailure();
     case WORKER_EXIT_CONVERSION_FAILED:
     case WORKER_EXIT_USAGE:
       return malformedFailure(`worker exited with code ${outcome.code}`);

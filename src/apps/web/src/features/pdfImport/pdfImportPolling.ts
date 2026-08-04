@@ -14,7 +14,8 @@ export type PdfImportPollDeps = Readonly<{
 }>;
 
 // Why a poll stopped: a terminal progress model (published / ocr_validation_failed / no_content /
-// image_unsupported / failed), `gone` when the attempt no longer exists for this user (a stale reopened
+// incomplete_conversion / image_unsupported / failed), `gone` when the attempt no longer exists for this
+// user (a stale reopened
 // id — drop it), or `aborted` when the caller signalled to stop (navigation/unmount) before a terminal
 // state.
 export type PdfImportPollResult =

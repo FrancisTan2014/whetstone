@@ -13,6 +13,7 @@ import {
 import {
   MAX_PDF_HEADING_LEVEL,
   decidePageFurniture,
+  findPagesMissingBodyContent,
   matchOutlineHeading,
   type PageFurnitureExclusionRule
 } from "@whetstone/domain";
@@ -68,6 +69,10 @@ export type PdfExcludedFurniture = Readonly<{
 // as-is (#745). Every Work language now ships an OCR pack (#746), so a text-less page reaching this
 // mapping means the OCR pass and the full conversion DISAGREED, or OCR was incomplete: the whole
 // publication is refused with a typed `ocr_validation_failed` outcome and NO partial Work is created. A
+// document that reports SUCCESS but silently DROPPED pages is refused with a typed `incomplete_conversion`
+// outcome (#832): a page the extractor itself said carried native text must contribute at least one body
+// item, so a fragment can never be published as a whole book even if the converter claimed to succeed.
+// A
 // PDF whose pages carry native text but map to ZERO canonical blocks (an empty body) is refused with a
 // typed `no_content` outcome, so publication never creates an empty-shell Work (#702's "no empty shell").
 // A picture/figure construct whose image bytes #701 cannot yet extract does NOT refuse the document
@@ -78,6 +83,7 @@ export type PdfExcludedFurniture = Readonly<{
 // publication can record it as a review warning rather than a terminal failure.
 export type PdfCanonicalMappingResult =
   | Readonly<{ status: "ocr_validation_failed"; pagesNeedingOcr: number }>
+  | Readonly<{ status: "incomplete_conversion"; pagesMissingContent: number }>
   | Readonly<{ status: "no_content" }>
   | Readonly<{
       status: "mapped";
@@ -461,12 +467,23 @@ function partitionPageFurniture(body: readonly StructuredDocItem[]): {
 // Map a reconstructed structured PDF document to canonical reading units + block evidence, or refuse the
 // whole document when any page is still text-less. Every Work language now ships an OCR pack (#746), so a
 // text-less page reaching here means the OCR pass and the full conversion disagreed (or OCR was
-// incomplete): the document is refused with `ocr_validation_failed`. Pure: the caller (publication
+// incomplete): the document is refused with `ocr_validation_failed`, and one that dropped pages outright
+// is refused with `incomplete_conversion` (#832). Pure: the caller (publication
 // command) resolves metadata and persists the result atomically.
 export function mapStructuredDocument(document: StructuredDocument): PdfCanonicalMappingResult {
   const pagesNeedingOcr = document.pages.filter((page) => !page.hasNativeText).length;
   if (pagesNeedingOcr > 0) {
     return { pagesNeedingOcr, status: "ocr_validation_failed" };
+  }
+
+  // Second, INDEPENDENT completeness check (#832), on the RAW body before any furniture rule runs: every
+  // page the extractor said carried native text must have contributed at least one body item. The worker
+  // already refuses a range docling reported as degraded; this catches the same loss from the payload
+  // itself, so a converter that claims SUCCESS while dropping pages cannot publish a fragment as a whole
+  // book. It is a refusal, not a warning: the defect being fixed is a 9%-complete book that looked real.
+  const pagesMissingContent = findPagesMissingBodyContent(document.pages, document.body).length;
+  if (pagesMissingContent > 0) {
+    return { pagesMissingContent, status: "incomplete_conversion" };
   }
 
   // Page furniture is printing, not authorship (#811): running heads, running feet, and folios are

@@ -455,11 +455,12 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
     }
 
     /* v8 ignore next 4 -- a terminal poll result is published, needs_review, ocr_validation_failed,
-       no_content, image_unsupported, or failed; `in_progress` (the only remaining kind) is never terminal,
-       so this early return is unreachable. */
+       no_content, incomplete_conversion, image_unsupported, or failed; `in_progress` (the only remaining
+       kind) is never terminal, so this early return is unreachable. */
     if (
       progress.kind !== "ocr_validation_failed" &&
       progress.kind !== "no_content" &&
+      progress.kind !== "incomplete_conversion" &&
       progress.kind !== "image_unsupported" &&
       progress.kind !== "failed"
     ) {

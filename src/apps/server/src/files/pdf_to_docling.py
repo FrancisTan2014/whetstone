@@ -22,8 +22,15 @@ Reliability contract (mirrors the #403 markdown worker, kept in LOCKSTEP with pd
   page with no native text is reported ``hasNativeText: false`` for #702/#704 to act on, never OCR'd.
 - Output is UTF-8 regardless of host locale, so CJK/Greek text never raises ``UnicodeEncodeError`` on
   a cp1252 Windows console.
-- Failures self-classify via exit code (missing dependency, conversion failed, password required,
-  unsupported schema, memory, memory-ceiling-unsupported) — never a bare traceback as the only signal.
+- Failures self-classify via exit code (missing dependency, conversion failed, conversion incomplete,
+  password required, unsupported schema, memory, memory-ceiling-unsupported) — never a bare traceback as
+  the only signal.
+- A conversion is trusted ONLY when Docling reports an unqualified ``SUCCESS`` (#832). Docling keeps going
+  when individual pages fail: it returns ``PARTIAL_SUCCESS`` with a document holding only the pages that
+  survived, and reports the rest on ``result.errors``. Reading just ``result.document`` therefore emits a
+  fragment as an ordinary range payload, which is later committed and published as a whole book. So the
+  status IS the contract here: anything other than ``SUCCESS`` exits ``EXIT_CONVERSION_INCOMPLETE`` with
+  the failed page numbers and Docling's own reason on stderr, and no payload at all.
 - The per-child memory ceiling is ENFORCED, not best-effort, through ONE worker-owned memory-boundary
   contract with a per-platform implementation (#782): POSIX applies an address-space ``RLIMIT_AS``; a
   supported Windows host applies a native Job Object memory limit (``JOB_OBJECT_LIMIT_PROCESS_MEMORY`` +
@@ -62,6 +69,7 @@ EXIT_PASSWORD_REQUIRED = 5
 EXIT_UNSUPPORTED_SCHEMA = 6
 EXIT_MEMORY = 7
 EXIT_MEMORY_CEILING_UNSUPPORTED = 8
+EXIT_CONVERSION_INCOMPLETE = 9
 
 RANGE_SCHEMA_VERSION = "whetstone-pdf-structured-range/1"
 DOCLING_SCHEMA_NAME = "DoclingDocument"
@@ -98,6 +106,13 @@ MAX_OUTLINE_TITLE_CHARS = 512
 # recursion over a maliciously deep tree.
 MAX_OUTLINE_DEPTH = 15
 
+# How many distinct Docling error messages and failed page numbers a ``ConversionIncomplete`` reason
+# quotes (#832). A degraded conversion can report a failure for every page in the range, and the reason
+# is written to the child's stderr and carried into an attempt's stored failure, so it is bounded: the
+# operator needs the shape of the failure and a sample, not 3,000 repetitions of one message.
+MAX_REPORTED_CONVERSION_ERRORS = 3
+MAX_REPORTED_FAILED_PAGES = 20
+
 
 class PasswordRequired(Exception):
     """Raised when the PDF is encrypted and cannot be opened without a password."""
@@ -113,6 +128,27 @@ class UnsupportedSchema(Exception):
 
 class ConversionFailed(Exception):
     """Raised for a genuine, file-level conversion failure (malformed/unreadable structure)."""
+
+
+class ConversionIncomplete(Exception):
+    """Raised when Docling finished a range in a DEGRADED state rather than an unqualified success (#832).
+
+    Docling does not stop when a page fails: it records the failure on ``result.errors``, sets
+    ``result.status`` to ``PARTIAL_SUCCESS`` (or ``FAILURE``), and still returns a ``document`` — one that
+    contains only the pages that survived. Building a payload from that document emits a FRAGMENT that is
+    indistinguishable from a good range, so the range is committed and the book is published ~90% empty
+    while every gate reports success. The degraded status is therefore a hard refusal here, never a
+    payload: the caller gets the reported page numbers and Docling's own reason instead.
+    """
+
+    def __init__(self, status: str, failed_pages: Sequence[int], reason: str) -> None:
+        super().__init__(
+            f"docling reported {status} for this page range; "
+            f"{len(failed_pages)} page(s) failed to convert: {reason}"
+        )
+        self.status = status
+        self.failed_pages = list(failed_pages)
+        self.reason = reason
 
 
 class MemoryCeilingUnsupported(Exception):
@@ -940,6 +976,65 @@ def build_range_payload(
     return payload
 
 
+def load_conversion_status() -> Any:
+    """Import docling's ``ConversionStatus`` enum lazily, mirroring ``build_converter``'s import style.
+
+    Lazy for the same reason the converter's imports are: a host without the doc-AI lane must surface a
+    plain ``ImportError`` (classified as ``EXIT_MISSING_DEPENDENCY`` in ``run_range``) rather than failing
+    at module load and turning every mode — including ``--check-memory-ceiling`` — into a crash.
+    """
+    from docling.datamodel.base_models import ConversionStatus
+
+    return ConversionStatus
+
+
+def _failed_page_numbers(errors: Sequence[Any]) -> list[int]:
+    """The distinct, ascending 1-based page numbers Docling reported an error for."""
+    pages = set()
+    for error in errors:
+        page_no = getattr(error, "page_no", None)
+        if isinstance(page_no, int) and not isinstance(page_no, bool):
+            pages.add(page_no)
+    return sorted(pages)
+
+
+def _conversion_error_reason(status: Any, errors: Sequence[Any]) -> str:
+    """Docling's OWN account of why the range degraded: its distinct error messages, bounded.
+
+    Never a message this worker invented. An operator reading the attempt failure needs to tell an
+    out-of-memory page (``std::bad_alloc``) apart from a malformed-glyph page, so the converter's text is
+    quoted verbatim — capped at ``MAX_REPORTED_CONVERSION_ERRORS`` distinct messages so one repeated
+    failure cannot flood stderr or the stored failure.
+    """
+    messages: list[str] = []
+    for error in errors:
+        message = str(getattr(error, "error_message", "") or "").strip()
+        if message != "" and message not in messages:
+            messages.append(message)
+    if len(messages) == 0:
+        return f"{status} reported with no error detail"
+    quoted = "; ".join(messages[:MAX_REPORTED_CONVERSION_ERRORS])
+    remaining = len(messages) - MAX_REPORTED_CONVERSION_ERRORS
+    return quoted if remaining <= 0 else f"{quoted}; and {remaining} more"
+
+
+def ensure_conversion_complete(result: Any) -> None:
+    """Refuse a converter result that is anything other than an unqualified ``SUCCESS`` (#832).
+
+    This is the trust boundary for one range: it runs BEFORE any payload is built, so a degraded document
+    can never be mistaken for a good range. A result that reports no ``status`` at all is accepted exactly
+    as before — the attribute is docling's, and an older or injected converter that does not report one
+    makes no claim to refuse.
+    """
+    status = getattr(result, "status", None)
+    if status is None or status == load_conversion_status().SUCCESS:
+        return
+    errors = list(getattr(result, "errors", None) or [])
+    raise ConversionIncomplete(
+        str(status), _failed_page_numbers(errors), _conversion_error_reason(status, errors)
+    )
+
+
 def convert_range(
     pdf_path: str,
     start_page: int,
@@ -957,9 +1052,14 @@ def convert_range(
     When an ``ArtifactSink`` is supplied, renderable body pictures are extracted to PNG artifacts (#807).
     When a ``read_outline`` seam is supplied, the PDF's bookmark tree is projected onto the payload as
     ``outline`` (#815), fail-soft: a bookmark-less or unreadable outline is an empty list, never an error.
+
+    The converter's REPORTED STATUS is checked before anything is read off the result (#832): docling
+    returns a truncated document rather than raising when individual pages fail, so a payload is built
+    only from a run it called an unqualified success.
     """
     converter = converter_factory()
     result = converter.convert(pdf_path, page_range=(start_page, end_page))
+    ensure_conversion_complete(result)
     metadata = read_metadata() if read_metadata is not None else None
     outline = read_outline_entries(read_outline)
     return build_range_payload(
@@ -1110,6 +1210,21 @@ def run_range(
     except UnsupportedSchema as error:
         _write(stderr, f"unsupported DoclingDocument schema version: {error.version}\n")
         return EXIT_UNSUPPORTED_SCHEMA
+    except ConversionIncomplete as error:
+        # A degraded conversion is reported with the pages it lost, not summarized as "failed": the range
+        # is retried or the import is abandoned by a human who can see WHICH pages docling dropped and
+        # WHY. The page list is bounded so a range that failed wholesale cannot flood the parent's pipe.
+        shown = error.failed_pages[:MAX_REPORTED_FAILED_PAGES]
+        pages = ", ".join(str(page) for page in shown) if len(shown) > 0 else "not reported"
+        if len(error.failed_pages) > len(shown):
+            pages = f"{pages}, and {len(error.failed_pages) - len(shown)} more"
+        _write(
+            stderr,
+            f"pdf conversion did not complete for {pdf_path} pages {start_page}-{end_page}: "
+            f"docling reported {error.status} for {len(error.failed_pages)} failed page(s) "
+            f"[{pages}]: {error.reason}\n",
+        )
+        return EXIT_CONVERSION_INCOMPLETE
     except ImportError as error:
         _write(
             stderr,
