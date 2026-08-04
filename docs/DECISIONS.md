@@ -14,7 +14,8 @@ it. Newest first.
 
 **Status:** Superseded 2026-08-04, before shipping, by direct measurement on a real book.
 **Replaced by:** the "a conversion is complete or it is refused" rule in `PRODUCT.md` →
-"v0 content ingestion", now resting on the converter's reported status alone.
+"v0 content ingestion", which rested on the converter's reported status alone until #840 added its
+per-page processing record behind it.
 
 **What it was.** D7 established that a converter result is untrusted evidence and must be refused
 unless it reports unqualified success. Alongside that status gate, #834/#835 added a second,
@@ -58,10 +59,16 @@ reopening #832. The gate refuses on status alone; the converter's `errors` are r
 the failure to an operator.
 
 Real per-page processing evidence — `ConversionResult.pages`, which records what the converter
-actually did to each page independently of what that page yielded — is the correct backstop and is
+actually did to each page independently of what that page yielded — is the correct backstop and was
 filed as follow-up work with this measurement attached. It was not adopted here: its marginal value
-over the status gate is currently hypothetical, it changes the payload contract, and a new evidence
-channel should not be designed and validated alongside the half that actually fixes the defect.
+over the status gate was hypothetical at the time, and a new evidence channel should not be designed
+and validated alongside the half that actually fixes the defect. **It landed separately in #840**,
+after measurement on the same book confirmed the channel's shape (a healthy range records one entry
+per requested page; a degraded one omits exactly the pages docling reports as failed, and `parsed_page`
+is released to `None` even on perfect pages, so presence of the entry — not state hanging off it — is
+the evidence). The worker now refuses a range whose requested pages are not all present in that
+record, through the same `conversion_incomplete` failure. Nothing in this decision was reopened: item
+counts remain inadmissible as completeness evidence.
 
 ---
 
