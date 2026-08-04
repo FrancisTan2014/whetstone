@@ -46,12 +46,64 @@
 > - **#834 / PR #835 — merged.** Product rule in `PRODUCT.md`: *"A conversion is complete or it is
 >   refused."* Decision record **D7** in `docs/DECISIONS.md` archives the superseded assumption that a
 >   memory ceiling fails loudly.
-> - **#837 / PR #838.** Makes the completeness invariant precise about furniture-only pages, so it
->   cannot false-refuse healthy books (a numbered blank page has native text but no body item).
-> - **#833 / PR #836.** Raises `WINDOWS_STRUCTURED_PDF_MEMORY_MIB` 6144 → 40960, calibrated against
->   measured commit, and removes the stale "~3.9 GiB peak" justification.
-> - **#832.** Refuses a conversion whose reported status is not unqualified success, plus an
->   independent page-coverage backstop.
+> - **#837 / PR #838 — merged.** Made the completeness invariant precise about furniture-only pages, so
+>   it could not false-refuse healthy books (a numbered blank page has native text but no body item).
+>   *This refinement was later falsified along with the invariant itself — see below.*
+> - **#833 / PR #836 — merged.** Raises `WINDOWS_STRUCTURED_PDF_MEMORY_MIB` 6144 → 40960, calibrated
+>   against measured commit, and removes the stale "~3.9 GiB peak" justification. **This one constant
+>   is what actually fixes the product defect.**
+> - **#832 / PR #839.** Refuses a conversion whose reported status is not unqualified success, and
+>   refuses one that cannot report a status at all. Defence in depth, not the fix.
+> - **#840.** Follow-up: back the rule with real per-page processing evidence. Blocked on #832.
+>
+> ### THE FIX IS PROVEN — the re-import already happened
+>
+> Do not repeat it. Clean Code was deleted and re-imported through the running app on merged `main`:
+>
+> | | before | after |
+> |---|---|---|
+> | `doc_blocks` | 335 | **3,038** |
+> | characters | 87,359 | **786,475** |
+> | pages covered | 54 of 462 | **461 of 462** |
+>
+> All 10 ranges succeeded, about 19 minutes. The book is readable. The single uncovered page is
+> **page 25**, whose entire text layer is the string `'This page intentionally left blank '` — and that
+> page turned out to matter far more than it looks.
+>
+> ### The page-coverage invariant was FALSIFIED before it shipped — do not resurrect it
+>
+> #834/#835 introduced, and #837/#838 refined, an independent backstop: *every page the source reports
+> as carrying native text must contribute at least one item.* It is intuitive, it is wrong, and it was
+> killed by measurement rather than by argument. Running the production worker over pages 21–30 of the
+> real book, in a run reporting `SUCCESS` with no errors:
+>
+> | | page 25 | page 29 |
+> |---|---|---|
+> | native text layer | `'This page intentionally left blank '` | identical, byte for byte |
+> | characters | 35 | 35 |
+> | page size | 518x666 | identical |
+> | text bounding box | (181,494)-(342,505) | identical |
+> | items produced | **0** | **1** |
+>
+> Byte-identical text, pixel-identical geometry, same range, same run, opposite outcomes — and it
+> reproduced exactly on a re-run. Item production is sensitive to **batch context**, not only to page
+> content. So "this page produced nothing" does **not** imply "this page was not processed", and an
+> **item count carries no information about whether a page converted**. Fifteen of the 462 pages carry
+> that notice, so the exposure was structural, not a curiosity.
+>
+> Shipping the backstop would have made whetstone loudly refuse a book we had just proven converts
+> completely. It was removed rather than weakened: a proportional threshold ("complete unless fewer
+> than N% missing") is a different and weaker rule with an unprincipled number, and was rejected. The
+> primary status gate was hardened to fail closed instead — a result that cannot report its status is
+> refused, because `PRODUCT.md` already holds that a converter result is untrusted evidence.
+>
+> Recorded as **D8** in `docs/DECISIONS.md`. This narrowed the *evidence*, not the rule: "a conversion
+> is complete or it is refused" is unchanged. The correct backstop is per-page processing evidence from
+> `ConversionResult.pages` (`parsed_page` / `predictions` / `assembled`), which proves a page was
+> processed regardless of what it emitted — filed as **#840**, deliberately not rushed into #839.
+>
+> **If you find yourself reaching for "surely a page with text should produce something", re-read the
+> table above.** That reasoning has now cost two rounds of work.
 >
 > ### Two traps that cost real time — do not repeat them
 >
@@ -63,18 +115,65 @@
 >   probe, so it listed all 462 pages with `hasNativeText: true` while `body` held only ~6 pages per
 >   50-page range. The payload looked healthy at a glance.
 >
+> ### Querying the live database — the recipe, including the schema surprises
+>
+> The DB is PGlite at `src/apps/server/.data/db`, and the running app holds an exclusive lease.
+> **Snapshot the directory and query the copy**; do not query in place. `@electric-sql/pglite` resolves
+> only from the server workspace, so the query script must sit under `src/apps/server/`. Helper:
+> `files/dbq.mjs` — `node dbq.mjs <snapshot-dir> "<sql>"`.
+>
+> Names that are not what you would guess, each of which cost time:
+>
+> - There is **no `works` table**. Work titles live in **`work_meta`** (`entry_id`, `title`).
+> - `entries` has only `id` and `type`.
+> - `doc_blocks` keys on **`reading_unit_entry_id`** (not `reading_unit_id`) and stores text in
+>   **`plaintext`** (not `plain_text`).
+> - `pdf_block_evidence` is `block_id, work_entry_id, page, left, top, right, bottom, char_start,
+>   char_end, confidence, label, ocr_engine, ocr_language` — this is how you get per-page coverage.
+>
+> ### Running a long import without it being killed
+>
+> `pnpm dev` runs the API under `tsx watch`. Any file touch restarts it, and the restart then dies with
+> `DatabaseBusyError` because the old process still holds `.data/db.lock`. A 20–40 minute import will
+> not survive that, and reviewer agents create worktrees and junctions that touch mtimes in the main
+> checkout. **For a long import, run the API without watch:**
+>
+> ```
+> cd src/apps/server
+> pnpm exec tsx --env-file-if-exists=../../../.env dev-server.mjs
+> ```
+>
+> `.data/db.lock` is a **directory**; clear a stale one only when no process holds the DB.
+>
+> Import: `POST /api/pdf-imports` with header `x-pdf-import-metadata` set to base64 of
+> `{"fileName","enteredTitle","enteredAuthor","enteredLanguage"}` and the raw PDF as the body
+> (`curl.exe --data-binary "@file"`). Poll `GET /api/pdf-imports/:attemptId`. Delete a Work with
+> `DELETE /api/works/:workEntryId` (cascade, #541).
+>
 > ### Still to do when you return
 >
-> The broken Clean Code Work is **still in the database** and nothing migrates it. Delete and
-> re-import it: `DELETE /api/works/575f0cfc-c3cc-43cc-a209-5ac3cd40ab60` (the cascade from #541), then
-> import again. The immutable source PDF is preserved at
-> `src/apps/server/.data/sources/c232d244-4c05-4171-9f4b-17c8b4fea22b.pdf` (462 pages), with a copy in
-> this session's `files/clean-code.pdf`. Expect roughly 40 minutes plus OCR.
+> The Clean Code re-import is **done** — see the table above. Nothing needs re-importing.
 >
-> Also note: this host's commit limit is **74.3 GiB** with about **40.9 GiB already charged**, so a
-> 31.78 GiB conversion fits with little to spare. On a busier or smaller host it can still be starved —
-> which now surfaces as a visible refusal rather than a silent 9% book. A commit-scale ceiling cannot
-> bound real pressure; that is recorded in D7 as unfinished business.
+> Note this host's commit limit is **74.3 GiB** with about **40.9 GiB already charged**, so a 31.78 GiB
+> conversion fits with little to spare. On a busier or smaller host it can still be starved — which now
+> surfaces as a visible refusal rather than a silent 9% book. A commit-scale ceiling cannot bound real
+> pressure; that is recorded in D7 as unfinished business and deserves an issue.
+>
+> Two small wording tidies were flagged and left as non-blocking: D7 and the POSIX path describe
+> `RLIMIT_AS` as bounding commit when it bounds **address space**, and `serverConfig.ts` says the
+> runtime "reserves address space it never touches" where D7 says "commits". Same idea, inconsistent
+> vocabulary.
+>
+> **The stored `gh-personal` config has lost its token**, which breaks the `run-*.cmd` launchers. Two
+> independent agents hit this. Recover a token from the Windows credential manager instead:
+>
+> ```powershell
+> $in = "protocol=https`nhost=github.com`nusername=FrancisTan2014`n`n"
+> $tok = ((($in | git -c credential.https://github.com.helper=manager -c credential.interactive=never credential fill 2>&1) | Select-String '^password=').ToString()) -replace '^password=',''
+> $env:GH_TOKEN=$tok; $env:GITHUB_TOKEN=$tok
+> ```
+>
+> Environment variables do **not** persist between tool calls — re-run that block every time.
 >
 > The reusable diagnostic is `files/diag_prod.py` — it runs the production worker under the real Job
 > Object and prints `result.status`, `result.errors`, page/char counts and peak bytes:
