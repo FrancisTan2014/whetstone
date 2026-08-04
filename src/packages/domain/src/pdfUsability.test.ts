@@ -13,7 +13,8 @@ import type {
   CorpusCaseInput,
   CorpusCaseResult,
   MappedWorkSummary,
-  PdfCaseMetrics
+  PdfCaseMetrics,
+  PdfUsabilityReason
 } from "./pdfUsability.js";
 
 const BOUNDS: CorpusBounds = { maxBytes: 128 * 1024 * 1024, maxPages: 3000 };
@@ -369,4 +370,119 @@ describe("regression fixtures", () => {
       expect(classifyPdfUsability(fixture.observation)).toEqual(fixture.expected);
     });
   }
+});
+
+// #832/#839. summarizeCorpus pre-seeds a zero counter for every reason in the module-private
+// USABILITY_REASONS list (reasonCounts = zeroed(USABILITY_REASONS)), so a reason no case hit still
+// appears in the aggregate as 0 instead of vanishing. That safety net only holds if USABILITY_REASONS
+// carries EXACTLY the reasons classifyPdfUsability can return: a reason the mapping produces but the
+// list omits is under-counted to invisibility (the corpus run silently under-reports the very thing it
+// measures — the defect the #839 harness fix was written to prevent), and a reason the list carries but
+// the mapping can never produce shows a permanent phantom 0. This block pins USABILITY_REASONS to the
+// mapping's real output in BOTH directions, observed through the report itself rather than by exporting
+// the private list only to restate it.
+describe("USABILITY_REASONS matches the reasons the canonical mapping can produce", () => {
+  // The producible set is the reasons classifyPdfUsability ACTUALLY returns, derived by driving the
+  // mapping over its input space rather than by hand-listing outputs (which is what let a new mapped
+  // sub-branch slip past this pin during review). It has two parts.
+  //
+  // Part 1 -- every non-`mapped` observation kind. Each is a distinct top-level union variant that maps
+  // 1:1 to a fixed reason with no sub-branches, and the production switch in classifyPdfUsability
+  // already forces exhaustive handling of the kinds, so a brand-new *kind* is a visible production
+  // change that must also be added to this short list (see the residual-gap note on the first test).
+  const nonMappedObservations: readonly ClassifiableObservation[] = [
+    { kind: "ocr_required", pagesNeedingOcr: 3 },
+    { kind: "no_content" },
+    { kind: "conversion_failed", detail: "x" },
+    { kind: "incomplete_conversion" },
+    { kind: "timeout" },
+    { kind: "memory" }
+  ];
+
+  // Part 2 -- a sweep of `mapped` over representative boundary values of EVERY MappedWorkSummary field,
+  // including headingCount, which classifyMappedWork does not read today. The values span the
+  // boundaries the current thresholds turn on (0; one; a count that crosses the 10% unknown / 25%
+  // low-confidence ceilings against the swept block counts) plus a 0/positive split for the fields the
+  // rubric does not read yet. Sweeping the INPUT space (the Cartesian product below) instead of
+  // hand-picking outputs is what makes this pin robust to future edits: a newly added mapped sub-branch
+  // keyed on an existing field -- e.g. a `headingCount === 0` rule producing a new reason -- is
+  // exercised automatically, so that reason lands in producibleReasons and the direction-A test below
+  // catches it if USABILITY_REASONS was not updated to match.
+  const mappedSweep: MappedWorkSummary[] = [];
+  for (const blockCount of [1, 10]) {
+    for (const headingCount of [0, 1, 3]) {
+      for (const unknownBlockCount of [0, 1, 2]) {
+        for (const lowConfidenceBlockCount of [0, 1, 3]) {
+          for (const unresolvedFigureCount of [0, 2]) {
+            for (const plainTextLength of [0, 500]) {
+              mappedSweep.push({
+                blockCount,
+                headingCount,
+                lowConfidenceBlockCount,
+                plainTextLength,
+                unknownBlockCount,
+                unresolvedFigureCount
+              });
+            }
+          }
+        }
+      }
+    }
+  }
+
+  const producibleReasons = new Set<PdfUsabilityReason>();
+  for (const observation of nonMappedObservations) {
+    producibleReasons.add(classifyPdfUsability(observation).reason);
+  }
+  for (const summary of mappedSweep) {
+    producibleReasons.add(classifyPdfUsability({ kind: "mapped", summary }).reason);
+  }
+
+  // The reasons the committed report actually pre-seeds: summarizeCorpus([]) returns
+  // reasonCounts = zeroed(USABILITY_REASONS), so its keys ARE USABILITY_REASONS — read through the
+  // report (the thing that under-counts on drift), which keeps the list encapsulated in the module.
+  const registeredReasons = new Set(
+    Object.keys(summarizeCorpus([]).reasonCounts) as PdfUsabilityReason[]
+  );
+
+  // Residual gap, stated precisely so no one over-trusts this pin. The sweep varies EVERY current
+  // MappedWorkSummary field, so the exact shape #842 was reopened for -- a new `mapped` sub-branch
+  // keyed on an existing field, including headingCount which the rubric ignores today -- IS caught: the
+  // reason it produces lands in producibleReasons and direction-A below goes red if it is unregistered.
+  // NOT caught automatically, and each requires a visible production change that lands the developer
+  // here: (1) a brand-new observation *kind* -- classifyPdfUsability's switch is exhaustive, so adding a
+  // kind is a compile-forced production edit, but this pin only sees it once the kind is added to
+  // nonMappedObservations above; (2) a brand-new MappedWorkSummary *field* with a branch keyed on it --
+  // the sweep cannot vary a field that does not exist yet, so the loop must be extended when the field
+  // and its rule are added; (3) a reason produced ONLY at a field value outside the representative
+  // boundary set below -- mitigated by picking values on each active threshold, not exhaustive over all
+  // integers. This is strictly narrower than the hand-picked table it replaced, which missed ANY new
+  // sub-branch, not just these three.
+  it("registers every reason the mapping can produce, so the corpus report can never silently drop one", () => {
+    const producedButUnregistered = [...producibleReasons]
+      .filter((reason) => !registeredReasons.has(reason))
+      .sort();
+    expect(
+      producedButUnregistered,
+      `The canonical mapping can return ${JSON.stringify(producedButUnregistered)}, but ` +
+        `USABILITY_REASONS does not list that reason. summarizeCorpus seeds reasonCounts from ` +
+        `USABILITY_REASONS, so an unregistered reason with a zero count is dropped from the corpus ` +
+        `report and the run silently under-reports it (#832/#839). Add it to USABILITY_REASONS in ` +
+        `pdfUsability.ts.`
+    ).toEqual([]);
+  });
+
+  it("registers no reason the mapping can never produce, so the report carries no permanent phantom 0", () => {
+    const registeredButUnproducible = [...registeredReasons]
+      .filter((reason) => !producibleReasons.has(reason))
+      .sort();
+    expect(
+      registeredButUnproducible,
+      `USABILITY_REASONS lists ${JSON.stringify(registeredButUnproducible)}, but the canonical mapping ` +
+        `never returns that reason across the non-mapped kinds or the MappedWorkSummary sweep above, ` +
+        `so the corpus report would carry a row no case can ever fill. Either it is a stale entry ` +
+        `(remove it from USABILITY_REASONS), or the sweep above no longer reaches it (widen the ` +
+        `boundary values it varies).`
+    ).toEqual([]);
+  });
 });
