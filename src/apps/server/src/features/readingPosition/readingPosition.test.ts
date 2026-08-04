@@ -3,6 +3,7 @@ import { toEntryId } from "@whetstone/domain";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { InjectOptions, LightMyRequestResponse } from "fastify";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type {
@@ -21,16 +22,20 @@ import { createServer } from "../../http/createServer.js";
 import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
 import type { ContentDependencies } from "../content/contentCommands.js";
 import { createWork } from "../library/libraryCommands.js";
-import type { LibraryDependencies } from "../library/libraryCommands.js";
+import type { LibraryRouteDependencies } from "../library/libraryRoutes.js";
 import {
   getLatestReadingPosition,
   getReadingPosition,
   getWorksWithReadingPosition
 } from "./readingPositionQueries.js";
 
+// What a test may send as a request body -- including shapes the route must reject. `NonNullable`
+// because `exactOptionalPropertyTypes` forbids handing `inject` an explicitly `undefined` payload.
+type InjectPayload = NonNullable<InjectOptions["payload"]>;
+
 type TestContext = Readonly<{
   db: DbClient;
-  library: LibraryDependencies;
+  library: LibraryRouteDependencies;
   server: ReturnType<typeof createServer>;
   sourcesDir: string;
 }>;
@@ -46,16 +51,30 @@ async function buildContext(): Promise<TestContext> {
   let workSequence = 0;
   let contentSequence = 0;
   let sourceSequence = 0;
-  const library: LibraryDependencies = {
+  const library: LibraryRouteDependencies = {
     createAuthorId: () => `author-${(workSequence += 1)}`,
     createEntryId: () => `work-${workSequence}`,
     db,
+    // Work deletion is exercised in library.test.ts; these tests never call DELETE /api/works/:id,
+    // so the file-side collaborators fail loudly rather than silently no-op.
+    deleteSourceFile: () => Promise.reject(new Error("unexpected deleteSourceFile")),
+    logSourceUnlinkFailure: () => {
+      throw new Error("unexpected logSourceUnlinkFailure");
+    },
     now: () => new Date()
   };
   const content: ContentDependencies = {
+    createAuthorId: () => `content-author-${(contentSequence += 1)}`,
     createEntryId: () => `content-${(contentSequence += 1)}`,
     createSourceId: () => `source-${(sourceSequence += 1)}`,
     db,
+    // These tests never ingest an EPUB; the parser, upload limit, and image store exist only to
+    // satisfy the content route wiring, and fail loudly rather than silently no-op if reached.
+    epubParser: () => Promise.reject(new Error("unexpected epubParser")),
+    epubUploadLimitBytes: 50 * 1024 * 1024,
+    imageResourceStore: {
+      store: () => Promise.reject(new Error("unexpected imageResourceStore.store"))
+    },
     ingestionLogger: () => {},
     sourceFileStore: createSourceFileStore(sourcesDir)
   };
@@ -115,17 +134,14 @@ async function createWorkWithUnitAndBlock(): Promise<{
   };
 }
 
-function getPosition(workEntryId: string): ReturnType<typeof context.server.inject> {
+function getPosition(workEntryId: string): Promise<LightMyRequestResponse> {
   return context.server.inject({
     method: "GET",
     url: `/api/works/${workEntryId}/reading-position`
   });
 }
 
-function putPosition(
-  workEntryId: string,
-  payload: unknown
-): ReturnType<typeof context.server.inject> {
+function putPosition(workEntryId: string, payload: InjectPayload): Promise<LightMyRequestResponse> {
   return context.server.inject({
     method: "PUT",
     payload,

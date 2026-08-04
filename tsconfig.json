@@ -2,9 +2,13 @@
   "files": [],
   "references": [
     { "path": "./src/packages/document" },
+    { "path": "./src/packages/document/tsconfig.test.json" },
     { "path": "./src/packages/domain" },
+    { "path": "./src/packages/domain/tsconfig.test.json" },
     { "path": "./src/packages/contracts" },
+    { "path": "./src/packages/contracts/tsconfig.test.json" },
     { "path": "./src/apps/server" },
+    { "path": "./src/apps/server/tsconfig.test.json" },
     { "path": "./src/apps/web" },
     { "path": "./src/apps/mobile" }
   ]

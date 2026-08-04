@@ -4,16 +4,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import type { PgTable } from "drizzle-orm/pg-core";
+import type { InjectOptions } from "fastify";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { AuthorNoteCardRequest } from "@whetstone/contracts";
 import { createTextDocument, documentReadableText, documentText } from "@whetstone/document";
-import { RECALL_REQUEST_RETENTION } from "@whetstone/domain";
+import { RECALL_REQUEST_RETENTION, toEntryId } from "@whetstone/domain";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
 import {
   cardCreationReceipts,
+  entries,
   entryLinks,
   memoryPrompts,
   personalEntries,
@@ -24,16 +26,15 @@ import { createSourceFileStore } from "../../files/sourceFileStore.js";
 import { createServer } from "../../http/createServer.js";
 import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
 import type { ContentDependencies } from "../content/contentCommands.js";
-import type { LibraryDependencies } from "../library/libraryCommands.js";
-import {
-  deleteNoteInTx,
-  insertNoteInTx,
-  insertNotePromptInTx,
-  type NotesDependencies
-} from "../notes/noteCommands.js";
+import type { LibraryRouteDependencies } from "../library/libraryRoutes.js";
+import { deleteNoteInTx, insertNoteInTx, type NotesDependencies } from "../notes/noteCommands.js";
 import { deleteReviewCard } from "../review/reviewCardCommands.js";
 import { authorNoteCard, type AuthorNoteCardDependencies } from "./authorNoteCard.js";
 import type { NotesReviewRouteDependencies } from "./notesReviewRoutes.js";
+
+// What a test may send as a request body -- including shapes the route must reject. `NonNullable`
+// because `exactOptionalPropertyTypes` forbids handing `inject` an explicitly `undefined` payload.
+type InjectPayload = NonNullable<InjectOptions["payload"]>;
 
 const now = new Date("2026-03-01T08:00:00.000Z");
 const later = new Date("2026-03-05T09:30:00.000Z");
@@ -57,16 +58,30 @@ async function buildContext(): Promise<TestContext> {
 
   let clock = now;
   const createId = (): string => `id-${(sequence += 1)}`;
-  const library: LibraryDependencies = {
+  const library: LibraryRouteDependencies = {
     createAuthorId: () => `author-${(sequence += 1)}`,
     createEntryId: () => `work-${(sequence += 1)}`,
     db,
+    // Work deletion is exercised in library.test.ts; these tests never call DELETE /api/works/:id,
+    // so the file-side collaborators fail loudly rather than silently no-op.
+    deleteSourceFile: () => Promise.reject(new Error("unexpected deleteSourceFile")),
+    logSourceUnlinkFailure: () => {
+      throw new Error("unexpected logSourceUnlinkFailure");
+    },
     now: () => new Date()
   };
   const content: ContentDependencies = {
+    createAuthorId: () => `content-author-${(sequence += 1)}`,
     createEntryId: () => `content-${(sequence += 1)}`,
     createSourceId: () => `source-${(sequence += 1)}`,
     db,
+    // These tests never ingest an EPUB; the parser, upload limit, and image store exist only to
+    // satisfy the content route wiring, and fail loudly rather than silently no-op if reached.
+    epubParser: () => Promise.reject(new Error("unexpected epubParser")),
+    epubUploadLimitBytes: 50 * 1024 * 1024,
+    imageResourceStore: {
+      store: () => Promise.reject(new Error("unexpected imageResourceStore.store"))
+    },
     ingestionLogger: () => {},
     sourceFileStore: createSourceFileStore(sourcesDir)
   };
@@ -75,7 +90,12 @@ async function buildContext(): Promise<TestContext> {
     db,
     now: () => clock
   };
-  const notesReview: NotesReviewRouteDependencies = { createId, db, now: () => clock };
+  const notesReview: NotesReviewRouteDependencies = {
+    attemptTtlMs: 30 * 60 * 1000,
+    createId,
+    db,
+    now: () => clock
+  };
 
   return {
     db,
@@ -125,7 +145,7 @@ async function seedNote(
       bodyText: isMark ? null : body,
       captureSource: "manual",
       kind: over.kind ?? "note",
-      noteEntryId,
+      noteEntryId: toEntryId(noteEntryId),
       now: over.when ?? now,
       userId: over.userId ?? DEFAULT_USER_ID
     })
@@ -134,21 +154,31 @@ async function seedNote(
 }
 
 // Seed a historical `legacy_custom` prompt on a note — an imported cardless sibling that coexists with any
-// number of authored prompts on the same note.
+// number of authored prompts on the same note. Written row-by-row rather than through
+// `insertNotePromptInTx`, because that writer only ever mints the two live reveal kinds (#658/#661/#689);
+// `legacy_custom` exists only as already-migrated historical data, which is exactly what this seeds.
 async function seedLegacyPrompt(noteEntryId: string): Promise<string> {
   const promptId = `legacy-${(sequence += 1)}`;
-  await context.db.transaction((tx) =>
-    insertNotePromptInTx(tx, {
+  await context.db.transaction(async (tx) => {
+    await tx.insert(entries).values({ id: promptId, type: "memory_prompt" });
+    await tx.insert(memoryPrompts).values({
       answerDoc: createTextDocument("A preserved custom answer."),
       answerText: "A preserved custom answer.",
+      chunkId: null,
+      createdAt: now,
       cueDoc: questionDoc("A legacy question?"),
       cueText: "A legacy question?",
+      entryId: promptId,
+      lifecycle: "ready",
       noteEntryId,
-      now,
-      promptId,
       revealKind: "legacy_custom"
-    })
-  );
+    });
+    await tx.insert(entryLinks).values({
+      fromEntryId: noteEntryId,
+      toEntryId: promptId,
+      type: "contains"
+    });
+  });
   return promptId;
 }
 
@@ -566,7 +596,7 @@ describe("authorNoteCard", () => {
 });
 
 describe("POST /api/notes/review/author-cards", () => {
-  const post = (payload: unknown) =>
+  const post = (payload: InjectPayload) =>
     context.server.inject({ method: "POST", payload, url: "/api/notes/review/author-cards" });
 
   it("authors a card and returns the result for a current-note target", async () => {

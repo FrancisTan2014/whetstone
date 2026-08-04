@@ -1,6 +1,6 @@
 import { PGlite } from "@electric-sql/pglite";
 import { sql } from "drizzle-orm";
-import { toAuthorId } from "@whetstone/domain";
+import { toAuthorId, toEntryId } from "@whetstone/domain";
 import type { WorkLanguage, WorkType } from "@whetstone/domain";
 import { beforeEach, describe, expect, it } from "vitest";
 
@@ -107,8 +107,8 @@ describe("findWorkDuplicateCandidates", () => {
     const sameAuthor = new Map(
       result.candidates.map((row) => [row.entryId, row.evidence.sameAuthor])
     );
-    expect(sameAuthor.get("w-same")).toBe(true);
-    expect(sameAuthor.get("w-diff")).toBe(false);
+    expect(sameAuthor.get(toEntryId("w-same"))).toBe(true);
+    expect(sameAuthor.get(toEntryId("w-diff"))).toBe(false);
     expect(calls).toEqual([
       {
         payload: { totalCandidateCount: 2, returnedCandidateCount: 2 },

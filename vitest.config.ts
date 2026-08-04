@@ -103,6 +103,7 @@ export default defineConfig({
     include: [
       "src/apps/**/*.{test,spec}.{ts,tsx}",
       "src/packages/**/*.{test,spec}.{ts,tsx}",
+      "scripts/build/**/*.{test,spec}.mjs",
       "scripts/probes/**/*.{test,spec}.mjs",
       "scripts/setup/**/*.{test,spec}.mjs"
     ],

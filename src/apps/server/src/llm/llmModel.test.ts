@@ -3,6 +3,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createOllamaModel, ollamaBaseUrl, probeOllamaModel } from "./llmModel.js";
 
+// The mock's `doGenerate` result type, taken from the mock itself rather than importing the SDK's
+// provider package directly (it is a transitive dependency, not one this app declares).
+type MockGenerateResult = Awaited<ReturnType<MockLanguageModelV4["doGenerate"]>>;
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -13,15 +17,19 @@ describe("createOllamaModel", () => {
     const model = createOllamaModel(
       "llama3.1:8b",
       new MockLanguageModelV4({
-        doGenerate: async (options) => {
+        doGenerate: async (options): Promise<MockGenerateResult> => {
           // The prompt is threaded to the model as a single user message — assert it arrives verbatim
-          // so a dropped/garbled prompt fails here rather than silently degrading the completion.
+          // so a dropped/garbled prompt fails here rather than silently degrading the completion. A
+          // message's content is a string for system messages, so narrow to the part shape first.
           const part = options.prompt.at(-1)?.content?.at(0);
-          seenPrompt = part && part.type === "text" ? part.text : undefined;
+          seenPrompt = typeof part === "object" && part.type === "text" ? part.text : undefined;
           return {
             content: [{ text: "the completion", type: "text" }],
-            finishReason: "stop",
-            usage: { inputTokens: 3, outputTokens: 2, totalTokens: 5 },
+            finishReason: { raw: "stop", unified: "stop" },
+            usage: {
+              inputTokens: { cacheRead: 0, cacheWrite: 0, noCache: 3, total: 3 },
+              outputTokens: { reasoning: 0, text: 2, total: 2 }
+            },
             warnings: []
           };
         }
@@ -42,12 +50,15 @@ describe("createOllamaModel", () => {
     const model = createOllamaModel(
       "llama3.1:8b",
       new MockLanguageModelV4({
-        doGenerate: async (options) => {
+        doGenerate: async (options): Promise<MockGenerateResult> => {
           seen = options.responseFormat;
           return {
             content: [{ text: '{"say":"ok"}', type: "text" }],
-            finishReason: "stop",
-            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            finishReason: { raw: "stop", unified: "stop" },
+            usage: {
+              inputTokens: { cacheRead: 0, cacheWrite: 0, noCache: 1, total: 1 },
+              outputTokens: { reasoning: 0, text: 1, total: 1 }
+            },
             warnings: []
           };
         }

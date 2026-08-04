@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { classifyEmptyTranscript } from "./speechFailure";
+import { classifyEmptyTranscript } from "./speechFailure.js";
 
 describe("classifyEmptyTranscript", () => {
   it("treats an empty transcript from a configured speech engine as genuine silence", () => {

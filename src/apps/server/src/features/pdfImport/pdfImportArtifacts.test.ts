@@ -62,7 +62,6 @@ function item(partial: Partial<StructuredDocItem> & { label: string }): Structur
     charSpan: [0, 0],
     children: [],
     confidence: 0.9,
-    label: partial.label,
     pageNumber: 1,
     text: "",
     ...partial

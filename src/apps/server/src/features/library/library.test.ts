@@ -6,6 +6,7 @@ import { fingerprintNoteMaterial } from "../notes/noteMaterialFingerprint.js";
 import { MAX_WORK_CONTENT_REVISION } from "@whetstone/contracts";
 import {
   RECALL_REQUEST_RETENTION,
+  toAuthorId,
   toEntryId,
   type WorkLanguage,
   type WorkType
@@ -340,7 +341,7 @@ describe("library routes", () => {
       url: "/api/authors",
       payload: { name: "Charles Dickens" }
     });
-    const authorId = author.json().id as string;
+    const authorId = toAuthorId(author.json().id as string);
 
     const created = await createWork(
       context.library,
@@ -376,7 +377,7 @@ describe("library routes", () => {
     const result = await createWork(
       context.library,
       {
-        author: { authorId: "missing-author", mode: "existing" },
+        author: { authorId: toAuthorId("missing-author"), mode: "existing" },
         language: "en",
         origin: "imported",
         title: "Orphan Work",
@@ -644,7 +645,7 @@ async function seedMemoriesDerivedFromWork(db: DbClient): Promise<ReadonlyArray<
         captureSource: "reader",
         derivedFromEntryId,
         kind: "note",
-        noteEntryId: noteId,
+        noteEntryId: toEntryId(noteId),
         now,
         userId: "user-a"
       });
@@ -1147,6 +1148,9 @@ describe("manual work editor (#720, sections #697)", () => {
 
     const firstBlock = (loaded.document as { content: Array<{ attrs: { id: string } }> })
       .content[0];
+    if (firstBlock === undefined) {
+      throw new Error("expected the loaded manual work to have a first block");
+    }
     const originalId = firstBlock.attrs.id;
     expect(typeof originalId).toBe("string");
 
@@ -1682,9 +1686,9 @@ describe("manual work editor (#720, sections #697)", () => {
     // One section remains — the headless lead — and the editor opens at it (the merged-into unit).
     const sections = merged.json().sections as Array<Record<string, unknown>>;
     expect(sections).toHaveLength(1);
-    expect(sections[0].headingLevel).toBeUndefined();
-    expect(sections[0].title).toBeUndefined();
-    expect(sections[0].unitEntryId).toBe(initial.unitEntryId);
+    expect(sections[0]?.headingLevel).toBeUndefined();
+    expect(sections[0]?.title).toBeUndefined();
+    expect(sections[0]?.unitEntryId).toBe(initial.unitEntryId);
     expect(merged.json().unitEntryId).toBe(initial.unitEntryId);
     expect(documentText(merged.json().document)).toBe(
       "A lead paragraph before any heading.Body only now."

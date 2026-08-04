@@ -3,20 +3,21 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { strToU8, zipSync } from "fflate";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
 import {
   createEpubParser,
   readNavDocument,
   readResourceBytes,
   sanitizeEpubBytes,
-  spineSourceFile
+  spineSourceFile,
+  type EpubParserDebugLog
 } from "./epubSource.js";
 
 let imagesDir: string;
 // A spy debug sink passed to every parser under test, so the "resource skipped" boundary log is
 // asserted rather than silently swallowed.
-let logDebug: ReturnType<typeof vi.fn>;
+let logDebug: Mock<EpubParserDebugLog>;
 
 const container = `<?xml version="1.0"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
@@ -209,7 +210,7 @@ function buildValidZipInvalidEpubBytes(): Uint8Array {
 
 beforeEach(async () => {
   imagesDir = await mkdtemp(join(tmpdir(), "whetstone-epub-img-"));
-  logDebug = vi.fn();
+  logDebug = vi.fn<EpubParserDebugLog>();
 });
 
 afterEach(async () => {

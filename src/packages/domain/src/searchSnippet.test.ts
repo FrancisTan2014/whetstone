@@ -14,7 +14,9 @@ function snippetFor(plaintext: string, needle: string, maxCodePoints?: number) {
     plaintext,
     matchStartCodePoint: codePointIndexOf(plaintext, needle),
     matchLengthCodePoints: Array.from(needle).length,
-    maxCodePoints
+    // `maxCodePoints` is optional under `exactOptionalPropertyTypes`, so omit the key entirely
+    // rather than passing an explicit `undefined` the parameter type does not accept.
+    ...(maxCodePoints === undefined ? {} : { maxCodePoints })
   });
 }
 

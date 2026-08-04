@@ -57,6 +57,9 @@ async function buildContext(): Promise<TestContext> {
   // The diary route is mounted only so the shared Timeline endpoint exists for the "work appears on the
   // Timeline" test; authored works do not otherwise depend on it.
   const diary: DiaryRouteDependencies = {
+    // These tests never stream a retained recording back, so the audio store fails loudly instead of
+    // silently answering 404 if a future test starts exercising playback through this server.
+    audioStore: { open: () => Promise.reject(new Error("unexpected audioStore.open")) },
     createId: () => `diary-${(sequence += 1)}`,
     db,
     deleteAudio: () => Promise.resolve(),
@@ -519,8 +522,8 @@ describe("authored Works are first-class in the shared reader (#576)", () => {
     // the PM nodes (toReaderBlocks prefers docBlocks). The block ids match the saved document so notes
     // anchor to them.
     expect(unit?.blocks).toEqual([]);
-    expect(unit?.docBlocks.map((block) => block.entryId)).toEqual([blockId(document, 0)]);
-    expect(unit?.docBlocks[0]?.type).toBe("paragraph");
+    expect(unit?.docBlocks?.map((block) => block.entryId)).toEqual([blockId(document, 0)]);
+    expect(unit?.docBlocks?.[0]?.type).toBe("paragraph");
   });
 
   it("still surfaces a brand-new empty authored Work, marking its empty unit non-substantive", async () => {

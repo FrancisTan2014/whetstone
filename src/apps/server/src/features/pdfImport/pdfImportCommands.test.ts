@@ -86,6 +86,7 @@ describe("pdfImport commands", () => {
       userId: DEFAULT_USER_ID,
       sourceHash: "a".repeat(64),
       stagePath,
+      ocrLanguage: "en",
       now: new Date()
     });
   }
@@ -111,6 +112,7 @@ describe("pdfImport commands", () => {
       const started = await bindStagedPdfAttempt(deps, {
         attemptId: staged.attemptId,
         stagePath: staged.stagePath,
+        ocrLanguage: "en",
         sha256: staged.sha256,
         userId: DEFAULT_USER_ID
       });
@@ -163,6 +165,7 @@ describe("pdfImport commands", () => {
         userId: DEFAULT_USER_ID,
         sourceHash: "a".repeat(64),
         stagePath: "dup",
+        ocrLanguage: "en",
         now: new Date()
       });
       const deps = buildDeps({ createAttemptId: () => "dup" });
@@ -175,6 +178,7 @@ describe("pdfImport commands", () => {
         bindStagedPdfAttempt(deps, {
           attemptId: staged.attemptId,
           stagePath: staged.stagePath,
+          ocrLanguage: "en",
           sha256: staged.sha256,
           userId: DEFAULT_USER_ID
         })
@@ -192,14 +196,12 @@ describe("pdfImport commands", () => {
         userId: DEFAULT_USER_ID,
         sourceHash: "a".repeat(64),
         stagePath: "dup",
+        ocrLanguage: "en",
         now: new Date()
       });
       const logCleanupFailure = vi.fn();
       const failingStore: PdfImportStageStore = {
-        createStage: stageStore.createStage,
-        createStageFromStream: stageStore.createStageFromStream,
-        openStage: stageStore.openStage,
-        readStage: stageStore.readStage,
+        ...stageStore,
         removeStage: () => Promise.reject("busy")
       };
       const deps = buildDeps({
@@ -217,6 +219,7 @@ describe("pdfImport commands", () => {
           // Bind under the colliding id so the insert fails, driving the rollback.
           attemptId: "dup",
           stagePath: staged.stagePath,
+          ocrLanguage: "en",
           sha256: staged.sha256,
           userId: DEFAULT_USER_ID
         })
@@ -241,6 +244,7 @@ describe("pdfImport commands", () => {
         bindStagedPdfAttempt(deps, {
           attemptId: staged.attemptId,
           stagePath: staged.stagePath,
+          ocrLanguage: "en",
           sha256: staged.sha256,
           userId: DEFAULT_USER_ID,
           commitWithin
@@ -265,6 +269,7 @@ describe("pdfImport commands", () => {
       const started = await bindStagedPdfAttempt(deps, {
         attemptId: staged.attemptId,
         stagePath: staged.stagePath,
+        ocrLanguage: "en",
         sha256: staged.sha256,
         userId: DEFAULT_USER_ID,
         commitWithin: async (tx, record) => {
@@ -305,10 +310,7 @@ describe("pdfImport commands", () => {
     it("surfaces a cleanup failure via the logger without throwing", async () => {
       const logCleanupFailure = vi.fn();
       const failingStore: PdfImportStageStore = {
-        createStage: stageStore.createStage,
-        createStageFromStream: stageStore.createStageFromStream,
-        openStage: stageStore.openStage,
-        readStage: stageStore.readStage,
+        ...stageStore,
         removeStage: () => Promise.reject(new Error("locked"))
       };
       const deps = buildDeps({ logCleanupFailure, stageStore: failingStore });
@@ -371,10 +373,7 @@ describe("pdfImport commands", () => {
       await seedStaged("a1");
       const logCleanupFailure = vi.fn();
       const failingStore: PdfImportStageStore = {
-        createStage: stageStore.createStage,
-        createStageFromStream: stageStore.createStageFromStream,
-        openStage: stageStore.openStage,
-        readStage: stageStore.readStage,
+        ...stageStore,
         removeStage: () => Promise.reject(new Error("locked"))
       };
       const result = await cancelPdfImport(
@@ -401,10 +400,7 @@ describe("pdfImport commands", () => {
       await seedStaged("a1");
       const logCleanupFailure = vi.fn();
       const failingStore: PdfImportStageStore = {
-        createStage: stageStore.createStage,
-        createStageFromStream: stageStore.createStageFromStream,
-        openStage: stageStore.openStage,
-        readStage: stageStore.readStage,
+        ...stageStore,
         removeStage: () => Promise.reject(new Error("locked"))
       };
       const result = await cancelPdfImport(
@@ -425,10 +421,7 @@ describe("pdfImport commands", () => {
       await seedStaged("a1");
       const logCleanupFailure = vi.fn();
       const failingStore: PdfImportStageStore = {
-        createStage: stageStore.createStage,
-        createStageFromStream: stageStore.createStageFromStream,
-        openStage: stageStore.openStage,
-        readStage: stageStore.readStage,
+        ...stageStore,
         removeStage: () => Promise.reject("stage busy")
       };
       const result = await cancelPdfImport(
@@ -453,10 +446,7 @@ describe("pdfImport commands", () => {
         .where(eq(pdfImportAttempts.id, "a1"));
       const removeStage = vi.fn(() => Promise.resolve());
       const noRemoveStore: PdfImportStageStore = {
-        createStage: stageStore.createStage,
-        createStageFromStream: stageStore.createStageFromStream,
-        openStage: stageStore.openStage,
-        readStage: stageStore.readStage,
+        ...stageStore,
         removeStage
       };
       const result = await cancelPdfImport(buildDeps({ stageStore: noRemoveStore }), {
@@ -514,10 +504,7 @@ describe("pdfImport commands", () => {
     // A store whose removeStage always rejects, to drive a cleanup failure that leaves the stage bound.
     function rejectingStore(reason: unknown): PdfImportStageStore {
       return {
-        createStage: stageStore.createStage,
-        createStageFromStream: stageStore.createStageFromStream,
-        openStage: stageStore.openStage,
-        readStage: stageStore.readStage,
+        ...stageStore,
         removeStage: () => Promise.reject(reason)
       };
     }
@@ -573,10 +560,7 @@ describe("pdfImport commands", () => {
       await seedStaged("a1");
       const removeStage = vi.fn(() => Promise.resolve());
       const spyingStore: PdfImportStageStore = {
-        createStage: stageStore.createStage,
-        createStageFromStream: stageStore.createStageFromStream,
-        openStage: stageStore.openStage,
-        readStage: stageStore.readStage,
+        ...stageStore,
         removeStage
       };
       const result = await retryPdfImportCleanup(buildDeps({ stageStore: spyingStore }), {
@@ -596,10 +580,7 @@ describe("pdfImport commands", () => {
       await cancelPdfImport(buildDeps(), { userId: DEFAULT_USER_ID, attemptId: "a1" });
       const removeStage = vi.fn(() => Promise.resolve());
       const spyingStore: PdfImportStageStore = {
-        createStage: stageStore.createStage,
-        createStageFromStream: stageStore.createStageFromStream,
-        openStage: stageStore.openStage,
-        readStage: stageStore.readStage,
+        ...stageStore,
         removeStage
       };
       const result = await retryPdfImportCleanup(buildDeps({ stageStore: spyingStore }), {
