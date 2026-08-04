@@ -534,6 +534,22 @@ describe("mapStructuredDocument", () => {
     expect(result.status).toBe("mapped");
   });
 
+  it("accepts a page whose only item the converter filed in the furniture group", () => {
+    // The payload carries TWO groups and the invariant must read both. Docling files running heads in
+    // `doc.body` today, but `doc.furniture` is a first-class part of the validated contract, and a
+    // healthy book's part-divider verso or numbered blank page may contribute only there. Reading the
+    // body alone would refuse that sound book — so this asserts the mapping passes furniture through.
+    const pages = [
+      { hasNativeText: true, pageNumber: 1 },
+      { hasNativeText: true, pageNumber: 2 }
+    ];
+    const document = {
+      ...doc([item({ label: "text", pageNumber: 1, text: "real content" })], pages),
+      furniture: [item({ label: "page_header", pageNumber: 2, text: "Chapter 5" })]
+    };
+    expect(mapEn(document).status).toBe("mapped");
+  });
+
   it("refuses text-less pages before it looks at conversion coverage", () => {
     // A text-less page is the OCR path's business. Reporting it as a dropped page instead would send
     // the learner to the wrong remedy.

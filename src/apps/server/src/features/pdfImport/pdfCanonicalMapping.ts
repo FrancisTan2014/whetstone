@@ -13,7 +13,7 @@ import {
 import {
   MAX_PDF_HEADING_LEVEL,
   decidePageFurniture,
-  findPagesMissingBodyContent,
+  findPagesMissingConvertedContent,
   matchOutlineHeading,
   type PageFurnitureExclusionRule
 } from "@whetstone/domain";
@@ -70,9 +70,10 @@ export type PdfExcludedFurniture = Readonly<{
 // mapping means the OCR pass and the full conversion DISAGREED, or OCR was incomplete: the whole
 // publication is refused with a typed `ocr_validation_failed` outcome and NO partial Work is created. A
 // document that reports SUCCESS but silently DROPPED pages is refused with a typed `incomplete_conversion`
-// outcome (#832): a page the extractor itself said carried native text must contribute at least one body
-// item, so a fragment can never be published as a whole book even if the converter claimed to succeed.
-// A
+// outcome (#832): a page the extractor itself said carried native text must contribute at least one
+// RECOGNIZED item — body or furniture — so a fragment can never be published as a whole book even if the
+// converter claimed to succeed. Furniture counts deliberately: a page whose only text is a running head
+// or a folio still converted, and demanding a body item there would refuse a healthy book. A
 // PDF whose pages carry native text but map to ZERO canonical blocks (an empty body) is refused with a
 // typed `no_content` outcome, so publication never creates an empty-shell Work (#702's "no empty shell").
 // A picture/figure construct whose image bytes #701 cannot yet extract does NOT refuse the document
@@ -476,11 +477,17 @@ export function mapStructuredDocument(document: StructuredDocument): PdfCanonica
     return { pagesNeedingOcr, status: "ocr_validation_failed" };
   }
 
-  // Second, INDEPENDENT completeness check (#832), on the RAW body before any furniture rule runs: every
-  // page the extractor said carried native text must have contributed at least one body item. The worker
+  // Second, INDEPENDENT completeness check (#832): every page the extractor said carried native text
+  // must have contributed at least one RECOGNIZED item — body or furniture, at any depth. The worker
   // already refuses a range docling reported as degraded; this catches the same loss from the payload
   // itself, so a converter that claims SUCCESS while dropping pages cannot publish a fragment as a whole
   // book. It is a refusal, not a warning: the defect being fixed is a 9%-complete book that looked real.
+  //
+  // Both groups count, and the RAW body is read before the furniture rule below runs. A real book has
+  // pages whose only text is a running head or a folio — a part-divider verso, a numbered blank page, a
+  // full-page plate — and those pages DID convert; excluding them here would refuse a healthy book
+  // wholesale, a worse defect than the silent truncation this fixes. The furniture rule below is a
+  // readability decision taken after this one, never evidence that a page failed to convert.
   //
   // Only a PARTIAL conversion is this outcome. A document that produced no body items at all extracted
   // nothing anywhere, which is indistinguishable from a genuinely contentless PDF from the payload alone
@@ -488,7 +495,10 @@ export function mapStructuredDocument(document: StructuredDocument): PdfCanonica
   const pagesMissingContent =
     document.body.length === 0
       ? 0
-      : findPagesMissingBodyContent(document.pages, document.body).length;
+      : findPagesMissingConvertedContent(document.pages, {
+          body: document.body,
+          furniture: document.furniture
+        }).length;
   if (pagesMissingContent > 0) {
     return { pagesMissingContent, status: "incomplete_conversion" };
   }
