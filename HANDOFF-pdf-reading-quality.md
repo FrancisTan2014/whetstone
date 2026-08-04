@@ -1226,3 +1226,125 @@ remainder in the shared editor — text that never reaches a block is invisible 
 and in the editor alike. Follow-up **#859** maps `document_index` to the existing canonical
 `tableNode`, and records the prior question it must settle first: whether a printed TOC and index
 belong in the reading body at all, or are furniture #811 should partition out.
+
+## 17. The retained payload: re-map a book in 0.3 s instead of re-converting it
+
+**This is the most reusable thing in this document. Read it before you try to verify any mapper change.**
+
+I believed — and filed #861 saying — that publication discards the converted docling payload, so every
+mapper fix could only be verified by re-uploading and re-converting a 462-page PDF. **That was wrong.**
+
+`removeRetainedStage` (`pdfImportPublish.ts:469`) frees the **stage directory**: the uploaded PDF bytes
+and rendered figure artifacts. It never touches **`pdf_import_ranges`**, and that table holds the
+validated converted payload, one row per range, `payload jsonb`.
+
+Measured on the live DB: **every published attempt still has all its ranges.** Only *failed* attempts
+have none.
+
+| work | pages | ranges | payload on disk |
+|---|---|---|---|
+| Clean Code (published) | 462 | 10 / 10 | **819 KB** |
+| Never Let Me Go | 137 | 3 | 12 KB |
+| AI Literacy Guide | 11 | 1 | 5 KB |
+
+Each payload carries `body`, `pages`, `furniture`, `metadata`, the full **384-entry `outline`**, and
+`schemaVersion: whetstone-pdf-structured-range/1` + `doclingSchema 1.10.0`.
+
+### The harness
+
+The mapper is a pure function of that payload, so you can replay production exactly:
+
+1. Copy the PGlite dir (never query the live one) and dump the ranges:
+   `select range_index, payload from pdf_import_ranges where attempt_id = $1 order by range_index`
+   — the row's `payload` **is** a `RangeConversion`; do not wrap it in `{ document: … }`.
+2. In a vitest file under `src/apps/server/`, call the production pair:
+   `concatenateRanges({ sha256, byteLength: 0, pageCount }, ranges)` from `@whetstone/contracts`,
+   then `mapStructuredDocument(doc)`.
+3. Run it **from the repo root** (`npx vitest run src/apps/server/<file>.test.ts`) — vitest's `include`
+   is repo-root-relative, so running from `src/apps/server` finds no tests.
+
+Units are `PersistableReadingUnit`; the blocks are **`u.docBlocks`**, not `u.blocks`. To count text,
+walk `node.content` recursively collecting `.text` — `plaintext` is not populated on this type.
+
+**It reproduced the live Work exactly** — 525 units, 4,267 blocks, identical type histogram, identical
+`{outline: 367, label: 157}`. That is the proof the harness is faithful. Runtime **0.3 s**.
+
+To test a branch, add a worktree and junction `node_modules` at the root **and** in every
+`src/packages/*` and `src/apps/*` — pnpm's per-package `node_modules` are all required, and you will
+get a misleading `Cannot find package 'zod'` if you link only the root.
+
+### What this changes
+
+- **#861 shrank by half and moved up.** Retention and version-stamping already exist; only the *re-map
+  command* is missing, and the disk-cost open question is answered (819 KB / 462 pp — drop the
+  retention-policy debate). Retitled accordingly.
+- **Clean Code can be corrected without re-importing.** Once #862 and #859 land, the existing Work can
+  be rebuilt from data already in the database. That is the difference between today's fixes being
+  adoptable and being theoretical for anyone with a library.
+- Any future mapper change can be measured on a real 462-page book in under a second. Use it.
+
+## 18. What #862 and #859 actually do to Clean Code, measured end to end
+
+Both numbers below come from the harness above, on the real book, through the production path.
+
+### #862 — chapter-scale units: 525 → 28, losing nothing
+
+The 28 units are the book's own table of contents: `Chapter 1: Clean Code` … `Chapter 17: Smells and
+Heuristics`, `Appendix A/B/C`, `Epilogue`, `Index` — titled from the **outline entry**, not from the
+bare label (`10`). The 12 duplicate-claim headings collapsed correctly, and `Clean Code` (title page,
+p2) stayed separate from `Chapter 1: Clean Code` (p32) because the matcher is page-anchored.
+
+Everything else is **byte-identical to main**: 4,267 blocks, same type histogram, same heading sources,
+same 863 excluded furniture items. Only the boundary moved.
+
+### #859 — `default: return tableNode(item)`: it recovers dropped text
+
+I expected this to be text-neutral re-shaping. It is not.
+
+| | before | after |
+|---|---|---|
+| **text characters** | 787,882 | **857,985  (+70,103)** |
+| blocks | 4,267 | 3,054 |
+| **`unknown` blocks** | **1,243** | **0** |
+| unmapped labels | 7 | 2 (`key_value_area`, `form_area`) |
+| `Contents` unit | 610 blocks | 16 |
+| `Index` unit | 612 blocks | 122 |
+| largest unit | 612 (`Index` — furniture) | **339 (`Chapter 17` — a real chapter)** |
+
+**It is a content-loss defect, not a tidy-up.** The `unknown` fallback is currently dropping 70,103
+characters of table content. Do **not** implement it as "skip expanding table-shaped containers" —
+those containers have no own text and skipping them drops the same 70,103 characters again. Give the
+`default:` branch a canonical node. `tableNode` already keys on `_table_rows`, not on
+`label === "table"`, which is why one line covers seven labels.
+
+Afterwards the unit list is finally book-shaped: today Clean Code's two largest "chapters" are its
+printed Contents and Index; afterwards the largest unit is Chapter 17.
+
+## 19. Corrections I had to make to my own work
+
+Recorded because the pattern matters more than the instances.
+
+**I specified #816's boundary rule wrongly.** I asserted the test was
+`source === "outline" && level === 1`, believing the 12 bare labels (`10`, `Appendix A`) were
+label-derived. Matcher rung 2 (`pdfOutlineHeadings.ts:141-142`) is same-page **substring containment**,
+and `"chapter 10: classes"` contains `"10"` — so all 39 level-1 headings are outline-derived, claiming
+27 distinct entries, 12 of them twice. My rule would have produced 40 units with 12 duplicated titles.
+The developer falsified it; I verified the falsification myself before accepting it.
+
+*Why I missed it:* my correspondence check (27 outline entries ↔ 27 non-label headings, 27 + 12 = 39)
+was consistent with **both** models. I verified the conclusion I wanted rather than the step it rested
+on. One file read would have caught it.
+
+**I filed #861 on a false premise** (§17) — I inferred "the payload is gone" from reading
+`removeRetainedStage` without checking whether another table held it.
+
+Both errors share a shape: **I reasoned from code I had read to a conclusion about data I had not
+measured.** Every time I actually queried the database or ran the mapper, the measurement either
+falsified me or sharpened the design. Measure first.
+
+**And once, the reviewer caught what I would have merged.** #862 delivered half of #816 and said
+`Closes #816`; merging it would have deleted the in-unit section outline from the queue at the moment
+it became most necessary. Re-sliced: #816 is now the boundary rule, **#865** carries the in-unit
+outline. The sidebar today goes from 525 entries nested 3 deep to a flat 28 — a large net gain, but
+chapters run 150–612 blocks with no way to jump inside one. **#865 completes the reading experience;
+treat it as required, not as an enhancement.**
