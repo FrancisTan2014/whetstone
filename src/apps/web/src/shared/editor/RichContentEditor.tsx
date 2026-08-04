@@ -106,10 +106,12 @@ function isSaveShortcut(event: KeyboardEvent): boolean {
 // it — the wide left/right gutter and the tall empty area below the last line of the Work editor's centered
 // "paper" (#791). ProseMirror places no caret when that dead margin is clicked, which reads as a broken
 // text field; the Work surface instead treats such a press as "put me in the document" and focuses the end.
-// Any press that lands on a real block (its target is a descendant, not the content root itself) is left to
-// ProseMirror so ordinary caret placement is unchanged.
-function isBlankSurfacePress(target: EventTarget | null): boolean {
-  return target instanceof HTMLElement && target.classList.contains(editorClassNames.content);
+// Those are exactly the presses whose target is the editable element itself; a press on a block inside the
+// paper, or on the surrounding chrome, reports that node instead and is left to ProseMirror so ordinary
+// caret placement is unchanged. Asking that needs no element check: react-dom retargets a TEXT_NODE press
+// to its parent before dispatch, so every target reaching this handler is a node of this tree (#853).
+function isBlankSurfacePress(target: EventTarget, surface: HTMLElement): boolean {
+  return target === surface;
 }
 
 // The document position just before the top-level block the selection sits in — the same value the
@@ -315,7 +317,7 @@ export function RichContentEditor({
       onMouseDown={
         presentation === "work" && editable
           ? (event) => {
-              if (isBlankSurfacePress(event.target)) {
+              if (isBlankSurfacePress(event.target, editor.view.dom)) {
                 // A press on the paper's dead margin leaves ProseMirror without a caret, which reads as a
                 // broken text field. Land the caret at the document end so the press enters the text. We do
                 // NOT preventDefault: blocking the browser's native focus of the contenteditable drops the
