@@ -57,6 +57,9 @@ async function buildContext(): Promise<TestContext> {
   // The diary route is mounted only so the shared Timeline endpoint exists for the "work appears on the
   // Timeline" test; authored works do not otherwise depend on it.
   const diary: DiaryRouteDependencies = {
+    // These tests never stream a retained recording back, so the audio store fails loudly instead of
+    // silently answering 404 if a future test starts exercising playback through this server.
+    audioStore: { open: () => Promise.reject(new Error("unexpected audioStore.open")) },
     createId: () => `diary-${(sequence += 1)}`,
     db,
     deleteAudio: () => Promise.resolve(),

@@ -71,6 +71,9 @@ async function buildContext(): Promise<TestContext> {
     now: () => now
   };
   const diary: DiaryRouteDependencies = {
+    // Recitation never streams a retained recording, so the audio store fails loudly instead of
+    // silently answering 404 if a future test starts exercising playback through this server.
+    audioStore: { open: () => Promise.reject(new Error("unexpected audioStore.open")) },
     createId: () => `diary-${(entrySequence += 1)}`,
     db,
     deleteAudio: () => Promise.resolve(),

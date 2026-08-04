@@ -23,7 +23,7 @@ import { createSourceFileStore } from "../../files/sourceFileStore.js";
 import type { ParsedEpub } from "../../files/epubSource.js";
 import { createServer } from "../../http/createServer.js";
 import type { ContentDependencies } from "./contentCommands.js";
-import type { LibraryDependencies } from "../library/libraryCommands.js";
+import type { LibraryRouteDependencies } from "../library/libraryRoutes.js";
 import type { WorkCreationDependencies } from "../workCreation/workCreationCommands.js";
 
 // What a test may send as a request body -- including shapes the route must reject. `NonNullable`
@@ -78,17 +78,31 @@ async function buildContext(epub: ParsedEpub = singleChapterEpub()): Promise<Tes
   let entrySequence = 0;
   let sourceSequence = 0;
   let authorSequence = 0;
-  const library: LibraryDependencies = {
+  const library: LibraryRouteDependencies = {
     createAuthorId: () => `author-${(workSequence += 1)}`,
     createEntryId: () => `work-${workSequence}`,
     db,
+    // Work deletion is exercised in library.test.ts; these tests never call DELETE /api/works/:id,
+    // so the file-side collaborators fail loudly rather than silently no-op.
+    deleteSourceFile: () => Promise.reject(new Error("unexpected deleteSourceFile")),
+    logSourceUnlinkFailure: () => {
+      throw new Error("unexpected logSourceUnlinkFailure");
+    },
     now: () => new Date()
   };
   const content: ContentDependencies = {
+    createAuthorId: () => `content-author-${(authorSequence += 1)}`,
     createAuthorId: () => `epub-author-${(authorSequence += 1)}`,
     createEntryId: () => `entry-${(entrySequence += 1)}`,
     createSourceId: () => `source-${(sourceSequence += 1)}`,
     db,
+    // These tests never ingest an EPUB; the parser, upload limit, and image store exist only to
+    // satisfy the content route wiring, and fail loudly rather than silently no-op if reached.
+    epubParser: () => Promise.reject(new Error("unexpected epubParser")),
+    epubUploadLimitBytes: 50 * 1024 * 1024,
+    imageResourceStore: {
+      store: () => Promise.reject(new Error("unexpected imageResourceStore.store"))
+    },
     epubParser: async () => epub,
     imageResourceStore: createImageResourceStore(imagesDir),
     ingestionLogger: () => {},

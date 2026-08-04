@@ -31,7 +31,7 @@ import { createServer } from "../../http/createServer.js";
 import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
 import type { ContentDependencies } from "../content/contentCommands.js";
 import { createWork } from "../library/libraryCommands.js";
-import type { LibraryDependencies } from "../library/libraryCommands.js";
+import type { LibraryRouteDependencies } from "../library/libraryRoutes.js";
 import type { RecitationRouteDependencies } from "../recitation/recitationRoutes.js";
 import { reviewStateColumns } from "../review/reviewCardQueries.js";
 import { loadTodayBoard } from "./todayQueries.js";
@@ -40,7 +40,7 @@ const START = "2026-07-01T12:00:00.000Z";
 
 type TestContext = Readonly<{
   db: DbClient;
-  library: LibraryDependencies;
+  library: LibraryRouteDependencies;
   server: ReturnType<typeof createServer>;
   setNow: (iso: string) => void;
   sourcesDir: string;
@@ -64,16 +64,30 @@ async function buildContext(): Promise<TestContext> {
     db,
     now: nowFn
   };
-  const library: LibraryDependencies = {
+  const library: LibraryRouteDependencies = {
     createAuthorId: () => `author-${(sequence += 1)}`,
     createEntryId: () => `work-${(sequence += 1)}`,
     db,
+    // Work deletion is exercised in library.test.ts; these tests never call DELETE /api/works/:id,
+    // so the file-side collaborators fail loudly rather than silently no-op.
+    deleteSourceFile: () => Promise.reject(new Error("unexpected deleteSourceFile")),
+    logSourceUnlinkFailure: () => {
+      throw new Error("unexpected logSourceUnlinkFailure");
+    },
     now: () => new Date()
   };
   const content: ContentDependencies = {
+    createAuthorId: () => `content-author-${(sequence += 1)}`,
     createEntryId: () => `content-${(sequence += 1)}`,
     createSourceId: () => `source-${(sequence += 1)}`,
     db,
+    // These tests never ingest an EPUB; the parser, upload limit, and image store exist only to
+    // satisfy the content route wiring, and fail loudly rather than silently no-op if reached.
+    epubParser: () => Promise.reject(new Error("unexpected epubParser")),
+    epubUploadLimitBytes: 50 * 1024 * 1024,
+    imageResourceStore: {
+      store: () => Promise.reject(new Error("unexpected imageResourceStore.store"))
+    },
     ingestionLogger: () => {},
     sourceFileStore: createSourceFileStore(sourcesDir)
   };
