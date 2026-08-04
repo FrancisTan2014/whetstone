@@ -175,6 +175,7 @@ describe("processNextPdfImport", () => {
       userId: DEFAULT_USER_ID,
       sourceHash: "a".repeat(64),
       stagePath,
+      ocrLanguage: "en",
       now: new Date()
     });
   }
@@ -719,6 +720,7 @@ describe("processNextPdfImport", () => {
       userId: DEFAULT_USER_ID,
       sourceHash: "a".repeat(64),
       stagePath: "bad/id",
+      ocrLanguage: "en",
       now: new Date()
     });
     const result = await processNextPdfImport(buildDeps());
@@ -733,6 +735,7 @@ describe("processNextPdfImport", () => {
       userId: DEFAULT_USER_ID,
       sourceHash: "a".repeat(64),
       stagePath: "a1",
+      ocrLanguage: "en",
       now: new Date()
     });
     const result = await processNextPdfImport(buildDeps());

@@ -196,6 +196,7 @@ async function driveToAwaitingReview(
     userId: DEFAULT_USER_ID,
     sourceHash: input.sourceHash,
     stagePath,
+    ocrLanguage: "en",
     now: NOW
   });
   await driveQueuedToAwaitingReview(db, {
@@ -761,6 +762,7 @@ describe("publishConvertedPdfImport", () => {
       userId: DEFAULT_USER_ID,
       sourceHash: "0".repeat(64),
       stagePath: "stage-att-7",
+      ocrLanguage: "en",
       now: NOW
     });
     await insertPublicationIntent(db, {
@@ -1182,6 +1184,7 @@ describe("loadPdfReviewSource", () => {
       userId: DEFAULT_USER_ID,
       sourceHash: "f".repeat(64),
       stagePath,
+      ocrLanguage: "en",
       now: NOW
     });
 
