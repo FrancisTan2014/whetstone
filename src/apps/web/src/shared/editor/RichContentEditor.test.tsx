@@ -845,6 +845,12 @@ describe("RichContentEditor work presentation", () => {
     const press = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
     textbox.dispatchEvent(press);
 
+    // The focus the handler asks for lands on a later frame, and until it does, the surface's DOM
+    // selection is still the untouched document start. Typing into that gap would read the stale start
+    // and prepend (#825). Wait for the focus the handler promises before typing, which is also the
+    // claim under test: the press puts the caret in the document.
+    await waitFor(() => expect(document.activeElement).toBe(textbox));
+
     await user.type(textbox, "!");
     await waitFor(() => expect(documentText(lastDocument(onChange))).toBe("Hello!"));
   });
