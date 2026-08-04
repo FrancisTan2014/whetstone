@@ -105,6 +105,48 @@
 > **If you find yourself reaching for "surely a page with text should produce something", re-read the
 > table above.** That reasoning has now cost two rounds of work.
 >
+> ### A third defect, found by verifying the merge: the Job Object eats every exit code
+>
+> After #839 merged I ran the real worker on merged `main` rather than trusting the tests. The gate
+> refuses correctly — but **on Windows the worker process always exits 0 whenever the memory ceiling is
+> applied**, which is exactly how the server spawns it. Filed as **#843**.
+>
+> `_WindowsMemoryBoundary.apply` sets `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` and retains the job handle
+> for the worker's lifetime. At interpreter shutdown the handle is released, the job terminates the
+> process still assigned to it, and that kill overwrites the status `sys.exit(code)` had just set.
+>
+> Reduced to the flag alone (same job, same memory limits, `sys.exit(9)`):
+>
+> | configuration | exit code |
+> |---|---|
+> | no Job Object | **9** |
+> | Job Object + memory limits, **without** `KILL_ON_JOB_CLOSE` | **9** |
+> | Job Object + memory limits, **with** `KILL_ON_JOB_CLOSE` | **0** |
+> | **clear the flag just before the orderly exit** | **9** ← the fix |
+>
+> This arrived with #782, not with #832, and it has been disarming the worker's failure reporting on
+> Windows ever since. `classifyWorkerExit` is a correct function that has been receiving a constant.
+> Every distinct reason — `conversion_incomplete`, `password_required`, `unsupported_schema`, `memory`,
+> `conversion_failed`, `missing_dependency` — collapses into a generic malformed-payload error.
+>
+> **It is not data loss.** A failed worker writes nothing to stdout, an empty payload cannot parse, so
+> the range fails and no partial book is published. The product invariant holds; the diagnosis is what
+> is destroyed.
+>
+> **Measuring an exit code on Windows is itself a trap — it gave me three false readings.**
+> `$LASTEXITCODE` after a native command piped to `Out-File` with a `2>` redirect reported 0 for a
+> process that really exited 9. `Start-Process -Wait -PassThru` mangled the argument list.
+> `cmd /c "… & echo %errorlevel%"` expands `%errorlevel%` **at parse time**, so it always prints the
+> value from before the command ran. The two shapes that survive a `python -c "import sys; sys.exit(7)"`
+> control are `& $env:ComSpec /v:on /c "… & echo EXIT=!errorlevel!"` (delayed expansion) and a bare
+> `& python …` followed by `$LASTEXITCODE` with no pipeline. **Always validate the measurement against a
+> known-exit control before believing it.**
+>
+> The general lesson, and the reason this was worth the hour: **a fake cannot observe this class of
+> defect.** The Python logic is correct, `main()` genuinely returns 9, and all 132 worker tests pass.
+> Only a real process under the real Job Object shows it. Anything that crosses a real OS boundary
+> needs at least one real run before you believe the suite.
+>
 > ### Two traps that cost real time — do not repeat them
 >
 > - **There are two block tables.** `blocks` is the legacy mdast table (superseded by D1) and is
