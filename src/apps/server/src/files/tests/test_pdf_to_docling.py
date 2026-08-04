@@ -66,12 +66,14 @@ from pdf_to_docling import (  # noqa: E402  (path set above)
     convert_range,
     count_pages,
     ensure_conversion_complete,
+    ensure_pages_processed,
     extract_picture_artifact,
     load_conversion_status,
     main,
     map_group,
     map_item,
     page_confidence_map,
+    processed_page_numbers,
     read_outline_entries,
     read_pdf_outline,
     run_probe,
@@ -161,6 +163,34 @@ class FakeDoc:
             self.confidence = confidence
 
 
+class FakePage:
+    """One ``ConversionResult.pages`` entry: the converter's own record that it processed this page.
+
+    Mirrors the shape MEASURED on the real book with the pinned converter: ``page_no`` plus populated
+    ``predictions``/``assembled``/``size``, and a ``parsed_page`` of ``None`` — docling RELEASES the
+    parsed page after assembly, on every successfully converted page, so released state is never the
+    evidence. A page the converter lost is ABSENT from ``pages`` entirely, never present-and-empty.
+    """
+
+    def __init__(self, page_no, predictions="PagePredictions", assembled="AssembledUnit"):
+        self.page_no = page_no
+        self.predictions = predictions
+        self.assembled = assembled
+        self.parsed_page = None
+        self.size = "Size"
+
+
+def page_evidence(page_range, processed_pages=None):
+    """Per-page processing evidence as a healthy docling run reports it: one entry per requested page.
+
+    ``processed_pages`` overrides that to model a converter that processed FEWER pages than it was
+    asked for (the reproduced #843 shape) or that reports unusable page numbers.
+    """
+    if processed_pages is None:
+        processed_pages = [] if page_range is None else list(range(page_range[0], page_range[1] + 1))
+    return [page if isinstance(page, FakePage) else FakePage(page) for page in processed_pages]
+
+
 class FakeConverter:
     def __init__(self, doc):
         self._doc = doc
@@ -170,9 +200,14 @@ class FakeConverter:
         self.calls.append((pdf_path, page_range))
         # A healthy conversion REPORTS that it is healthy. Since the completeness gate fails closed
         # (#832, D8), a fake standing in for a good range must report success exactly as the real
-        # docling result does; a fake that reported nothing would model a refused conversion.
+        # docling result does; a fake that reported nothing would model a refused conversion. It must
+        # also carry the per-page processing record a real run carries (#840), one entry per requested
+        # page — a fake with no record would model a converter that processed nothing.
         return types.SimpleNamespace(
-            document=self._doc, status=FakeConversionStatus.SUCCESS, errors=[]
+            document=self._doc,
+            status=FakeConversionStatus.SUCCESS,
+            errors=[],
+            pages=page_evidence(page_range),
         )
 
 
@@ -1208,17 +1243,28 @@ class FakeError:
 
 
 class FakeStatusConverter:
-    """A converter whose result reports a status and errors, as the real docling result does."""
+    """A converter whose result reports a status, errors, and its per-page processing record.
 
-    def __init__(self, doc, status, errors=()):
+    ``processed_pages`` defaults to a complete record — one entry per requested page, as a healthy run
+    produces — so a test that means to exercise the STATUS gate is not accidentally refused by the
+    per-page one (#840). Pass it explicitly to model a converter that under-produced.
+    """
+
+    def __init__(self, doc, status, errors=(), processed_pages=None):
         self._doc = doc
         self._status = status
         self._errors = list(errors)
+        self._processed_pages = processed_pages
         self.calls = []
 
     def convert(self, pdf_path, page_range=None):
         self.calls.append((pdf_path, page_range))
-        return types.SimpleNamespace(document=self._doc, status=self._status, errors=self._errors)
+        return types.SimpleNamespace(
+            document=self._doc,
+            status=self._status,
+            errors=self._errors,
+            pages=page_evidence(page_range, self._processed_pages),
+        )
 
 
 @contextlib.contextmanager
@@ -1453,6 +1499,170 @@ class ConversionCompletenessTests(unittest.TestCase):
             )
         self.assertEqual(code, EXIT_CONVERSION_INCOMPLETE)
         self.assertIn("[not reported]", stderr.getvalue())
+
+
+# --- Per-page processing evidence (#840: the backstop behind the status gate) -------------------
+
+# The real 35-character notice pages 25 and 29 of the 462-page Clean Code PDF both carry, byte for
+# byte, on identically sized pages with an identical text bounding box. In the SAME converter run page
+# 29 produced one item and page 25 produced none, which is why an item count is not completeness
+# evidence (docs/DECISIONS.md D8) — and why the page-25 case is pinned here with the real string.
+BLANK_PAGE_NOTICE = "This page intentionally left blank "
+
+
+class PageProcessingEvidenceTests(unittest.TestCase):
+    """The completeness rule stops resting on the converter's report about ITSELF (#840).
+
+    ``ConversionResult.pages`` carries one entry per page the converter actually processed. Measured on
+    the real book: a healthy 10-page range produced ten entries (``page_no`` 21..30), and the reproduced
+    #843 degradation produced 6 entries for 50 requested pages whose 44 absentees matched docling's own
+    error records element for element. So the signal is set equality — the page numbers present must be
+    the page numbers requested — and a page is refused for being ABSENT, never for producing nothing.
+    """
+
+    def test_the_per_page_record_yields_the_pages_the_converter_processed(self):
+        result = types.SimpleNamespace(pages=page_evidence((21, 23)))
+        self.assertEqual(processed_page_numbers(result), {21, 22, 23})
+
+    def test_a_result_carrying_no_per_page_record_proves_nothing(self):
+        # FAIL CLOSED: no record at all is not "nothing went wrong", it is no evidence, so every
+        # requested page is unproven and the range is refused rather than published.
+        self.assertEqual(processed_page_numbers(types.SimpleNamespace()), set())
+        self.assertEqual(processed_page_numbers(types.SimpleNamespace(pages=None)), set())
+        with self.assertRaises(ConversionIncomplete) as caught:
+            ensure_pages_processed(types.SimpleNamespace(pages=None), 4, 6)
+        self.assertEqual(caught.exception.failed_pages, [4, 5, 6])
+
+    def test_an_unusable_page_number_is_not_evidence(self):
+        # A missing page_no, a null one, a bool (an int in Python), and a non-positive one are not page
+        # numbers, so those entries prove nothing — the same shape rule the error records get.
+        result = types.SimpleNamespace(
+            pages=[
+                types.SimpleNamespace(predictions="PagePredictions"),
+                FakePage(None),
+                FakePage(True),
+                FakePage(0),
+                FakePage(2),
+            ]
+        )
+        self.assertEqual(processed_page_numbers(result), {2})
+
+    def test_a_complete_record_passes_the_gate(self):
+        # THE case that must not regress: a healthy range is accepted. A gate that refuses everything
+        # would fail every PDF import, which is worse than no gate at all.
+        ensure_pages_processed(
+            types.SimpleNamespace(status=FakeConversionStatus.SUCCESS, pages=page_evidence((21, 30))),
+            21,
+            30,
+        )
+
+    def test_released_per_page_state_is_still_processing_evidence(self):
+        # Docling releases per-page state after assembly: `parsed_page` is None on every successfully
+        # converted page, measured across all ten pages of a healthy range. Presence of the entry is the
+        # evidence; gating on state the converter is free to release would refuse every healthy book.
+        released = FakePage(21, predictions=None, assembled=None)
+        self.assertIsNone(released.parsed_page)
+        ensure_pages_processed(types.SimpleNamespace(pages=[released]), 21, 21)
+
+    def test_the_reproduced_fragment_shape_is_refused_even_when_the_status_claims_success(self):
+        # The #843 degradation, reshaped into the failure this backstop exists for: a converter that
+        # reports an unqualified SUCCESS while its own record shows it processed 6 of 50 pages. The
+        # status gate sees nothing wrong; this one refuses, so the backstop is not vacuous.
+        result = types.SimpleNamespace(
+            status=FakeConversionStatus.SUCCESS,
+            errors=[],
+            pages=page_evidence(None, [21, 22, 23, 24, 25, 26]),
+        )
+        with self.assertRaises(ConversionIncomplete) as caught:
+            ensure_pages_processed(result, 21, 70)
+        self.assertEqual(caught.exception.failed_pages, list(range(27, 71)))
+        self.assertIn("SUCCESS", caught.exception.status)
+        self.assertIn("covers 6 of 50 requested page(s)", caught.exception.reason)
+        self.assertIn("44 page(s) carry no processing evidence", caught.exception.reason)
+        self.assertIn("44 page(s) failed to convert", str(caught.exception))
+
+    def test_evidence_outside_the_window_cannot_stand_in_for_a_missing_page(self):
+        # Only the REQUESTED pages count. A record padded with repeats and with pages from another
+        # range must not mask page 23, or the gate could be satisfied by evidence about other work.
+        result = types.SimpleNamespace(pages=page_evidence(None, [21, 21, 22, 99]))
+        with self.assertRaises(ConversionIncomplete) as caught:
+            ensure_pages_processed(result, 21, 23)
+        self.assertEqual(caught.exception.failed_pages, [23])
+        self.assertIn("covers 2 of 3 requested page(s)", caught.exception.reason)
+
+    def test_a_result_with_no_status_names_the_missing_status_in_its_refusal(self):
+        with self.assertRaises(ConversionIncomplete) as caught:
+            ensure_pages_processed(types.SimpleNamespace(pages=page_evidence(None, [1])), 1, 2)
+        self.assertEqual(caught.exception.status, "unreported")
+        self.assertEqual(caught.exception.failed_pages, [2])
+
+    def test_a_processed_page_that_produced_no_item_is_not_refused(self):
+        # D8's page 25, with the real string: pages 25 and 29 carry byte-identical native text, and in
+        # the same run page 29 produced one item while page 25 produced none of any kind. Both were
+        # processed, so both carry evidence and the range converts. Refusing here would reject every
+        # book with a numbered blank page — 15 of this one's 462 pages carry that notice.
+        doc = FakeDoc(
+            body=FakeGroup([FakeItem(text=BLANK_PAGE_NOTICE, prov=FakeProv(page_no=29))])
+        )
+        converter = FakeStatusConverter(doc, FakeConversionStatus.SUCCESS)
+        with fake_docling_conversion_status():
+            payload = convert_range(
+                "/tmp/clean-code.pdf", 25, 29, lambda: converter, native_text=lambda _p: True
+            )
+        self.assertEqual([page["pageNumber"] for page in payload["pages"]], [25, 26, 27, 28, 29])
+        self.assertEqual(
+            [(item["pageNumber"], item["text"]) for item in payload["body"]],
+            [(29, BLANK_PAGE_NOTICE)],
+        )
+
+    def test_convert_range_builds_no_payload_from_a_short_per_page_record(self):
+        converter = FakeStatusConverter(
+            FakeDoc(body=FakeGroup([FakeItem(text="the pages that survived")])),
+            FakeConversionStatus.SUCCESS,
+            processed_pages=[1, 2],
+        )
+        with fake_docling_conversion_status():
+            with self.assertRaises(ConversionIncomplete) as caught:
+                convert_range("/tmp/a.pdf", 1, 3, lambda: converter, native_text=lambda _p: True)
+        self.assertEqual(caught.exception.failed_pages, [3])
+
+    def test_convert_range_accepts_a_complete_per_page_record(self):
+        converter = FakeStatusConverter(
+            FakeDoc(body=FakeGroup([FakeItem(text="x", prov=FakeProv(page_no=2))])),
+            FakeConversionStatus.SUCCESS,
+        )
+        with fake_docling_conversion_status():
+            payload = convert_range(
+                "/tmp/a.pdf", 1, 3, lambda: converter, native_text=lambda _p: True
+            )
+        self.assertEqual([page["pageNumber"] for page in payload["pages"]], [1, 2, 3])
+        self.assertEqual(payload["body"][0]["text"], "x")
+
+    def test_run_range_reports_lost_pages_with_the_incomplete_exit_code(self):
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        converter = FakeStatusConverter(
+            FakeDoc(body=FakeGroup([FakeItem(text="fragment")])),
+            FakeConversionStatus.SUCCESS,
+            processed_pages=[21, 22, 23, 24, 25, 26],
+        )
+        with fake_docling_conversion_status():
+            code = run_range(
+                "/tmp/a.pdf",
+                21,
+                70,
+                lambda: converter,
+                native_text_factory(lambda _p: True),
+                stdout,
+                stderr,
+            )
+        self.assertEqual(code, EXIT_CONVERSION_INCOMPLETE)
+        self.assertEqual(stdout.getvalue(), "")
+        message = stderr.getvalue()
+        self.assertIn("pages 21-70", message)
+        self.assertIn("44 failed page(s)", message)
+        self.assertIn("[27, 28,", message)
+        self.assertIn("no processing evidence", message)
 
 
 # --- build_converter (docling imports mocked) --------------------------------------------------

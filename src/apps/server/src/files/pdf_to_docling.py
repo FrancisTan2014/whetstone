@@ -25,15 +25,21 @@ Reliability contract (mirrors the #403 markdown worker, kept in LOCKSTEP with pd
 - Failures self-classify via exit code (missing dependency, conversion failed, conversion incomplete,
   password required, unsupported schema, memory, memory-ceiling-unsupported) — never a bare traceback as
   the only signal.
-- A conversion is trusted ONLY when Docling reports an unqualified ``SUCCESS`` (#832). Docling keeps going
-  when individual pages fail: it returns ``PARTIAL_SUCCESS`` with a document holding only the pages that
+- A conversion is trusted ONLY when Docling reports an unqualified ``SUCCESS`` (#832) AND its own per-page
+  record covers every requested page (#840). Docling keeps going when individual pages fail: it returns
+  ``PARTIAL_SUCCESS`` with a document holding only the pages that
   survived, and reports the rest on ``result.errors``. Reading just ``result.document`` therefore emits a
   fragment as an ordinary range payload, which is later committed and published as a whole book. So the
   status IS the contract here: anything other than ``SUCCESS`` exits ``EXIT_CONVERSION_INCOMPLETE`` with
-  the failed page numbers and Docling's own reason on stderr, and no payload at all. This gate FAILS
-  CLOSED: a result that reports no status is refused too, because a conversion whose completeness cannot
-  be checked is not a complete conversion. It is the only completeness guard — judging completeness from
-  what a page produced was measured to be unsound and was removed (``docs/DECISIONS.md`` D8).
+  the failed page numbers and Docling's own reason on stderr, and no payload at all. Standing behind that
+  single channel, ``ConversionResult.pages`` records what the converter actually PROCESSED, page by page,
+  independently of the status it reports about itself: a requested page absent from it is a lost page and
+  refuses the range with the same exit code, so a future converter that claims success while silently
+  under-producing cannot publish a fragment either. Both gates FAIL CLOSED: a result that reports no
+  status, and a result carrying no per-page record, are refused too, because a conversion whose
+  completeness cannot be checked is not a complete conversion. Neither judges completeness from what a
+  page PRODUCED — an item count was measured to be zero for pages that converted perfectly
+  (``docs/DECISIONS.md`` D8).
 - The per-child memory ceiling is ENFORCED, not best-effort, through ONE worker-owned memory-boundary
   contract with a per-platform implementation (#782): POSIX applies an address-space ``RLIMIT_AS``; a
   supported Windows host applies a native Job Object memory limit (``JOB_OBJECT_LIMIT_PROCESS_MEMORY`` +
@@ -134,7 +140,7 @@ class ConversionFailed(Exception):
 
 
 class ConversionIncomplete(Exception):
-    """Raised when Docling finished a range in a DEGRADED state rather than an unqualified success (#832).
+    """Raised when a range did not fully convert: a DEGRADED status (#832) or a page with no evidence (#840).
 
     Docling does not stop when a page fails: it records the failure on ``result.errors``, sets
     ``result.status`` to ``PARTIAL_SUCCESS`` (or ``FAILURE``), and still returns a ``document`` — one that
@@ -142,6 +148,12 @@ class ConversionIncomplete(Exception):
     indistinguishable from a good range, so the range is committed and the book is published ~90% empty
     while every gate reports success. The degraded status is therefore a hard refusal here, never a
     payload: the caller gets the reported page numbers and Docling's own reason instead.
+
+    The same refusal carries the #840 backstop, because the outcome is identical — pages were lost and no
+    payload may be built. There, ``status`` is what the converter CLAIMED (an unqualified success, since
+    the status gate ran first) and ``failed_pages`` are the requested pages its own per-page record does
+    not account for. One failure vocabulary, so an operator and the adapter see "this range lost pages"
+    however it was detected.
     """
 
     def __init__(self, status: str, failed_pages: Sequence[int], reason: str) -> None:
@@ -1082,10 +1094,12 @@ def ensure_conversion_complete(result: Any) -> None:
     FAIL CLOSED. A result that reports no ``status`` at all is refused too, not accepted. ``PRODUCT.md``
     holds that a converter result is untrusted evidence, and a result that cannot report its own status is
     the purest case of that: a conversion whose completeness cannot be checked is not a complete
-    conversion. This is the ONLY completeness guard — the page-coverage backstop that once stood behind it
-    was removed as unsound (``docs/DECISIONS.md`` D8) — so its permissive seam had to close. The converter
-    version is pinned, so this is deterministic; a future upgrade that changes the reporting contract fails
-    loudly here instead of silently reopening #832.
+    conversion. It is the FIRST of two completeness guards — ``ensure_pages_processed`` then checks the
+    converter's per-page processing record against the requested window (#840), so the rule no longer
+    rests on the converter's report about itself alone. Judging completeness from what a page PRODUCED
+    stays out of both (``docs/DECISIONS.md`` D8). The converter version is pinned, so this is
+    deterministic; a future upgrade that changes the reporting contract fails loudly here instead of
+    silently reopening #832.
     """
     status = getattr(result, "status", None)
     if status is not None and status == load_conversion_status().SUCCESS:
@@ -1099,6 +1113,74 @@ def ensure_conversion_complete(result: Any) -> None:
     errors = list(getattr(result, "errors", None) or [])
     raise ConversionIncomplete(
         str(status), _failed_page_numbers(errors), _conversion_error_reason(status, errors)
+    )
+
+
+def _evidence_page_number(page: Any) -> Optional[int]:
+    """The 1-based page number one ``ConversionResult.pages`` entry proves was processed, or None.
+
+    ``page_no`` is the whole signal (#840). A missing, null, boolean (``bool`` is an ``int`` in Python)
+    or non-positive value is not a page number, so such an entry proves nothing and is not counted as
+    evidence — the same shape rule ``_failed_page_numbers`` applies to Docling's error records.
+    """
+    page_no = getattr(page, "page_no", None)
+    if isinstance(page_no, bool) or not isinstance(page_no, int) or page_no < 1:
+        return None
+    return page_no
+
+
+def processed_page_numbers(result: Any) -> set[int]:
+    """The pages Docling's OWN per-page record says it processed: the ``page_no``s on ``result.pages``.
+
+    ``ConversionResult.pages`` holds one entry per page the converter actually processed, so it records
+    what the converter DID rather than what it emitted — a channel independent of ``status``/``errors``,
+    which is the point of #840: the hypothesized future failure is a converter that reports ``SUCCESS``
+    while under-producing, and that failure cannot be seen from the status it reports about itself.
+
+    Measured on the real 462-page book with the pinned converter: a healthy 10-page range produced ten
+    entries, ``page_no`` 21..30; the reproduced #843 degradation produced 6 entries for 50 requested
+    pages, and the 44 absent pages matched Docling's own error records element for element. A lost page
+    is therefore ABSENT here, never present-and-empty.
+
+    Presence is the evidence, deliberately NOT the state hanging off an entry. Docling RELEASES per-page
+    state after assembly: ``parsed_page`` is ``None`` on every perfectly converted page, so a check
+    written against released state would refuse every range, healthy books included. A result carrying
+    no per-page record at all yields the empty set, which refuses the whole range — fail closed.
+    """
+    entries = getattr(result, "pages", None)
+    numbers: set[int] = set()
+    for page in entries or ():
+        number = _evidence_page_number(page)
+        if number is not None:
+            numbers.add(number)
+    return numbers
+
+
+def ensure_pages_processed(result: Any, start_page: int, end_page: int) -> None:
+    """Refuse the range unless the converter's per-page record covers EVERY requested page (#840).
+
+    The backstop behind ``ensure_conversion_complete``. The status gate (#832) closed the reproduced
+    hole — a ``PARTIAL_SUCCESS`` fragment published as a whole book — but it trusts one channel: the
+    converter's own report about itself. This asserts completeness from what was actually processed, so
+    a converter that reports an unqualified ``SUCCESS`` while silently dropping pages is still refused.
+
+    FAILS CLOSED in the same shape as the status gate: a missing page, an unusable ``page_no``, or a
+    result with no per-page record at all is evidence NOT of processing, and no payload is built. It is
+    the ABSENCE of a requested page number that refuses — never a count of what a page produced, which
+    was measured to be zero for pages that converted perfectly (``docs/DECISIONS.md`` D8), and never a
+    proportional tolerance, which would be a weaker rule with an unprincipled threshold.
+    """
+    processed = processed_page_numbers(result)
+    missing = [page for page in range(start_page, end_page + 1) if page not in processed]
+    if len(missing) == 0:
+        return
+    requested = end_page - start_page + 1
+    status = getattr(result, "status", None)
+    raise ConversionIncomplete(
+        "unreported" if status is None else str(status),
+        missing,
+        f"the converter's per-page record covers {requested - len(missing)} of {requested} requested "
+        f"page(s): {len(missing)} page(s) carry no processing evidence, so they were never converted",
     )
 
 
@@ -1122,11 +1204,15 @@ def convert_range(
 
     The converter's REPORTED STATUS is checked before anything is read off the result (#832): docling
     returns a truncated document rather than raising when individual pages fail, so a payload is built
-    only from a run it called an unqualified success.
+    only from a run it called an unqualified success. Its PER-PAGE PROCESSING RECORD is then checked
+    against the requested window (#840), so a converter that claims success while silently dropping
+    pages is refused too — the payload's per-page records are only ever emitted for a window every page
+    of which the converter's own record proves it processed.
     """
     converter = converter_factory()
     result = converter.convert(pdf_path, page_range=(start_page, end_page))
     ensure_conversion_complete(result)
+    ensure_pages_processed(result, start_page, end_page)
     metadata = read_metadata() if read_metadata is not None else None
     outline = read_outline_entries(read_outline)
     return build_range_payload(
