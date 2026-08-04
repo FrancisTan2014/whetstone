@@ -869,7 +869,13 @@ describe("RichContentEditor work presentation", () => {
     const press = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
     (paragraph as HTMLElement).dispatchEvent(press);
 
-    await user.type(textbox, "!");
+    // Let any frame the handler might have scheduled land first. Tiptap's `focus()` defers only the DOM
+    // focus by one frame, so out-running it (typing immediately) would hide a wrongly-claimed press: the
+    // keystroke would win and prepend either way. Awaiting the frame makes the opposite true — had this
+    // press been claimed, `focus("end")` would have moved the caret and the prepend below would fail.
+    await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)));
+    textbox.focus();
+    await user.type(textbox, "!", { skipClick: true });
     await waitFor(() => expect(documentText(lastDocument(onChange))).toBe("!Hello"));
   });
 
@@ -886,7 +892,11 @@ describe("RichContentEditor work presentation", () => {
     const press = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
     (textNode as ChildNode).dispatchEvent(press);
 
-    await user.type(textbox, "!");
+    // Same as the test above: await the frame so a wrongly-claimed press would move the caret and redden
+    // the prepend, rather than being out-run by the keystroke.
+    await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)));
+    textbox.focus();
+    await user.type(textbox, "!", { skipClick: true });
     await waitFor(() => expect(documentText(lastDocument(onChange))).toBe("!Hello"));
   });
 
