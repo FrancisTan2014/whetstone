@@ -4,6 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
+import type { LightMyRequestResponse } from "fastify";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -13,7 +14,8 @@ import {
   RANGE_CONVERSION_SCHEMA_VERSION,
   type PdfImportStartMetadataDto,
   type RangeConversion,
-  type StructuredDocItem
+  type StructuredDocItem,
+  type WorkCreationReviewDto
 } from "@whetstone/contracts";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
@@ -112,6 +114,11 @@ function publishDeps(db: DbClient): PdfImportPublishDependencies {
   };
 }
 
+// The upload-path tests below never poll an attempt, so the shared-review bridge is never reached; this
+// stub fails loudly rather than silently standing in for a park none of them expects.
+const unreachedBeginReview = (): Promise<PdfImportBeginReviewResult> =>
+  Promise.reject(new Error("unexpected beginReview"));
+
 function metadataHeader(
   metadata: Partial<PdfImportStartMetadataDto> & { fileName: string }
 ): string {
@@ -121,7 +128,7 @@ function metadataHeader(
 function beginUpload(
   bytes: Buffer,
   header: string | undefined
-): ReturnType<typeof context.server.inject> {
+): Promise<LightMyRequestResponse> {
   return context.server.inject({
     headers: {
       "content-type": pdfContentType,
@@ -237,7 +244,8 @@ describe("pdf import routes", () => {
     app.decorate("currentUser", { getCurrentUserId: () => "user-1" });
     registerPdfImportRoutes(app, {
       commands: commandDeps(context.db, context.stageStore),
-      uploadLimitBytes: 10_000_000
+      uploadLimitBytes: 10_000_000,
+      beginReview: unreachedBeginReview
     });
     try {
       const response = await app.inject({
@@ -297,7 +305,8 @@ describe("pdf import routes", () => {
       logger: false,
       pdfImport: {
         commands: commandDeps(context.db, failingStage),
-        uploadLimitBytes: 10_000_000
+        uploadLimitBytes: 10_000_000,
+        beginReview: unreachedBeginReview
       }
     });
     try {
@@ -348,7 +357,11 @@ describe("pdf import routes", () => {
   it("rejects an upload that exceeds the configured byte limit with 413", async () => {
     const smallServer = createServer({
       logger: false,
-      pdfImport: { commands: commandDeps(context.db, context.stageStore), uploadLimitBytes: 4 }
+      pdfImport: {
+        commands: commandDeps(context.db, context.stageStore),
+        uploadLimitBytes: 4,
+        beginReview: unreachedBeginReview
+      }
     });
     try {
       const response = await smallServer.inject({
@@ -468,17 +481,18 @@ describe("pdf import routes", () => {
     await driveToAwaitingReview(context.db, queued.attemptId, [true]);
 
     // A credible duplicate parked one review attempt: the poll must surface the panel the client renders.
-    const reviewStub = {
+    const reviewStub: WorkCreationReviewDto = {
       attemptId: queued.attemptId,
       revision: 0,
       proposed: { title: "The Work", authorName: "Unknown", language: "en", workType: "book" },
       candidates: [],
-      expiresAt: NOW.toISOString()
+      candidateFingerprint: "",
+      sourceFileName: "review.pdf"
     };
     context.beginReview.mockResolvedValue({
       status: "needs_review",
       review: reviewStub
-    } as PdfImportBeginReviewResult);
+    });
 
     const response = await context.server.inject({
       method: "GET",
