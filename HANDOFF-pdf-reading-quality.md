@@ -1348,3 +1348,147 @@ it became most necessary. Re-sliced: #816 is now the boundary rule, **#865** car
 outline. The sidebar today goes from 525 entries nested 3 deep to a flat 28 — a large net gain, but
 chapters run 150–612 blocks with no way to jump inside one. **#865 completes the reading experience;
 treat it as required, not as an enhancement.**
+
+---
+
+## 20. #862 is merged — and the live database still needs one more step
+
+**`main` is at `28bf3299` and contains #862.** Chapter-scale PDF reading units are now the shipped
+behaviour: a PDF divides at its embedded bookmark outline, exactly as an EPUB divides at its spine.
+
+Measured on the real 462-page *Clean Code*, through the production path, at the merged head:
+
+| | before | after |
+|---|---:|---:|
+| reading units | 525 | **28** |
+| doc blocks | 4,267 | 4,267 |
+| text characters | 787,882 | 787,882 |
+
+28 = Chapters 1–17, Appendices A–C, Epilogue, Index. Nothing else moved by a single character, which
+is the point: this changed *where the book divides*, not what it contains.
+
+### The operational fact that matters most to whoever reads this next
+
+**Merging the mapper does not fix a book that is already imported.**
+
+I inspected the live development database (`src/apps/server/.data/db`, copied first so nothing was
+locked or mutated). The published *Clean Code* Work is `7b9b5e8f-5965-4895-882b-aa13dc137ac1`:
+
+| | live DB right now | what the merged code produces |
+|---|---:|---:|
+| reading units | **525** | 28 |
+| doc blocks | 3,038 | 4,267 |
+| plaintext characters | 786,475 | 787,882 |
+
+So if you open Whetstone today, **you still see the broken book**. #862 and #859 change the mapper;
+they do not rewrite any already-published Work. There are exactly two ways to close that gap:
+
+1. **Re-import** the 462-page PDF — roughly 30 minutes of conversion, and it abandons the reading
+   positions and notes attached to the current Work.
+2. **Re-map from the retained payload** — issue **#861**, which reuses the conversion already sitting
+   in `pdf_import_ranges.payload` (10 ranges, 819 KB, full 384-entry outline, all intact) and finishes
+   in well under a second.
+
+That makes **#861 the highest-value item left in the PDF queue for anyone who already has a book
+imported.** It is the difference between "the fix is in `main`" and "the fix is in the reader's hands."
+
+## 21. What the book actually reads like now, block by block
+
+I stopped inferring reading quality from counts and dumped a real chapter as the Reader renders it.
+This is Chapter 1 at the merged head:
+
+```
+  0 [heading h1] "1"
+  1 [heading h1] "Clean Code"
+  2 [figure]     ""
+  3 [paragraph]  "You are reading this book for two reasons. First, you are a programmer..."
+  5 [heading h2] "There Will Be Code"
+  6 [paragraph]  "One might argue that a book about code is somehow behind the times..."
+ 12 [heading h2] "Bad Code"
+ 21 [footnoteTarget] "1. [Beck07]."
+ 22 [heading h2] "The Total Cost of Owning a Mess"
+ 25 [figure]     "Figure 1-1 Productivity vs. time"
+ 26 [heading h3] "The Grand Redesign in the Sky"
+ 32 [heading h3] "Attitude"
+```
+
+That is a genuinely readable chapter: correct h1/h2/h3 nesting, real prose paragraphs, footnote
+targets and figure captions in the right places. Compare the same dump for the `Contents` unit, which
+is the screenshot Francis sent — 610 blocks, of which blocks 1 through 609 are **empty**:
+
+```
+  0 [heading h1] "Contents"
+  1 [unknown] ""
+  2 [unknown] ""
+  ... 607 more empty blocks ...
+```
+
+**That is what #859 fixes** (PR #868, in review): `Contents` goes 610 blocks → 16, and 70,103
+characters that were reaching PostgreSQL with empty `plaintext` become real text.
+
+### The one thing still visibly wrong, now filed as #867
+
+Blocks 0 and 1 above are the defect. The chapter announces itself **three times**:
+
+```
+Chapter 1: Clean Code     <- unit title eyebrow, from the bookmark
+1                         <- h1 heading block
+Clean Code                <- h1 heading block
+```
+
+Measured across the book: **13 of 28 units open with two consecutive heading blocks** — Chapters 1
+and 10–17, Appendices A–C, and the front-matter title page. Chapters 2–9 are not split; it is a
+property of the source PDF's typography.
+
+The Reader *has* a suppressor for this — `isUnitTitleRedundant` in
+`src/apps/web/src/features/reader/readerHeadings.ts` — but it compares the unit title to the first
+block's text for an **exact** match. That held on `main`, where a unit's title came from its own first
+block. It cannot hold after #862, where the title is bookmark-derived and deliberately richer:
+
+- `"1"` vs `"chapter 1: clean code"` → no match
+- `"meaningful names"` vs `"chapter 2: meaningful names"` → no match
+
+Measured: the suppressor now fires on **7 of 28** units and on **0 of the 20 chapter/appendix units**.
+
+**This is not a regression from #862.** Before #862 those two halves were two *separate reading units*
+— part of the very 525-unit problem #862 fixes. #862 correctly resolves them to one unit; #867 is the
+residual cleanup. #867 records both candidate fixes (mapping-side recombination vs reader-side
+suppression by outline-entry identity) and says explicitly that the choice should be made with a
+measurement, not by taste. It also warns against reintroducing title-string matching, which is the
+trap that produced this in the first place.
+
+## 22. A merge-gate failure that looked like a bug and was not
+
+`mergeApprovedPrs.mjs` refused #862 with:
+
+```
+SKIP   #862 - head 62f277319727 != reviewed 3bccba081d9a
+```
+
+The cause is worth recording because it will happen again. `reviewedSha` (`scripts/delivery/workflow.mjs:73`)
+scans every comment and keeps the **last** `reviewer-run-reviewed: <40-hex>` match it finds. I had
+relayed the reviewer's saved approval body verbatim, prefixing it with a header carrying the *new*
+head SHA — but the reviewer's own body **ends** with its marker for the *old* head. Within that single
+comment, the last match was therefore the stale SHA.
+
+**The gate was right and I was wrong.** The fix is to post the marker in its own short comment with
+nothing after it. When relaying a saved reviewer body that already contains a marker, never assume
+your prefix wins.
+
+## 23. Current state of the queue
+
+Merged today: **fifteen PRs**, ending with #862.
+
+| PR | what | state |
+|---|---|---|
+| #862 | chapter-scale reading units (525 → 28) | **merged** |
+| #868 | #859 — map table-shaped constructs by shape (+70,103 chars, 1,243 → 0 `unknown`) | in review (rev-868) |
+| #866 | PRODUCT.md: the unifying ReadingUnit division rule | needs review |
+
+Open and ready: **#861** (re-map — see §20, highest value), **#865** (in-unit section outline, unblocked
+by #862's merge, dev running), **#867** (split chapter opener), **#856** (2,594-char heading — measured:
+exactly 1 heading of 524 exceeds 200 chars, next-largest legitimate is 94, so a threshold anywhere in
+200–2,000 has zero false positives), #860, #864, #857, #847, #828.
+
+**Sequencing note:** #859/#868, #856, and #867 all touch `pdfCanonicalMapping.ts`. Land #868 first —
+it is the largest content win and the others rebase over it cheaply, not the reverse.
