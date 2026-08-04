@@ -861,9 +861,11 @@ describe("RichContentEditor work presentation", () => {
       presentation: "work"
     });
 
-    // A press on the paragraph element (not the content root) is a normal in-text click: the margin
+    // A press on the paragraph element (not the editable surface) is a normal in-text click: the margin
     // handler must not hijack it, so the caret is not forced to the end. Typing then prepends at the
-    // document start (the untouched initial selection), proving the press was left alone.
+    // document start (the untouched initial selection), proving the press was left alone. Pressing the
+    // paragraph's own text node is this same case, not a separate one: react-dom retargets a TEXT_NODE
+    // target to its parent before dispatch, so the handler is handed this same <p> either way (#853).
     const paragraph = textbox.querySelector("p");
     expect(paragraph).not.toBeNull();
     const press = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
@@ -873,27 +875,6 @@ describe("RichContentEditor work presentation", () => {
     // focus by one frame, so out-running it (typing immediately) would hide a wrongly-claimed press: the
     // keystroke would win and prepend either way. Awaiting the frame makes the opposite true — had this
     // press been claimed, `focus("end")` would have moved the caret and the prepend below would fail.
-    await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)));
-    textbox.focus();
-    await user.type(textbox, "!", { skipClick: true });
-    await waitFor(() => expect(documentText(lastDocument(onChange))).toBe("!Hello"));
-  });
-
-  it("ignores a press whose target is a text node, not an element", async () => {
-    const { onChange, textbox, user } = await renderReady({
-      document: textDocument("Hello"),
-      presentation: "work"
-    });
-
-    // A press reported against a raw text node is not an element surface: the guard rejects it and the
-    // caret is left at the document start, so typing prepends.
-    const textNode = textbox.querySelector("p")?.firstChild;
-    expect(textNode).not.toBeNull();
-    const press = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
-    (textNode as ChildNode).dispatchEvent(press);
-
-    // Same as the test above: await the frame so a wrongly-claimed press would move the caret and redden
-    // the prepend, rather than being out-run by the keystroke.
     await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)));
     textbox.focus();
     await user.type(textbox, "!", { skipClick: true });
