@@ -337,12 +337,17 @@ owning source flow:
   with it, because a conversion whose completeness cannot be checked is not a complete one. A
   partially converted book is never published: it passes the empty-shell and OCR refusals, looks like
   a real import, and is discovered only while reading, which serves the learner worse than a visible
-  failure. Completeness is judged from the converter's own record of what it did, never from what a
-  page produced: measured on a real book, two pages with byte-identical text and identical geometry
-  yielded one item and zero items in the same run, so an item count carries no information about
-  whether a page was converted and must never be used to decide it. Resource ceilings are calibrated
-  against what the pinned converter actually commits on the host, and a ceiling that throttles a
-  supported book is a defect of the ceiling, never an acceptable degradation.
+  failure. Completeness is judged from the converter's own per-page record of what it processed — a
+  page that record does not account for is a lost page, and a range that lost one is refused whatever
+  the run reported about itself. The record is checked against the pages the range asked for, which
+  the reported status cannot see: a converter that quietly narrows the window it was given still
+  reports an unqualified success, and so would a future converter whose status stopped standing for a
+  page count. Completeness is never judged from what a page produced: measured on a real book, two
+  pages with byte-identical text and identical geometry yielded one item and zero items in the same
+  run, so an item count carries no information about whether a page was converted and must never be
+  used to decide it. Resource ceilings are calibrated against what the pinned converter actually
+  commits on the host, and a ceiling that throttles a supported book is a defect of the ceiling, never
+  an acceptable degradation.
 - The product target is usable automatic ingestion for at least 95% of the deduplicated supported PDF
   pressure corpus. "Usable" means the current Reader can present materially complete body content in
   readable order, with a workable heading/block hierarchy for search, selection, notes, and editing.
