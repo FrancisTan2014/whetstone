@@ -25,6 +25,18 @@ export function figuresToReviewMessage(figuresToReview: number): string {
   return `Imported with ${figures} to review.`;
 }
 
+// The learner-facing phrase for a PDF whose heading depths came from labels rather than the embedded
+// outline (#870). `label` is the count of headings derived from labels (the gap); `outline` is the count
+// derived from the outline. The message distinguishes a book with no outline at all from a book whose
+// outline was present but only partially matched. A named export so the Library flow and its tests agree.
+export function outlineGapMessage(label: number, outline: number): string {
+  const headings = label === 1 ? "1 heading" : `${label} headings`;
+  if (outline === 0) {
+    return `Imported with ${headings} from labels (no outline).`;
+  }
+  return `Imported with ${headings} from labels (outline present; some headings unmatched).`;
+}
+
 function imageUnsupportedMessage(unpreservableImages: number): string {
   const images =
     unpreservableImages === 1
@@ -44,7 +56,14 @@ function ocrValidationFailedPagesMessage(pagesNeedingOcr: number): string {
 // and every phrase/branch is unit-tested without a component or the network.
 export type PdfImportProgress =
   | Readonly<{ kind: "in_progress"; label: string; needsResume: boolean; terminal: false }>
-  | Readonly<{ kind: "published"; workEntryId: string; figuresToReview: number; terminal: true }>
+  | Readonly<{
+      kind: "published";
+      workEntryId: string;
+      figuresToReview: number;
+      // Outline-gap warning (#870): heading depths from labels (the gap) and from the outline.
+      headingLevelSources: Readonly<{ label: number; outline: number }>;
+      terminal: true;
+    }>
   | Readonly<{ kind: "needs_review"; review: WorkCreationReviewDto; terminal: true }>
   | Readonly<{ kind: "ocr_validation_failed"; message: string; terminal: true }>
   | Readonly<{ kind: "no_content"; message: string; terminal: true }>
@@ -64,6 +83,7 @@ export function describePdfImport(view: PdfImportViewDto): PdfImportProgress {
   if (view.publication.status === "published") {
     return {
       figuresToReview: view.publication.unresolvedFigureCount,
+      headingLevelSources: view.publication.headingLevelSources,
       kind: "published",
       terminal: true,
       workEntryId: view.publication.workEntryId

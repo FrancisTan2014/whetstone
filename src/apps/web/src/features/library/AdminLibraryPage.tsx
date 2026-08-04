@@ -36,7 +36,7 @@ import {
   pollPdfImportUntilTerminal,
   type PdfImportPollResult
 } from "../pdfImport/pdfImportPolling";
-import { figuresToReviewMessage } from "../pdfImport/pdfImportProgress";
+import { figuresToReviewMessage, outlineGapMessage } from "../pdfImport/pdfImportProgress";
 import {
   forgetActivePdfImport,
   readActivePdfImport,
@@ -444,11 +444,22 @@ export function AdminLibraryPage({ onManageContent }: AdminLibraryPageProps): Re
       await reload();
       // A born-digital PDF with unresolved figures still publishes (#806): open the Work and report how many
       // figures need an image supplied in the editor, so the administrator knows the review workload rather
-      // than seeing a terminal failure. A Work with no unresolved figures shows the plain ready message.
+      // than seeing a terminal failure. An outline gap (#870) is reported the same way: heading depths
+      // derived from labels instead of the embedded outline warn the administrator before the book is
+      // presented to a reader. A Work with no warnings shows the plain ready message.
+      const outlineWarning =
+        progress.headingLevelSources.label > 0
+          ? outlineGapMessage(
+              progress.headingLevelSources.label,
+              progress.headingLevelSources.outline
+            )
+          : null;
       toast.success(
         progress.figuresToReview > 0
           ? figuresToReviewMessage(progress.figuresToReview)
-          : "Your PDF is ready to read."
+          : outlineWarning !== null
+            ? outlineWarning
+            : "Your PDF is ready to read."
       );
       openReader(progress.workEntryId);
       return;

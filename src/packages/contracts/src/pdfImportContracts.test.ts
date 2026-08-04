@@ -206,16 +206,28 @@ describe("pdfImportPublicationOutcomeDtoSchema", () => {
       pdfImportPublicationOutcomeDtoSchema.parse({
         status: "published",
         unresolvedFigureCount: 0,
+        headingLevelSources: { label: 0, outline: 0 },
         workEntryId: "work-1"
       })
-    ).toEqual({ status: "published", unresolvedFigureCount: 0, workEntryId: "work-1" });
+    ).toEqual({
+      status: "published",
+      unresolvedFigureCount: 0,
+      headingLevelSources: { label: 0, outline: 0 },
+      workEntryId: "work-1"
+    });
     expect(
       pdfImportPublicationOutcomeDtoSchema.parse({
         status: "published",
         unresolvedFigureCount: 2,
+        headingLevelSources: { label: 2, outline: 0 },
         workEntryId: "work-fig"
       })
-    ).toEqual({ status: "published", unresolvedFigureCount: 2, workEntryId: "work-fig" });
+    ).toEqual({
+      status: "published",
+      unresolvedFigureCount: 2,
+      headingLevelSources: { label: 2, outline: 0 },
+      workEntryId: "work-fig"
+    });
     expect(
       pdfImportPublicationOutcomeDtoSchema.parse({
         pagesNeedingOcr: 3,

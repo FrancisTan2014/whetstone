@@ -1,0 +1,4 @@
+ALTER TABLE "pdf_import_publications" ADD COLUMN "outline_gap_headings" integer;--> statement-breakpoint
+ALTER TABLE "pdf_import_publications" ADD COLUMN "outline_resolved_headings" integer;--> statement-breakpoint
+ALTER TABLE "pdf_import_publications" ADD CONSTRAINT "pdf_import_publications_outline_gap_ck" CHECK ("pdf_import_publications"."outline_gap_headings" is null or ("pdf_import_publications"."outline_gap_headings" > 0 and "pdf_import_publications"."work_entry_id" is not null));--> statement-breakpoint
+ALTER TABLE "pdf_import_publications" ADD CONSTRAINT "pdf_import_publications_outline_resolved_ck" CHECK ("pdf_import_publications"."outline_resolved_headings" is null or ("pdf_import_publications"."outline_resolved_headings" > 0 and "pdf_import_publications"."work_entry_id" is not null));
