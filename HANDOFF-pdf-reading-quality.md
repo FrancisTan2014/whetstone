@@ -1110,3 +1110,119 @@ full in the issue body so the knowledge survives even if no PR lands).
 own "fix" for a caret race made the suite green by *removing the assertion*, and only an independent
 reviewer's planted mutation caught it. "Fails before, passes after" cannot distinguish a repaired test
 from a disarmed one.
+
+## 15. The design answer to "nearly unusable": use the navigation the author wrote
+
+This is the most reusable thing learned today, so it goes last where it is easiest to find.
+
+The original complaint was that whetstone's PDF reading was unusable next to Edge's viewer. After the
+ingestion truncation was fixed (Clean Code 335 -> 3,038 blocks), I measured what was still wrong and
+found the dominant defect was not extraction quality at all. It was **granularity**:
+
+| book | path | pages | reading units |
+|---|---|---:|---:|
+| Clean Code | PDF | 462 | **525** |
+| DDIA | EPUB | comparable | **25** |
+
+Roughly one unit per page. The reader was paging through fragments instead of reading chapters. That
+is most of what "nearly unusable" meant, and it is issue **#816**.
+
+### Why the obvious fix is wrong
+
+`splitIntoUnits` (`pdfCanonicalMapping.ts:369`) starts a unit at every heading. The obvious repair is
+"start a unit only at the shallowest heading level", which would give 39. I nearly specified that, and
+it is wrong, because **12 of Clean Code's 39 level-1 headings are a bare label**: docling emits the
+chapter number and the chapter title as two separate headings.
+
+```
+"Unit Tests"                       <- ch.9, number absorbed elsewhere
+"10" "Classes"   "11" "Systems"  ...  "17" "Smells and Heuristics"
+"Appendix A" "Concurrency II"    "Appendix B" "org.jfree.date.SerialDate"
+```
+
+So the naive rule produces ~10 junk units titled `10`, `11`, `Appendix A`. Any fix that starts
+sniffing for numerals and a `Chapter|Appendix|Part` vocabulary is inventing a heuristic that will rot
+on the next book.
+
+### The rule that is actually right
+
+Look at what the working path does. **EPUB never looks at headings** — `epubCommands.ts` splits on the
+**spine**, one unit per spine document. Its granularity is right because it is *authored by the
+publisher*, not inferred by us. So the product rule is not about headings:
+
+> **A reading unit is a top-level division of the work's authored navigation.**
+
+PDFs carry the same authored navigation as an embedded outline. Clean Code declares **384 outline
+entries, 27 of them top-level**, correctly titled — `Chapter 10: Classes`, not `10`:
+
+```
+Clean Code / Contents / Foreword / Introduction / On the Cover
+Chapter 1: Clean Code ... Chapter 17: Smells and Heuristics
+Appendix A: Concurrency II / Appendix B: org.jfree.date.SerialDate
+Appendix C: Cross References of Heuristics / Epilogue / Index
+```
+
+**And #815 already parses that outline and already passes it into the mapper.** We were using it to
+decide heading *depth* and then discarding the structure when splitting units — `splitIntoUnits` does
+not even receive it.
+
+The arithmetic closes exactly, which is what convinced me the model is right rather than merely
+plausible:
+
+> **27 outline-derived headings + 12 bare label headings = the 39 level-1 headings in the database.**
+
+The bare labels are `source: "label"`, never `source: "outline"`. So a boundary test of
+`source === "outline" && level === 1` selects the 27 real divisions and ignores all 12 labels **with
+no special case at all**. The trap dissolves; no regex is needed. Expected result: **525 -> 27 units**,
+against DDIA's 25 on the path that already works.
+
+### Why this matters beyond #816
+
+It is not a PDF heuristic. Both formats end up following one rule — *use the navigation the author
+wrote* — which is what the block bedrock demands, since the Reader must never branch by source format.
+When the next format arrives, ask what its authored navigation is before writing any inference.
+
+The general lesson, worth more than the specific fix: **when one path works and another does not,
+find out what the working path is actually keying on before designing a repair for the broken one.** I
+was one step from shipping a heading heuristic into a product that already had the publisher's own
+chapter list sitting in memory, unused.
+
+## 16. #812 / #858: recovering dropped text at the cost of shape
+
+Sweeping the repaired database turned up 39 blocks of `type: "unknown"` carrying **zero characters** —
+`key_value_area`, `document_index`, `form_area`. Two ordinary docling constructs reached the mapper
+unmapped and their descendants were dropped entirely: not in `plaintext`, not in `node_json`, so
+unreadable, unsearchable and *uncorrectable*. One of them was the book's own table of contents.
+That is **71,510 characters** of Clean Code.
+
+PR **#858** adds an `expandUnmappedContainers` pre-pass that flattens an unrecognized container into
+its children in source order, running *after* furniture partitioning so #811's rules judge the same
+top-level items. A construct with no text and no children now emits **no block**, instead of a blank
+one occupying an order slot. All 71,510 characters return; zero blank blocks remain.
+
+The cost, and the reason it needed a design decision rather than just a review: `document_index`
+recovers as **1,243 cell-level fragments** (docling's `_table_rows` is label-agnostic), growing the
+book 3,038 -> 4,267 blocks. Shipping a thousand new fragments while #816 says fragmentation is the
+worst thing about PDF reading deserved more than a shrug, so I measured where they land:
+
+| unit | tag | blocks |
+|---|---|---:|
+| Contents (7) | `document_index` | 11 |
+| Cross References of Heuristics (518) | `document_index` | 2 |
+| Index (520) | `document_index` | 11 |
+| P (521, index continuation) | `document_index` | 6 |
+| 8 scattered body units | `key_value_area` | 8 |
+| Multithread Calculation of Throughput (432) | `form_area` | 1 |
+
+**All the fragmentation is confined to 4 units out of 525 — front and back matter. Not one chapter is
+affected.** In the 521 body units the reader actually reads, the change is +25 paragraphs of recovered
+prose and 9 blank gaps removed: pure improvement, no fragmentation cost.
+
+So the honest statement is not "recovers text but fragments the book". It is **"recovers body text
+cleanly, and recovers front/back matter in a shape that still needs work"**. That flipped my
+hesitation, and the decision rule generalizes: **dropped text is not correctable by anybody; fragmented
+text is.** `PRODUCT.md` targets >=95% usable automatic ingestion with an administrator correcting the
+remainder in the shared editor — text that never reaches a block is invisible in the reader, in search
+and in the editor alike. Follow-up **#859** maps `document_index` to the existing canonical
+`tableNode`, and records the prior question it must settle first: whether a printed TOC and index
+belong in the reading body at all, or are furniture #811 should partition out.
