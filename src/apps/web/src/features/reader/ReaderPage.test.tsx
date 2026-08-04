@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import {
+  act,
   cleanup,
   fireEvent,
   render as rtlRender,
@@ -2395,13 +2396,73 @@ describe("ReaderPage note management", () => {
     selectTextDeep(block, "Intro");
     fireEvent.mouseUp(block);
 
-    const addNote = (await screen.findByRole("button", { name: "Add note" })) as HTMLButtonElement;
+    // Read the disabled Add note and the reason (the overlap hint) from the SAME live toolbar in one
+    // synchronous pass, never through two independent global queries: the disabled state and the hint
+    // are one fact, so if a background re-render unmounted the toolbar between the two, `disabled`
+    // would be read off a detached node while the hint was checked against the new DOM — the exact
+    // split the #825 flake exploited. Querying both within the one toolbar node keeps them agreeing.
+    const toolbar = await screen.findByRole("toolbar", { name: "Annotate selection" });
+    const addNote = within(toolbar).getByRole("button", { name: "Add note" }) as HTMLButtonElement;
     expect(addNote.disabled).toBe(true);
-    expect(screen.getByText("Notes can't overlap")).toBeDefined();
+    expect(within(toolbar).getByRole("note").textContent).toBe("Notes can't overlap");
     // Look up stays available for an overlapping selection.
-    expect((screen.getByRole("button", { name: "Look up" }) as HTMLButtonElement).disabled).toBe(
-      false
-    );
+    expect(
+      (within(toolbar).getByRole("button", { name: "Look up" }) as HTMLButtonElement).disabled
+    ).toBe(false);
+  });
+
+  it("keeps an open selection toolbar through a note re-application it did not ask for (#825)", async () => {
+    // A note already annotates "Replication" [0,11) in the first block, which also carries a footnote
+    // marker to a second block in the same unit — so a marker jump borns that block and forces the
+    // reader to re-decorate without the learner touching their selection.
+    const note = makeNote({
+      anchor: {
+        blockEntryId: toEntryId("b-1"),
+        contextSnapshot: "Replication keeps a copy",
+        endBlockEntryId: toEntryId("b-1"),
+        endOffset: 11,
+        selectedTextSnapshot: "Replication",
+        startOffset: 0
+      }
+    });
+    seedWorkContent(footnoteContent);
+    mockedFetchNotes.mockResolvedValue({ notes: [note] });
+    const { container } = render(<ReaderPage initialWorkEntryId="work-1" />);
+    const block = await waitFor(() => {
+      const el = blockElement(container, "b-1");
+      expect(el.querySelector(".noteMark")).not.toBeNull();
+      return el;
+    });
+
+    // Open the toolbar over the annotated text: the selection overlaps the note, so it shows the
+    // disabled Add note and the "Notes can't overlap" hint — the toolbar and hint that must survive.
+    selectTextDeep(block, "Replication");
+    fireEvent.mouseUp(block);
+    const toolbar = await screen.findByRole("toolbar", { name: "Annotate selection" });
+    expect(within(toolbar).getByRole("note").textContent).toBe("Notes can't overlap");
+
+    // Tapping the footnote marker borns the target block, which bumps the highlight render key and
+    // makes `applyNoteHighlights` unwrap and re-wrap every `.noteMark` — collapsing the live selection
+    // inside one. `fireEvent.click` dispatches only a click (no mousedown), so this is not an
+    // outside-press dismissal; it is purely the reader re-applying its own decorations. Driving it
+    // inside `act` lets the born + surgery run while the guard's deferred release stays pending.
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "i" }));
+    });
+    // The reader's own surgery collapsed the selection — the exact condition that, unguarded, dismisses
+    // the toolbar mid-action.
+    expect(window.getSelection()?.isCollapsed).toBe(true);
+
+    // The browser reports that collapse as a selectionchange. Before #825 this cleared the capture and
+    // unmounted the toolbar; the re-application guard now recognises it as reader-driven, so the
+    // toolbar — and its hint — stay open. Read both from the one live toolbar (never a detached node).
+    fireEvent(document, new Event("selectionchange"));
+
+    const survivor = screen.getByRole("toolbar", { name: "Annotate selection" });
+    expect(
+      (within(survivor).getByRole("button", { name: "Add note" }) as HTMLButtonElement).disabled
+    ).toBe(true);
+    expect(within(survivor).getByRole("note").textContent).toBe("Notes can't overlap");
   });
 
   it("keeps Add note enabled for a selection disjoint from existing annotations", async () => {
