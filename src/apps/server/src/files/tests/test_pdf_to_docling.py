@@ -48,6 +48,7 @@ from pdf_to_docling import (  # noqa: E402  (path set above)
     UnsupportedSchema,
     ArtifactSink,
     apply_memory_limit,
+    release_memory_boundary,
     resolve_memory_boundary,
     run_check_memory_ceiling,
     write_metrics_sidecar,
@@ -871,7 +872,7 @@ class _FakeWin32JobApi:
     JOB_OBJECT_LIMIT_JOB_MEMORY = 0x200
     JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
 
-    def __init__(self, *, peak=None, fail_on=None):
+    def __init__(self, *, peak=None, fail_on=None, fail_on_release=False):
         self.calls = []
         self.info = {
             "BasicLimitInformation": {"LimitFlags": 0},
@@ -880,6 +881,8 @@ class _FakeWin32JobApi:
             "PeakJobMemoryUsed": peak,
         }
         self._fail_on = fail_on
+        self._fail_on_release = fail_on_release
+        self._assigned = False
 
     def create_job_object(self):
         self.calls.append("create")
@@ -893,7 +896,9 @@ class _FakeWin32JobApi:
 
     def set_extended_limit(self, _job, info):
         self.calls.append("set")
-        if self._fail_on == "set":
+        # `fail_on_release` fails only the reconfigure that follows assignment, so a job that applied
+        # cleanly can still fail to release (#843).
+        if self._fail_on == "set" or (self._fail_on_release and self._assigned):
             raise OSError("SetInformationJobObject failed")
         self.info = info
 
@@ -901,6 +906,35 @@ class _FakeWin32JobApi:
         self.calls.append("assign")
         if self._fail_on == "assign":
             raise OSError("AssignProcessToJobObject failed")
+        self._assigned = True
+
+
+class _RecordingBoundary:
+    """A ``MemoryBoundary`` double that records apply/release, so ``main``'s exit paths can be asserted.
+
+    The Job Object fake above is the right instrument for the FLAG semantics; this one is the right
+    instrument for "release ran exactly once on this return path, and could not change the code" (#843).
+    """
+
+    def __init__(self, *, apply_error=None, release_error=None, peak=None):
+        self.applied = []
+        self.releases = 0
+        self._apply_error = apply_error
+        self._release_error = release_error
+        self._peak = peak
+
+    def apply(self, limit_bytes):
+        self.applied.append(limit_bytes)
+        if self._apply_error is not None:
+            raise self._apply_error
+
+    def peak_bytes(self):
+        return self._peak
+
+    def release(self):
+        self.releases += 1
+        if self._release_error is not None:
+            raise self._release_error
 
 
 class MemoryLimitTests(unittest.TestCase):
@@ -976,6 +1010,72 @@ class MemoryLimitTests(unittest.TestCase):
     def test_windows_boundary_assign_failure_is_refused(self):
         with self.assertRaises(MemoryCeilingUnsupported):
             apply_memory_limit("64", _WindowsMemoryBoundary(_FakeWin32JobApi(fail_on="assign")))
+
+
+class MemoryBoundaryReleaseTests(unittest.TestCase):
+    """#843: the orderly-exit release that stops the boundary overwriting the code the worker chose."""
+
+    UNRELATED_FLAG = 0x400  # e.g. DIE_ON_UNHANDLED_EXCEPTION set by an outer job; must survive both calls.
+
+    def test_windows_release_clears_only_the_kill_on_job_close_flag(self):
+        api = _FakeWin32JobApi(peak=7 * 1024 * 1024)
+        api.info["BasicLimitInformation"]["LimitFlags"] = self.UNRELATED_FLAG
+        boundary = _WindowsMemoryBoundary(api)
+        apply_memory_limit("128", boundary)
+        applied_flags = api.info["BasicLimitInformation"]["LimitFlags"]
+
+        boundary.release()
+
+        # Exactly the KILL_ON_JOB_CLOSE bit is dropped — nothing else is touched, added or reset.
+        self.assertEqual(
+            api.info["BasicLimitInformation"]["LimitFlags"],
+            applied_flags & ~api.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        )
+        self.assertFalse(
+            api.info["BasicLimitInformation"]["LimitFlags"] & api.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        )
+        # The MEMORY ceiling is NOT released with it: both flags and both limits stand.
+        self.assertTrue(
+            api.info["BasicLimitInformation"]["LimitFlags"] & api.JOB_OBJECT_LIMIT_PROCESS_MEMORY
+        )
+        self.assertTrue(
+            api.info["BasicLimitInformation"]["LimitFlags"] & api.JOB_OBJECT_LIMIT_JOB_MEMORY
+        )
+        self.assertTrue(api.info["BasicLimitInformation"]["LimitFlags"] & self.UNRELATED_FLAG)
+        self.assertEqual(api.info["ProcessMemoryLimit"], 128 * 1024 * 1024)
+        self.assertEqual(api.info["JobMemoryLimit"], 128 * 1024 * 1024)
+        # One reconfigure, and the handle is kept open so the metrics sidecar can still read the peak.
+        self.assertEqual(api.calls, ["create", "query", "set", "assign", "query", "set"])
+        self.assertEqual(boundary.peak_bytes(), 7 * 1024 * 1024)
+
+    def test_windows_release_without_an_applied_job_touches_nothing(self):
+        # A ceiling that was never requested leaves no job, so the exit-path release is a no-op — it must
+        # not create or configure one just to tear it down.
+        api = _FakeWin32JobApi()
+        _WindowsMemoryBoundary(api).release()
+        self.assertEqual(api.calls, [])
+
+    def test_posix_release_is_a_noop(self):
+        # RLIMIT_AS dies with the process and can never overwrite the exit status, so POSIX stands nothing
+        # down — and in particular does not touch the rlimit it set.
+        recorder = types.SimpleNamespace(calls=[], RLIMIT_AS="AS")
+        recorder.setrlimit = lambda which, pair: recorder.calls.append((which, pair))
+        boundary = _PosixMemoryBoundary(recorder)
+        apply_memory_limit("256", boundary)
+        boundary.release()
+        self.assertEqual(recorder.calls, [("AS", (256 * 1024 * 1024, 256 * 1024 * 1024))])
+
+    def test_releasing_no_boundary_is_a_noop(self):
+        release_memory_boundary(None)  # must not raise
+
+    def test_a_failing_release_is_swallowed(self):
+        # Best effort: a cleanup must never become a new failure mode on top of the outcome being reported.
+        boundary = _WindowsMemoryBoundary(_FakeWin32JobApi(fail_on_release=True))
+        apply_memory_limit("64", boundary)
+        release_memory_boundary(boundary)  # must not raise
+        boundary = _RecordingBoundary(release_error=RuntimeError("handle gone"))
+        release_memory_boundary(boundary)  # must not raise
+        self.assertEqual(boundary.releases, 1)
 
 
 class ResolveMemoryBoundaryTests(unittest.TestCase):
@@ -1759,14 +1859,124 @@ class MainTests(unittest.TestCase):
         self.assertEqual(code, EXIT_USAGE)
         self.assertEqual(calls, [])
 
+    # --- #843: the boundary is stood down on EVERY return path, and can never change the code ---------
+
+    def _main_with(self, boundary, argv, ceiling="512", **kwargs):
+        """Run ``main`` with the memory-ceiling env var set, so the injected boundary is really applied."""
+        previous = os.environ.get(MEMORY_LIMIT_ENV)
+        os.environ[MEMORY_LIMIT_ENV] = ceiling
+        try:
+            return main(
+                argv, boundary=boundary, stdout=io.StringIO(), stderr=io.StringIO(), **kwargs
+            )
+        finally:
+            if previous is None:
+                os.environ.pop(MEMORY_LIMIT_ENV, None)
+            else:
+                os.environ[MEMORY_LIMIT_ENV] = previous
+
+    def test_a_successful_run_releases_the_boundary_exactly_once(self):
+        boundary = _RecordingBoundary()
+        code = self._main_with(boundary, ["--probe", "/tmp/a.pdf"], opener=lambda _p: FakeBackendDoc(1))
+        self.assertEqual(code, EXIT_OK)
+        self.assertEqual(boundary.applied, [512 * 1024 * 1024])
+        self.assertEqual(boundary.releases, 1)
+
+    def test_every_return_path_releases_the_boundary(self):
+        # The early readiness-probe return, the unenforceable-ceiling return and BOTH usage returns are
+        # exactly the paths a `return` inside the ceiling's scope would skip.
+        for name, argv, boundary, expected in (
+            (
+                "readiness probe",
+                ["--check-memory-ceiling"],
+                _RecordingBoundary(),
+                EXIT_OK,
+            ),
+            (
+                "unenforceable ceiling",
+                ["--probe", "/tmp/a.pdf"],
+                _RecordingBoundary(apply_error=MemoryCeilingUnsupported(512)),
+                EXIT_MEMORY_CEILING_UNSUPPORTED,
+            ),
+            ("unknown mode", ["--nope"], _RecordingBoundary(), EXIT_USAGE),
+            ("bad page range", ["--range", "/tmp/a.pdf", "5", "2"], _RecordingBoundary(), EXIT_USAGE),
+        ):
+            with self.subTest(name):
+                code = self._main_with(boundary, argv, opener=lambda _p: FakeBackendDoc(1))
+                self.assertEqual(code, expected)
+                self.assertEqual(boundary.releases, 1)
+
+    def test_a_raising_release_never_changes_the_code_the_worker_decided(self):
+        # The release is a best-effort cleanup on the way out; if it fails, the worker still reports the
+        # outcome it classified rather than inventing a new failure.
+        for name, argv, expected in (
+            ("success", ["--probe", "/tmp/a.pdf"], EXIT_OK),
+            ("usage error", ["--nope"], EXIT_USAGE),
+        ):
+            with self.subTest(name):
+                boundary = _RecordingBoundary(release_error=OSError("SetInformationJobObject failed"))
+                code = self._main_with(boundary, argv, opener=lambda _p: FakeBackendDoc(1))
+                self.assertEqual(code, expected)
+                self.assertEqual(boundary.releases, 1)
+
+    def test_a_propagating_exception_still_releases_the_boundary(self):
+        # A MemoryError raised while emitting the payload travels PAST `main` to `_entrypoint`, which
+        # turns it into EXIT_MEMORY (7) — one of the codes the ceiling was destroying. That is why the
+        # stand-down lives in a `finally` rather than on each `return`.
+        boundary = _RecordingBoundary()
+
+        class _RaisingStdout:
+            def write(self, _text):
+                raise MemoryError("the payload does not fit under the ceiling")
+
+        previous = os.environ.get(MEMORY_LIMIT_ENV)
+        os.environ[MEMORY_LIMIT_ENV] = "512"
+        try:
+            with self.assertRaises(MemoryError):
+                main(
+                    ["--probe", "/tmp/a.pdf"],
+                    opener=lambda _p: FakeBackendDoc(1),
+                    boundary=boundary,
+                    stdout=_RaisingStdout(),
+                    stderr=io.StringIO(),
+                )
+        finally:
+            if previous is None:
+                os.environ.pop(MEMORY_LIMIT_ENV, None)
+            else:
+                os.environ[MEMORY_LIMIT_ENV] = previous
+        self.assertEqual(boundary.releases, 1)
+
+    def test_the_peak_is_read_before_the_boundary_is_released(self):
+        # The release deliberately keeps the job handle open, but the sidecar is still written first, so
+        # peak accounting never depends on what release does.
+        api = _FakeWin32JobApi(peak=3 * 1024 * 1024)
+        boundary = _WindowsMemoryBoundary(api)
+        observed = []
+        code = self._main_with(
+            boundary,
+            ["--probe", "/tmp/a.pdf"],
+            opener=lambda _p: FakeBackendDoc(1),
+            metrics_writer=lambda _path, b: observed.append(b.peak_bytes()),
+        )
+        self.assertEqual(code, EXIT_OK)
+        self.assertEqual(observed, [3 * 1024 * 1024])
+        self.assertFalse(
+            api.info["BasicLimitInformation"]["LimitFlags"] & api.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        )
+        # The handle outlives the release, so the peak is still readable afterwards.
+        self.assertEqual(boundary.peak_bytes(), 3 * 1024 * 1024)
+
 
 @unittest.skipUnless(sys.platform == "win32", "Windows Job Object enforcement is Windows-only")
 class WindowsMemoryCeilingEnforcementTests(unittest.TestCase):
-    """A REAL child-process contract test (#782): apply a deliberately small Windows ceiling and exceed it.
+    """REAL child-process contract tests for the Windows Job Object boundary (#782, #843).
 
-    This proves the Job Object memory limit is actually enforced (an over-ceiling allocation fails), or —
-    where pywin32 is unavailable — that the worker returns the typed unsupported result. Asserting the
-    Job Object calls fired would be insufficient; this spawns a real interpreter under a real ceiling.
+    A fake can prove which Job Object calls fired; only a real process can prove what the OS then does.
+    These spawn a real interpreter under a real ceiling to check the two things that matter: an
+    over-ceiling allocation actually fails (#782), and the ceiling does not overwrite the exit code the
+    worker chose on its way out (#843). Where pywin32 is unavailable each falls back to asserting the
+    typed unsupported result.
     """
 
     def _run_child(self, script):
@@ -1813,6 +2023,64 @@ class WindowsMemoryCeilingEnforcementTests(unittest.TestCase):
         )
         self.assertNotIn("UNBOUNDED", result.stdout)
         self.assertIn(result.stdout.strip(), ("ENFORCED", "UNSUPPORTED"))
+
+    def test_an_applied_ceiling_does_not_overwrite_the_exit_code(self):
+        # #843, and the ONLY instrument that can see it: no fake can observe the Job Object killing this
+        # process at interpreter shutdown, which is exactly why the defect survived every unit test. The
+        # child applies the REAL ceiling through the REAL boundary, releases it, and exits 9 — the
+        # `conversion_incomplete` code #832 added. Before the release existed this process exited 0.
+        script = (
+            "import sys\n"
+            "from pdf_to_docling import (resolve_memory_boundary, apply_memory_limit, "
+            "release_memory_boundary, MemoryCeilingUnsupported)\n"
+            "boundary = resolve_memory_boundary('win32')\n"
+            "if boundary is None:\n"
+            "    print('UNSUPPORTED'); sys.exit(8)\n"
+            "try:\n"
+            "    apply_memory_limit('512', boundary)\n"
+            "except MemoryCeilingUnsupported:\n"
+            "    print('UNSUPPORTED'); sys.exit(8)\n"
+            "release_memory_boundary(boundary)\n"
+            "print('APPLIED')\n"
+            "sys.stdout.flush()\n"
+            "sys.exit(9)\n"
+        )
+        result = self._run_child(script)
+        if result.stdout.strip() == "UNSUPPORTED":
+            self.assertEqual(result.returncode, 8)
+            return
+        self.assertEqual(
+            result.returncode,
+            9,
+            msg="the ceiling destroyed the worker's exit code: the process chose 9 and reported "
+            f"{result.returncode} (stdout={result.stdout!r} stderr={result.stderr!r})",
+        )
+        self.assertEqual(result.stdout.strip(), "APPLIED", msg=result.stderr)
+
+    def test_main_reports_its_own_exit_code_through_a_real_ceiling(self):
+        # The same proof one level up, over the production entry point: with the ceiling env var the
+        # server always sets, a usage return must still reach the parent as 2 rather than a silent 0.
+        script = (
+            "import io, os, sys\n"
+            "os.environ['WHETSTONE_PDF_MEMORY_MIB'] = '512'\n"
+            "from pdf_to_docling import main\n"
+            "code = main(['--nope'], stdout=io.StringIO(), stderr=io.StringIO())\n"
+            "print(f'MAIN_RETURNED={code}')\n"
+            "sys.stdout.flush()\n"
+            "sys.exit(code)\n"
+        )
+        result = self._run_child(script)
+        if "MAIN_RETURNED=8" in result.stdout:  # pywin32 absent: the ceiling is refused, not applied.
+            self.assertEqual(result.returncode, 8)
+            return
+        self.assertEqual(
+            result.returncode,
+            2,
+            msg="main chose a usage exit but the process reported "
+            f"{result.returncode}: the memory boundary overwrote it "
+            f"(stdout={result.stdout!r} stderr={result.stderr!r})",
+        )
+        self.assertIn("MAIN_RETURNED=2", result.stdout, msg=result.stderr)
 
 
 # --- Picture artifact extraction (#807) --------------------------------------------------------
