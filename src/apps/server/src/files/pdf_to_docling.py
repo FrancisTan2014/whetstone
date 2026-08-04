@@ -180,6 +180,14 @@ class MemoryBoundary(Protocol):
     def peak_bytes(self) -> Optional[int]:
         """Peak memory used under the ceiling, or None where this platform cannot cheaply report it."""
 
+    def release(self) -> None:
+        """Relax teardown-time enforcement on the orderly exit path so the worker's own exit code survives.
+
+        Called once from ``main`` immediately before the worker returns its code (#843). The MEMORY ceiling
+        itself is never relaxed, and any handle ``peak_bytes`` still reads stays open — only enforcement
+        that would outlive the decision and overwrite it is stood down.
+        """
+
 
 class _PosixMemoryBoundary:
     """Enforce a hard address-space ceiling with POSIX ``resource.setrlimit(RLIMIT_AS)`` (unchanged #701)."""
@@ -195,6 +203,11 @@ class _PosixMemoryBoundary:
         # accounting"); the worker emits no sidecar peak here.
         return None
 
+    def release(self) -> None:
+        # RLIMIT_AS is a per-process ceiling with no teardown behaviour: it bounds allocation and then dies
+        # with the process, so it can never overwrite the exit status. Nothing to stand down here (#843).
+        return None
+
 
 class _WindowsMemoryBoundary:
     """Enforce a hard per-process/job memory ceiling with a Windows Job Object (pinned pywin32, #782).
@@ -205,6 +218,11 @@ class _WindowsMemoryBoundary:
     worker already inside an outer job is placed in a NESTED job (no breakaway requested) on supported
     Windows. The handle is RETAINED for the worker lifetime so KILL_ON_JOB_CLOSE does not tear the job
     down early, and peak memory is read from the job's ``PeakJobMemoryUsed`` accounting.
+
+    KILL_ON_JOB_CLOSE is stood down by ``release`` on the orderly exit path (#843): the retained handle is
+    dropped at interpreter shutdown, and a job that sees its last handle close TERMINATES the processes
+    still assigned to it — this one. That kill landed after ``sys.exit(code)`` and overwrote the worker's
+    status with the job's, so every classified failure reached the adapter as 0.
     """
 
     def __init__(self, win32: Any) -> None:
@@ -235,6 +253,23 @@ class _WindowsMemoryBoundary:
         info = self._win32.query_extended_limit(self._job)
         peak = info.get("PeakJobMemoryUsed")
         return int(peak) if peak else None
+
+    def release(self) -> None:
+        """Clear ONLY KILL_ON_JOB_CLOSE so shutdown cannot overwrite the exit code the worker chose (#843).
+
+        The flag guards the whole run — it is what stops a runaway descendant outliving the worker — so it
+        is cleared here, at the orderly exit, and not dropped from ``apply``. The two memory-limit flags and
+        both limits are left exactly as configured, so the job stays bounded until the process is gone. The
+        handle is deliberately NOT closed: ``peak_bytes`` still reads ``PeakJobMemoryUsed`` from it for the
+        metrics sidecar.
+        """
+        if self._job is None:
+            return
+        win32 = self._win32
+        info = win32.query_extended_limit(self._job)
+        basic = info["BasicLimitInformation"]
+        basic["LimitFlags"] = basic["LimitFlags"] & ~win32.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        win32.set_extended_limit(self._job, info)
 
 
 class _Win32JobApi:
@@ -320,6 +355,23 @@ def apply_memory_limit(mib: Optional[str], boundary: Optional[MemoryBoundary]) -
         raise
     except Exception as error:  # noqa: BLE001 - any create/configure/assign failure is a hard refusal.
         raise MemoryCeilingUnsupported(limit_mib) from error
+
+
+def release_memory_boundary(boundary: Optional[MemoryBoundary]) -> None:
+    """Stand the boundary's teardown-time enforcement down on the orderly exit path — BEST EFFORT (#843).
+
+    Called once from ``main`` after the worker has decided its exit code and before it returns, so no
+    platform teardown can overwrite that code (on Windows the Job Object's KILL_ON_JOB_CLOSE did exactly
+    that, collapsing every classified failure to 0). It can never CHANGE the decided code: no boundary is a
+    no-op, and a boundary whose release fails is swallowed — a best-effort cleanup must not become a new
+    failure mode, and the memory ceiling it enforced is bounded by the process ending either way.
+    """
+    if boundary is None:
+        return
+    try:
+        boundary.release()
+    except Exception:  # noqa: BLE001 - never let a cleanup rewrite the outcome the worker reported.
+        pass
 
 
 def write_metrics_sidecar(
@@ -1322,54 +1374,62 @@ def main(
     if outline_reader_factory is None:
         outline_reader_factory = lambda path: pdf_outline_reader(path, opener)
 
-    # The readiness probe exercises the real controller itself, so it precedes (and does not double-apply)
-    # the startup ceiling.
-    if len(argv) == 1 and argv[0] == "--check-memory-ceiling":
-        return run_check_memory_ceiling(os.environ.get(MEMORY_LIMIT_ENV), boundary, stdout, stderr)
-
+    # Every return below — including the early readiness-probe, unenforceable-ceiling and usage returns —
+    # leaves through this `finally`, so the boundary's teardown-time enforcement is stood down on EVERY
+    # orderly exit path and the code the worker decided is the code the OS reports (#843). An exception on
+    # its way to `_entrypoint`'s ImportError/MemoryError handlers passes through here too, so those codes
+    # survive as well. Peak memory is read before this point, and `release` keeps the handle open anyway.
     try:
-        apply_memory_limit(os.environ.get(MEMORY_LIMIT_ENV), boundary)
-    except MemoryCeilingUnsupported as error:
-        _write(stderr, f"{error}\n")
-        return EXIT_MEMORY_CEILING_UNSUPPORTED
+        # The readiness probe exercises the real controller itself, so it precedes (and does not
+        # double-apply) the startup ceiling.
+        if len(argv) == 1 and argv[0] == "--check-memory-ceiling":
+            return run_check_memory_ceiling(os.environ.get(MEMORY_LIMIT_ENV), boundary, stdout, stderr)
 
-    try:
-        if len(argv) == 2 and argv[0] == "--probe":
-            code = run_probe(argv[1], opener, prober_factory, geometry_factory, stdout, stderr)
-        elif len(argv) in (4, 5) and argv[0] == "--range":
-            start_page = _parse_positive_int(argv[2])
-            end_page = _parse_positive_int(argv[3])
-            if end_page < start_page:
-                raise ValueError("end page must be >= start page")
-            artifact_dir = argv[4] if len(argv) == 5 else None
-            code = run_range(
-                argv[1],
-                start_page,
-                end_page,
-                converter_factory,
-                prober_factory,
-                stdout,
-                stderr,
-                metadata_reader_factory,
-                artifact_dir,
-                outline_reader_factory=outline_reader_factory,
-            )
-        else:
-            _write(
-                stderr,
-                "usage: pdf_to_docling.py --probe <file.pdf> | "
-                "--range <file.pdf> <start> <end> [artifact-dir] | --check-memory-ceiling\n",
-            )
+        try:
+            apply_memory_limit(os.environ.get(MEMORY_LIMIT_ENV), boundary)
+        except MemoryCeilingUnsupported as error:
+            _write(stderr, f"{error}\n")
+            return EXIT_MEMORY_CEILING_UNSUPPORTED
+
+        try:
+            if len(argv) == 2 and argv[0] == "--probe":
+                code = run_probe(argv[1], opener, prober_factory, geometry_factory, stdout, stderr)
+            elif len(argv) in (4, 5) and argv[0] == "--range":
+                start_page = _parse_positive_int(argv[2])
+                end_page = _parse_positive_int(argv[3])
+                if end_page < start_page:
+                    raise ValueError("end page must be >= start page")
+                artifact_dir = argv[4] if len(argv) == 5 else None
+                code = run_range(
+                    argv[1],
+                    start_page,
+                    end_page,
+                    converter_factory,
+                    prober_factory,
+                    stdout,
+                    stderr,
+                    metadata_reader_factory,
+                    artifact_dir,
+                    outline_reader_factory=outline_reader_factory,
+                )
+            else:
+                _write(
+                    stderr,
+                    "usage: pdf_to_docling.py --probe <file.pdf> | "
+                    "--range <file.pdf> <start> <end> [artifact-dir] | --check-memory-ceiling\n",
+                )
+                return EXIT_USAGE
+        except ValueError as error:
+            _write(stderr, f"usage error: {error}\n")
             return EXIT_USAGE
-    except ValueError as error:
-        _write(stderr, f"usage error: {error}\n")
-        return EXIT_USAGE
 
-    # Emit the bounded peak-memory sidecar only for a successful conversion, so a failure's partial peak is
-    # never mistaken for a completed run's metric.
-    if code == EXIT_OK:
-        metrics_writer(os.environ.get(METRICS_PATH_ENV), boundary)
-    return code
+        # Emit the bounded peak-memory sidecar only for a successful conversion, so a failure's partial
+        # peak is never mistaken for a completed run's metric.
+        if code == EXIT_OK:
+            metrics_writer(os.environ.get(METRICS_PATH_ENV), boundary)
+        return code
+    finally:
+        release_memory_boundary(boundary)
 
 
 def _entrypoint() -> int:  # pragma: no cover - process entry
