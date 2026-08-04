@@ -106,7 +106,6 @@ function item(partial: Partial<StructuredDocItem> & { label: string }): Structur
     charSpan: [0, 5],
     children: [],
     confidence: 0.9,
-    label: partial.label,
     pageNumber: 1,
     text: "",
     ...partial
@@ -646,7 +645,9 @@ describe("publishConvertedPdfImport", () => {
     });
     // Write DIFFERENT bytes than the manifest claims (same declared length, different content).
     const tampered = pngBytes(64, 48, 8);
-    tampered[tampered.byteLength - 1] ^= 0xff;
+    const lastIndex = tampered.byteLength - 1;
+    // pngBytes always yields a non-empty buffer, so the last byte is present.
+    tampered[lastIndex] = tampered[lastIndex]! ^ 0xff;
     const artifactDir = await stageStore.prepareRangeArtifactDir("att-corrupt", 0);
     await writeFile(join(artifactDir, "fig-0.png"), tampered);
     await insertPublicationIntent(db, {

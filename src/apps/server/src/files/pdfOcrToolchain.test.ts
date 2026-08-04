@@ -80,12 +80,13 @@ function recordingProbe(
   results: Readonly<Record<string, OcrProbeResult>>
 ): OcrToolProbe & { calls: string[] } {
   const calls: string[] = [];
-  const probe = ((binary: string) => {
-    calls.push(binary);
-    return Promise.resolve(results[binary] ?? { outcome: "missing" });
-  }) as OcrToolProbe & { calls: string[] };
-  probe.calls = calls;
-  return probe;
+  return Object.assign(
+    (binary: string): Promise<OcrProbeResult> => {
+      calls.push(binary);
+      return Promise.resolve(results[binary] ?? { outcome: "missing" });
+    },
+    { calls }
+  );
 }
 
 describe("createOcrToolchainInspector", () => {
