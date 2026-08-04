@@ -803,16 +803,20 @@ find its anchor. Always pass `encoding="utf-8"`.
 
 ## 10. The caret race has two shapes, not one (#825 → #848, then #851 → #852)
 
-`RichContentEditor.tsx` (~L317) claims a mousedown that lands on the blank paper margin and puts
-the caret at the document end:
+`RichContentEditor.tsx` claims a mousedown that lands on the blank paper margin and puts the caret
+at the document end:
 
 ```ts
 if (isBlankSurfacePress(event.target)) {
-  requestAnimationFrame(() => editor.commands.focus("end"));
+  editor.commands.focus("end");
 }
 ```
 
-The focus lands **one frame later**. Every test that types near that press is racing that frame.
+**The deferral is not ours.** There is no `requestAnimationFrame` in `RichContentEditor.tsx`; the
+one-frame delay lives inside **Tiptap's `focus()` command** (`delayedFocus` → rAF → `view.focus()` →
+`selectionToDOM`). The ProseMirror **state** selection moves synchronously; only the **DOM**
+selection lands a frame later — and typing follows the DOM. So the race cannot be removed by editing
+our component, and any test that types near that press is racing Tiptap's frame.
 Three separate CI failures came from this one deferred step, and they look different enough that
 fixing one does not suggest the others exist. **The product code is correct in all three cases —
 a human cannot type within one frame of a mousedown. Do not "fix" `RichContentEditor.tsx`.**
@@ -841,17 +845,40 @@ was not armed. The failure signature is the mirror image of shape A:
 AssertionError: expected 'Hello!' to be '!Hello'
 ```
 
-Fixed by focusing directly and suppressing that click:
+The fix is to **await the frame, not out-run it**:
 
 ```ts
+(paragraph as HTMLElement).dispatchEvent(press);
+
+await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)));
 textbox.focus();
 await user.type(textbox, "!", { skipClick: true });
 ```
 
-**`{ skipClick: true }` alone is wrong** — it also skips focusing, so the keystroke never reaches
-the editor and the test dies with `Expected the document listener to have been called.` The
-explicit `focus()` is load-bearing; the committed comments say so, because the obvious
-"simplification" is to delete it.
+`{ skipClick: true }` alone also skips focusing, so the keystroke never reaches the editor and the
+test dies with `Expected the document listener to have been called.` The explicit `focus()` is
+load-bearing.
+
+### The mistake worth inheriting: I disarmed these tests first, and the reviewer caught it
+
+The first attempt was **just** `textbox.focus()` + `skipClick`, with no awaited frame. It made the
+tests green and it was **wrong**: by ensuring the keystroke always wins, a *claimed* press and an
+*ignored* press produce the same document. Mutating `isBlankSurfacePress` to `return true` — a press
+that should be claimed — left both tests **passing**. The gap the "fix" removed was the assertion.
+
+Measured on the landed form, product file byte-identical to `main` throughout:
+
+| condition | both tests |
+|---|---|
+| unmutated (full file) | pass, 36/36 |
+| unmutated, synchronous-rAF stub | pass |
+| `isBlankSurfacePress` → `return true` | **FAIL** |
+| drop the `classList` check | **FAIL** |
+
+**The rule to carry forward: _"fails before, passes after" cannot distinguish a repaired test from a
+disarmed one._** A race fix must be shown deterministic in **both** directions — the flake gone
+*and* the bug still caught. Prove it with a planted mutation, and write the mutation result into the
+PR. This is now the standing expectation on any timing fix in this repository.
 
 ### How to prove a caret race — do not use repetition
 
@@ -867,6 +894,14 @@ vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
 
 Under that stub the broken tests failed **100%** with the exact CI signature, and the fixed ones
 pass. The stub is a diagnostic — it is never committed.
+
+### A second latent trap in the same tests: #853
+
+`ignores a press whose target is a text node, not an element` **never delivers a text node**. React
+retargets a `TEXT_NODE` event target to its `parentNode`, so the guard only ever sees the paragraph
+(`PROBE-TARGET HTMLParagraphElement nodeType=1`). It is therefore a duplicate of the test above it,
+its comment describes something that does not happen, and the guard's non-element branch is
+unexercised. Pre-existing, filed as **#853**, deliberately untouched by #852.
 
 ### The rest of the file is clean
 
