@@ -53,7 +53,12 @@ async function buildContext(): Promise<TestContext> {
 
   let now = t0;
   const createId = (): string => `id-${(sequence += 1)}`;
-  const notesReview: NotesReviewRouteDependencies = { createId, db, now: () => now };
+  const notesReview: NotesReviewRouteDependencies = {
+    attemptTtlMs: 30 * 60 * 1000,
+    createId,
+    db,
+    now: () => now
+  };
 
   return {
     db,

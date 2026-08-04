@@ -9,12 +9,13 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { AuthorNoteCardRequest } from "@whetstone/contracts";
 import { createTextDocument, documentReadableText, documentText } from "@whetstone/document";
-import { RECALL_REQUEST_RETENTION } from "@whetstone/domain";
+import { RECALL_REQUEST_RETENTION, toEntryId } from "@whetstone/domain";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
 import {
   cardCreationReceipts,
+  entries,
   entryLinks,
   memoryPrompts,
   personalEntries,
@@ -29,7 +30,6 @@ import type { LibraryRouteDependencies } from "../library/libraryRoutes.js";
 import {
   deleteNoteInTx,
   insertNoteInTx,
-  insertNotePromptInTx,
   type NotesDependencies
 } from "../notes/noteCommands.js";
 import { deleteReviewCard } from "../review/reviewCardCommands.js";
@@ -94,7 +94,12 @@ async function buildContext(): Promise<TestContext> {
     db,
     now: () => clock
   };
-  const notesReview: NotesReviewRouteDependencies = { createId, db, now: () => clock };
+  const notesReview: NotesReviewRouteDependencies = {
+    attemptTtlMs: 30 * 60 * 1000,
+    createId,
+    db,
+    now: () => clock
+  };
 
   return {
     db,
@@ -144,7 +149,7 @@ async function seedNote(
       bodyText: isMark ? null : body,
       captureSource: "manual",
       kind: over.kind ?? "note",
-      noteEntryId,
+      noteEntryId: toEntryId(noteEntryId),
       now: over.when ?? now,
       userId: over.userId ?? DEFAULT_USER_ID
     })
@@ -153,21 +158,31 @@ async function seedNote(
 }
 
 // Seed a historical `legacy_custom` prompt on a note — an imported cardless sibling that coexists with any
-// number of authored prompts on the same note.
+// number of authored prompts on the same note. Written row-by-row rather than through
+// `insertNotePromptInTx`, because that writer only ever mints the two live reveal kinds (#658/#661/#689);
+// `legacy_custom` exists only as already-migrated historical data, which is exactly what this seeds.
 async function seedLegacyPrompt(noteEntryId: string): Promise<string> {
   const promptId = `legacy-${(sequence += 1)}`;
-  await context.db.transaction((tx) =>
-    insertNotePromptInTx(tx, {
+  await context.db.transaction(async (tx) => {
+    await tx.insert(entries).values({ id: promptId, type: "memory_prompt" });
+    await tx.insert(memoryPrompts).values({
       answerDoc: createTextDocument("A preserved custom answer."),
       answerText: "A preserved custom answer.",
+      chunkId: null,
+      createdAt: now,
       cueDoc: questionDoc("A legacy question?"),
       cueText: "A legacy question?",
+      entryId: promptId,
+      lifecycle: "ready",
       noteEntryId,
-      now,
-      promptId,
       revealKind: "legacy_custom"
-    })
-  );
+    });
+    await tx.insert(entryLinks).values({
+      fromEntryId: noteEntryId,
+      toEntryId: promptId,
+      type: "contains"
+    });
+  });
   return promptId;
 }
 

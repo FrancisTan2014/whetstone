@@ -574,6 +574,8 @@ describe("writeDirectCardInTx receipt replay", () => {
     const draft = prepared();
     const first = await context.db.transaction((tx) =>
       writeDirectCardInTx(tx, {
+        attemptId: null,
+        channel: "ui",
         draft,
         noteEntryId: toEntryId("note-replay-a"),
         now,
@@ -584,6 +586,8 @@ describe("writeDirectCardInTx receipt replay", () => {
     );
     const second = await context.db.transaction((tx) =>
       writeDirectCardInTx(tx, {
+        attemptId: null,
+        channel: "ui",
         draft,
         noteEntryId: toEntryId("note-replay-b"),
         now,
@@ -612,6 +616,8 @@ describe("writeDirectCardInTx receipt replay", () => {
 
     await context.db.transaction((tx) =>
       writeDirectCardInTx(tx, {
+        attemptId: null,
+        channel: "ui",
         draft: firstDraft,
         noteEntryId: toEntryId("note-conflict-a"),
         now,
@@ -622,6 +628,8 @@ describe("writeDirectCardInTx receipt replay", () => {
     );
     const second = await context.db.transaction((tx) =>
       writeDirectCardInTx(tx, {
+        attemptId: null,
+        channel: "ui",
         draft: changed.draft,
         noteEntryId: toEntryId("note-conflict-b"),
         now,
