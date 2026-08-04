@@ -1751,3 +1751,93 @@ narrows to what the one instrument actually covers.
 This is also why the harness measures **characters that reach the reader** and not block counts: it
 was chosen after the second instance, specifically because the counting instruments had already lied
 once.
+---
+
+## 29. The defect I only found by reading the book instead of measuring it
+
+`main` is at **`cbb552c9`** — **#868 merged**, so the mapper is now correct for tables and the
+`unknown` block type is gone. Measured on `main` itself, not on a merged worktree:
+
+```
+28 units   3,054 blocks   857,985 chars   44 empty blocks (1%)
+every chapter/appendix <= 6% empty     Contents 0%   Index 0%
+```
+
+That is the state a fresh import produces today, and it is a good book.
+
+### Then I printed a chapter and looked at it
+
+Every measurement up to this point counted characters. So I printed Chapter 2 verbatim — paragraphs
+joined correctly across PDF line breaks, headings right, lists right, reading order right. Genuinely
+good prose. And then I printed a code listing:
+
+```
+codeBlock blocks          520
+code characters       301,668
+blocks containing "\n"      0        <- zero
+longest single line     4,441 characters
+```
+
+**Not one of 520 code listings has a line break.** In *Clean Code*. The character counts had been
+perfect about this the whole time — 301,668 characters of code, all present, all correct, all on one
+line. No count could have caught it. Only reading it could.
+
+This is issue **#876**, and it is the largest remaining gap between our reader and a PDF viewer.
+
+### The cause, and why the first answer was wrong
+
+My first conclusion was that the lines were unrecoverable: the retained payload has
+`children = 0`, one `charSpan`, one bounding box per listing, and `pages[]` keeps no cell geometry.
+All true — and all irrelevant, because I was looking **downstream of the loss**.
+
+Converting page 63 of the real book and reading docling's clusters directly:
+
+```
+=== page 63  CODE cluster id=1  cells=47
+   '  public static String testableHtml('
+   '    PageData pageData,'
+   '      if (includeSuiteSetup) {'
+   '        WikiPage suiteSetup ='
+--- resulting code item: has newline=False, len=1323
+```
+
+**47 cells, one per source line, with the indentation already sitting in `cell.text`.** Docling
+discards it in `page_assemble_model.py`: `cell.text...strip()` removes the indentation, then
+`sanitize_text` welds every line together with `lines[ix] += " "`.
+
+We hold the whole `ConversionResult` at `pdf_to_docling.py:1234` and pass only `result.document`
+onward, so the cells are reachable from our own worker. Deterministic, model-free, no new dependency.
+Written up on #876 with revised acceptance criteria; **dev-876 is implementing it.**
+
+### The same line of code explains the prose defects
+
+Issue **#874**: 639 spaces before `.,;:`, 228 broken contractions (`it' s`), 32 before `?!`, 11 inside
+parens — 910 reader-visible defects in 472,318 prose characters. Same unconditional `" "` join: the
+text layer emits punctuation and clitics as separate runs, and each collects a space in front.
+
+I also counted 5,637 double spaces and nearly reported them. They are **not visible** — reader
+paragraphs carry no `white-space` declaration, so the browser collapses them; `pre-wrap` applies only
+to `.reader pre`/`code` and the notes panels. Excluded, with the reason recorded on the issue.
+
+### The lesson, which is §28's rule paying off immediately
+
+Character counts, block counts, empty-block fractions, and diffs all agreed the book was fine. They
+were right about what they measured and silent about line structure. **The instrument that finally
+found it was reading the output.**
+
+Keep `harness/prose.harness.test.ts` and `harness/code.harness.test.ts` for this reason. Before
+believing any future PDF result, print a chapter and a listing and look at them.
+
+### Consequence for the recovery story
+
+Re-map (#861 / PR #875) replays the mapper over the **retained payload**, which was written after the
+loss. **A re-map cannot restore code line structure — that needs re-import.** So the two paths in
+§27.3 are no longer equivalent:
+
+| | fixes structure, tables, Contents/Index | fixes code listings |
+|---|---|---|
+| **Re-map** (DB only, no Python) | yes | **no** |
+| **Re-import** (needs the worker + the PDF) | yes | yes, once #876 lands |
+
+If you can get the Python worker running at home, **re-import** is the better path. Keep the database
+copy regardless — it is the fallback if the worker install fights you.
