@@ -1492,3 +1492,135 @@ exactly 1 heading of 524 exceeds 200 chars, next-largest legitimate is 94, so a 
 
 **Sequencing note:** #859/#868, #856, and #867 all touch `pdfCanonicalMapping.ts`. Land #868 first —
 it is the largest content win and the others rebase over it cheaply, not the reverse.
+
+---
+
+## 24. The measurement that actually answers the complaint
+
+Everything before this section measured *proxies* — unit counts, block counts, character totals.
+Those are useful for proving a fix landed, and every one of them can improve while the book gets
+worse (§16 is the proof: a change that "fixed" 1,243 `unknown` blocks did it by deleting 70,103
+characters). None of them is the thing that was wrong.
+
+What was wrong was a screenshot of a reading unit that was **almost entirely blank**. So the
+measurement that answers it is: *for each unit, what fraction of its blocks contain no text at all?*
+
+`harness/usability.harness.test.ts` computes exactly that, per unit, for the whole book. Run against
+merged `main` (carrying #862) with #868 cherry-picked on top:
+
+```
+units:        28
+blocks:     3054
+empty:        44   (1%)
+chars:   857,985
+```
+
+| unit | blocks | empty | empty % | median block chars |
+|---|---:|---:|---:|---:|
+| 0 (cover) | 4 | 2 | 50% | 18 |
+| Clean Code | 43 | 1 | 2% | 53 |
+| **Contents** | **16** | **0** | **0%** | 3100 |
+| Foreword | 22 | 0 | 0% | 625 |
+| Chapter 1: Clean Code | 150 | 9 | 6% | 204 |
+| Chapter 3: Functions | 187 | 4 | 2% | 197 |
+| Chapter 13: Concurrency | 167 | 0 | 0% | 146 |
+| Chapter 14: Successive Refinement | 237 | 1 | 0% | 227 |
+| Chapter 17: Smells and Heuristics | 339 | 1 | 0% | 180 |
+| Appendix A: Concurrency II | 284 | 3 | 1% | 153 |
+| Appendix B: SerialDate | 114 | 0 | 0% | 302 |
+| Index | 122 | 0 | 0% | 28 |
+
+The unit in the screenshot was `Contents`:
+
+```
+before:  610 blocks, 609 empty  (99.8%)
+after:    16 blocks,   0 empty  (0%)
+```
+
+Book-wide empty blocks are **1%**, and all 20 chapter and appendix units are at or under 6%.
+
+Two things this establishes that neither PR could establish alone:
+
+1. **The two fixes compose.** The cherry-pick auto-merged both files; the combined result is better
+   than either alone. #862 supplies the 28 chapter-scale divisions; #868 fills them with the text
+   that was being dropped. 787,882 + 70,103 = 857,985 — the exact figure #868 claims, reproduced
+   from a different harness on a different branch.
+2. **The remaining defects are cosmetic, not structural.** Unit 0 is the cover page: two figures and
+   two OCR-garbled lines (`"mee srt C. Martin"`), with a `null` title. That is deliberate —
+   `splitIntoUnits` keeps the pre-division run as a neutral unit — and the reader degrades
+   gracefully: `readerNavigation.ts:46` shows *"Section 1"* in the drawer, `ReaderPage.tsx:1503`
+   suppresses the heading. Cover furniture is #859's territory, not a reading-quality blocker.
+
+**If you inherit this work, run this harness first.** It is the one number that tells you whether
+the product is acceptable, and it is cheap — the retained payload (§17) means no re-conversion.
+
+---
+
+## 25. #871 is live today, not latent — and it is the most severe item open
+
+I filed #871 from a measurement of the repartition rule and left one question open: can an
+administrator actually *reach* it, or is the correction page still unfinished? If latent, it queues
+behind #867 and #865. It is not latent. Every hop is shipped production code:
+
+```
+AppRoutes.tsx:104                      <ImportedWorkCorrectionPage … />
+  ImportedWorkCorrectionPage.tsx:35      saveContent: saveImportedWorkContent
+    importedWorkApi.ts:72                 PUT /api/imported-works/:id/units/:id/content
+      libraryRoutes.ts:316                correctImportedWorkContent(…)
+        importedWorkContentCommands.ts:122  repartitionEditableWorkContent(…)
+          workRepartition.ts:4              "partitioned at every heading node"
+```
+
+No flag, no unrouted page, no stub. **Fix one OCR typo in Chapter 17, press Save, and that unit
+becomes 79 units.** Whole book: `UNITS NOW: 28  AFTER FULL REPARTITION: 525` — not an approximation
+of the pre-#862 number, *that number exactly*.
+
+Three properties make it worse than its size:
+
+- **Silent** — the save returns 200 and stamps correction markers; nothing reports the re-division.
+- **Irreversible in-product** — there is no undo for a repartition, and the outline that produced the
+  divisions was consumed at import time.
+- **Armed on exactly the designated workflow** — `PRODUCT.md` says administrators correct the
+  residual 5% in the shared editor. The more faithfully they do the job the product asks for, the
+  more of the book they destroy.
+
+It shares no files with the mapper queue (#868/#856) or the reader queue (#867), so it can be
+implemented in parallel without a rebase collision. **Do it first.**
+
+Open design question I deliberately did not answer (AC 4): what should happen when an administrator
+types a genuinely *new* heading into a corrected imported section? Preserving import divisions
+verbatim is right for existing content; a new H1 mid-chapter is a real authoring act. Argue it, do
+not assume it.
+
+---
+
+## 26. The failure mode that recurred three times in one PR
+
+#866 changed four sentences of `PRODUCT.md`. It took **three review rounds**, and each round
+falsified an *absolute claim* I had written:
+
+| round | claim | why it was false |
+|---|---|---|
+| 1 | "Every format obeys one rule" | Markdown starts a unit at *each* heading (`workRepartition.ts:4`) |
+| 2 | "…and at each heading where it does not" | a bookmark-less PDF divides only at the **shallowest** level (`startsDivision` gates on `h.level === level`) |
+| 3 | *(my paraphrase to the reviewer, never committed)* | made "shallowest level" the fallback for *any* structure-less format — but Markdown divides at every heading of any depth |
+
+Round 3 is the instructive one. I asked the reviewer to *"verify the text, not my summary of it"* —
+and my summary was wrong. The committed text was correct; had I written what I told the reviewer I
+had written, it would have been a third false absolute, of the same shape I had just been corrected
+on twice.
+
+Two durable lessons:
+
+1. **The tell is a quantifier.** *every, never, neither, always, any* — in design prose these are
+   claims about all code paths, and they are almost never checked against all code paths. The reviewer
+   falsified each one by enumerating the four partition paths (EPUB spine, PDF outline, Markdown
+   headings, manual `RepartitionBlock`), not by reading more carefully.
+2. **Review the artifact, never the author's account of it.** What caught round 3 was not care while
+   writing — I wrote the round-2 error *immediately after* being corrected on round 1. It was someone
+   reading the file instead of my description of the file. This applies to every relayed measurement
+   in this document: re-run the harness, do not trust the table.
+
+The same instinct found #871. The reviewer did not read `workRepartition.ts` more carefully — that
+module is correct, commented, and tested. It asked a different question: **which callers reach this
+rule?** The defect lived entirely in who was allowed to call it.
