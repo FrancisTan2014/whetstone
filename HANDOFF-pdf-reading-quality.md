@@ -673,3 +673,105 @@ aggressively.
 
 Still not exercised: the actual Reader UI and a full-book import. The mapping layer is proven; the
 render path above it is unchanged by this work, so the remaining risk is low but non-zero.
+
+---
+
+## 8. Measured: what docling actually reports per page (settles #840)
+
+`#840` proposes backing the completeness rule with per-page processing evidence instead of the
+converter's self-reported status. Its premise is **sound, but it named the wrong attribute** — I
+measured this against the real book before letting a developer near it, and corrected the issue.
+
+Two runs of the production converter on `Clean Code`, same worker code, same machine.
+
+**Run 1 — healthy ceiling (40960 MiB), pages 21–30** (the range that falsified the item-count rule):
+
+```
+status       : ConversionStatus.SUCCESS
+errors       : 0
+result.pages : 10 entries, page_no 21..30
+```
+
+Evidence shape, identical on all ten pages:
+
+| attribute | value on a fully converted page |
+|---|---|
+| `page_no` | 21 … 30 |
+| `predictions` | `PagePredictions` (populated) |
+| `assembled` | `AssembledUnit` (populated) |
+| `size` | `Size` (populated) |
+| **`parsed_page`** | **`None`** |
+| `_backend` | `None` |
+
+> **`parsed_page` is `None` on every successfully converted page.** Docling releases the parsed page
+> and the backend after assembly. #840 originally named `parsed_page` as the evidence to check;
+> implemented literally, that check finds no evidence for *any* page and refuses every range,
+> including perfect ones. **Use the presence of a `page_no` entry, corroborated by `predictions` and
+> `assembled`.** The issue body is now corrected.
+
+**Run 2 — the reproduced #843 degradation (6144 MiB), pages 21–70:**
+
+```
+status                             : ConversionStatus.PARTIAL_SUCCESS
+errors                             : 44   (all "Stage preprocess failed … std::bad_alloc")
+result.pages                       : 6 entries (of 50 requested)
+pages absent from result.pages     : 44
+pages docling names as failed      : 44   <- element-for-element identical
+present pages with hollow evidence : 0
+```
+
+So a failed page is **simply absent** from `result.pages`. "A requested page with no processing
+evidence" is an exact loss detector, derived from a channel independent of `status`/`errors` — which
+is the entire point, since the hypothesised future failure is a converter that reports `SUCCESS`
+while under-producing.
+
+**Incidental reconfirmation of D8.** Run 1's item counts came out **page 25 → 1, page 29 → 1**. The
+measurement recorded in #840 found **page 25 → 0, page 29 → 1** on byte-identical text and
+pixel-identical geometry. Same book, same range, same code — *the asymmetry moved between runs*. That
+is a second, independent demonstration that item production is sensitive to batch context and carries
+no information about whether a page was processed. **Do not reintroduce an item-count check.**
+
+Both runs are reproducible from the worker's own seams, no patching required:
+
+```python
+import pdf_to_docling as w
+boundary = w.resolve_memory_boundary(sys.platform)
+w.apply_memory_limit("6144", boundary)          # or "40960" for the healthy control
+result = w.build_converter().convert(PDF, page_range=(21, 70))
+# result.status, result.errors, result.pages, w._failed_page_numbers(result.errors)
+```
+
+## 9. Merge mechanics that cost a cycle if you get them wrong
+
+**Order merges by how many required checks each branch has to satisfy.** `REQUIRED_MERGE_CHECK_NAMES`
+in `scripts/delivery/workflow.mjs` is read **from your working tree**, not from the PR. #846 adds a
+fourth entry (`Python worker tests`). So while #846 is still unmerged, `main` demands **3** checks and
+an older branch can merge on 3; the moment #846 lands, every branch cut before it is refused with
+`required check "Python worker tests" is missing` and needs a refresh plus a full ~25-minute CI cycle.
+**Merge the older approved branches first.** #848 was merged ahead of #846 for exactly this reason.
+
+**A `BEHIND` branch cannot merge.** `mergeGateFailures` (`workflow.mjs:190`) accepts only `CLEAN` or
+`UNSTABLE`. Refresh with `gh pr update-branch <n> --repo <repo>`.
+
+**Refreshing invalidates the approval marker**, because the gate matches
+`reviewer-run-reviewed: <headRefOid>` and the head SHA changes. Re-posting the marker yourself is
+legitimate **only if you prove the refresh changed nothing that was reviewed**. The check that makes
+it honest:
+
+```powershell
+# before the refresh
+$b = git merge-base origin/main origin/<branch>
+git diff $b origin/<branch> | Out-File before.patch -Encoding utf8
+# after the refresh
+$a = git merge-base origin/main origin/<branch>
+git diff $a origin/<branch> | Out-File after.patch -Encoding utf8
+(Get-FileHash before.patch).Hash -eq (Get-FileHash after.patch).Hash   # must be True
+```
+
+If the hashes match, the PR's own diff is byte-identical and only `main` moved underneath it. Say so
+in the comment that carries the new marker, and link the original review.
+
+**`gh` output is UTF-8; Windows Python is not.** `subprocess.run(..., text=True)` decodes with the
+locale codepage and mangles em dashes, so a string match against an issue body silently fails to
+find its anchor. Always pass `encoding="utf-8"`.
+
