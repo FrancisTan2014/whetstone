@@ -468,6 +468,26 @@ export async function getPublication(
   return row === undefined ? null : toPublicationRecord(row);
 }
 
+// The attempt whose publication created this Work, or null when the Work was not published from a PDF
+// import (an EPUB/Markdown import, or an authored Work). This is the inverse of `linkPublishedWork`: it
+// is how the re-map command (#861) finds the retained converted payload belonging to an already-published
+// Work. Reopening identical bytes links a SECOND attempt's publication to the same Work (#706), so the
+// EARLIEST published attempt is chosen — the one whose conversion actually produced the Work's blocks —
+// making the lookup deterministic rather than dependent on how often the file was re-uploaded.
+export async function getPublishingAttemptForWork(
+  db: DbClient,
+  workEntryId: string
+): Promise<PdfImportAttemptRecord | null> {
+  const [row] = await db
+    .select({ attempt: pdfImportAttempts })
+    .from(pdfImportPublications)
+    .innerJoin(pdfImportAttempts, eq(pdfImportAttempts.id, pdfImportPublications.attemptId))
+    .where(eq(pdfImportPublications.workEntryId, workEntryId))
+    .orderBy(asc(pdfImportPublications.publishedAt), asc(pdfImportPublications.attemptId))
+    .limit(1);
+  return row === undefined ? null : toRecord(row.attempt);
+}
+
 // Link a published Work to its publication as the terminal job state, inside the caller's claim
 // transaction so the outcome commits atomically with the Work. Only applies while the publication is
 // still pending (no result yet), so a re-run cannot relink an already-resolved publication.
