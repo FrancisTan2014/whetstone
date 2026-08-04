@@ -295,7 +295,10 @@ owning source flow:
 - Markdown uses confirmed title, author, and language and enters through the same block pipeline.
 - Every uploaded format ends as the same canonical ProseMirror
   `Work -> ReadingUnit -> Block` hierarchy and opens in the existing Reader. Format-specific logic
-  stops at ingestion; Whetstone has no PDF-, EPUB-, or other format-specific reader.
+  stops at ingestion; Whetstone has no PDF-, EPUB-, or other format-specific reader. Every format
+  divides into ReadingUnits at the author's own navigation where the source declares any — an EPUB's
+  spine, a PDF's embedded outline — and at its headings where it does not: Markdown at every heading,
+  a PDF with no outline at the shallowest heading level present.
 - PDF ingestion stages a bounded source and runs a pinned structured-document pipeline in an
   isolated, recoverable job. The job runs on every supported host OS under one fail-closed
   worker contract and a hard, single-admission memory ceiling enforced by the platform's native
@@ -322,7 +325,13 @@ owning source flow:
     where the source has one, matched to body headings by page and title. Depth is never assigned from
     a structure label alone; a source with no outline falls back to the label and is reported as an
     outline gap rather than presented as a flat book.
-  - **ReadingUnits are chapter-scale.** A unit is a chapter-level division, not every heading.
+  - **ReadingUnits divide at the PDF's own outline.** A unit is a chapter-level division, not every
+    heading. Divisions come from the embedded outline (bookmark tree), never from page counts or block
+    counts, so a book divides where its publisher says it divides. A bookmark names one division, so
+    where a converter splits a chapter opener into a separate label and title, both resolve to the
+    same entry and open one unit titled from the bookmark rather than from the block's own text. A PDF
+    that declares no top-level bookmark falls back to the shallowest heading level actually present,
+    joining a bare division label to the heading that names it.
     Sub-headings stay heading blocks inside their unit and appear in the same table of contents as
     in-unit anchors. Unit boundaries are navigation and reading-position identity, so a unit per page
     fragments both and turns the contents drawer into an undifferentiated wall.
