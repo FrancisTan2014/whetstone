@@ -114,6 +114,11 @@ async function seedVoiceCapture(
 
 async function readRow(db: DbClient, id: string) {
   const [row] = await db.select().from(diaryEntries).where(eq(diaryEntries.entryId, id)).limit(1);
+  // Every caller seeded the capture first, so a missing row is a broken test, not an expected
+  // state. Failing here names the id instead of surfacing as `undefined` property assertions.
+  if (row === undefined) {
+    throw new Error(`voice capture test: no diary entry row for ${id}`);
+  }
   return row;
 }
 

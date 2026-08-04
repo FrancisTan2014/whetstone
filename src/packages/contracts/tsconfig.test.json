@@ -1,0 +1,18 @@
+{
+  // Type-check companion to tsconfig.json. The build project above emits dist/ and therefore cannot
+  // compile tests; this project emits nothing and excludes nothing under src/, so every file the
+  // package owns -- production, test, or test helper, whatever it is named -- is type-checked by
+  // `pnpm typecheck` (#850). Node types live here and not in the build project so tests may read
+  // fixtures from disk while production contract code still cannot reach node: APIs.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "composite": true,
+    "noEmit": true,
+    "sourceMap": false,
+    "tsBuildInfoFile": "dist/tsconfig.test.tsbuildinfo",
+    "types": ["node", "vitest"]
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["dist"],
+  "references": [{ "path": "../document" }, { "path": "../domain" }]
+}

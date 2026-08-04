@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
+import type { InjectOptions, LightMyRequestResponse } from "fastify";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type {
@@ -38,6 +39,10 @@ import { reviewStateColumns } from "../review/reviewCardQueries.js";
 import type { ContentDependencies } from "../content/contentCommands.js";
 import { createWork as createWorkCommand } from "../library/libraryCommands.js";
 import type { LibraryDependencies } from "../library/libraryCommands.js";
+
+// What a test may send as a request body -- including shapes the route must reject. `NonNullable`
+// because `exactOptionalPropertyTypes` forbids handing `inject` an explicitly `undefined` payload.
+type InjectPayload = NonNullable<InjectOptions["payload"]>;
 
 type TestContext = Readonly<{
   db: DbClient;
@@ -217,7 +222,7 @@ async function createWorkWithTwoUnits(): Promise<{
   };
 }
 
-function postNote(workEntryId: string, payload: unknown): ReturnType<typeof context.server.inject> {
+function postNote(workEntryId: string, payload: InjectPayload): Promise<LightMyRequestResponse> {
   return context.server.inject({ method: "POST", payload, url: `/api/works/${workEntryId}/notes` });
 }
 
@@ -253,7 +258,7 @@ async function createWholeBlockNote(
   return response.json() as NoteDto;
 }
 
-function listNotes(workEntryId: string): ReturnType<typeof context.server.inject> {
+function listNotes(workEntryId: string): Promise<LightMyRequestResponse> {
   return context.server.inject({ method: "GET", url: `/api/works/${workEntryId}/notes` });
 }
 
@@ -281,8 +286,8 @@ async function listContent(workEntryId: string): Promise<WorkContentDto> {
 function patchNote(
   workEntryId: string,
   noteEntryId: string,
-  payload: unknown
-): ReturnType<typeof context.server.inject> {
+  payload: InjectPayload
+): Promise<LightMyRequestResponse> {
   return context.server.inject({
     method: "PATCH",
     payload,
@@ -293,7 +298,7 @@ function patchNote(
 function deleteNoteRequest(
   workEntryId: string,
   noteEntryId: string
-): ReturnType<typeof context.server.inject> {
+): Promise<LightMyRequestResponse> {
   return context.server.inject({
     method: "DELETE",
     url: `/api/works/${workEntryId}/notes/${noteEntryId}`
@@ -587,8 +592,8 @@ describe("create note route", () => {
 describe("create mark route", () => {
   function postMark(
     workEntryId: string,
-    payload: unknown
-  ): ReturnType<typeof context.server.inject> {
+    payload: InjectPayload
+  ): Promise<LightMyRequestResponse> {
     return context.server.inject({
       method: "POST",
       payload,
@@ -911,7 +916,7 @@ describe("notes anchored to soft-deleted blocks (re-ingestion)", () => {
   function reingest(
     workEntryId: string,
     markdown: string
-  ): ReturnType<typeof context.server.inject> {
+  ): Promise<LightMyRequestResponse> {
     return context.server.inject({
       method: "POST",
       payload: { kind: "manual", markdown },
@@ -1192,7 +1197,7 @@ describe("offline-gloss suggestion relocated to Notes (#662)", () => {
 describe("notes home — owner-scoped create, read, edit, delete, filter, and search (#659)", () => {
   let seedSequence = 0;
 
-  function createStandalone(text: string): ReturnType<typeof context.server.inject> {
+  function createStandalone(text: string): Promise<LightMyRequestResponse> {
     return context.server.inject({
       method: "POST",
       payload: { bodyDoc: createTextDocument(text) },
@@ -1200,22 +1205,22 @@ describe("notes home — owner-scoped create, read, edit, delete, filter, and se
     });
   }
 
-  function ownerGet(noteEntryId: string): ReturnType<typeof context.server.inject> {
+  function ownerGet(noteEntryId: string): Promise<LightMyRequestResponse> {
     return context.server.inject({ method: "GET", url: `/api/notes/${noteEntryId}` });
   }
 
-  function ownerList(query = ""): ReturnType<typeof context.server.inject> {
+  function ownerList(query = ""): Promise<LightMyRequestResponse> {
     return context.server.inject({ method: "GET", url: `/api/notes${query}` });
   }
 
   function ownerPatch(
     noteEntryId: string,
-    payload: unknown
-  ): ReturnType<typeof context.server.inject> {
+    payload: InjectPayload
+  ): Promise<LightMyRequestResponse> {
     return context.server.inject({ method: "PATCH", payload, url: `/api/notes/${noteEntryId}` });
   }
 
-  function ownerDelete(noteEntryId: string): ReturnType<typeof context.server.inject> {
+  function ownerDelete(noteEntryId: string): Promise<LightMyRequestResponse> {
     return context.server.inject({ method: "DELETE", url: `/api/notes/${noteEntryId}` });
   }
 
@@ -1555,7 +1560,7 @@ describe("import notebook lists route (#661)", () => {
     return { noteDoc: createTextDocument(note), questionDoc: createTextDocument(question) };
   }
 
-  function postImport(payload: unknown): ReturnType<typeof context.server.inject> {
+  function postImport(payload: InjectPayload): Promise<LightMyRequestResponse> {
     return context.server.inject({ method: "POST", payload, url: "/api/notes/import" });
   }
 

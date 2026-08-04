@@ -2,6 +2,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { InjectOptions } from "fastify";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type {
@@ -23,6 +24,10 @@ import { deleteNoteInTx, updateNoteBodyInTx } from "../notes/noteCommands.js";
 import type { NotesDependencies } from "../notes/noteCommands.js";
 import { queryMaterialMatches } from "./exactMaterialQuery.js";
 import type { NotesReviewRouteDependencies } from "./notesReviewRoutes.js";
+
+// What a test may send as a request body -- including shapes the route must reject. `NonNullable`
+// because `exactOptionalPropertyTypes` forbids handing `inject` an explicitly `undefined` payload.
+type InjectPayload = NonNullable<InjectOptions["payload"]>;
 
 const now = new Date("2026-03-01T08:00:00.000Z");
 const later = new Date("2026-03-05T09:30:00.000Z");
@@ -110,17 +115,17 @@ function currentNoteRequest(over: Partial<CreateDirectCardRequest> = {}): Create
   };
 }
 
-const saveDirect = (payload: unknown) =>
+const saveDirect = (payload: InjectPayload) =>
   context.server.inject({ method: "POST", payload, url: "/api/notes/review/direct-cards" });
-const materialMatches = (payload: unknown) =>
+const materialMatches = (payload: InjectPayload) =>
   context.server.inject({ method: "POST", payload, url: "/api/notes/review/material-matches" });
-const useExisting = (payload: unknown) =>
+const useExisting = (payload: InjectPayload) =>
   context.server.inject({
     method: "POST",
     payload,
     url: "/api/notes/review/material-review/use-existing"
   });
-const keepSeparate = (payload: unknown) =>
+const keepSeparate = (payload: InjectPayload) =>
   context.server.inject({
     method: "POST",
     payload,

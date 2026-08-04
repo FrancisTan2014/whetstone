@@ -3,6 +3,7 @@ import { toEntryId } from "@whetstone/domain";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { InjectOptions, LightMyRequestResponse } from "fastify";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type {
@@ -27,6 +28,10 @@ import {
   getReadingPosition,
   getWorksWithReadingPosition
 } from "./readingPositionQueries.js";
+
+// What a test may send as a request body -- including shapes the route must reject. `NonNullable`
+// because `exactOptionalPropertyTypes` forbids handing `inject` an explicitly `undefined` payload.
+type InjectPayload = NonNullable<InjectOptions["payload"]>;
 
 type TestContext = Readonly<{
   db: DbClient;
@@ -115,7 +120,7 @@ async function createWorkWithUnitAndBlock(): Promise<{
   };
 }
 
-function getPosition(workEntryId: string): ReturnType<typeof context.server.inject> {
+function getPosition(workEntryId: string): Promise<LightMyRequestResponse> {
   return context.server.inject({
     method: "GET",
     url: `/api/works/${workEntryId}/reading-position`
@@ -124,8 +129,8 @@ function getPosition(workEntryId: string): ReturnType<typeof context.server.inje
 
 function putPosition(
   workEntryId: string,
-  payload: unknown
-): ReturnType<typeof context.server.inject> {
+  payload: InjectPayload
+): Promise<LightMyRequestResponse> {
   return context.server.inject({
     method: "PUT",
     payload,

@@ -1,4 +1,5 @@
 import { PGlite } from "@electric-sql/pglite";
+import type { InjectOptions } from "fastify";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
@@ -6,6 +7,10 @@ import { runMigrations } from "../../db/migrate.js";
 import { createServer } from "../../http/createServer.js";
 
 type TestContext = Readonly<{ db: DbClient; server: ReturnType<typeof createServer> }>;
+
+// What a test may send as a request body -- including shapes the route must reject. `NonNullable`
+// because `exactOptionalPropertyTypes` forbids handing `inject` an explicitly `undefined` payload.
+type InjectPayload = NonNullable<InjectOptions["payload"]>;
 
 let context: TestContext;
 
@@ -28,7 +33,7 @@ function get() {
   return context.server.inject({ method: "GET", url: "/api/preferences" });
 }
 
-function put(payload: unknown) {
+function put(payload: InjectPayload) {
   return context.server.inject({ method: "PUT", payload, url: "/api/preferences" });
 }
 

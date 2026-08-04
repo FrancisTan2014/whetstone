@@ -4,7 +4,7 @@ import {
   formatNextReviewLabel,
   isShortTermReviewState,
   SHORT_TERM_REVIEW_PREFIX
-} from "./nextReview";
+} from "./nextReview.js";
 
 // America/New_York exercises DST (EDT = UTC-4 in summer, EST = UTC-5 in winter). In July the offset is
 // -4, so 20:00Z is 16:00 (4:00 PM) local and the local day is the 19th.

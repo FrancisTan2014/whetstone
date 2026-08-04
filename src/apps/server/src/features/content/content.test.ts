@@ -3,6 +3,7 @@ import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
+import type { InjectOptions, LightMyRequestResponse } from "fastify";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -44,6 +45,10 @@ import type { IngestionEvidence } from "./htmlToDocument.js";
 import { createWork as createWorkCommand } from "../library/libraryCommands.js";
 import type { LibraryDependencies } from "../library/libraryCommands.js";
 import type { WorkCreationDependencies } from "../workCreation/workCreationCommands.js";
+
+// What a test may send as a request body -- including shapes the route must reject. `NonNullable`
+// because `exactOptionalPropertyTypes` forbids handing `inject` an explicitly `undefined` payload.
+type InjectPayload = NonNullable<InjectOptions["payload"]>;
 
 type TestContext = Readonly<{
   content: ContentDependencies;
@@ -156,7 +161,7 @@ async function createWork(): Promise<string> {
   return created.work.work.entryId;
 }
 
-function ingest(workEntryId: string, payload: unknown): ReturnType<typeof context.server.inject> {
+function ingest(workEntryId: string, payload: InjectPayload): Promise<LightMyRequestResponse> {
   return context.server.inject({
     method: "POST",
     payload,
@@ -176,7 +181,7 @@ function blockIdByText(content: WorkContentDto): Map<string, string> {
   );
 }
 
-function ingestEpub(bytes: Buffer): ReturnType<typeof context.server.inject> {
+function ingestEpub(bytes: Buffer): Promise<LightMyRequestResponse> {
   return context.server.inject({
     headers: { "content-type": epubContentType },
     method: "POST",
@@ -1360,7 +1365,7 @@ describe("EPUB ingestion routes", () => {
 
   const structureMarkdown = "Intro.\n\n# Chapter One\n\n- a\n- b\n\n> quote";
 
-  async function getStructure(workEntryId: string): ReturnType<typeof context.server.inject> {
+  async function getStructure(workEntryId: string): Promise<LightMyRequestResponse> {
     return context.server.inject({ method: "GET", url: `/api/works/${workEntryId}/structure` });
   }
 

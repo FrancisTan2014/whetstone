@@ -2,6 +2,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { InjectOptions, LightMyRequestResponse } from "fastify";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type {
@@ -24,6 +25,10 @@ import { createServer } from "../../http/createServer.js";
 import type { ContentDependencies } from "./contentCommands.js";
 import type { LibraryDependencies } from "../library/libraryCommands.js";
 import type { WorkCreationDependencies } from "../workCreation/workCreationCommands.js";
+
+// What a test may send as a request body -- including shapes the route must reject. `NonNullable`
+// because `exactOptionalPropertyTypes` forbids handing `inject` an explicitly `undefined` payload.
+type InjectPayload = NonNullable<InjectOptions["payload"]>;
 
 type TestContext = Readonly<{
   db: DbClient;
@@ -142,7 +147,7 @@ async function ingestEpubWithDocBlock(): Promise<{
   };
 }
 
-function postNote(workEntryId: string, payload: unknown): ReturnType<typeof context.server.inject> {
+function postNote(workEntryId: string, payload: InjectPayload): Promise<LightMyRequestResponse> {
   return context.server.inject({ method: "POST", payload, url: `/api/works/${workEntryId}/notes` });
 }
 

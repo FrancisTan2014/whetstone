@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import type { PgTable } from "drizzle-orm/pg-core";
+import type { InjectOptions } from "fastify";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { CreateDirectCardRequest } from "@whetstone/contracts";
@@ -37,6 +38,10 @@ import {
 } from "./createDirectCard.js";
 import { useExistingMaterial } from "./reviewMaterialCommands.js";
 import type { NotesReviewRouteDependencies } from "./notesReviewRoutes.js";
+
+// What a test may send as a request body -- including shapes the route must reject. `NonNullable`
+// because `exactOptionalPropertyTypes` forbids handing `inject` an explicitly `undefined` payload.
+type InjectPayload = NonNullable<InjectOptions["payload"]>;
 
 const now = new Date("2026-03-01T08:00:00.000Z");
 const later = new Date("2026-03-05T09:30:00.000Z");
@@ -455,7 +460,7 @@ describe("createDirectCard", () => {
 });
 
 describe("POST /api/notes/review/direct-cards", () => {
-  const post = (payload: unknown) =>
+  const post = (payload: InjectPayload) =>
     context.server.inject({ method: "POST", payload, url: "/api/notes/review/direct-cards" });
 
   it("creates a card and returns the result for a current-note target", async () => {
