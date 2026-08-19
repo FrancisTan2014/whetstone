@@ -117,7 +117,7 @@ test("populated Outline is a sticky sidebar at 1440 and an overlay drawer below 
   const workspace = page.locator(".manualWorkWorkspace");
   await expect(workspace).toHaveAttribute("data-outline", "populated");
   const outlineNav = page.getByRole("navigation", { name: "Outline" });
-  await expect(outlineNav.getByRole("button", { name: "Alpha" })).toBeVisible();
+  await expect(outlineNav.getByRole("button", { exact: true, name: "Alpha" })).toBeVisible();
   await expect(page.getByRole("button", { exact: true, name: "Outline" })).toBeHidden();
   const sidebarBox = await page.locator(".workOutline").boundingBox();
   expect(Math.abs(sidebarBox!.width - 14 * rem)).toBeLessThan(0.5 * rem);
