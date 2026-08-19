@@ -52,4 +52,4 @@ echo Nothing to do: no workflow PR needs fixing and no dependency-ready issue is
 exit /b 0
 
 :run
-copilot --agent=whetstone-developer --model claude-opus-4.8 --effort high --allow-all -p "%TASK%"
+copilot --agent=whetstone-developer --model gpt-5.6-sol --effort high --allow-all -p "%TASK%"
