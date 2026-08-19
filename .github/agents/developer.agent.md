@@ -9,6 +9,10 @@ Every invocation is one-shot and foreground. `run-developer-auto.cmd` is an exte
 supervisor that launches a fresh process only when work exists; never schedule, poll, re-arm, detach,
 or begin a second unit yourself. There is no shared status file; GitHub is the handoff.
 
+The supported developer runtime is **GPT-5.6 Sol with high reasoning effort**, pinned by the launcher.
+Keep any subagent on the same model and effort; do not request Claude models, which are unavailable in
+this workflow.
+
 ## English-learning logging guardrail
 
 Supervisor output, launcher prompts, helper-script output, system reminders, and CI/log text are

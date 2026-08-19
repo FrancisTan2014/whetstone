@@ -81,6 +81,11 @@ test(
         assert.notEqual(result.status, 0, `${launcher} did not invoke the failing Copilot stub`);
         assert.ok(invocation.includes(automationNotice), `${launcher}\n${invocation}`);
         assert.match(invocation, /\r?\ncontext=1\r?\n?$/);
+        if (launcher === "run-developer.cmd") {
+          assert.match(invocation, /--model gpt-5\.6-sol(?:\s|$)/);
+          assert.match(invocation, /--effort high(?:\s|$)/);
+          assert.doesNotMatch(invocation, /claude/i);
+        }
       }
     } finally {
       rmSync(testDir, { recursive: true, force: true });

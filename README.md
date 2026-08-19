@@ -155,7 +155,7 @@ The developer and reviewer each run two ways: a **one-shot** run that handles on
 `*-auto.cmd` deterministic **foreground supervisor**. The supervisor polls GitHub without a model,
 blocks while a one-shot worker runs, and launches every implementation, fix, or review in a fresh
 Copilot process. No timer tick enters an active worker's context; Ctrl+C stops the supervisor. The
-design role you trigger yourself.
+design role you trigger yourself. Developer workers use GPT-5.6 Sol with high reasoning effort.
 
 The **Tester (QA)** is the exploratory discovery layer above the deterministic E2E gate
 ([GUIDELINES.md](./GUIDELINES.md) "Functional verification"). It runs **independently** of the
