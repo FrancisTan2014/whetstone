@@ -121,8 +121,8 @@ export function registerLibraryRoutes(
     }
   );
 
-  // Append a new section (a new reading unit seeded with a heading block) to a manual Work and return it
-  // opened at that section (#697). Owner/origin-scoped (404 otherwise); a stale revision is a 409 that
+  // Insert a contextual sibling/child in a manual Work and return it opened at that section (#881).
+  // Owner/origin/target-scoped (404 otherwise); a stale revision is a 409 and an unsupported relation is 400.
   // writes nothing, so the editor keeps its state and can reload.
   server.post<{ Params: WorkParams }>(
     "/api/manual-works/:workEntryId/units",
@@ -135,6 +135,8 @@ export function registerLibraryRoutes(
       const result = await addManualWorkSection(
         dependencies,
         toEntryId(request.params.workEntryId),
+        toEntryId(parsed.data.targetUnitEntryId),
+        parsed.data.placement,
         parsed.data.revision,
         request.server.currentUser.getCurrentUserId()
       );
@@ -145,6 +147,10 @@ export function registerLibraryRoutes(
 
       if (result.status === "conflict") {
         return reply.code(409).send({ error: "revision_conflict" });
+      }
+
+      if (result.status === "invalid_placement") {
+        return reply.code(400).send(invalidRequestBody);
       }
 
       request.log.info(
@@ -262,9 +268,8 @@ export function registerLibraryRoutes(
     }
   );
 
-  // Append a new section (a new reading unit seeded with a heading block) to a correctable imported Work
-  // and return it opened at that section (#762). Origin/eligibility-scoped (404 otherwise); a stale
-  // revision is a 409 that writes nothing, so the editor keeps its state and can reload.
+  // Insert a contextual sibling/child in a correctable imported Work and return it opened at that section
+  // (#881). Origin/eligibility/target-scoped (404 otherwise); stale is 409 and unsupported placement is 400.
   server.post<{ Params: WorkParams }>(
     "/api/imported-works/:workEntryId/units",
     async (request, reply) => {
@@ -276,6 +281,8 @@ export function registerLibraryRoutes(
       const result = await addImportedWorkSection(
         dependencies,
         toEntryId(request.params.workEntryId),
+        toEntryId(parsed.data.targetUnitEntryId),
+        parsed.data.placement,
         parsed.data.revision
       );
 
@@ -285,6 +292,10 @@ export function registerLibraryRoutes(
 
       if (result.status === "conflict") {
         return reply.code(409).send({ error: "revision_conflict" });
+      }
+
+      if (result.status === "invalid_placement") {
+        return reply.code(400).send(invalidRequestBody);
       }
 
       request.log.info(

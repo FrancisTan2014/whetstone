@@ -1,11 +1,17 @@
-import { toEntryId, type BlockChangeSet, type EntryId } from "@whetstone/domain";
+import {
+  planWorkSectionInsertion,
+  toEntryId,
+  type BlockChangeSet,
+  type EntryId,
+  type WorkSectionPlacement
+} from "@whetstone/domain";
 import type { ImportedWorkDto } from "@whetstone/contracts";
 import type { DocumentNodeJSON } from "@whetstone/document";
-import { and, desc, eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import {
-  appendEditableWorkSection,
+  insertEditableWorkSection,
   repartitionEditableWorkContent
 } from "../content/editableWorkContent.js";
 import { stampCorrectionMarkers } from "../content/workCorrectionMarkers.js";
@@ -48,6 +54,7 @@ export type CorrectImportedWorkContentResult =
 export type AddImportedWorkSectionResult =
   | Readonly<{ status: "added"; work: ImportedWorkDto }>
   | Readonly<{ status: "not_found" }>
+  | Readonly<{ status: "invalid_placement" }>
   | Readonly<{ status: "conflict" }>;
 
 type Transaction = Parameters<Parameters<DbClient["transaction"]>[0]>[0];
@@ -64,17 +71,6 @@ async function findCorrectableWork(tx: Transaction, workEntryId: EntryId): Promi
     .limit(1);
 
   return work !== undefined;
-}
-
-// The document a new correction section starts from (#762): one empty Heading 1 block (so the section is a
-// real, navigable outline node from creation) followed by an empty paragraph for the body. Ids are stamped
-// by the shared boundary on write. Identical to the manual editor's new-section seed — the section shape is
-// origin-neutral.
-function newSectionDocument(): DocumentNodeJSON {
-  return {
-    content: [{ attrs: { level: 1 }, type: "heading" }, { type: "paragraph" }],
-    type: "doc"
-  };
 }
 
 // Correct one section's canonical document through the shared editable-Work boundary, which preserves the
@@ -140,14 +136,13 @@ export async function correctImportedWorkContent(
   };
 }
 
-// Append a new section (a new reading unit with a real heading block) to the imported Work under correction
-// and open it (#762). Same origin/eligibility authorization and revision protection as a correction: a
-// non-correctable id is a 404 and a stale revision is a conflict that writes nothing. Inserting the new
-// blocks IS a real change, so the correction markers are stamped on the newly inserted blocks. The section
-// is appended at the next order index, so ordering stays a dense, source-order sequence.
+// Insert a sibling or child from the target's canonical first-heading branch and open it (#881). Imported
+// insertion uses the same planner/writer as manual authoring, then stamps only the genuinely new blocks.
 export async function addImportedWorkSection(
   dependencies: ImportedWorkContentDependencies,
   workEntryId: EntryId,
+  targetUnitEntryId: EntryId,
+  placement: WorkSectionPlacement,
   revision: number
 ): Promise<AddImportedWorkSectionResult> {
   const now = dependencies.now();
@@ -157,41 +152,37 @@ export async function addImportedWorkSection(
       return { status: "not_found" as const };
     }
 
+    const sections = await loadManualWorkSections(tx, workEntryId);
+    const plan = planWorkSectionInsertion(sections, targetUnitEntryId, placement);
+    if (plan.status === "target_not_found") {
+      return { status: "not_found" as const };
+    }
+    if (plan.status === "invalid_placement") {
+      return plan;
+    }
+
     const claimed = await claimWorkContentRevision(tx, workEntryId, revision);
     if (claimed === undefined) {
       return { status: "conflict" as const };
     }
 
-    const [last] = await tx
-      .select({ orderIndex: readingUnits.orderIndex })
-      .from(readingUnits)
-      .where(eq(readingUnits.workEntryId, workEntryId))
-      .orderBy(desc(readingUnits.orderIndex))
-      .limit(1);
-    // A published imported Work always has at least one section, so `last` is defined; the nullish
-    // fallback keeps the arithmetic total without a separately-tested empty-Work branch.
-    /* v8 ignore start -- `last` is always defined (a published imported Work keeps >= 1 section), so the
-       `?.`/`?? -1` fallbacks are unreachable and only satisfy the possibly-empty query-result type. */
-    const nextOrderIndex = (last?.orderIndex ?? -1) + 1;
-    /* v8 ignore stop */
-
-    const appended = await appendEditableWorkSection(tx, {
+    const inserted = await insertEditableWorkSection(tx, {
       createEntryId: dependencies.createEntryId,
-      document: newSectionDocument(),
-      orderIndex: nextOrderIndex,
+      headingLevel: plan.headingLevel,
+      orderIndex: plan.orderIndex,
       workEntryId
     });
     // Adding a section inserts real new blocks, so the change set is exactly those insertions; stamping
     // records the Work marker (on the first section added) and `corrected_at` on each new block.
     const changeSet: BlockChangeSet = {
       changed: [],
-      inserted: appended.insertedBlockIds,
+      inserted: inserted.insertedBlockIds,
       moved: [],
       removed: []
     };
     await stampCorrectionMarkers(tx, workEntryId, changeSet, now);
 
-    return { status: "added" as const, unitEntryId: appended.unitEntryId };
+    return { status: "added" as const, unitEntryId: inserted.unitEntryId };
   });
 
   if (outcome.status !== "added") {

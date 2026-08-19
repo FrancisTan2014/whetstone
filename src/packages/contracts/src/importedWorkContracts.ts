@@ -2,7 +2,12 @@ import { z } from "zod";
 
 import { documentJsonSchema } from "./diaryContracts.js";
 import { workLanguageDtoSchema, workTypeDtoSchema } from "./entryContracts.js";
-import { MAX_WORK_CONTENT_REVISION, manualWorkSectionDtoSchema } from "./manualWorkContracts.js";
+import {
+  addWorkSectionRequestSchema,
+  MAX_WORK_CONTENT_REVISION,
+  manualWorkSectionDtoSchema,
+  type AddWorkSectionRequest
+} from "./manualWorkContracts.js";
 
 // Shared, Zod-validated shapes for CORRECTING a canonical imported Work in the Library editor (#762).
 // Imported content stays shared content, not a personal Entry: a correction reuses the same canonical
@@ -30,16 +35,9 @@ export type CorrectImportedWorkContentRequest = z.infer<
   typeof correctImportedWorkContentRequestSchema
 >;
 
-// Adding a section appends a new reading unit (with a real heading block) to an imported Work under
-// correction (#762). It carries the loaded `revision` for the same optimistic-concurrency protection as a
-// save, so a section is never appended on top of another session's concurrent write.
-export const addImportedWorkSectionRequestSchema = z
-  .object({
-    revision: workContentRevisionSchema
-  })
-  .strict();
-
-export type AddImportedWorkSectionRequest = z.infer<typeof addImportedWorkSectionRequestSchema>;
+// Manual authoring and imported correction deliberately share the exact contextual insertion boundary.
+export const addImportedWorkSectionRequestSchema = addWorkSectionRequestSchema;
+export type AddImportedWorkSectionRequest = AddWorkSectionRequest;
 
 // A persisted imported Work opened for correction, with the currently-opened section's canonical document
 // and the whole Work's ordered section list (#762). Mirrors the manual editor DTO but omits owner

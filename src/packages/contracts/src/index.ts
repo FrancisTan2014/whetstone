@@ -64,6 +64,7 @@ export type {
 } from "./authoredWorkContracts.js";
 export {
   addManualWorkSectionRequestSchema,
+  addWorkSectionRequestSchema,
   manualWorkDtoSchema,
   manualWorkSectionDtoSchema,
   manualWorkUnitDtoSchema,
@@ -72,14 +73,17 @@ export {
   parseManualWorkDto,
   parseManualWorkUnitDto,
   parseUpdateManualWorkContentRequest,
-  updateManualWorkContentRequestSchema
+  updateManualWorkContentRequestSchema,
+  workSectionPlacementSchema
 } from "./manualWorkContracts.js";
 export type {
   AddManualWorkSectionRequest,
+  AddWorkSectionRequest,
   ManualWorkDto,
   ManualWorkSectionDto,
   ManualWorkUnitDto,
-  UpdateManualWorkContentRequest
+  UpdateManualWorkContentRequest,
+  WorkSectionPlacement
 } from "./manualWorkContracts.js";
 export {
   addImportedWorkSectionRequestSchema,

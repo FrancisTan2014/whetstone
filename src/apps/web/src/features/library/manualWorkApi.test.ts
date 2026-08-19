@@ -129,7 +129,7 @@ describe("addManualWorkSection", () => {
   it("returns the work opened at the new section on success", async () => {
     const fetchMock = stubFetch({ ok: true, body: dto });
 
-    await expect(addManualWorkSection("work-1", dto.revision)).resolves.toEqual({
+    await expect(addManualWorkSection("work-1", "unit-1", "child", dto.revision)).resolves.toEqual({
       status: "added",
       work: dto
     });
@@ -138,18 +138,24 @@ describe("addManualWorkSection", () => {
       expect.objectContaining({ method: "POST" })
     );
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(JSON.parse(init.body as string)).toEqual({ revision: dto.revision });
+    expect(JSON.parse(init.body as string)).toEqual({
+      placement: "child",
+      revision: dto.revision,
+      targetUnitEntryId: "unit-1"
+    });
   });
 
   it("reports a stale revision as a conflict", async () => {
     stubFetch({ ok: false, status: 409 });
 
-    await expect(addManualWorkSection("work-1", 1)).resolves.toEqual({ status: "conflict" });
+    await expect(addManualWorkSection("work-1", "unit-1", "next", 1)).resolves.toEqual({
+      status: "conflict"
+    });
   });
 
   it("throws on an unexpected non-2xx response", async () => {
     stubFetch({ ok: false, status: 500 });
 
-    await expect(addManualWorkSection("work-1", 2)).rejects.toThrow(/status 500/);
+    await expect(addManualWorkSection("work-1", "unit-1", "next", 2)).rejects.toThrow(/status 500/);
   });
 });

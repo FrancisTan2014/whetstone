@@ -54,12 +54,12 @@ test("build a Part/Chapter/Section hierarchy, navigate distant sections, and rea
   await page.getByRole("button", { exact: true, name: "Save" }).click();
   await expect(page.getByRole("status")).toHaveText("Saved");
   // A single-section Work has no useful outline yet — it reserves no sidebar track, so section creation is
-  // a single "Add section" control above the canvas instead of an empty Outline.
+  // a single proper action above the canvas instead of an empty Outline.
   await expect(outline).toBeHidden();
-  await expect(page.getByRole("button", { name: "Add section" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Add section after current" })).toBeVisible();
 
   // Section 2: add a section, name its seeded heading, and demote it to level 2 ("Chapter One").
-  await page.getByRole("button", { name: "Add section" }).click();
+  await page.getByRole("button", { name: "Add section after current" }).click();
   await expect(page.getByRole("status")).toHaveText("Saved");
   await editor.locator("h1").click();
   await page.keyboard.type("Chapter One");
@@ -67,57 +67,71 @@ test("build a Part/Chapter/Section hierarchy, navigate distant sections, and rea
   await expect(editor.locator("h2")).toContainText("Chapter One");
   await page.getByRole("button", { exact: true, name: "Save" }).click();
   await expect(page.getByRole("status")).toHaveText("Saved");
-  await expect(outline.getByRole("button", { name: "Chapter One" })).toBeVisible();
+  await expect(
+    outline.getByRole("button", { exact: true, name: "Chapter One" })
+  ).toBeVisible();
 
-  // Section 3: add a third section as a level-3 "Section One" heading.
-  await outline.getByRole("button", { name: "Add section" }).click();
+  // Add a same-level Chapter Two from Chapter One. The server derives Heading 2 and places it after the
+  // active branch; no heading-level repair is needed in the editor.
+  await outline.getByRole("button", { name: "Add next section after Chapter One" }).click();
   await expect(page.getByRole("status")).toHaveText("Saved");
-  await editor.locator("h1").click();
+  await expect(editor).toBeFocused();
+  await page.keyboard.type("Chapter Two");
+  await page.getByRole("button", { exact: true, name: "Save" }).click();
+  await expect(page.getByRole("status")).toHaveText("Saved");
+
+  // Return to Chapter One and add a child. The contextual action creates Heading 3 and inserts it before
+  // Chapter Two as the last child of Chapter One.
+  await outline.getByRole("button", { exact: true, name: "Chapter One" }).click();
+  await outline.getByRole("button", { name: "Add subsection under Chapter One" }).click();
+  await expect(page.getByRole("status")).toHaveText("Saved");
+  await expect(editor).toBeFocused();
   await page.keyboard.type("Section One");
-  await chooseBlockStyle(page, "Heading 3");
   await expect(editor.locator("h3")).toContainText("Section One");
   await page.getByRole("button", { exact: true, name: "Save" }).click();
   await expect(page.getByRole("status")).toHaveText("Saved");
 
-  // The live Outline reflects the persisted heading hierarchy: Part One > Chapter One > Section One.
+  // The live Outline reflects dense depth-first order: Part One > Chapter One > Section One, then Chapter Two.
   const nodes = outline.locator("li.workOutlineNode");
-  await expect(nodes).toHaveCount(3);
+  await expect(nodes).toHaveCount(4);
   await expect(nodes.nth(0)).toHaveAttribute("data-depth", "0");
   await expect(nodes.nth(0)).toContainText("Part One");
   await expect(nodes.nth(1)).toHaveAttribute("data-depth", "1");
   await expect(nodes.nth(1)).toContainText("Chapter One");
   await expect(nodes.nth(2)).toHaveAttribute("data-depth", "2");
   await expect(nodes.nth(2)).toContainText("Section One");
-  await expect(outline.getByRole("button", { name: "Section One" })).toHaveAttribute(
+  await expect(nodes.nth(3)).toHaveAttribute("data-depth", "1");
+  await expect(nodes.nth(3)).toContainText("Chapter Two");
+  await expect(outline.getByRole("button", { exact: true, name: "Section One" })).toHaveAttribute(
     "aria-current",
     "true"
   );
   // The whole ancestor path is highlighted, not just the exact section (#697 active-path requirement).
-  await expect(outline.getByRole("button", { name: "Section One" })).toHaveAttribute(
+  await expect(outline.getByRole("button", { exact: true, name: "Section One" })).toHaveAttribute(
     "data-active-path",
     "true"
   );
-  await expect(outline.getByRole("button", { name: "Chapter One" })).toHaveAttribute(
+  await expect(outline.getByRole("button", { exact: true, name: "Chapter One" })).toHaveAttribute(
     "data-active-path",
     "true"
   );
-  await expect(outline.getByRole("button", { name: "Part One" })).toHaveAttribute(
+  await expect(outline.getByRole("button", { exact: true, name: "Part One" })).toHaveAttribute(
     "data-active-path",
     "true"
   );
-  await outline.getByRole("button", { name: "Part One" }).click();
+  await outline.getByRole("button", { exact: true, name: "Part One" }).click();
   await expect(editor.locator("h1")).toContainText("Part One");
   await expect(editor.locator("h2")).toHaveCount(0);
   await expect(editor.locator("h3")).toHaveCount(0);
-  await expect(outline.getByRole("button", { name: "Part One" })).toHaveAttribute(
+  await expect(outline.getByRole("button", { exact: true, name: "Part One" })).toHaveAttribute(
     "aria-current",
     "true"
   );
 
   // ...and back to the far section: navigation resolves only persisted content, never a stale draft.
-  await outline.getByRole("button", { name: "Section One" }).click();
+  await outline.getByRole("button", { exact: true, name: "Section One" }).click();
   await expect(editor.locator("h3")).toContainText("Section One");
-  await expect(outline.getByRole("button", { name: "Section One" })).toHaveAttribute(
+  await expect(outline.getByRole("button", { exact: true, name: "Section One" })).toHaveAttribute(
     "aria-current",
     "true"
   );
@@ -131,15 +145,17 @@ test("build a Part/Chapter/Section hierarchy, navigate distant sections, and rea
   const toggle = page.getByRole("button", { exact: true, name: "Outline" });
   await toggle.click();
   const drawer = page.getByRole("navigation", { name: "Outline" });
-  await expect(drawer.getByRole("button", { name: "Chapter One" })).toBeVisible();
+  await expect(
+    drawer.getByRole("button", { exact: true, name: "Chapter One" })
+  ).toBeVisible();
 
   // Selecting a section closes the drawer and loads it (focus moves into the editor, so no restore).
-  await drawer.getByRole("button", { name: "Section One" }).click();
+  await drawer.getByRole("button", { exact: true, name: "Section One" }).click();
   await expect(narrowEditor.locator("h3")).toContainText("Section One");
 
   // Reopening then Escape dismisses the drawer and restores focus to the control that opened it.
   await toggle.click();
-  await expect(drawer.getByRole("button", { name: "Part One" })).toBeVisible();
+  await expect(drawer.getByRole("button", { exact: true, name: "Part One" })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(toggle).toBeFocused();
 
@@ -159,6 +175,7 @@ test("build a Part/Chapter/Section hierarchy, navigate distant sections, and rea
 
   await toc.getByRole("button", { name: "Expand Part One" }).click();
   await expect(toc.getByRole("button", { exact: true, name: "Chapter One" })).toBeVisible();
+  await expect(toc.getByRole("button", { exact: true, name: "Chapter Two" })).toBeVisible();
   await expect(toc.getByRole("button", { exact: true, name: "Section One" })).toHaveCount(0);
 
   await toc.getByRole("button", { name: "Expand Chapter One" }).click();
@@ -174,4 +191,7 @@ test("build a Part/Chapter/Section hierarchy, navigate distant sections, and rea
   await expect(
     toc.locator('li.readerTocNode:has(> div.readerTocRow:has-text("Section One"))')
   ).toHaveAttribute("data-depth", "2");
+  await expect(
+    toc.locator('li.readerTocNode:has(> div.readerTocRow:has-text("Chapter Two"))')
+  ).toHaveAttribute("data-depth", "1");
 });

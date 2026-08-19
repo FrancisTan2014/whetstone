@@ -2,7 +2,8 @@ import type {
   AddImportedWorkSectionRequest,
   CorrectImportedWorkContentRequest,
   ImportedWorkDto,
-  ImportedWorkUnitDto
+  ImportedWorkUnitDto,
+  WorkSectionPlacement
 } from "@whetstone/contracts";
 import { parseImportedWorkDto, parseImportedWorkUnitDto } from "@whetstone/contracts";
 import type { DocumentNodeJSON } from "@whetstone/document";
@@ -98,13 +99,15 @@ export async function saveImportedWorkContent(
   return { status: "saved", work: parseImportedWorkDto(await response.json()) };
 }
 
-// Append a new section (a new reading unit seeded with a heading block) to an imported Work under
-// correction, returning it opened at that section. A 409 is a revision conflict; any other non-2xx throws.
+// Insert a contextual section under the canonical target of an imported Work under correction, returning
+// it opened at that section. A 409 is a revision conflict; any other non-2xx throws.
 export async function addImportedWorkSection(
   workEntryId: string,
+  targetUnitEntryId: string,
+  placement: WorkSectionPlacement,
   revision: number
 ): Promise<AddImportedWorkSectionResult> {
-  const body: AddImportedWorkSectionRequest = { revision };
+  const body: AddImportedWorkSectionRequest = { placement, revision, targetUnitEntryId };
   const response = await fetch(apiUrl(`/imported-works/${encodeURIComponent(workEntryId)}/units`), {
     body: JSON.stringify(body),
     headers: jsonHeaders,

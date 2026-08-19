@@ -72,16 +72,18 @@ describe("parseCorrectImportedWorkContentRequest", () => {
 });
 
 describe("parseAddImportedWorkSectionRequest", () => {
-  it("accepts a revision token", () => {
-    expect(parseAddImportedWorkSectionRequest({ revision: 4 })).toEqual({ revision: 4 });
+  const request = { placement: "child" as const, revision: 4, targetUnitEntryId: "unit-1" };
+
+  it("accepts the shared contextual insertion shape", () => {
+    expect(parseAddImportedWorkSectionRequest(request)).toEqual(request);
   });
 
-  it("rejects a request missing its revision", () => {
+  it("rejects a request missing contextual fields", () => {
     expect(() => parseAddImportedWorkSectionRequest({})).toThrow();
   });
 
   it("rejects an unknown extra field", () => {
-    expect(() => parseAddImportedWorkSectionRequest({ extra: 1, revision: 0 })).toThrow();
+    expect(() => parseAddImportedWorkSectionRequest({ ...request, extra: 1 })).toThrow();
   });
 });
 

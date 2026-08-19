@@ -37,6 +37,84 @@ export const HEADING_OUTLINE_UNTITLED_LABEL = "Untitled section";
 
 type OpenHeading = { depth: number; entryId: string; level: number };
 
+export type WorkSectionPlacement = "next" | "child";
+
+export type WorkSectionHeadingLevel = 1 | 2 | 3;
+
+export type WorkSectionInsertionUnit = Readonly<{
+  headingLevel?: number | undefined;
+  unitEntryId: string;
+}>;
+
+export type WorkSectionInsertionPlan =
+  | Readonly<{
+      headingLevel: WorkSectionHeadingLevel;
+      orderIndex: number;
+      status: "planned";
+    }>
+  | Readonly<{ status: "target_not_found" }>
+  | Readonly<{ status: "invalid_placement" }>;
+
+// The editor exposes only the hierarchy Whetstone supports creating in v0. A leading headless section
+// ("Start") can be followed by an H1; H1/H2 can create a sibling or child; H3 can create only a sibling.
+// Deeper imported headings remain navigable but are not section-creation targets.
+export function availableWorkSectionPlacements(
+  headingLevel: number | undefined
+): ReadonlyArray<WorkSectionPlacement> {
+  if (headingLevel === undefined || headingLevel === 3) {
+    return ["next"];
+  }
+  if (headingLevel === 1 || headingLevel === 2) {
+    return ["next", "child"];
+  }
+  return [];
+}
+
+// Plan a contextual insertion from the canonical, source-ordered first-heading stream. Both "next" and
+// "child" insert after the target's complete descendant branch: "next" keeps the target level, while
+// "child" goes one level deeper and therefore becomes the branch's last child. A headless Start has no
+// descendants and "next" creates H1 immediately after it.
+export function planWorkSectionInsertion(
+  units: ReadonlyArray<WorkSectionInsertionUnit>,
+  targetUnitEntryId: string,
+  placement: WorkSectionPlacement
+): WorkSectionInsertionPlan {
+  const targetIndex = units.findIndex((unit) => unit.unitEntryId === targetUnitEntryId);
+  if (targetIndex === -1) {
+    return { status: "target_not_found" };
+  }
+
+  const targetLevel = units[targetIndex]?.headingLevel;
+  if (targetLevel !== undefined && targetLevel !== 1 && targetLevel !== 2 && targetLevel !== 3) {
+    return { status: "invalid_placement" };
+  }
+  if (!availableWorkSectionPlacements(targetLevel).includes(placement)) {
+    return { status: "invalid_placement" };
+  }
+
+  let orderIndex = targetIndex + 1;
+  if (targetLevel !== undefined) {
+    while (orderIndex < units.length) {
+      const followingLevel = units[orderIndex]?.headingLevel;
+      if (followingLevel === undefined || followingLevel <= targetLevel) {
+        break;
+      }
+      orderIndex += 1;
+    }
+  }
+
+  let headingLevel: WorkSectionHeadingLevel;
+  if (targetLevel === undefined) {
+    headingLevel = 1;
+  } else if (placement === "child") {
+    headingLevel = targetLevel === 1 ? 2 : 3;
+  } else {
+    headingLevel = targetLevel;
+  }
+
+  return { headingLevel, orderIndex, status: "planned" };
+}
+
 // Derive the hierarchical outline from a work's reading units, in source order.
 //
 // Rules (see issue #680): a single-unit work, or a work whose units carry no heading level, has no

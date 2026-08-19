@@ -124,9 +124,9 @@ test("repartition a typed multi-heading book, then merge a section while its not
   await expect(editor.locator("h2")).toHaveCount(2);
 
   // Live draft Outline: the three headings project into bounded sections BEFORE any save.
-  await expect(outline.getByRole("button", { name: "Part One" })).toBeVisible();
-  await expect(outline.getByRole("button", { name: "Chapter One" })).toBeVisible();
-  await expect(outline.getByRole("button", { name: "Chapter Two" })).toBeVisible();
+  await expect(outline.getByRole("button", { exact: true, name: "Part One" })).toBeVisible();
+  await expect(outline.getByRole("button", { exact: true, name: "Chapter One" })).toBeVisible();
+  await expect(outline.getByRole("button", { exact: true, name: "Chapter Two" })).toBeVisible();
 
   await page.getByRole("button", { exact: true, name: "Save" }).click();
   await expect(page.getByRole("status")).toHaveText("Saved");
@@ -183,7 +183,7 @@ test("repartition a typed multi-heading book, then merge a section while its not
   await expect(editor2).toBeVisible();
   const outline2 = page.getByRole("navigation", { name: "Outline" });
 
-  await outline2.getByRole("button", { name: "Chapter One" }).click();
+  await outline2.getByRole("button", { exact: true, name: "Chapter One" }).click();
   await expect(editor2.locator("h2")).toContainText("Chapter One");
   await editor2.locator("h2").click();
   await chooseBlockStyle(page, "Text");
@@ -192,12 +192,14 @@ test("repartition a typed multi-heading book, then merge a section while its not
   await expect(page.getByRole("status")).toHaveText("Saved");
 
   // Focus follows the server-reconciled unit: Chapter One is gone and Part One is active.
-  await expect(outline2.getByRole("button", { name: "Chapter One" })).toHaveCount(0);
-  await expect(outline2.getByRole("button", { name: "Part One" })).toHaveAttribute(
+  await expect(
+    outline2.getByRole("button", { exact: true, name: "Chapter One" })
+  ).toHaveCount(0);
+  await expect(outline2.getByRole("button", { exact: true, name: "Part One" })).toHaveAttribute(
     "aria-current",
     "true"
   );
-  await expect(outline2.getByRole("button", { name: "Chapter Two" })).toBeVisible();
+  await expect(outline2.getByRole("button", { exact: true, name: "Chapter Two" })).toBeVisible();
 
   // The anchored reading position followed its block into the surviving Part One unit — the anchor block
   // is unchanged and the unit is now Part One, never silently dropped.

@@ -2,7 +2,8 @@ import type {
   AddManualWorkSectionRequest,
   ManualWorkDto,
   ManualWorkUnitDto,
-  UpdateManualWorkContentRequest
+  UpdateManualWorkContentRequest,
+  WorkSectionPlacement
 } from "@whetstone/contracts";
 import { parseManualWorkDto, parseManualWorkUnitDto } from "@whetstone/contracts";
 import type { DocumentNodeJSON } from "@whetstone/document";
@@ -97,13 +98,15 @@ export async function saveManualWorkContent(
   return { status: "saved", work: parseManualWorkDto(await response.json()) };
 }
 
-// Append a new section (a new reading unit seeded with a heading block) to a manual Work, returning it
-// opened at that section. A 409 is a revision conflict; any other non-2xx throws.
+// Insert a contextual section under the canonical target, returning the Work opened at that section.
+// A 409 is a revision conflict; any other non-2xx throws.
 export async function addManualWorkSection(
   workEntryId: string,
+  targetUnitEntryId: string,
+  placement: WorkSectionPlacement,
   revision: number
 ): Promise<AddManualWorkSectionResult> {
-  const body: AddManualWorkSectionRequest = { revision };
+  const body: AddManualWorkSectionRequest = { placement, revision, targetUnitEntryId };
   const response = await fetch(apiUrl(`/manual-works/${encodeURIComponent(workEntryId)}/units`), {
     body: JSON.stringify(body),
     headers: jsonHeaders,
