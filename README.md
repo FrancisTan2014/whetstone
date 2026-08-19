@@ -128,38 +128,35 @@ Thanks to these projects and their contributors.
 
 ## Development workflow
 
-This repo is built by **manually-triggered** Copilot CLI roles. You (the maintainer) act as the
-coordinator: you decide what runs and when, and each role does one unit of work and then stops.
+This repo is built by a **manually-triggered** Copilot CLI delivery agent. You (the maintainer)
+decide what runs and when; the agent owns one unit from design through a merge-ready PR, then stops.
 
-1. Stabilize a requirement, then create a GitHub issue with acceptance criteria (the design role helps).
-2. Trigger the developer role to implement one ready issue end to end on a clean branch and open a PR.
-3. Trigger the reviewer role to review that PR and merge it when the gates pass.
+1. Give the developer agent an idea or a ready issue; it stabilizes design and creates/refines the issue.
+2. The same agent implements and validates that issue end to end on a clean branch.
+3. It marks the PR `merge-ready`; deterministic CI gates the merge.
 
 Role definitions live in [.github/agents/](./.github/agents/).
 Current design lives in [PRODUCT.md](./PRODUCT.md).
-Engineering and review rules live in [GUIDELINES.md](./GUIDELINES.md).
+Engineering and delivery rules live in [GUIDELINES.md](./GUIDELINES.md).
 
 ## Local launchers
 
 ```powershell
-.\scripts\run-design.cmd            # shape ideas into PRODUCT.md + issues (interactive)
-.\scripts\run-developer.cmd 12      # one-shot: implement issue #12 (omit the number to auto-decide: fix an open changes-requested PR, else the next ready issue — ready [Bug]s before [Task]s)
-.\scripts\run-developer-auto.cmd    # auto: deterministic supervisor — fresh one-shot developer per real unit; idle polling uses no model
-.\scripts\run-reviewer.cmd 17       # one-shot: review PR #17 (omit the number to auto-pick the oldest needs-review PR), then run the merge step
-.\scripts\run-reviewer-auto.cmd     # auto: deterministic supervisor — fresh one-shot reviewer per PR; idle polling uses no model
+.\scripts\run-developer.cmd 12      # one-shot: deliver issue #12; omit the number to fix CI, merge a ready PR, or take the next ready issue
+.\scripts\run-developer-auto.cmd    # auto: deterministic supervisor — fresh one-shot delivery agent per real unit; idle polling uses no model
 .\scripts\run-tester.cmd            # one-shot: explore the booted app on main beyond the E2E smoke and file high-signal, de-duplicated [Bug]s (or nothing)
 .\scripts\run-tester-auto.cmd       # auto: foreground loop — the Tester (QA) schedules itself, explores one session per tick + files bugs, until you stop it (Ctrl+C)
 ```
 
-The developer and reviewer each run two ways: a **one-shot** run that handles one unit/PR, or an
-`*-auto.cmd` deterministic **foreground supervisor**. The supervisor polls GitHub without a model,
-blocks while a one-shot worker runs, and launches every implementation, fix, or review in a fresh
-Copilot process. No timer tick enters an active worker's context; Ctrl+C stops the supervisor. The
-design role you trigger yourself. Developer workers use GPT-5.6 Sol with high reasoning effort.
+The developer runs as a **one-shot** delivery or under the deterministic **foreground supervisor**.
+The supervisor polls GitHub without a model, blocks while a worker runs, and launches every
+implementation or CI fix in a fresh Copilot process. It also invokes deterministic merge and
+dependency-unblock steps. No timer tick enters an active worker's context; Ctrl+C stops the
+supervisor. Developer workers use GPT-5.6 Sol with high reasoning effort.
 
 The **Tester (QA)** is the exploratory discovery layer above the deterministic E2E gate
-([GUIDELINES.md](./GUIDELINES.md) "Functional verification"). It runs **independently** of the
-reviewer (on a different model than the developer), boots the real stack on `main`, drives the app
+([GUIDELINES.md](./GUIDELINES.md) "Functional verification"). It runs **independently** of delivery,
+boots the real stack on `main`, drives the app
 beyond the scripted smoke, and files high-signal, de-duplicated `[Bug]` issues — its only action is
 filing issues (read-only on code; it never merges or edits). It is **self-limiting**:
 `scripts/delivery/testerNextAction.mjs` caps how many bugs a run may file from the open-bug backlog headroom,

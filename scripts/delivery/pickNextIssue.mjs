@@ -40,7 +40,7 @@ export function ghJson(args) {
 
 // Every #N in a `Depends on:` clause, handling "Depends on: #3, #4" and "Depends on #3 and #5". The
 // clause may lead with Markdown decoration -- bold/italic (`**Depends on:**`), a list marker
-// (`- Depends on:`), or a blockquote (`> Depends on:`) -- because the design agent writes issue
+// (`- Depends on:`), or a blockquote (`> Depends on:`) -- because the delivery agent writes issue
 // bodies in Markdown; those leading tokens are skipped so a bolded line is NOT silently read as "no
 // dependency" (which would wrongly unblock, or let the picker grab, a still-gated issue). The match
 // stops at the first sentence end, so a trailing sentence on the same line (e.g.

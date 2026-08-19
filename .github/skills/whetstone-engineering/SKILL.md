@@ -1,19 +1,18 @@
 ---
 name: whetstone-engineering
 description: >-
-    Operational engineering playbook for implementing or reviewing whetstone issues and pull
-    requests: monorepo layout, tech stack, the design/testability rules reviewers enforce, the
-    `pnpm validate` gate, and PR conventions. Use whenever writing code, fixing review feedback,
-    or reviewing a pull request in the whetstone repository.
+    Operational engineering playbook for designing and implementing whetstone issues and pull
+    requests: monorepo layout, tech stack, design/testability rules, the `pnpm validate` gate,
+    and PR conventions. Use whenever shaping or writing code in the whetstone repository.
 user-invocable: true
 ---
 
 # Whetstone engineering playbook
 
-This is the operational quick reference for building and reviewing whetstone work.
-`PRODUCT.md` (product/design memory) and `GUIDELINES.md` (engineering and review authority)
-are the source of truth — read them for full detail. This skill summarizes what a coding or
-review subagent needs in order to act; it never overrides those documents.
+This is the operational quick reference for designing and building whetstone work.
+`PRODUCT.md` (product/design memory) and `GUIDELINES.md` (engineering and delivery authority)
+are the source of truth. This skill summarizes what the single delivery agent needs in order to act;
+it never overrides those documents.
 
 ## Repository map
 
@@ -44,7 +43,7 @@ conclusions — a runaway context is the main reason a run gets slow.
 React + Vite, Fastify, PostgreSQL + Drizzle, Zod, Vitest. Do not add a runtime dependency unless
 the issue needs it and the PR explains why.
 
-## Design rules reviewers enforce
+## Design rules the delivery self-check enforces
 
 1. Export the smallest API a consumer needs; keep everything else local.
 2. Never expose mutable internals (arrays, maps, caches, state).
@@ -83,9 +82,8 @@ required lane (quality coverage, runtime/E2E, and isolated contracts) before mer
 composes those lanes sequentially for an optional full local run. Never lower coverage thresholds or
 skip evidence to make a handoff pass.
 
-Do the landability and acceptance-to-evidence self-check yourself. Do not launch a duplicate
-fresh-context preflight: the independent reviewer is the sole code review and runs concurrently with
-CI.
+Do the landability, acceptance-to-evidence, and gate-by-gate self-check yourself. Do not delegate a
+second model review; exact-head CI is the independent merge authority.
 
 ## Pull request conventions
 
@@ -93,7 +91,8 @@ CI.
 - Prefer cohesive vertical slices (schema + API + server + UI for one capability is fine).
 - Open with `Closes #<issue-number>`. The PR body must state: linked issue, what changed, what
   validation ran, and any validation that could not run and why.
-- Developers do not merge. The reviewer records a verdict; a deterministic step (`scripts/delivery/mergeApprovedPrs.mjs`) merges only when the `GUIDELINES.md` merge gates pass.
+- The developer never merges by hand. It applies `merge-ready` after the self-check; a deterministic
+  step (`scripts/delivery/mergeReadyPrs.mjs`) merges only when the `GUIDELINES.md` gates pass.
 - If your PR changes what an area owns, its entry points, or where a subsystem lives, update
   `docs/MAP.md` (or the relevant `AGENTS.md`) in the same PR — a concise pointer-level edit, not a
   change log. A PR that does not change an area's shape touches no doc.

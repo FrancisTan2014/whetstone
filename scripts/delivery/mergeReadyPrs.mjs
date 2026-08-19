@@ -1,16 +1,14 @@
 #!/usr/bin/env node
-// Deterministic merge step for the whetstone reviewer workflow.
+// Deterministic merge step for the whetstone delivery workflow.
 //
-// The reviewer agent only records a verdict: it sets the `review-approved` label and posts a
-// `reviewer-run-reviewed: <head-sha>` marker. Whether a PR actually merges is decided here, in code,
-// as a pure function of the GUIDELINES.md merge gates -- not by a non-deterministic LLM session. This
-// is what stops an approved-and-eligible PR from being left unmerged just because one reviewer run
-// chose to "hand off to a human".
+// The delivery agent marks a bounded, locally validated PR `merge-ready`. Whether it actually merges is
+// decided here, in code, from the exact-head CI and repository-integrity gates in GUIDELINES.md -- never
+// from a model's discretion.
 //
 // Usage:
-//   node scripts/delivery/mergeApprovedPrs.mjs            merge every eligible review-approved PR
-//   node scripts/delivery/mergeApprovedPrs.mjs --pr 21    evaluate only PR #21
-//   node scripts/delivery/mergeApprovedPrs.mjs --dry-run  report what would merge, merge nothing
+//   node scripts/delivery/mergeReadyPrs.mjs            merge every eligible merge-ready PR
+//   node scripts/delivery/mergeReadyPrs.mjs --pr 21    evaluate only PR #21
+//   node scripts/delivery/mergeReadyPrs.mjs --dry-run  report what would merge, merge nothing
 //
 // Requires `gh` on PATH; the caller sets GH_CONFIG_DIR (see run-merge.cmd).
 
@@ -34,7 +32,6 @@ const PR_FIELDS = [
   "mergeable",
   "mergeStateStatus",
   "statusCheckRollup",
-  "comments",
   "closingIssuesReferences"
 ].join(",");
 
@@ -50,14 +47,13 @@ function sleepSync(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
-// A PR worth waiting on: approved, not blocked, open, not draft.
+// A PR worth waiting on: explicitly ready, not blocked, open, not draft.
 function isMergeCandidate(pr) {
   const labels = (pr.labels ?? []).map((l) => l.name);
   return (
     pr.state === "OPEN" &&
     !pr.isDraft &&
-    labels.includes("review-approved") &&
-    !labels.includes("needs-review") &&
+    labels.includes("merge-ready") &&
     !labels.includes("changes-requested")
   );
 }
@@ -93,7 +89,7 @@ if (ONLY_PR != null) {
     "--state",
     "open",
     "--label",
-    "review-approved",
+    "merge-ready",
     "--json",
     "number"
   ]);
@@ -101,7 +97,7 @@ if (ONLY_PR != null) {
 }
 
 if (numbers.length === 0) {
-  console.log("No review-approved pull requests to merge.");
+  console.log("No merge-ready pull requests to merge.");
   process.exit(0);
 }
 

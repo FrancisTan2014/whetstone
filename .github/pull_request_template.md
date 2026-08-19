@@ -10,6 +10,6 @@
 
 <!-- Commands run, tests passed, or why validation is not available yet. -->
 
-## Notes for reviewers
+## Delivery notes
 
-<!-- Anything reviewers should pay attention to. -->
+<!-- Any material tradeoff, known limitation, or follow-up the merge record should preserve. -->

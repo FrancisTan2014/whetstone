@@ -113,7 +113,7 @@ describe("pnpm typecheck scope (#850)", () => {
 
   it("keeps the root solution as the entry point `pnpm typecheck` builds", async () => {
     // The scope proven above is the root solution's. If the script stopped building it, the proof
-    // would no longer describe the command reviewers and CI actually run.
+    // would no longer describe the command the delivery agent and CI actually run.
     const packageJson = JSON.parse(await readFile(resolve(repoRoot, "package.json"), "utf8"));
     expect(packageJson.scripts.typecheck).toMatch(/^tsc -b(?: |$)/);
   });
