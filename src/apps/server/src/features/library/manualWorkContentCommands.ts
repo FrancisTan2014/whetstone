@@ -1,11 +1,16 @@
-import { toEntryId, type EntryId } from "@whetstone/domain";
+import {
+  planWorkSectionInsertion,
+  toEntryId,
+  type EntryId,
+  type WorkSectionPlacement
+} from "@whetstone/domain";
 import type { ManualWorkDto } from "@whetstone/contracts";
 import type { DocumentNodeJSON } from "@whetstone/document";
-import { and, desc, eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import {
-  appendEditableWorkSection,
+  insertEditableWorkSection,
   repartitionEditableWorkContent
 } from "../content/editableWorkContent.js";
 import { claimWorkContentRevision } from "../content/workContentRevision.js";
@@ -40,12 +45,12 @@ export type UpdateManualWorkContentResult =
   | Readonly<{ status: "not_found" }>
   | Readonly<{ status: "conflict" }>;
 
-// Adding a section either lands (returning the Work opened at the NEW section with a new revision and the
-// recomputed section list), is rejected because the caller does not own a manual Work by that id, or is
-// refused because the sent revision is stale. Same conflict semantics as a save.
+// A contextual insertion can also reject a relation the canonical target cannot support (for example a
+// child of H3). Like not-found and conflict, that refusal commits no revision or content write.
 export type AddManualWorkSectionResult =
   | Readonly<{ status: "added"; work: ManualWorkDto }>
   | Readonly<{ status: "not_found" }>
+  | Readonly<{ status: "invalid_placement" }>
   | Readonly<{ status: "conflict" }>;
 
 type OwnedMeta = Readonly<{
@@ -112,16 +117,6 @@ async function claimContentRevision(
     .where(and(eq(personalEntries.entryId, workEntryId), eq(personalEntries.userId, userId)));
 
   return { revision: claimed, updatedAt: now };
-}
-
-// The document a new manual section starts from (#697): one empty Heading 1 block (so the section is a
-// real, navigable outline node from creation — its level and text are then owned in the shared editor)
-// followed by an empty paragraph for the body. Ids are stamped by the shared boundary on write.
-function newSectionDocument(): DocumentNodeJSON {
-  return {
-    content: [{ attrs: { level: 1 }, type: "heading" }, { type: "paragraph" }],
-    type: "doc"
-  };
 }
 
 // Save one section's canonical document through the shared editable-Work boundary, which preserves the id
@@ -194,13 +189,13 @@ export async function updateManualWorkContent(
   };
 }
 
-// Append a new section (a new reading unit with a real heading block) to the manual Work and open it
-// (#697). Same owner/origin authorization and revision protection as a save: a non-owner is a 404 and a
-// stale revision is a conflict that writes nothing. The section is appended at the next order index, so
-// ordering stays a dense, source-order sequence.
+// Insert a sibling or child from the target's canonical first-heading branch and open it (#881). The
+// shared planner derives heading level and dense source-order index; the shared writer shifts later units.
 export async function addManualWorkSection(
   dependencies: ManualWorkContentDependencies,
   workEntryId: EntryId,
+  targetUnitEntryId: EntryId,
+  placement: WorkSectionPlacement,
   revision: number,
   userId: string
 ): Promise<AddManualWorkSectionResult> {
@@ -212,28 +207,24 @@ export async function addManualWorkSection(
       return { status: "not_found" as const };
     }
 
+    const sections = await loadManualWorkSections(tx, workEntryId);
+    const plan = planWorkSectionInsertion(sections, targetUnitEntryId, placement);
+    if (plan.status === "target_not_found") {
+      return { status: "not_found" as const };
+    }
+    if (plan.status === "invalid_placement") {
+      return plan;
+    }
+
     const claimed = await claimContentRevision(tx, workEntryId, userId, revision, now);
     if (claimed === undefined) {
       return { status: "conflict" as const };
     }
 
-    const [last] = await tx
-      .select({ orderIndex: readingUnits.orderIndex })
-      .from(readingUnits)
-      .where(eq(readingUnits.workEntryId, workEntryId))
-      .orderBy(desc(readingUnits.orderIndex))
-      .limit(1);
-    // A manual Work always has at least its seeded first section, so `last` is defined; the nullish
-    // fallback keeps the arithmetic total without a separately-tested empty-Work branch.
-    /* v8 ignore start -- `last` is always defined (a manual Work keeps >= 1 section), so the `?.`/`?? -1`
-       fallbacks are unreachable and only satisfy the possibly-empty query-result type. */
-    const nextOrderIndex = (last?.orderIndex ?? -1) + 1;
-    /* v8 ignore stop */
-
-    const appended = await appendEditableWorkSection(tx, {
+    const inserted = await insertEditableWorkSection(tx, {
       createEntryId: dependencies.createEntryId,
-      document: newSectionDocument(),
-      orderIndex: nextOrderIndex,
+      headingLevel: plan.headingLevel,
+      orderIndex: plan.orderIndex,
       workEntryId
     });
 
@@ -241,7 +232,7 @@ export async function addManualWorkSection(
       claimed,
       owned,
       status: "added" as const,
-      unitEntryId: appended.unitEntryId
+      unitEntryId: inserted.unitEntryId
     };
   });
 

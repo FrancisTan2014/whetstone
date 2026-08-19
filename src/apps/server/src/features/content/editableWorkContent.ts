@@ -5,7 +5,8 @@ import {
   type BlockSequenceEntry,
   type EntryId,
   type RepartitionBlock,
-  type RepartitionPlan
+  type RepartitionPlan,
+  type WorkSectionHeadingLevel
 } from "@whetstone/domain";
 import {
   assignNodeIds,
@@ -13,7 +14,7 @@ import {
   documentText,
   type DocumentNodeJSON
 } from "@whetstone/document";
-import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, or, sql } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import {
@@ -47,21 +48,26 @@ export type InitializeEditableWorkContentResult = Readonly<{
   unitEntryId: string;
 }>;
 
-// The already-authorized Work context an appended section runs under. The caller has verified ownership
-// and origin and computed the next `orderIndex`; this boundary writes one more reading unit and its
-// blocks from `document` (a manual Work's new section starts at a heading block — issue #697).
-export type AppendEditableWorkSectionContext = Readonly<{
+// The already-authorized insertion plan. The caller owns authorization, revision fencing, and placement
+// planning; this boundary shifts later units and writes the new heading-led section in the same transaction.
+export type InsertEditableWorkSectionContext = Readonly<{
   createEntryId: () => string;
-  document: DocumentNodeJSON;
+  headingLevel: WorkSectionHeadingLevel;
   orderIndex: number;
   workEntryId: EntryId;
 }>;
 
-export type AppendEditableWorkSectionResult = Readonly<{
+export type InsertEditableWorkSectionResult = Readonly<{
   document: DocumentNodeJSON;
-  // Every block written for the new section (all genuinely new), so a correction caller can mark them.
   insertedBlockIds: readonly string[];
   unitEntryId: string;
+}>;
+
+type WriteEditableWorkSectionContext = Readonly<{
+  createEntryId: () => string;
+  document: DocumentNodeJSON;
+  orderIndex: number;
+  workEntryId: EntryId;
 }>;
 
 // The already-authorized Work+unit context a reconciliation runs under. The caller has verified ownership
@@ -167,16 +173,32 @@ export async function initializeEditableWorkContent(
   });
 }
 
-// Append one more reading unit to an editable Work at `orderIndex`, seeded from `document` — the manual
-// Work's "Add section" (#697) hands in a heading-led document so the new section is a real, navigable
-// outline node from the first save. Same graph as an initialization (an `entries` row, a `reading_units`
-// row, a `contains` link, one `doc_blocks` row per top-level node), written in the caller's transaction.
-// The caller owns ownership/origin/concurrency; this boundary only writes the section's content.
-export async function appendEditableWorkSection(
+// Insert one real outline section at the planner's dense source-order index. Every following unit shifts
+// atomically before the shared writer creates the new Entry/unit/blocks graph. Existing units, block ids,
+// source provenance, and annotations are otherwise untouched.
+export async function insertEditableWorkSection(
   tx: Transaction,
-  context: AppendEditableWorkSectionContext
-): Promise<AppendEditableWorkSectionResult> {
-  return writeEditableWorkSection(tx, context);
+  context: InsertEditableWorkSectionContext
+): Promise<InsertEditableWorkSectionResult> {
+  await tx
+    .update(readingUnits)
+    .set({ orderIndex: sql`${readingUnits.orderIndex} + 1` })
+    .where(
+      and(
+        eq(readingUnits.workEntryId, context.workEntryId),
+        gte(readingUnits.orderIndex, context.orderIndex)
+      )
+    );
+
+  return writeEditableWorkSection(tx, {
+    createEntryId: context.createEntryId,
+    document: {
+      content: [{ attrs: { level: context.headingLevel }, type: "heading" }, { type: "paragraph" }],
+      type: "doc"
+    },
+    orderIndex: context.orderIndex,
+    workEntryId: context.workEntryId
+  });
 }
 
 // Insert one reading unit (its Entry, `reading_units` row, and `contains` link) plus its id-stamped
@@ -184,8 +206,8 @@ export async function appendEditableWorkSection(
 // written identically.
 async function writeEditableWorkSection(
   tx: Transaction,
-  context: AppendEditableWorkSectionContext
-): Promise<AppendEditableWorkSectionResult> {
+  context: WriteEditableWorkSectionContext
+): Promise<InsertEditableWorkSectionResult> {
   const unitEntryId = context.createEntryId();
   const { blocks, document } = documentToBlocks(context.document);
 

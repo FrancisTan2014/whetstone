@@ -50,13 +50,7 @@ const baseExtensions: Extensions = [
   BlockGutterHighlight as unknown as Extensions[number],
   // The PDF extraction-review cue (#763): inert until a consumer sets a non-empty evidence map, so every
   // non-PDF surface that mounts the shared editor shows nothing. Editing-only; the reader never mounts it.
-  ExtractionEvidenceDecoration as unknown as Extensions[number],
-  // A restrained, decoration-only hint on a focused empty paragraph — never stored, copied, or read
-  // by the static reader (which mounts `documentExtensions` without this editing-only extension).
-  Placeholder.configure({
-    placeholder: ({ node }) => (node.type.name === "paragraph" ? "Type / for commands" : ""),
-    showOnlyCurrent: true
-  })
+  ExtractionEvidenceDecoration as unknown as Extensions[number]
 ];
 
 // The gutter is a pointer affordance: it only makes sense with a fine, hovering pointer. On touch or a
@@ -180,8 +174,22 @@ export function RichContentEditor({
   // hands down an above-overlay host so every surface stays visible and interactive over the modal.
   const container = useFloatingLayerContainer();
   const editorExtensions = useMemo<Extensions>(
-    () => [...baseExtensions, SlashCommand.configure({ container })],
-    [container]
+    () => [
+      ...baseExtensions,
+      // Decoration-only hints are never stored or read by the static reader. Work sections additionally
+      // name their focused empty heading so a newly inserted section immediately explains what to type.
+      Placeholder.configure({
+        placeholder: ({ node }) => {
+          if (node.type.name === "paragraph") {
+            return "Type / for commands";
+          }
+          return presentation === "work" && node.type.name === "heading" ? "Section title" : "";
+        },
+        showOnlyCurrent: true
+      }),
+      SlashCommand.configure({ container })
+    ],
+    [container, presentation]
   );
   // The block whose grip is currently hovered/focused (pointer gutter), and the open menu, if any.
   const [gutterPos, setGutterPos] = useState<number | null>(null);

@@ -15,8 +15,8 @@ import {
   readingUnits
 } from "../../db/schema.js";
 import {
-  appendEditableWorkSection,
   initializeEditableWorkContent,
+  insertEditableWorkSection,
   reconcileEditableWorkContent,
   repartitionEditableWorkContent
 } from "./editableWorkContent.js";
@@ -114,18 +114,32 @@ async function seedThreeSections(): Promise<Readonly<{ u0: string; u1: string; u
     })
   );
   const { unitEntryId: u1 } = await db.transaction(async (tx) =>
-    appendEditableWorkSection(tx, {
+    insertEditableWorkSection(tx, {
       createEntryId,
-      document: doc(heading(1, "Chapter One", "h1"), para("A body", "a1")),
+      headingLevel: 1,
       orderIndex: 1,
       workEntryId: WORK_ID
     })
   );
+  await db.transaction(async (tx) =>
+    reconcileEditableWorkContent(tx, {
+      document: doc(heading(1, "Chapter One", "h1"), para("A body", "a1")),
+      unitEntryId: u1,
+      workEntryId: WORK_ID
+    })
+  );
   const { unitEntryId: u2 } = await db.transaction(async (tx) =>
-    appendEditableWorkSection(tx, {
+    insertEditableWorkSection(tx, {
       createEntryId,
-      document: doc(heading(1, "Chapter Two", "h2"), para("B body", "b1")),
+      headingLevel: 1,
       orderIndex: 2,
+      workEntryId: WORK_ID
+    })
+  );
+  await db.transaction(async (tx) =>
+    reconcileEditableWorkContent(tx, {
+      document: doc(heading(1, "Chapter Two", "h2"), para("B body", "b1")),
+      unitEntryId: u2,
       workEntryId: WORK_ID
     })
   );

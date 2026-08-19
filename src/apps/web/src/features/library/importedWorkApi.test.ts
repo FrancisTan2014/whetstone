@@ -131,27 +131,37 @@ describe("addImportedWorkSection", () => {
   it("returns the work opened at the new section on success", async () => {
     const fetchMock = stubFetch({ ok: true, body: dto });
 
-    await expect(addImportedWorkSection("work-1", dto.revision)).resolves.toEqual({
-      status: "added",
-      work: dto
-    });
+    await expect(addImportedWorkSection("work-1", "unit-1", "next", dto.revision)).resolves.toEqual(
+      {
+        status: "added",
+        work: dto
+      }
+    );
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/imported-works/work-1/units",
       expect.objectContaining({ method: "POST" })
     );
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(JSON.parse(init.body as string)).toEqual({ revision: dto.revision });
+    expect(JSON.parse(init.body as string)).toEqual({
+      placement: "next",
+      revision: dto.revision,
+      targetUnitEntryId: "unit-1"
+    });
   });
 
   it("reports a stale revision as a conflict", async () => {
     stubFetch({ ok: false, status: 409 });
 
-    await expect(addImportedWorkSection("work-1", 1)).resolves.toEqual({ status: "conflict" });
+    await expect(addImportedWorkSection("work-1", "unit-1", "next", 1)).resolves.toEqual({
+      status: "conflict"
+    });
   });
 
   it("throws on an unexpected non-2xx response", async () => {
     stubFetch({ ok: false, status: 500 });
 
-    await expect(addImportedWorkSection("work-1", 2)).rejects.toThrow(/status 500/);
+    await expect(addImportedWorkSection("work-1", "unit-1", "next", 2)).rejects.toThrow(
+      /status 500/
+    );
   });
 });
