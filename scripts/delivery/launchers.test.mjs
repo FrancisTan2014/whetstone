@@ -18,7 +18,7 @@ test(
     try {
       const failingSelector = join(testDir, "fail-selector.cmd");
       writeFileSync(failingSelector, "@echo off\r\necho selector failed 1>&2\r\nexit /b 7\r\n");
-      for (const launcher of ["run-developer.cmd", "run-reviewer.cmd"]) {
+      for (const launcher of ["run-developer.cmd"]) {
         const result = spawnSync(
           process.env.ComSpec ?? "cmd.exe",
           ["/d", "/c", resolve("scripts", launcher)],
@@ -61,7 +61,6 @@ test(
 
       for (const { launcher, args } of [
         { launcher: "run-developer.cmd", args: ["733"] },
-        { launcher: "run-reviewer.cmd", args: ["734"] },
         { launcher: "run-tester.cmd", args: [] },
         { launcher: "run-tester-auto.cmd", args: [] }
       ]) {
@@ -77,6 +76,7 @@ test(
             }
           }
         );
+
         const invocation = readFileSync(invocationFile, "utf8");
         assert.notEqual(result.status, 0, `${launcher} did not invoke the failing Copilot stub`);
         assert.ok(invocation.includes(automationNotice), `${launcher}\n${invocation}`);
@@ -87,6 +87,50 @@ test(
           assert.doesNotMatch(invocation, /claude/i);
         }
       }
+    } finally {
+      rmSync(testDir, { recursive: true, force: true });
+    }
+  }
+);
+
+test(
+  "developer wait path runs deterministic merge and dependency unblock without a model",
+  { skip: process.platform !== "win32" },
+  () => {
+    const testDir = mkdtempSync(join(tmpdir(), "whetstone-finalize-test-"));
+    try {
+      const callsFile = join(testDir, "node-calls.txt");
+      const copilotFile = join(testDir, "copilot-called.txt");
+      const selector = join(testDir, "wait-selector.cmd");
+      writeFileSync(selector, "@echo off\r\necho wait 42\r\n");
+      writeFileSync(
+        join(testDir, "node.cmd"),
+        `@echo off\r\n>> "${callsFile}" echo %*\r\nexit /b 0\r\n`
+      );
+      writeFileSync(
+        join(testDir, "copilot.cmd"),
+        `@echo off\r\n> "${copilotFile}" echo called\r\nexit /b 0\r\n`
+      );
+
+      const result = spawnSync(
+        process.env.ComSpec ?? "cmd.exe",
+        ["/d", "/c", resolve("scripts", "run-developer.cmd")],
+        {
+          cwd: resolve("."),
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PATH: `${testDir};${process.env.PATH ?? ""}`,
+            WHETSTONE_SELECTOR_COMMAND: selector
+          }
+        }
+      );
+
+      assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+      const calls = readFileSync(callsFile, "utf8");
+      assert.match(calls, /scripts\\delivery\\mergeReadyPrs\.mjs/);
+      assert.match(calls, /scripts\\delivery\\unblockReadyIssues\.mjs/);
+      assert.throws(() => readFileSync(copilotFile, "utf8"), /ENOENT/);
     } finally {
       rmSync(testDir, { recursive: true, force: true });
     }

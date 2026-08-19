@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-// Deterministic dependency-unblock step for the whetstone reviewer workflow.
+// Deterministic dependency-unblock step for the whetstone delivery workflow.
 //
-// The design agent labels a dependency-gated issue `blocked` (not `ready-for-dev`) and names the
+// The delivery agent labels a dependency-gated issue `blocked` (not `ready-for-dev`) and names the
 // issues it waits on with a `Depends on: #N` line. Once those dependencies are resolved -- their
 // PRs merged, so the issues are closed -- the blocked issue should rejoin the developer queue.
 // Deciding that must be deterministic, a pure function of the GitHub queue, not a choice left to a
-// non-deterministic LLM session -- the same reason mergeApprovedPrs.mjs decides merges in code.
-// The reviewer runs this right AFTER the merge step each tick, so a dependency closed by that
+// non-deterministic LLM session -- the same reason mergeReadyPrs.mjs decides merges in code.
+// The developer launcher runs this right AFTER the merge step each tick, so a dependency closed by that
 // merge is seen as resolved here; anything missed self-heals on the next run (this scan is
 // idempotent and re-evaluates every open `blocked` issue from scratch).
 //
@@ -23,7 +23,7 @@
 //   node scripts/delivery/unblockReadyIssues.mjs            unblock every now-ready blocked issue
 //   node scripts/delivery/unblockReadyIssues.mjs --dry-run  report what would unblock, change nothing
 //
-// Requires `gh` on PATH; the caller sets GH_CONFIG_DIR (see run-merge.cmd / run-reviewer.cmd).
+// Requires `gh` on PATH; the caller sets GH_CONFIG_DIR (see run-developer.cmd).
 
 import { dependsOn, gh, ghJson } from "./pickNextIssue.mjs";
 
@@ -132,7 +132,7 @@ for (const issue of blocked) {
       repo,
       "--body",
       `Dependencies ${resolved} resolved (closed) — unblocking. Removed \`${BLOCKED_LABEL}\`, ` +
-        `added \`${READY_LABEL}\`. _(automated reviewer dependency-unblock step)_`
+        `added \`${READY_LABEL}\`. _(automated dependency-unblock step)_`
     ]);
     unblocked++;
     console.log(`UNBLOCK #${issue.number} ${issue.title} (deps ${resolved} resolved)`);

@@ -5,7 +5,7 @@
 // The Tester explores the booted app on `main` and files `[Bug]` issues for what it finds. To keep
 // it from flooding the backlog, its per-run filing budget is a pure function of the GitHub queue --
 // the headroom below a cap on open `bug` issues -- not a choice left to a non-deterministic LLM
-// session, the same way developerNextAction.mjs and reviewerNextAction.mjs decide their work.
+// session, the same way developerNextAction.mjs decides delivery work.
 // When the open-bug backlog is at the cap the Tester stays idle and lets the developer (bug-first)
 // pay it down before more bugs are filed. The remaining guardrails -- reproduce before filing,
 // dedupe against open `[Bug]`s, file nothing when nothing is found -- live in tester.agent.md.

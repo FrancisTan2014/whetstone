@@ -33,11 +33,11 @@ test("supervisor accepts only a known role and positive interval", () => {
     role: "developer",
     intervalSeconds: 120
   });
-  assert.deepEqual(parseSupervisorArgs(["reviewer", "--interval", "30"]), {
-    role: "reviewer",
+  assert.deepEqual(parseSupervisorArgs(["developer", "--interval", "30"]), {
+    role: "developer",
     intervalSeconds: 30
   });
-  assert.throws(() => parseSupervisorArgs(["tester"]), /developer.*reviewer/);
+  assert.throws(() => parseSupervisorArgs(["tester"]), /developer/);
   assert.throws(() => parseSupervisorArgs(["developer", "--interval", "0"]), /positive integer/);
   assert.throws(() => parseSupervisorArgs(["developer", "--interval"]), /positive integer/);
   assert.throws(
@@ -63,7 +63,7 @@ test("supervisor cycle preserves foreground execution on every platform", () => 
   assert.match(invocations[0].command, /run-developer\.cmd$/);
 
   const windows = runSupervisorCycle(
-    "reviewer",
+    "developer",
     runtime({
       comSpec: "custom-cmd.exe",
       platform: "win32",
@@ -83,10 +83,10 @@ test("supervisor cycle preserves foreground execution on every platform", () => 
     },
     {
       command: "custom-cmd.exe",
-      args: ["/d", "/c", resolve("scripts/run-reviewer.cmd")],
+      args: ["/d", "/c", resolve("scripts/run-developer.cmd")],
       ok: false,
       status: 7,
-      resumeCommand: ".\\scripts\\run-reviewer.cmd"
+      resumeCommand: ".\\scripts\\run-developer.cmd"
     }
   );
 
@@ -139,7 +139,7 @@ test("supervisor continues after success, stops cleanly, and stops on failure", 
 
   const errors = [];
   const failed = await runSupervisor(
-    ["reviewer"],
+    ["developer"],
     runtime({
       error(message) {
         errors.push(message);
@@ -150,7 +150,7 @@ test("supervisor continues after success, stops cleanly, and stops on failure", 
     })
   );
   assert.equal(failed, 9);
-  assert.match(errors[0], /run-reviewer\.cmd.*restart this supervisor/);
+  assert.match(errors[0], /run-developer\.cmd.*restart this supervisor/);
 });
 
 test("CLI reports configuration errors and runIfMain starts only the entry module", async () => {
