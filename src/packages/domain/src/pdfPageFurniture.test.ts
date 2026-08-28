@@ -371,3 +371,25 @@ describe("decidePageFurniture with an embedded folio", () => {
     ).toEqual([null, null, null, null, null, null]);
   });
 });
+
+// #829: whitespace alone is a valid embedded-folio separator (a deliberate #826 requirement — see the
+// comment on `TRAILING_EMBEDDED_FOLIO` / `LEADING_EMBEDDED_FOLIO`), so a short opener whose last token is
+// itself a number strips exactly like a real running head's folio would. Two genuinely distinct chapter
+// or part openers can therefore collide onto one comparison key and both get deleted as
+// `repeated-across-pages`. This block pins that CURRENT, ACCEPTED behavior — it is not a bug to silently
+// patch here; #829 tracks whether the bookmark outline #828 now exposes to the caller can narrow it.
+describe("decidePageFurniture: a known whitespace-separator collision (#829)", () => {
+  it("collapses two distinct chapter openers onto one key and excludes both", () => {
+    expect(rules([header("Chapter 3", 30), header("Chapter 4", 60)])).toEqual([
+      "repeated-across-pages",
+      "repeated-across-pages"
+    ]);
+  });
+
+  it("collapses two distinct part openers the same way", () => {
+    expect(rules([header("Part 1", 5), header("Part 2", 150)])).toEqual([
+      "repeated-across-pages",
+      "repeated-across-pages"
+    ]);
+  });
+});

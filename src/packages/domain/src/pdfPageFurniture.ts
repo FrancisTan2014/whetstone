@@ -80,6 +80,19 @@ const REPEATED_PAGE_THRESHOLD = 2;
 const TRAILING_EMBEDDED_FOLIO = /^(.+?)[\s\u00b7\u2022|\u2013\u2014:-]+(?:\d{1,4})$/u;
 const LEADING_EMBEDDED_FOLIO = /^(?:\d{1,4})[\s\u00b7\u2022|\u2013\u2014:-]+(.+)$/u;
 
+// Whitespace alone counts as a separator above by design (many running heads print as `Chapter 2 26`
+// with no punctuation at all), and that is a KNOWN, ACCEPTED trade-off (#829): a short opener whose own
+// last token happens to be a number strips exactly like a genuine embedded folio would, so `Chapter 3`
+// and `Chapter 4` both reduce to the same `chapter` comparison key and collide with each other exactly
+// as if one running head had repeated. From inside this module the two situations are indistinguishable
+// — nothing here can tell "the same heading restated" apart from "two distinct short headings that
+// happen to collide" — and tightening the separator (requiring punctuation, or a longer residue) would
+// either reopen #826 or break the `Formatting. 121` case this suite pins below. The bookmark outline
+// #828 exposes to the caller is the evidence that could resolve this safely (a collision candidate whose
+// stripped text names a DIFFERENT, unclaimed outline entry per occurrence is almost certainly two real
+// headings, not one repeat) — see #829 and this file's "known whitespace-separator collision" tests for
+// why that narrowing is deliberately not attempted here.
+
 // Why one candidate was excluded. Reported per item so the exclusion is auditable — a caller can show
 // exactly which rule removed which line rather than a bare count.
 //
