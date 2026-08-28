@@ -36,6 +36,9 @@ export default defineConfig({
         // I/O entrypoints (like index.ts); all decision logic lives in the covered data/*.ts modules.
         "**/src/data/backupCli.ts",
         "**/src/data/restoreCli.ts",
+        // Real PGlite + argv bootstrap for `pnpm pdf:remap` (#861): the same wiring-only entrypoint
+        // shape; every decision lives in the covered pdfWorkRemap*.ts modules.
+        "**/src/features/pdfImport/pdfWorkRemapCli.ts",
         // The setup runner's real-I/O boundary: builds the SetupContext from Node's
         // child_process/fs/os and is wiring-only (like src/**/index.ts). All setup decision logic
         // lives in scripts/setup/runner.mjs and the steps, covered via fakes.

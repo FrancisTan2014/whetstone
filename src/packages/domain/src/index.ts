@@ -275,13 +275,14 @@ export type {
   WorkCreationAttemptState,
   WorkCreationSourceKind
 } from "./workCreationAttempt.js";
-export { planSectionRepartition } from "./workRepartition.js";
+export { planSectionRepartition, planWorkContentReplacement } from "./workRepartition.js";
 export type {
   PlannedUnit,
   RepartitionBlock,
   RepartitionInput,
   RepartitionPlan,
-  RepartitionUnit
+  RepartitionUnit,
+  WorkContentReplacementInput
 } from "./workRepartition.js";
 export {
   candidateTitleKeyLengthBounds,
