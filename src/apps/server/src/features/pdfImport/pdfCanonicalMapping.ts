@@ -157,6 +157,58 @@ const CAPTION_LABEL = "caption";
 // keeps the pre-#812 behavior of one visible `unknown` node, which is reported and therefore auditable.
 const MAX_UNMAPPED_EXPANSION_DEPTH = 16;
 
+// Heading sanity rule (#856): detect when a heading's text is actually a code listing absorbed during
+// PDF extraction. A real heading is typically brief (legitimate headings across imported corpus: 27 char
+// average, 94-char max in Clean Code, 185-char max in DDIA). A heading > 150 chars that contains
+// numbered lines (code pattern: "1 " / "2 " at line starts, with optional leading whitespace) is almost
+// certainly a mislabeled code block, not a heading. Split it: treat the first line as caption heading,
+// everything after as code block. Fail-safe: if no numbered line pattern is found, keep the original
+// heading (no magic-number threshold without structural signal).
+//
+// Returns { caption?: string, code?: string } when split is justified, else undefined.
+function detectAndSplitCodeListing(
+  headingText: string
+): { caption: string; code: string } | undefined {
+  if (headingText.length < 150) {
+    return undefined;
+  }
+
+  // Look for numbered-line pattern: lines starting with digits followed by space or other code delimiter.
+  // Split on the first occurrence of this pattern.
+  const lines = headingText.split("\n");
+  if (lines.length < 2) {
+    // Single-line heading, even if long, without structural indication of code
+    return undefined;
+  }
+
+  // Find the first line that looks like a numbered code line: "1 " or "2 " or similar, optionally with
+  // leading whitespace. Also match lines starting with common code delimiters: /*, //, {, #, etc.
+  const codeLine = lines.findIndex((line) => {
+    const trimmed = line.trim();
+    return (
+      /^\d+\s/.test(trimmed) || // line number: "1 ", "42 ", etc.
+      /^\/[/*]/.test(trimmed) || // C-style comment: //, /*, etc.
+      /^[{#;]/.test(trimmed) || // common code block starts
+      /^\*\s/.test(trimmed) // continuation comment line: " * ..."
+    );
+  });
+
+  if (codeLine <= 0) {
+    return undefined;
+  }
+
+  // Join lines before the code line as the caption (heading), everything from the code line onward as
+  // the code block.
+  const caption = lines.slice(0, codeLine).join("\n").trim();
+  const code = lines.slice(codeLine).join("\n").trim();
+
+  if (caption.length === 0 || code.length === 0) {
+    return undefined;
+  }
+
+  return { caption, code };
+}
+
 function inlineContent(text: string): DocumentNodeJSON[] {
   return text.length === 0 ? [] : [{ text, type: "text" }];
 }
@@ -469,6 +521,31 @@ function walkBody(
     const heading = headings[index]!;
     if (heading !== null) {
       sources[heading.outlineEntry === null ? "label" : "outline"] += 1;
+
+      // Apply heading sanity rule (#856): if heading text is a code listing, split it into caption + code.
+      const split = detectAndSplitCodeListing(item.text);
+      if (split !== undefined) {
+        // Add the caption as a heading block.
+        out.push({
+          heading,
+          label: item.label,
+          node: {
+            attrs: { level: heading.level },
+            content: inlineContent(split.caption),
+            type: "heading"
+          },
+          source: item
+        });
+        // Add the code as a code block.
+        out.push({
+          heading: null,
+          label: "code",
+          node: { content: inlineContent(split.code), type: "codeBlock" },
+          source: item
+        });
+        index += 1;
+        continue;
+      }
     }
     // Expansion already decided that an item reaching the fallback path here is one that SHOULD show as
     // an `unknown` node: a leaf carrying its own text, or a container held back at the depth bound.
