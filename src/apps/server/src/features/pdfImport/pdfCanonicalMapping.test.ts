@@ -1647,6 +1647,33 @@ describe("outline-derived heading depth", () => {
       "The Law of Demeter",
       "Train Wrecks"
     ]);
+
+    // #828: refusing to PROMOTE the page-125 restatement is not the same as accounting for it — before
+    // #828 it stayed a kept, unexcluded paragraph (the residual leak this issue measured). The bookmark
+    // it names ("Chapter 6: ...") was already claimed by the real heading on page 124, so it is now
+    // excluded on that evidence; the other three running-head/folio items were already excluded by
+    // #811's own same-page/repetition rules and are unaffected.
+    expect(result.excludedFurniture).toEqual([
+      {
+        label: "page_header",
+        normalizedText: "chapter 6: objects and data structures",
+        page: 125,
+        rule: "claimed-outline-entry"
+      },
+      {
+        label: "page_header",
+        normalizedText: "data/object anti-symmetry",
+        page: 126,
+        rule: "matches-heading"
+      },
+      {
+        label: "page_header",
+        normalizedText: "the law of demeter",
+        page: 128,
+        rule: "matches-heading"
+      },
+      { label: "page_footer", normalizedText: "97", page: 128, rule: "folio" }
+    ]);
   });
 
   it("promotes a mislabelled opener whose bookmark no real heading claimed, beside claimed ones", () => {
@@ -1725,6 +1752,130 @@ describe("outline-derived heading depth", () => {
     const empty = mapped(mapEn(doc(cleanCodeHeadings, cleanCodePages, [])));
     expect(empty.headingLevelSources).toEqual({ label: 5, outline: 0 });
     expect(headingLevels(empty)).toEqual([2, 2, 2, 2, 2]);
+  });
+});
+
+// #828: a once-seen page furniture candidate can restate a heading printed on a DIFFERENT page under a
+// DIFFERENT label — outside what #811's own same-page/repetition rules ever compare. The PDF's own
+// bookmark outline is authored once for the whole book, so it names that heading even when the current
+// page range cannot: measured as the residual leak on Seven Concurrency Models in Seven Weeks pp.40-62
+// (11 -> 3 -> 1 across main/#811/#826). A candidate is excluded only when the outline entry it names is
+// ALREADY claimed by a real heading; an unclaimed entry means the candidate is very likely the chapter's
+// own opener under a mislabel, so it is protected and promoted instead, exactly as #815 already promotes
+// an unclaimed non-folio candidate.
+describe("page furniture vs. the outline's own claimed headings (#828)", () => {
+  const outline: readonly PdfOutlineEntry[] = [
+    { level: 1, pageNumber: 40, title: "Chapter 2: Threads and Locks" },
+    { level: 1, pageNumber: 60, title: "Chapter 3: Out of Order" }
+  ];
+  const pages: readonly StructuredPage[] = [40, 41, 60, 61].map((pageNumber) => ({
+    hasNativeText: true,
+    pageNumber
+  }));
+
+  it("excludes a once-seen running head whose embedded-folio text names a bookmark a real heading already claimed", () => {
+    const result = mapped(
+      mapEn(
+        doc(
+          [
+            item({ label: "title", pageNumber: 40, text: "Threads and Locks" }),
+            item({ label: "text", pageNumber: 40, text: "Body." }),
+            // Restates the chapter's own bookmark title, with its printed folio embedded, and appears
+            // only once in this range — so #811's own same-page/repetition rules never catch it.
+            item({
+              label: "page_header",
+              pageNumber: 41,
+              text: "Chapter 2: Threads and Locks \u00b7 41"
+            }),
+            item({ label: "text", pageNumber: 41, text: "More body." })
+          ],
+          pages,
+          outline
+        )
+      )
+    );
+    expect(result.excludedFurniture).toEqual([
+      {
+        label: "page_header",
+        normalizedText: "chapter 2: threads and locks \u00b7 41",
+        page: 41,
+        rule: "claimed-outline-entry"
+      }
+    ]);
+    expect(result.admittedFurnitureCandidateCount).toBe(0);
+    expect(unitTypes(result, 0)).toEqual(["heading", "paragraph", "paragraph"]);
+  });
+
+  it("protects and promotes a once-seen running head whose embedded-folio text names an UNCLAIMED bookmark", () => {
+    // No real heading was extracted for the "Out of Order" chapter at all (docling mislabelled its
+    // opener as a running head), so the bookmark is unclaimed — the candidate is the chapter opener, not
+    // debris, and must be protected from exclusion AND promoted to a heading, not merely spared.
+    const result = mapped(
+      mapEn(
+        doc(
+          [
+            item({ label: "title", pageNumber: 40, text: "Threads and Locks" }),
+            item({
+              label: "page_header",
+              pageNumber: 60,
+              text: "Chapter 3: Out of Order \u00b7 60"
+            }),
+            item({ label: "text", pageNumber: 60, text: "Chapter body." })
+          ],
+          pages,
+          outline
+        )
+      )
+    );
+    expect(result.excludedFurniture).toEqual([]);
+    // The heading BLOCK preserves the item's own printed text verbatim, folio included — only the
+    // unit's derived `title` (used for the reading-unit list) takes the outline's clean bookmark title.
+    expect(headingTexts(result)).toEqual([
+      "Threads and Locks",
+      "Chapter 3: Out of Order \u00b7 60"
+    ]);
+    expect(headingLevels(result)).toEqual([1, 1]);
+    expect(result.units[1]!.title).toBe("Chapter 3: Out of Order");
+  });
+
+  it("leaves a once-seen running head with an embedded folio that names no bookmark on its ordinary mapping", () => {
+    const result = mapped(
+      mapEn(
+        doc(
+          [
+            item({ label: "title", pageNumber: 40, text: "Threads and Locks" }),
+            item({
+              label: "page_header",
+              pageNumber: 41,
+              text: "Unrelated Running Head \u00b7 41"
+            }),
+            item({ label: "text", pageNumber: 41, text: "Body." })
+          ],
+          pages,
+          outline
+        )
+      )
+    );
+    expect(result.excludedFurniture).toEqual([]);
+    expect(unitTypes(result, 0)).toEqual(["heading", "paragraph", "paragraph"]);
+    expect(result.admittedFurnitureCandidateCount).toBe(1);
+  });
+
+  it("behaves exactly as before when the document carries no bookmark outline at all", () => {
+    const result = mapped(
+      mapEn(
+        doc([
+          item({
+            label: "page_header",
+            pageNumber: 1,
+            text: "Chapter 2: Threads and Locks \u00b7 41"
+          }),
+          item({ label: "text", pageNumber: 1, text: "Body." })
+        ])
+      )
+    );
+    expect(result.excludedFurniture).toEqual([]);
+    expect(unitTypes(result, 0)).toEqual(["paragraph", "paragraph"]);
   });
 });
 

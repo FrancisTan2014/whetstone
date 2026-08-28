@@ -82,11 +82,17 @@ const LEADING_EMBEDDED_FOLIO = /^(?:\d{1,4})[\s\u00b7\u2022|\u2013\u2014:-]+(.+)
 
 // Why one candidate was excluded. Reported per item so the exclusion is auditable — a caller can show
 // exactly which rule removed which line rather than a bare count.
+//
+// `claimed-outline-entry` is never produced by `decidePageFurniture` itself: this module has no notion
+// of the PDF's bookmark outline, so it cannot know whether a once-seen candidate restates a heading
+// printed elsewhere. A caller that also holds the outline applies this rule on top of this module's own
+// decision, using `stripEmbeddedFolio` and `matchOutlineHeading` together — see `pdfCanonicalMapping.ts`.
 export type PageFurnitureExclusionRule =
   | "empty"
   | "folio"
   | "repeated-across-pages"
-  | "matches-heading";
+  | "matches-heading"
+  | "claimed-outline-entry";
 
 // The minimum a furniture decision needs from a docling body item. Structural (not the contracts type)
 // so this module stays dependency-free and testable without a full StructuredDocument.
@@ -145,7 +151,10 @@ function isFolioShape(normalized: string): boolean {
 // A line with a number at BOTH edges gives up only its trailing one — the common convention — and keeps
 // the leading number inside the compared text. Taking a single token means such a line at worst matches
 // nothing and stays readable: the conservative direction, a stray line kept over a title deleted.
-function stripEmbeddedFolio(normalized: string): string {
+//
+// Exported so a caller composing this module with the outline matcher (`matchOutlineHeading`) can strip
+// a candidate's own printed folio before comparing it against a bookmark title — see #828.
+export function stripEmbeddedFolio(normalized: string): string {
   const trailing = TRAILING_EMBEDDED_FOLIO.exec(normalized);
   if (trailing) {
     const residue = trimEdgePunctuation(trailing[1]!);

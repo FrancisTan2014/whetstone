@@ -202,7 +202,8 @@ export type {
 export {
   decidePageFurniture,
   isPageFurnitureCandidate,
-  normalizePageFurnitureText
+  normalizePageFurnitureText,
+  stripEmbeddedFolio
 } from "./pdfPageFurniture.js";
 export type {
   PageFurnitureDecision,
