@@ -44,7 +44,8 @@
     "validate:runtime": "pnpm build && pnpm size-limit && pnpm smoke && pnpm e2e",
     "db:generate": "drizzle-kit generate",
     "data:backup": "node --import tsx --env-file-if-exists=.env src/apps/server/src/data/backupCli.ts",
-    "data:restore": "node --import tsx --env-file-if-exists=.env src/apps/server/src/data/restoreCli.ts"
+    "data:restore": "node --import tsx --env-file-if-exists=.env src/apps/server/src/data/restoreCli.ts",
+    "pdf:remap": "node --import tsx --env-file-if-exists=.env src/apps/server/src/features/pdfImport/pdfWorkRemapCli.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

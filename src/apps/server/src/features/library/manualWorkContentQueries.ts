@@ -6,6 +6,8 @@ import { and, asc, eq } from "drizzle-orm";
 import type { DbClient } from "../../db/dbClient.js";
 import { docBlocks, personalEntries, readingUnits, workMeta } from "../../db/schema.js";
 
+type QueryClient = Pick<DbClient, "select">;
+
 // The Work-level facts a manual Work's editor payload is built from. A manual Work is a `work_meta` row
 // with `origin = 'manual'` that also carries the learner's `personal_entries` ownership facet (#695/#720).
 // Origin is the authority discriminator: an authored Work also carries `personal_entries`, so the
@@ -60,7 +62,7 @@ export async function findOwnedManualWork(
 // leading pre-heading section) or an empty heading contributes neither, and the outline projection maps
 // the absence to a root "Start" / an untitled label. Recomputed from the blocks on every read.
 export async function loadManualWorkSections(
-  db: DbClient,
+  db: QueryClient,
   workEntryId: EntryId
 ): Promise<ManualWorkSectionDto[]> {
   const unitRows = await db

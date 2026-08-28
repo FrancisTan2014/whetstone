@@ -69,25 +69,6 @@ export function requiredMergeCheckFailures(rollup) {
   return failures;
 }
 
-export function reviewedSha(comments) {
-  const marker = /reviewer-run-reviewed:\s*([0-9a-f]{40})(?![0-9a-f])/gi;
-  let sha = null;
-  for (const comment of comments ?? []) {
-    marker.lastIndex = 0;
-    let match;
-    while ((match = marker.exec(comment.body ?? "")) !== null) sha = match[1];
-  }
-  return sha;
-}
-
-export function reviewedHeadMatches(pullRequest) {
-  const marker = reviewedSha(pullRequest.comments);
-  if (marker == null) return false;
-  const head = (pullRequest.headRefOid ?? "").toLowerCase();
-  const reviewed = marker.toLowerCase();
-  return head === reviewed;
-}
-
 export function mergePullRequestArgs(pullRequest, repo) {
   return [
     "pr",
@@ -103,12 +84,12 @@ export function mergePullRequestArgs(pullRequest, repo) {
 }
 
 export function workflowPullRequests(pullRequests) {
-  const reviewLabels = new Set(["needs-review", "changes-requested", "review-approved"]);
+  const deliveryLabels = new Set(["merge-ready", "changes-requested"]);
   return pullRequests
     .filter(
       (pullRequest) =>
         (pullRequest.headRefName ?? "").startsWith("dev/") ||
-        labelNames(pullRequest).some((name) => reviewLabels.has(name))
+        labelNames(pullRequest).some((name) => deliveryLabels.has(name))
     )
     .map((pullRequest) => ({
       ...pullRequest,
@@ -143,22 +124,6 @@ export function selectDeveloperPrAction(pullRequests) {
   return { action: "none", open: [] };
 }
 
-export function selectReviewQueue(pullRequests) {
-  return pullRequests
-    .filter((pullRequest) => !pullRequest.isDraft)
-    .filter((pullRequest) => {
-      const labels = labelNames(pullRequest);
-      if (labels.includes("blocked") || labels.includes("changes-requested")) return false;
-      return (
-        labels.includes("needs-review") ||
-        (labels.includes("review-approved") && !reviewedHeadMatches(pullRequest))
-      );
-    })
-    .sort(
-      (left, right) => left.createdAt.localeCompare(right.createdAt) || left.number - right.number
-    );
-}
-
 export function mergeGateFailures(pullRequest) {
   const reasons = [];
   const labels = labelNames(pullRequest);
@@ -166,18 +131,9 @@ export function mergeGateFailures(pullRequest) {
   if (pullRequest.state !== "OPEN") reasons.push(`state is ${pullRequest.state}`);
   if (pullRequest.isDraft) reasons.push("PR is a draft");
   if (labels.includes("blocked")) reasons.push("has blocked label");
-  if (!labels.includes("review-approved")) reasons.push("missing review-approved label");
-  if (labels.includes("needs-review")) reasons.push("has needs-review label");
+  if (!labels.includes("merge-ready")) reasons.push("missing merge-ready label");
   if (labels.includes("changes-requested")) reasons.push("has changes-requested label");
-
-  const marker = reviewedSha(pullRequest.comments);
-  if (marker == null) {
-    reasons.push("no reviewer-run-reviewed marker");
-  } else if (!reviewedHeadMatches(pullRequest)) {
-    reasons.push(
-      `head ${(pullRequest.headRefOid ?? "").slice(0, 12)} != reviewed ${marker.slice(0, 12)}`
-    );
-  }
+  if (!pullRequest.headRefOid) reasons.push("missing head commit");
 
   const checks = blockingCheckState(pullRequest.statusCheckRollup);
   if (checks.status === "missing") reasons.push("no required checks reported");

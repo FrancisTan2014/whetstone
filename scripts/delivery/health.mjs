@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
 
 import { dependsOn } from "./pickNextIssue.mjs";
+import { blockingCheckState } from "./workflow.mjs";
 
 const execFileAsync = promisify(execFile);
 const maxBuffer = 16 * 1024 * 1024;
@@ -64,7 +65,7 @@ export function flowRecord(pr, issueEvents, prEvents, ciRuns = []) {
   const start = lastAtOrBefore(starts, created) ?? starts[0] ?? null;
   const ready =
     start == null ? null : lastAtOrBefore(labelTimes(issueEvents, "ready-for-dev"), start);
-  const approved = lastAtOrBefore(labelTimes(prEvents, "review-approved"), merged);
+  const mergeReady = lastAtOrBefore(labelTimes(prEvents, "merge-ready"), merged);
   const successfulRuns = ciRuns
     .filter((run) => run.conclusion === "success")
     .map((run) => Date.parse(run.updatedAt))
@@ -81,8 +82,8 @@ export function flowRecord(pr, issueEvents, prEvents, ciRuns = []) {
     firstToFinalGreenMinutes: minutesBetween(firstGreen, finalGreen),
     finalGreenToMergeMinutes: minutesBetween(finalGreen, merged),
     prToMergeMinutes: minutesBetween(created, merged),
-    approvalToMergeMinutes: minutesBetween(approved, merged),
-    changesRequestedRounds: labelTimes(prEvents, "changes-requested").length,
+    mergeReadyToMergeMinutes: minutesBetween(mergeReady, merged),
+    ciFailureRuns: ciRuns.filter((run) => run.conclusion === "failure").length,
     changedFiles: pr.changedFiles,
     rawChurn: (pr.additions ?? 0) + (pr.deletions ?? 0)
   };
@@ -97,14 +98,11 @@ export function summarizeFlow(records) {
     firstToFinalGreenMinutes: stats(records.map((record) => record.firstToFinalGreenMinutes)),
     finalGreenToMergeMinutes: stats(records.map((record) => record.finalGreenToMergeMinutes)),
     prToMergeMinutes: stats(records.map((record) => record.prToMergeMinutes)),
-    approvalToMergeMinutes: stats(records.map((record) => record.approvalToMergeMinutes)),
+    mergeReadyToMergeMinutes: stats(records.map((record) => record.mergeReadyToMergeMinutes)),
     changedFiles: stats(records.map((record) => record.changedFiles)),
     rawChurn: stats(records.map((record) => record.rawChurn)),
-    changesRequestedPrs: records.filter((record) => record.changesRequestedRounds > 0).length,
-    changesRequestedRounds: records.reduce(
-      (total, record) => total + record.changesRequestedRounds,
-      0
-    ),
+    ciReworkPrs: records.filter((record) => record.ciFailureRuns > 0).length,
+    ciFailureRuns: records.reduce((total, record) => total + record.ciFailureRuns, 0),
     warnedPrs: records.filter((record) => record.changedFiles > 15 || record.rawChurn > 1_500)
       .length
   };
@@ -152,8 +150,8 @@ export function summarizeQueue(issues, pullRequests) {
     blocked: 0,
     needsDesign: 0,
     manualGate: 0,
-    awaitingReview: 0,
-    changesRequested: 0
+    mergeReady: 0,
+    ciFailed: 0
   };
 
   for (const issue of issues) {
@@ -167,8 +165,8 @@ export function summarizeQueue(issues, pullRequests) {
 
   for (const pr of pullRequests) {
     const labels = new Set((pr.labels ?? []).map((label) => label.name));
-    if (labels.has("needs-review")) counts.awaitingReview++;
-    if (labels.has("changes-requested")) counts.changesRequested++;
+    if (labels.has("merge-ready")) counts.mergeReady++;
+    if (blockingCheckState(pr.statusCheckRollup).status === "failed") counts.ciFailed++;
   }
 
   const openNumbers = new Set(issues.map((issue) => issue.number));
@@ -217,12 +215,12 @@ function printReport(report) {
   console.log(`  green rework:      ${formatStats(flow.firstToFinalGreenMinutes)}`);
   console.log(`  final green -> merge: ${formatStats(flow.finalGreenToMergeMinutes)}`);
   console.log(`  PR -> merge:       ${formatStats(flow.prToMergeMinutes)}`);
-  console.log(`  approval -> merge: ${formatStats(flow.approvalToMergeMinutes)}`);
+  console.log(`  merge-ready -> merge: ${formatStats(flow.mergeReadyToMergeMinutes)}`);
   console.log(`  changed files:     ${formatStats(flow.changedFiles, "number")}`);
   console.log(`  raw line churn:    ${formatStats(flow.rawChurn, "number")}`);
   console.log(
-    `  review rework:     ${flow.changesRequestedPrs}/${flow.sample} PRs, ` +
-      `${flow.changesRequestedRounds} rounds`
+    `  CI rework:         ${flow.ciReworkPrs}/${flow.sample} PRs, ` +
+      `${flow.ciFailureRuns} failed runs`
   );
   console.log(`  landability warn:  ${flow.warnedPrs}/${flow.sample} PRs (raw churn signal)`);
   console.log("Validation lanes");
@@ -236,8 +234,8 @@ function printReport(report) {
   }
   console.log("Current queue");
   console.log(
-    `  ready=${queue.ready} in-progress=${queue.inProgress} awaiting-review=${queue.awaitingReview} ` +
-      `changes-requested=${queue.changesRequested}`
+    `  ready=${queue.ready} in-progress=${queue.inProgress} merge-ready=${queue.mergeReady} ` +
+      `ci-failed=${queue.ciFailed}`
   );
   console.log(
     `  blocked=${queue.blocked} dependency-blocked=${queue.dependencyBlocked} ` +
@@ -293,7 +291,7 @@ async function run() {
       "--limit",
       "200",
       "--json",
-      "number,labels"
+      "number,labels,statusCheckRollup"
     ]),
     ghJson([
       "run",

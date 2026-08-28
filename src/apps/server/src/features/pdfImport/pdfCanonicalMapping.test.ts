@@ -1615,6 +1615,163 @@ describe("outline-derived heading depth", () => {
   });
 });
 
+// #856: heading sanity rule. A heading whose text is a code listing (e.g., "Listing B-6 ..." followed by
+// numbered source lines) is nearly always mis-extracted. Measurement over the imported corpus (#856):
+// Clean Code average heading: 27 chars, legitimate max: 94 chars. DDIA max: 185 chars. A heading > 150
+// chars that contains numbered lines (code pattern) is almost certainly a listing — split it into caption
+// heading + code block. Fail-safe: no structural signal = keep the original heading (no magic threshold).
+describe("heading sanity rule (#856): detect and split code listings absorbed into headings", () => {
+  it("preserves legitimate short headings under 150 chars", () => {
+    // A heading 94 chars (the measured longest legitimate heading in Clean Code) must survive unchanged.
+    const shortHeading = "A".repeat(94);
+    const result = mapped(
+      mapEn(
+        doc([
+          item({ label: "section_header", text: shortHeading }),
+          item({ label: "text", text: "Body." })
+        ])
+      )
+    );
+    expect(headingTexts(result)).toEqual([shortHeading]);
+    expect(unitTypes(result, 0)).toEqual(["heading", "paragraph"]);
+  });
+
+  it("preserves long headings without code structure signals", () => {
+    // A heading 180 chars without code patterns (no line numbers, no delimiters) keeps its form.
+    // This guards against false positives: a legitimately long heading in some books must not regress.
+    const longButClean =
+      "This is a very long heading that exceeds 150 characters but contains " +
+      "no numbered lines or code delimiters, just prose that happens to be longer than normal";
+    const result = mapped(
+      mapEn(
+        doc([
+          item({ label: "section_header", text: longButClean }),
+          item({ label: "text", text: "Body." })
+        ])
+      )
+    );
+    expect(headingTexts(result)).toEqual([longButClean]);
+    expect(unitTypes(result, 0)).toEqual(["heading", "paragraph"]);
+  });
+
+  it("splits a long heading containing numbered lines (code pattern) into caption + code block", () => {
+    // A heading that starts with a caption then has numbered lines like a code listing is split:
+    // everything before the first numbered line becomes the heading, the rest becomes a code block.
+    // This models the real issue (#856): "Listing B-6 RelativeDayOfWeekRule.java 1 /* ... 2 * ..."
+    const listing =
+      "Listing B-6 RelativeDayOfWeekRule.java\n" +
+      "1 /* =========================================\n" +
+      "2  * JCommon : a free general purpose class library\n" +
+      "3  * =========================================";
+    const result = mapped(
+      mapEn(
+        doc([
+          item({ label: "section_header", text: listing }),
+          item({ label: "text", text: "Body." })
+        ])
+      )
+    );
+    // The listing is split: caption heading + code block + body.
+    expect(unitTypes(result, 0)).toEqual(["heading", "codeBlock", "paragraph"]);
+    expect(headingTexts(result)).toEqual(["Listing B-6 RelativeDayOfWeekRule.java"]);
+    // The code block should contain the numbered lines.
+    const codeBlock = result.units[0]!.docBlocks.find((b) => b.type === "codeBlock");
+    expect(codeBlock?.node.content?.[0]?.text).toMatch(/^1 \/\*/);
+  });
+
+  it("ignores single-line headings even if long (no multiline = no code structure)", () => {
+    // A single-line heading, even if 200+ chars, without newlines has no code structure signal.
+    const singleLongLine = "Listing " + "A".repeat(200);
+    const result = mapped(
+      mapEn(
+        doc([
+          item({ label: "section_header", text: singleLongLine }),
+          item({ label: "text", text: "Body." })
+        ])
+      )
+    );
+    expect(headingTexts(result)).toEqual([singleLongLine]);
+    expect(unitTypes(result, 0)).toEqual(["heading", "paragraph"]);
+  });
+
+  it("detects various code delimiters: //, /*, {, #, etc.", () => {
+    // Test that different code-start patterns are recognized: C-style //, /*, shell-style #, etc.
+    // Each test case is padded with descriptive text to exceed the 150-char threshold.
+    const testCases = [
+      {
+        name: "C++ line comment",
+        text: "Listing A Sample Code with Detailed Comments and Documentation with Extended Information for Testing Purposes Only\n// This is a C++ style line comment with code"
+      },
+      {
+        name: "C block comment",
+        text: "Listing B Another Example of Code with More Context Information and Detailed Description for Extended Listing Here\n/* This is a block comment style that begins code */"
+      },
+      {
+        name: "Shell script",
+        text: "Listing C Shell Script Example with Configuration and Setup Data and More Context for Extended Listing Information\n# This is a shell-style comment introducing commands"
+      },
+      {
+        name: "Continuation comment",
+        text: "Listing D Documentation Example Showing Various Code Patterns Found Throughout Many Programs for Testing\n* This is a continuation-style comment line continuing"
+      }
+    ];
+    for (const testCase of testCases) {
+      const result = mapped(
+        mapEn(
+          doc([
+            item({ label: "section_header", text: testCase.text }),
+            item({ label: "text", text: "Body." })
+          ])
+        )
+      );
+      // Each should split into heading + code block.
+      const types = unitTypes(result, 0);
+      expect(types).toEqual(["heading", "codeBlock", "paragraph"]);
+      const captionLine = testCase.text.split("\n")[0]!;
+      expect(headingTexts(result)).toContain(captionLine);
+    }
+  });
+
+  it("preserves a long heading that wraps across lines but has no code structure signal", () => {
+    // A heading can legitimately span multiple lines (e.g. a subtitle wrapped during extraction)
+    // without being a code listing. No line here starts with a line number or code delimiter, so the
+    // heading must survive unsplit even though it is multi-line and exceeds the length threshold.
+    const wrappedButClean =
+      "A Very Long Chapter Heading That Somehow Wrapped Across Two Lines During Extraction\n" +
+      "But Still Contains Only Ordinary Prose Text With No Code Patterns Whatsoever Present";
+    const result = mapped(
+      mapEn(
+        doc([
+          item({ label: "section_header", text: wrappedButClean }),
+          item({ label: "text", text: "Body." })
+        ])
+      )
+    );
+    expect(headingTexts(result)).toEqual([wrappedButClean]);
+    expect(unitTypes(result, 0)).toEqual(["heading", "paragraph"]);
+  });
+
+  it("keeps the original heading when the text before the first code line is blank", () => {
+    // A stray leading blank line before the code pattern leaves no real caption text once trimmed.
+    // Splitting would produce an empty heading, so the rule must fall back to the original heading
+    // rather than emit a blank one.
+    const blankCaptionListing =
+      "\n" +
+      "1 /* JCommon : a free general purpose class library for the Java platform, padded well past " +
+      "the one hundred fifty character detection threshold so this line alone satisfies the rule */";
+    const result = mapped(
+      mapEn(
+        doc([
+          item({ label: "section_header", text: blankCaptionListing }),
+          item({ label: "text", text: "Body." })
+        ])
+      )
+    );
+    expect(headingTexts(result)).toEqual([blankCaptionListing]);
+    expect(unitTypes(result, 0)).toEqual(["heading", "paragraph"]);
+  });
+});
+
 // #816: a ReadingUnit is a CHAPTER, not a heading. Measured on the real Clean Code (462pp) import:
 // starting a unit at every heading produced 525 units for a book whose own bookmarks declare 27
 // top-level divisions, so the reader paged through fragments. The fixtures below are the real book's
@@ -1715,22 +1872,26 @@ describe("chapter-scale reading units", () => {
     expect(result.evidence.map((row) => row.blockId)).toEqual(ids);
   });
 
-  it("opens ONE unit when docling split the chapter opener into a number and a title", () => {
+  it("opens ONE unit when docling split the chapter opener into a number and a title, recombined into one heading (#867)", () => {
     // Measured: `10` and `Classes` are two level-1 headings resolving to the SAME bookmark. A bookmark
-    // names one division, so the second joins the first's unit — 27 chapters, not 39 fragments.
+    // names one division, so the second joins the first's unit — 27 chapters, not 39 fragments. #867: the
+    // same signal means the two ARE one converter-mangled heading, so they collapse into a single block
+    // rather than each rendering the chapter's identity again beside the unit's own eyebrow.
     const result = mapped(mapEn(doc(classesBody, classesPages, classesOutline)));
 
     expect(result.units.map((unit) => unit.title)).toEqual(["Chapter 10: Classes"]);
-    // The unit is titled from the bookmark, so no unit is called `10` even though its first block is.
+    // The recombined heading takes the bookmark's own title, not either mangled half.
     expect(headingTexts(result)).toEqual([
-      "10",
-      "Classes",
+      "Chapter 10: Classes",
       "Class Organization",
       "Encapsulation",
       "Classes Should Be Small!"
     ]);
-    expect(headingLevels(result)).toEqual([1, 1, 2, 3, 2]);
-    expect(blockIds(result)).toHaveLength(classesBody.length);
+    expect(headingLevels(result)).toEqual([1, 2, 3, 2]);
+    // Two input heading items collapsed into one block: one block fewer than input items.
+    expect(blockIds(result)).toHaveLength(classesBody.length - 1);
+    // Both consumed items are still counted as outline-derived — merging changes blocks, not provenance.
+    expect(result.headingLevelSources).toEqual({ label: 0, outline: 5 });
   });
 
   it("divides an outline-less PDF at its shallowest heading level, joining a bare chapter label", () => {
@@ -1749,5 +1910,53 @@ describe("chapter-scale reading units", () => {
     expect(headingLevels(result)).toEqual([2, 2, 2, 2, 2]);
     expect(result.headingLevelSources).toEqual({ label: 5, outline: 0 });
     expect(blockIds(result)).toHaveLength(classesBody.length);
+  });
+});
+
+// #867: a split chapter opener announced its identity three times over — the unit's eyebrow, then each
+// converter-mangled half at full heading weight. The fix reads ONLY outline-entry identity (never a
+// heading's text, shape, or page position): a run of consecutive headings resolved from the SAME
+// non-null bookmark is one heading docling tore in two, and collapses into one block titled from the
+// bookmark. That is deliberately narrower than "two headings in a row" — two headings that merely sit
+// next to each other but name DIFFERENT (or no) bookmark stay exactly as printed.
+describe("recombining a converter-split chapter opener (#867)", () => {
+  it("collapses a run of more than two headings sharing one bookmark into a single heading", () => {
+    // A three-way split is rarer than docling's usual number+title pair, but the signal generalizes: every
+    // fragment here independently names the same "Appendix A: Concurrency II" bookmark.
+    const outline: readonly PdfOutlineEntry[] = [
+      { level: 1, pageNumber: 5, title: "Appendix A: Concurrency II" }
+    ];
+    const body: readonly StructuredDocItem[] = [
+      item({ label: "section_header", pageNumber: 5, text: "Appendix" }),
+      item({ label: "section_header", pageNumber: 5, text: "A" }),
+      item({ label: "section_header", pageNumber: 5, text: "Concurrency II" }),
+      item({ label: "text", pageNumber: 5, text: "Appendix body." })
+    ];
+    const result = mapped(mapEn(doc(body, [{ hasNativeText: true, pageNumber: 5 }], outline)));
+
+    expect(result.units).toHaveLength(1);
+    expect(result.units[0]!.title).toBe("Appendix A: Concurrency II");
+    expect(headingTexts(result)).toEqual(["Appendix A: Concurrency II"]);
+    expect(headingLevels(result)).toEqual([1]);
+    expect(unitTypes(result, 0)).toEqual(["heading", "paragraph"]);
+    // Three consumed heading items collapsed into one block — merging changes blocks, not provenance.
+    expect(result.headingLevelSources).toEqual({ label: 0, outline: 3 });
+  });
+
+  it("does not merge a heading run unless every member names the SAME bookmark (front-matter title + series subtitle)", () => {
+    // The real shape that must stay untouched: the half-title's "Clean Code" exactly names the book's own
+    // top-level bookmark, but the very next heading — the publisher's series line — names no bookmark at
+    // all. It is not a fragment of "Clean Code" the way "10"/"Classes" are fragments of one chapter
+    // opener, so outline-entry identity correctly leaves it as its own heading rather than absorbing it.
+    const outline: readonly PdfOutlineEntry[] = [{ level: 1, pageNumber: 1, title: "Clean Code" }];
+    const body: readonly StructuredDocItem[] = [
+      item({ label: "title", pageNumber: 1, text: "Clean Code" }),
+      item({ label: "section_header", pageNumber: 1, text: "Robert C. Martin Series" })
+    ];
+    const result = mapped(mapEn(doc(body, [{ hasNativeText: true, pageNumber: 1 }], outline)));
+
+    expect(headingTexts(result)).toEqual(["Clean Code", "Robert C. Martin Series"]);
+    expect(headingLevels(result)).toEqual([1, 2]);
+    expect(result.headingLevelSources).toEqual({ label: 1, outline: 1 });
   });
 });

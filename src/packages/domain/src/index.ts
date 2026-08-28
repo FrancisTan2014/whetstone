@@ -52,11 +52,20 @@ export { normalizeEpubMetadata } from "./epubMetadata.js";
 export type { NormalizedEpubMetadata, RawEpubCreator, RawEpubMetadata } from "./epubMetadata.js";
 export { decomposeHtmlChapter } from "./htmlBlocks.js";
 export {
+  availableWorkSectionPlacements,
   buildHeadingOutline,
   HEADING_OUTLINE_PREFACE_LABEL,
-  HEADING_OUTLINE_UNTITLED_LABEL
+  HEADING_OUTLINE_UNTITLED_LABEL,
+  planWorkSectionInsertion
 } from "./headingOutline.js";
-export type { HeadingOutlineEntry, HeadingOutlineUnit } from "./headingOutline.js";
+export type {
+  HeadingOutlineEntry,
+  HeadingOutlineUnit,
+  WorkSectionHeadingLevel,
+  WorkSectionInsertionPlan,
+  WorkSectionInsertionUnit,
+  WorkSectionPlacement
+} from "./headingOutline.js";
 export {
   classifyLexicalRelation,
   classifyWordNetPointer,
@@ -266,13 +275,14 @@ export type {
   WorkCreationAttemptState,
   WorkCreationSourceKind
 } from "./workCreationAttempt.js";
-export { planSectionRepartition } from "./workRepartition.js";
+export { planSectionRepartition, planWorkContentReplacement } from "./workRepartition.js";
 export type {
   PlannedUnit,
   RepartitionBlock,
   RepartitionInput,
   RepartitionPlan,
-  RepartitionUnit
+  RepartitionUnit,
+  WorkContentReplacementInput
 } from "./workRepartition.js";
 export {
   candidateTitleKeyLengthBounds,

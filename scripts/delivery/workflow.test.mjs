@@ -10,15 +10,11 @@ import {
   mergePullRequestArgs,
   REQUIRED_MERGE_CHECK_NAMES,
   requiredMergeCheckFailures,
-  reviewedHeadMatches,
-  reviewedSha,
   selectDeveloperPrAction,
-  selectReviewQueue,
   workflowPullRequests
 } from "./workflow.mjs";
 
 const headSha = "abcdef1234567890abcdef1234567890abcdef12";
-const otherSha = "1234567890abcdef1234567890abcdef12345678";
 const passingCheck = {
   __typename: "CheckRun",
   name: "Quality",
@@ -131,46 +127,12 @@ test("required merge checks are named, present, and successful", () => {
   );
 });
 
-test("review markers require the complete exact head SHA", () => {
-  assert.equal(reviewedSha(), null);
-  assert.equal(
-    reviewedSha([
-      {},
-      { body: "reviewer-run-reviewed: abcdef1" },
-      { body: `reviewer-run-reviewed: ${headSha.toUpperCase()}` },
-      { body: `old ${headSha} reviewer-run-reviewed: ${otherSha}` }
-    ]),
-    otherSha
-  );
-  assert.equal(
-    reviewedHeadMatches(
-      pullRequest({
-        comments: [{ body: `reviewer-run-reviewed: ${headSha.toUpperCase()}` }]
-      })
-    ),
-    true
-  );
-  assert.equal(
-    reviewedHeadMatches(pullRequest({ comments: [{ body: "reviewer-run-reviewed: abcdef1" }] })),
-    false
-  );
-  assert.equal(
-    reviewedHeadMatches(
-      pullRequest({
-        headRefOid: undefined,
-        comments: [{ body: `reviewer-run-reviewed: ${headSha}` }]
-      })
-    ),
-    false
-  );
-});
-
 test("workflow ownership and developer action preserve WIP ordering", () => {
   const workflow = workflowPullRequests([
     pullRequest({
       number: 14,
       headRefName: "feature/unrelated",
-      labels: [{ name: "needs-review" }],
+      labels: [{ name: "merge-ready" }],
       closingIssuesReferences: [{ number: 10 }]
     }),
     pullRequest({
@@ -182,7 +144,7 @@ test("workflow ownership and developer action preserve WIP ordering", () => {
     pullRequest({
       number: 15,
       headRefName: undefined,
-      labels: [{ name: "needs-review" }],
+      labels: [{ name: "merge-ready" }],
       closingIssuesReferences: [{ number: 11 }]
     }),
     pullRequest({
@@ -243,56 +205,11 @@ test("workflow ownership and developer action preserve WIP ordering", () => {
   assert.deepEqual(selectDeveloperPrAction([]), { action: "none", open: [] });
 });
 
-test("review queue skips blocked work and recovers stale approvals deterministically", () => {
-  const queue = selectReviewQueue([
-    pullRequest({
-      number: 16,
-      createdAt: "2026-07-21T02:00:00Z",
-      labels: [{ name: "review-approved" }],
-      comments: [{ body: `reviewer-run-reviewed: ${otherSha}` }]
-    }),
-    pullRequest({
-      number: 15,
-      createdAt: "2026-07-21T01:00:00Z",
-      labels: [{ name: "needs-review" }]
-    }),
-    pullRequest({
-      number: 14,
-      createdAt: "2026-07-21T01:00:00Z",
-      labels: [{ name: "needs-review" }]
-    }),
-    pullRequest({
-      number: 13,
-      isDraft: true,
-      labels: [{ name: "needs-review" }]
-    }),
-    pullRequest({
-      number: 12,
-      labels: [{ name: "needs-review" }, { name: "blocked" }]
-    }),
-    pullRequest({
-      number: 11,
-      labels: [{ name: "changes-requested" }]
-    }),
-    pullRequest({
-      labels: [{ name: "review-approved" }],
-      comments: [{ body: `reviewer-run-reviewed: ${headSha}` }]
-    }),
-    pullRequest({ labels: [] })
-  ]);
-
-  assert.deepEqual(
-    queue.map((item) => item.number),
-    [14, 15, 16]
-  );
-});
-
-test("merge gate requires exact approval, complete checks, and an atomic head match", () => {
+test("merge gate requires an explicit ready signal, complete checks, and an atomic head match", () => {
   const base = pullRequest({
     state: "OPEN",
     isDraft: false,
-    labels: [{ name: "review-approved" }],
-    comments: [{ body: `reviewer-run-reviewed: ${headSha}` }],
+    labels: [{ name: "merge-ready" }],
     mergeable: "MERGEABLE",
     mergeStateStatus: "CLEAN",
     statusCheckRollup: requiredPassingChecks
@@ -315,8 +232,7 @@ test("merge gate requires exact approval, complete checks, and an atomic head ma
     ...base,
     state: "CLOSED",
     isDraft: true,
-    labels: [{ name: "blocked" }, { name: "needs-review" }, { name: "changes-requested" }],
-    comments: [],
+    labels: [{ name: "blocked" }, { name: "changes-requested" }],
     statusCheckRollup: [],
     mergeable: "CONFLICTING",
     mergeStateStatus: "DIRTY",
@@ -325,32 +241,29 @@ test("merge gate requires exact approval, complete checks, and an atomic head ma
   assert.ok(invalid.includes("state is CLOSED"));
   assert.ok(invalid.includes("PR is a draft"));
   assert.ok(invalid.includes("has blocked label"));
-  assert.ok(invalid.includes("missing review-approved label"));
-  assert.ok(invalid.includes("has needs-review label"));
+  assert.ok(invalid.includes("missing merge-ready label"));
   assert.ok(invalid.includes("has changes-requested label"));
-  assert.ok(invalid.includes("no reviewer-run-reviewed marker"));
   assert.ok(invalid.includes("no required checks reported"));
   assert.ok(invalid.includes("mergeable is CONFLICTING"));
   assert.ok(invalid.includes("merge state is DIRTY"));
   assert.ok(invalid.includes("no linked closing issue"));
 
-  const stale = mergeGateFailures({
+  const failed = mergeGateFailures({
     ...base,
-    comments: [{ body: `reviewer-run-reviewed: ${otherSha}` }],
     statusCheckRollup: [
       { ...requiredPassingChecks[0], conclusion: "FAILURE" },
       requiredPassingChecks[1],
-      requiredPassingChecks[2]
+      requiredPassingChecks[2],
+      requiredPassingChecks[3]
     ]
   });
-  assert.ok(stale.some((reason) => reason.includes("!= reviewed")));
-  assert.ok(stale.some((reason) => reason.includes("FAILURE")));
+  assert.ok(failed.some((reason) => reason.includes("FAILURE")));
 
   assert.ok(
     mergeGateFailures({
       ...base,
       headRefOid: undefined
-    }).some((reason) => reason.includes("head  != reviewed"))
+    }).includes("missing head commit")
   );
 
   assert.ok(
@@ -359,7 +272,8 @@ test("merge gate requires exact approval, complete checks, and an atomic head ma
       statusCheckRollup: [
         requiredPassingChecks[0],
         { ...requiredPassingChecks[1], status: "QUEUED", conclusion: null },
-        requiredPassingChecks[2]
+        requiredPassingChecks[2],
+        requiredPassingChecks[3]
       ]
     }).includes("required checks are pending")
   );

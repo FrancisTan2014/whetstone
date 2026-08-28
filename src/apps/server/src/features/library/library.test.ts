@@ -1366,7 +1366,11 @@ describe("manual work editor (#720, sections #697)", () => {
     const added = await context.server.inject({
       method: "POST",
       url: `/api/manual-works/${workEntryId}/units`,
-      payload: { revision: loaded.revision }
+      payload: {
+        placement: "next",
+        revision: loaded.revision,
+        targetUnitEntryId: loaded.unitEntryId
+      }
     });
 
     expect(added.statusCode).toBe(201);
@@ -1384,6 +1388,143 @@ describe("manual work editor (#720, sections #697)", () => {
     // The new section starts at an EMPTY heading, so it carries a level but no title until named.
     expect(dto.sections[1].headingLevel).toBe(1);
     expect(dto.sections[1].title).toBeUndefined();
+  });
+
+  it("inserts contextual siblings and last children in dense depth-first order", async () => {
+    const workEntryId = await createManualWork();
+    const loaded = await load(workEntryId);
+    const partId = loaded.unitEntryId as string;
+
+    const savedPart = await context.server.inject({
+      method: "PUT",
+      url: `/api/manual-works/${workEntryId}/units/${partId}/content`,
+      payload: {
+        document: { content: [heading(1, "Part One"), paragraph("Body")], type: "doc" },
+        revision: loaded.revision
+      }
+    });
+    expect(savedPart.statusCode).toBe(200);
+    const partBlockId = savedPart.json().document.content[0].attrs.id as string;
+
+    const chapter = await context.server.inject({
+      method: "POST",
+      url: `/api/manual-works/${workEntryId}/units`,
+      payload: {
+        placement: "child",
+        revision: savedPart.json().revision,
+        targetUnitEntryId: partId
+      }
+    });
+    expect(chapter.statusCode).toBe(201);
+    const chapterId = chapter.json().unitEntryId as string;
+
+    const section = await context.server.inject({
+      method: "POST",
+      url: `/api/manual-works/${workEntryId}/units`,
+      payload: {
+        placement: "child",
+        revision: chapter.json().revision,
+        targetUnitEntryId: chapterId
+      }
+    });
+    expect(section.statusCode).toBe(201);
+    const sectionId = section.json().unitEntryId as string;
+
+    const laterPart = await context.server.inject({
+      method: "POST",
+      url: `/api/manual-works/${workEntryId}/units`,
+      payload: {
+        placement: "next",
+        revision: section.json().revision,
+        targetUnitEntryId: partId
+      }
+    });
+    expect(laterPart.statusCode).toBe(201);
+    const laterPartId = laterPart.json().unitEntryId as string;
+
+    const chapterSibling = await context.server.inject({
+      method: "POST",
+      url: `/api/manual-works/${workEntryId}/units`,
+      payload: {
+        placement: "next",
+        revision: laterPart.json().revision,
+        targetUnitEntryId: chapterId
+      }
+    });
+    expect(chapterSibling.statusCode).toBe(201);
+    const chapterSiblingId = chapterSibling.json().unitEntryId as string;
+
+    const lastChild = await context.server.inject({
+      method: "POST",
+      url: `/api/manual-works/${workEntryId}/units`,
+      payload: {
+        placement: "child",
+        revision: chapterSibling.json().revision,
+        targetUnitEntryId: partId
+      }
+    });
+    expect(lastChild.statusCode).toBe(201);
+    const finalDto = lastChild.json();
+    expect(
+      finalDto.sections.map(
+        (item: { headingLevel?: number; orderIndex: number; unitEntryId: string }) => ({
+          headingLevel: item.headingLevel,
+          orderIndex: item.orderIndex,
+          unitEntryId: item.unitEntryId
+        })
+      )
+    ).toEqual([
+      { headingLevel: 1, orderIndex: 0, unitEntryId: partId },
+      { headingLevel: 2, orderIndex: 1, unitEntryId: chapterId },
+      { headingLevel: 3, orderIndex: 2, unitEntryId: sectionId },
+      { headingLevel: 2, orderIndex: 3, unitEntryId: chapterSiblingId },
+      { headingLevel: 2, orderIndex: 4, unitEntryId: finalDto.unitEntryId },
+      { headingLevel: 1, orderIndex: 5, unitEntryId: laterPartId }
+    ]);
+
+    // H3 cannot accept a child. The semantic 400 leaves both revision and the dense section stream intact.
+    const refused = await context.server.inject({
+      method: "POST",
+      url: `/api/manual-works/${workEntryId}/units`,
+      payload: {
+        placement: "child",
+        revision: finalDto.revision,
+        targetUnitEntryId: sectionId
+      }
+    });
+    expect(refused.statusCode).toBe(400);
+    const afterRefusal = await load(workEntryId);
+    expect(afterRefusal.revision).toBe(finalDto.revision);
+    expect(afterRefusal.sections).toEqual(finalDto.sections);
+
+    // Insertion shifts only unit order; the existing Part block keeps its stable address.
+    const reopenedPart = await context.server.inject({
+      method: "GET",
+      url: `/api/manual-works/${workEntryId}/units/${partId}`
+    });
+    expect(reopenedPart.json().document.content[0].attrs.id).toBe(partBlockId);
+  });
+
+  it("returns 404 for a cross-work insertion target and writes nothing", async () => {
+    const workEntryId = await createManualWork();
+    const loaded = await load(workEntryId);
+    const otherWorkEntryId = await createManualWork({ title: "Other target" });
+    const other = await load(otherWorkEntryId);
+
+    const response = await context.server.inject({
+      method: "POST",
+      url: `/api/manual-works/${workEntryId}/units`,
+      payload: {
+        placement: "next",
+        revision: loaded.revision,
+        targetUnitEntryId: other.unitEntryId
+      }
+    });
+
+    expect(response.statusCode).toBe(404);
+    const reopened = await load(workEntryId);
+    expect(reopened.revision).toBe(loaded.revision);
+    expect(reopened.sections).toEqual(loaded.sections);
   });
 
   it("derives each section's outline title from its heading text after saves", async () => {
@@ -1405,7 +1546,11 @@ describe("manual work editor (#720, sections #697)", () => {
     const added = await context.server.inject({
       method: "POST",
       url: `/api/manual-works/${workEntryId}/units`,
-      payload: { revision: savedFirst.json().revision }
+      payload: {
+        placement: "child",
+        revision: savedFirst.json().revision,
+        targetUnitEntryId: loaded.unitEntryId
+      }
     });
     expect(added.statusCode).toBe(201);
     const secondUnitId = added.json().unitEntryId as string;
@@ -1432,7 +1577,11 @@ describe("manual work editor (#720, sections #697)", () => {
     const added = await context.server.inject({
       method: "POST",
       url: `/api/manual-works/${workEntryId}/units`,
-      payload: { revision: loaded.revision }
+      payload: {
+        placement: "next",
+        revision: loaded.revision,
+        targetUnitEntryId: loaded.unitEntryId
+      }
     });
     const secondUnitId = added.json().unitEntryId as string;
 
@@ -1486,14 +1635,22 @@ describe("manual work editor (#720, sections #697)", () => {
     const first = await context.server.inject({
       method: "POST",
       url: `/api/manual-works/${workEntryId}/units`,
-      payload: { revision: loaded.revision }
+      payload: {
+        placement: "next",
+        revision: loaded.revision,
+        targetUnitEntryId: loaded.unitEntryId
+      }
     });
     expect(first.statusCode).toBe(201);
 
     const stale = await context.server.inject({
       method: "POST",
       url: `/api/manual-works/${workEntryId}/units`,
-      payload: { revision: loaded.revision }
+      payload: {
+        placement: "next",
+        revision: loaded.revision,
+        targetUnitEntryId: loaded.unitEntryId
+      }
     });
     expect(stale.statusCode).toBe(409);
     expect(stale.json()).toEqual({ error: "revision_conflict" });
@@ -1509,12 +1666,12 @@ describe("manual work editor (#720, sections #697)", () => {
     const unknown = await context.server.inject({
       method: "POST",
       url: "/api/manual-works/work-missing/units",
-      payload: { revision: 0 }
+      payload: { placement: "next", revision: 0, targetUnitEntryId: "unit-x" }
     });
     const imported = await context.server.inject({
       method: "POST",
       url: `/api/manual-works/${importedEntryId}/units`,
-      payload: { revision: 0 }
+      payload: { placement: "next", revision: 0, targetUnitEntryId: "unit-x" }
     });
 
     expect(unknown.statusCode).toBe(404);
@@ -1528,6 +1685,8 @@ describe("manual work editor (#720, sections #697)", () => {
     const result = await addManualWorkSection(
       commandDeps(),
       toEntryId(workEntryId),
+      toEntryId(loaded.unitEntryId as string),
+      "next",
       loaded.revision as number,
       "another-user"
     );
@@ -1542,6 +1701,8 @@ describe("manual work editor (#720, sections #697)", () => {
     const result = await addManualWorkSection(
       commandDeps(),
       toEntryId(workEntryId),
+      toEntryId(loaded.unitEntryId as string),
+      "next",
       MAX_WORK_CONTENT_REVISION + 1,
       DEFAULT_USER_ID
     );
@@ -1585,7 +1746,11 @@ describe("manual work editor (#720, sections #697)", () => {
     const addedB = await context.server.inject({
       method: "POST",
       url: `/api/manual-works/${workEntryId}/units`,
-      payload: { revision: savedA.json().revision }
+      payload: {
+        placement: "next",
+        revision: savedA.json().revision,
+        targetUnitEntryId: initial.unitEntryId
+      }
     });
     const unitB = addedB.json().unitEntryId as string;
     const savedB = await context.server.inject({
@@ -1602,7 +1767,11 @@ describe("manual work editor (#720, sections #697)", () => {
     const addedC = await context.server.inject({
       method: "POST",
       url: `/api/manual-works/${workEntryId}/units`,
-      payload: { revision: savedB.json().revision }
+      payload: {
+        placement: "child",
+        revision: savedB.json().revision,
+        targetUnitEntryId: unitB
+      }
     });
     const unitC = addedC.json().unitEntryId as string;
     const savedC = await context.server.inject({
@@ -1657,7 +1826,11 @@ describe("manual work editor (#720, sections #697)", () => {
     const added = await context.server.inject({
       method: "POST",
       url: `/api/manual-works/${workEntryId}/units`,
-      payload: { revision: savedLead.json().revision }
+      payload: {
+        placement: "next",
+        revision: savedLead.json().revision,
+        targetUnitEntryId: initial.unitEntryId
+      }
     });
     const secondUnitId = added.json().unitEntryId as string;
     const savedSecond = await context.server.inject({
@@ -1962,8 +2135,8 @@ describe("imported work correction editor (#762)", () => {
     expect(stale.json()).toEqual({ error: "revision_conflict" });
   });
 
-  it("appends a section, opens it, and protects against malformed, stale, and unknown adds", async () => {
-    const { workEntryId } = await seedCorrectableImported();
+  it("inserts a section and protects against invalid, malformed, stale, and unknown adds", async () => {
+    const { unitEntryId, workEntryId } = await seedCorrectableImported();
     const opened = (
       await context.server.inject({ method: "GET", url: `/api/imported-works/${workEntryId}` })
     ).json();
@@ -1971,7 +2144,11 @@ describe("imported work correction editor (#762)", () => {
     const added = await context.server.inject({
       method: "POST",
       url: `/api/imported-works/${workEntryId}/units`,
-      payload: { revision: opened.revision }
+      payload: {
+        placement: "next",
+        revision: opened.revision,
+        targetUnitEntryId: opened.unitEntryId
+      }
     });
     expect(added.statusCode).toBe(201);
     const addedDto = added.json();
@@ -1979,20 +2156,49 @@ describe("imported work correction editor (#762)", () => {
     expect(addedDto.unitEntryId).toBe(addedDto.sections[1].unitEntryId);
     expect(addedDto.document.content[0].type).toBe("heading");
 
+    const [openedHeading, ...openedBody] = opened.document.content as Array<
+      Record<string, unknown>
+    >;
+    const deepened = await context.server.inject({
+      method: "PUT",
+      url: `/api/imported-works/${workEntryId}/units/${unitEntryId}/content`,
+      payload: {
+        document: {
+          content: [
+            { ...openedHeading, attrs: { ...(openedHeading?.attrs as object), level: 3 } },
+            ...openedBody
+          ],
+          type: "doc"
+        },
+        revision: addedDto.revision
+      }
+    });
+    expect(deepened.statusCode).toBe(200);
+    const invalidPlacement = await context.server.inject({
+      method: "POST",
+      url: `/api/imported-works/${workEntryId}/units`,
+      payload: {
+        placement: "child",
+        revision: deepened.json().revision,
+        targetUnitEntryId: unitEntryId
+      }
+    });
+    expect(invalidPlacement.statusCode).toBe(400);
+
     const malformed = await context.server.inject({
       method: "POST",
       url: `/api/imported-works/${workEntryId}/units`,
-      payload: { revision: "r" }
+      payload: { placement: "next", revision: "r", targetUnitEntryId: opened.unitEntryId }
     });
     const stale = await context.server.inject({
       method: "POST",
       url: `/api/imported-works/${workEntryId}/units`,
-      payload: { revision: 99 }
+      payload: { placement: "next", revision: 99, targetUnitEntryId: opened.unitEntryId }
     });
     const unknown = await context.server.inject({
       method: "POST",
       url: "/api/imported-works/work-missing/units",
-      payload: { revision: 0 }
+      payload: { placement: "next", revision: 0, targetUnitEntryId: "unit-x" }
     });
 
     expect(malformed.statusCode).toBe(400);

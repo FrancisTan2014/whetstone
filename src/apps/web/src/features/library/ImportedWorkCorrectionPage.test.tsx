@@ -309,12 +309,12 @@ describe("ImportedWorkCorrectionPage", () => {
     });
     const { user } = await renderReadyEditor();
 
-    await user.click(screen.getByRole("button", { name: "Add section" }));
+    await user.click(screen.getByRole("button", { name: "Add section after current" }));
 
     await waitFor(() => {
       expect(mockedAdd).toHaveBeenCalledTimes(1);
     });
-    expect(mockedAdd.mock.calls[0]).toEqual(["work-1", 0]);
+    expect(mockedAdd.mock.calls[0]).toEqual(["work-1", "unit-1", "next", 0]);
     expect(mockedFetchUnit).not.toHaveBeenCalled();
   });
 

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Plus } from "lucide-react";
 import { Link } from "react-router-dom";
 
+import { availableWorkSectionPlacements, type WorkSectionPlacement } from "@whetstone/domain";
 import type { DocumentNodeJSON } from "@whetstone/document";
 
 import {
@@ -23,7 +24,7 @@ import { projectDraftOutline, WorkOutline } from "./WorkOutline.js";
 // administrator reaches from a Work's edit/correct action to edit its ordered sections. A live Outline —
 // derived only from the persisted heading blocks, never a stored tree — sits beside the shared rich editor
 // with its persistent formatting toolbar. Selecting a section loads that ReadingUnit and focuses its
-// heading; "Add section" appends a new heading-led ReadingUnit and opens it. Every write is EXPLICIT (a
+// heading; contextual next/child actions insert a heading-led ReadingUnit and open it. Every write is EXPLICIT (a
 // Save button and Ctrl/Cmd+S) and carries the work-level revision (#703), so a stale save/add is refused
 // rather than silently overwriting another session; navigation saves the current section first and, on a
 // failure/conflict, leaves the current draft, section, and active item unchanged. The editor is neutral to
@@ -68,7 +69,12 @@ export type WorkEditorAddResult<W extends WorkEditorWork> =
 // The origin-specific data access the editor drives, injected by the page so the editor stays neutral to
 // whether it is editing an owner's manual Work or correcting shared imported content.
 export type WorkEditorApi<W extends WorkEditorWork> = Readonly<{
-  addSection: (workEntryId: string, revision: number) => Promise<WorkEditorAddResult<W>>;
+  addSection: (
+    workEntryId: string,
+    targetUnitEntryId: string,
+    placement: WorkSectionPlacement,
+    revision: number
+  ) => Promise<WorkEditorAddResult<W>>;
   fetchUnit: (
     workEntryId: string,
     unitEntryId: string
@@ -194,7 +200,7 @@ export function WorkContentEditor<W extends WorkEditorWork>({
     validateEditorDocument(initialWork.document)
   );
   const [status, setStatus] = useState<WorkEditorSaveStatus>("saved");
-  const [addPending, setAddPending] = useState(false);
+  const [addPending, setAddPending] = useState<WorkSectionPlacement | null>(null);
   // Bumped to a number to focus the active section's heading after a user-driven open (selection/add);
   // `undefined` on first load so opening the work does not steal focus into the editor.
   const [focusSignal, setFocusSignal] = useState<number | undefined>(undefined);
@@ -202,6 +208,7 @@ export function WorkContentEditor<W extends WorkEditorWork>({
   // A single in-flight save at a time: a rapid second Save/Ctrl+S while one is pending is ignored rather
   // than racing two writes.
   const savingRef = useRef(false);
+  const addingRef = useRef(false);
   // Async navigation/add read the latest values through refs so their awaited continuations never act on
   // a stale render snapshot (the shared editor also re-emits an onChange on mount).
   const workRef = useRef(work);
@@ -335,7 +342,7 @@ export function WorkContentEditor<W extends WorkEditorWork>({
   // target section's document and focuses its heading.
   const navigateTo = useCallback(
     async (unitEntryId: string): Promise<void> => {
-      if (unitEntryId === activeUnitRef.current || savingRef.current || addPending) {
+      if (unitEntryId === activeUnitRef.current || savingRef.current || addingRef.current) {
         return;
       }
 
@@ -367,65 +374,78 @@ export function WorkContentEditor<W extends WorkEditorWork>({
       setStatus("saved");
       bumpFocus();
     },
-    [addPending, api, bumpFocus, runSave]
+    [api, bumpFocus, runSave]
   );
 
-  // Append a new heading-led section and open it. Saves the current section first (a failure/conflict
-  // aborts the add and leaves everything unchanged), then focuses the new section's empty heading so the
-  // learner names it.
-  const addSection = useCallback(async (): Promise<void> => {
-    if (savingRef.current) {
-      return;
-    }
-
-    const isDirty = !editorDocumentsEqualIgnoringIds(draftRef.current, savedDocumentRef.current);
-    if (isDirty) {
-      const outcome = await runSave(draftRef.current);
-      if (outcome !== "saved") {
-        return;
+  // Insert a contextual sibling/child and open it. Saves first, then names the canonical active unit and
+  // relation; the server derives heading level and source order. A refusal leaves draft, selection, and
+  // drawer unchanged. The boolean lets the Outline dismiss its drawer only after a committed success.
+  const addSection = useCallback(
+    async (placement: WorkSectionPlacement): Promise<boolean> => {
+      if (savingRef.current || addingRef.current) {
+        return false;
       }
-    }
 
-    setAddPending(true);
-    let result;
-    try {
-      result = await api.addSection(workRef.current.entryId, workRef.current.revision);
-    } catch {
-      setAddPending(false);
-      setStatus("error");
-      return;
-    }
+      const isDirty = !editorDocumentsEqualIgnoringIds(draftRef.current, savedDocumentRef.current);
+      if (isDirty) {
+        const outcome = await runSave(draftRef.current);
+        if (outcome !== "saved") {
+          return false;
+        }
+      }
 
-    if (result.status === "conflict") {
-      // Another session wrote in between: adopt the current revision/sections and keep the learner where
-      // they are, so a repeat add works against the latest state.
+      addingRef.current = true;
+      setAddPending(placement);
+      let result;
       try {
-        const latest = await api.fetchWork(workRef.current.entryId);
-        setWork((previous) => {
-          const adopted = { ...previous, revision: latest.revision, sections: latest.sections };
-          workRef.current = adopted;
-          return adopted;
-        });
-        setStatus("conflict");
+        result = await api.addSection(
+          workRef.current.entryId,
+          activeUnitRef.current,
+          placement,
+          workRef.current.revision
+        );
       } catch {
+        addingRef.current = false;
+        setAddPending(null);
         setStatus("error");
+        return false;
       }
-      setAddPending(false);
-      return;
-    }
 
-    setWork(result.work);
-    workRef.current = result.work;
-    activeUnitRef.current = result.work.unitEntryId;
-    savedDocumentRef.current = result.work.document;
-    draftRef.current = result.work.document;
-    setActiveUnitEntryId(result.work.unitEntryId);
-    setSavedDocument(result.work.document);
-    setDraft(result.work.document);
-    setStatus("saved");
-    setAddPending(false);
-    bumpFocus();
-  }, [api, bumpFocus, runSave]);
+      if (result.status === "conflict") {
+        // Another session wrote in between: adopt the current revision/sections and keep the learner where
+        // they are, so a repeat add works against the latest state.
+        try {
+          const latest = await api.fetchWork(workRef.current.entryId);
+          setWork((previous) => {
+            const adopted = { ...previous, revision: latest.revision, sections: latest.sections };
+            workRef.current = adopted;
+            return adopted;
+          });
+          setStatus("conflict");
+        } catch {
+          setStatus("error");
+        }
+        addingRef.current = false;
+        setAddPending(null);
+        return false;
+      }
+
+      setWork(result.work);
+      workRef.current = result.work;
+      activeUnitRef.current = result.work.unitEntryId;
+      savedDocumentRef.current = result.work.document;
+      draftRef.current = result.work.document;
+      setActiveUnitEntryId(result.work.unitEntryId);
+      setSavedDocument(result.work.document);
+      setDraft(result.work.document);
+      setStatus("saved");
+      addingRef.current = false;
+      setAddPending(null);
+      bumpFocus();
+      return true;
+    },
+    [api, bumpFocus, runSave]
+  );
 
   const header = (
     <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
@@ -458,8 +478,14 @@ export function WorkContentEditor<W extends WorkEditorWork>({
 
   // The Outline renders only when the Work has headings; an empty Outline reserves no sidebar track. So the
   // workspace advertises its outline state (populated/empty) to the layout, and when empty the section
-  // navigation is a single 44px "Add section" control above the canvas rather than an empty sidebar.
+  // navigation is a single 44px "Add section after current" action above the canvas rather than an empty sidebar.
   const hasOutline = outlineEntries.length > 0;
+  const firstDraftBlock = draft.content?.[0];
+  const activeHeadingLevel =
+    firstDraftBlock?.type === "heading"
+      ? (firstDraftBlock.attrs as { level?: number } | undefined)?.level
+      : undefined;
+  const canAddAfterCurrent = availableWorkSectionPlacements(activeHeadingLevel).includes("next");
 
   return (
     <EditorFrame primaryAction={header} title={work.title}>
@@ -467,27 +493,27 @@ export function WorkContentEditor<W extends WorkEditorWork>({
         {hasOutline ? (
           <WorkOutline
             activeUnitEntryId={activeUnitEntryId}
+            activeHeadingLevel={activeHeadingLevel}
             addPending={addPending}
             entries={outlineEntries}
-            onAddSection={() => {
-              void addSection();
-            }}
+            onAddSection={addSection}
             onSelect={(unitEntryId) => {
               void navigateTo(unitEntryId);
             }}
           />
-        ) : (
+        ) : canAddAfterCurrent ? (
           <button
             className="manualWorkAddSection"
-            disabled={addPending}
+            disabled={addPending !== null}
             onClick={() => {
-              void addSection();
+              void addSection("next");
             }}
             type="button"
           >
-            {addPending ? "Adding…" : "Add section"}
+            <Plus aria-hidden size={18} strokeWidth={1.75} />
+            <span>{addPending === "next" ? "Adding…" : "Add section after current"}</span>
           </button>
-        )}
+        ) : null}
         <div className="manualWorkCanvas">
           <RichContentEditor
             ariaLabel={`Edit ${work.title}`}

@@ -46,6 +46,16 @@ export type WriteReadingUnitsInput = Readonly<{
   workEntryId: EntryId;
 }>;
 
+// One persisted reading unit: the Entry id minted for it and the ordered ids of the canonical
+// `doc_blocks` it now contains — the ids a note anchor or reading position addresses (#312). Returned so a
+// caller that must re-point existing references (a whole-Work content replacement, #861) knows what was
+// written without re-reading it. Units skipped as empty are not reported, and the legacy mdast `blocks`
+// rows are deliberately not listed: canonical PM blocks are the addressable identity.
+export type WrittenReadingUnit = Readonly<{
+  docBlockIds: readonly string[];
+  entryId: string;
+}>;
+
 // Persist decomposed reading units and their blocks for a work, in a single batch,
 // continuing the work's reading-unit ordering from `startOrder`. Shared by every
 // format adapter (Markdown, EPUB) so block/link/entry creation has one owner.
@@ -54,17 +64,19 @@ export type WriteReadingUnitsInput = Readonly<{
 // unknown-only publisher construct (`<video>`) whose fidelity path emits an `unknown`
 // node — which would violate the #311 fail-loud invariant. A unit empty on both sides
 // (an EPUB image-only or empty title page) carries no content and is skipped, so no
-// empty unit or empty `values()` insert is produced.
+// empty unit or empty `values()` insert is produced. Returns the units it actually wrote, in order, so a
+// caller can address them without re-reading the rows it just inserted.
 export async function writeReadingUnits(
   tx: Transaction,
   input: WriteReadingUnitsInput
-): Promise<void> {
+): Promise<readonly WrittenReadingUnit[]> {
   const units = input.units.filter((unit) => unit.blocks.length > 0 || unit.docBlocks.length > 0);
 
   if (units.length === 0) {
-    return;
+    return [];
   }
 
+  const writtenUnits: WrittenReadingUnit[] = [];
   const entryRows: { id: string; type: "reading_unit" | "block" }[] = [];
   const readingUnitRows: {
     entryId: string;
@@ -102,6 +114,10 @@ export async function writeReadingUnits(
 
   units.forEach((unit, unitIndex) => {
     const unitEntryId = input.createEntryId();
+    writtenUnits.push({
+      docBlockIds: unit.docBlocks.map((block) => block.id),
+      entryId: unitEntryId
+    });
     entryRows.push({ id: unitEntryId, type: "reading_unit" });
     readingUnitRows.push({
       entryId: unitEntryId,
@@ -160,4 +176,6 @@ export async function writeReadingUnits(
   await insertInBatches(blockRows, (batch) => tx.insert(blocks).values(batch));
   await insertInBatches(docBlockRows, (batch) => tx.insert(docBlocks).values(batch));
   await insertInBatches(linkRows, (batch) => tx.insert(entryLinks).values(batch));
+
+  return writtenUnits;
 }

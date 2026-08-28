@@ -111,29 +111,44 @@ describe("parseManualWorkUnitDto", () => {
 });
 
 describe("parseAddManualWorkSectionRequest", () => {
-  it("accepts the loaded revision token", () => {
-    expect(parseAddManualWorkSectionRequest({ revision: 4 })).toEqual({ revision: 4 });
+  const request = { placement: "next" as const, revision: 4, targetUnitEntryId: "unit-1" };
+
+  it("accepts next and child placement with the canonical target and revision", () => {
+    expect(parseAddManualWorkSectionRequest(request)).toEqual(request);
+    expect(parseAddManualWorkSectionRequest({ ...request, placement: "child" })).toEqual({
+      ...request,
+      placement: "child"
+    });
   });
 
-  it("rejects a request missing its revision", () => {
+  it("requires revision, target, and placement", () => {
     expect(() => parseAddManualWorkSectionRequest({})).toThrow();
+    expect(() => parseAddManualWorkSectionRequest({ placement: "next", revision: 1 })).toThrow();
+    expect(() =>
+      parseAddManualWorkSectionRequest({ revision: 1, targetUnitEntryId: "unit-1" })
+    ).toThrow();
+  });
+
+  it("rejects an unknown placement or empty target", () => {
+    expect(() => parseAddManualWorkSectionRequest({ ...request, placement: "before" })).toThrow();
+    expect(() => parseAddManualWorkSectionRequest({ ...request, targetUnitEntryId: "" })).toThrow();
   });
 
   it("rejects a non-integer or negative revision", () => {
-    expect(() => parseAddManualWorkSectionRequest({ revision: 1.5 })).toThrow();
-    expect(() => parseAddManualWorkSectionRequest({ revision: -1 })).toThrow();
+    expect(() => parseAddManualWorkSectionRequest({ ...request, revision: 1.5 })).toThrow();
+    expect(() => parseAddManualWorkSectionRequest({ ...request, revision: -1 })).toThrow();
   });
 
   it("accepts the maximum PostgreSQL integer revision but rejects one beyond it", () => {
-    expect(parseAddManualWorkSectionRequest({ revision: MAX_WORK_CONTENT_REVISION })).toEqual({
-      revision: MAX_WORK_CONTENT_REVISION
-    });
+    expect(
+      parseAddManualWorkSectionRequest({ ...request, revision: MAX_WORK_CONTENT_REVISION })
+    ).toEqual({ ...request, revision: MAX_WORK_CONTENT_REVISION });
     expect(() =>
-      parseAddManualWorkSectionRequest({ revision: MAX_WORK_CONTENT_REVISION + 1 })
+      parseAddManualWorkSectionRequest({ ...request, revision: MAX_WORK_CONTENT_REVISION + 1 })
     ).toThrow();
   });
 
   it("rejects an unknown extra field", () => {
-    expect(() => parseAddManualWorkSectionRequest({ extra: true, revision: 1 })).toThrow();
+    expect(() => parseAddManualWorkSectionRequest({ ...request, extra: true })).toThrow();
   });
 });

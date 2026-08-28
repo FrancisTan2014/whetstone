@@ -24,10 +24,12 @@ import {
   reviewEvents,
   workSources
 } from "../../db/schema.js";
+import type { PersistableReadingUnit } from "./blockWriter.js";
 import {
-  appendEditableWorkSection,
   initializeEditableWorkContent,
-  reconcileEditableWorkContent
+  insertEditableWorkSection,
+  reconcileEditableWorkContent,
+  replaceWorkContent
 } from "./editableWorkContent.js";
 
 let db: DbClient;
@@ -464,24 +466,28 @@ describe("reconcileEditableWorkContent transaction and input safety", () => {
   });
 });
 
-function heading(level: number, text: string): DocumentNodeJSON {
-  return { attrs: { level }, content: [{ text, type: "text" }], type: "heading" };
-}
-
-describe("appendEditableWorkSection", () => {
-  it("appends a reading unit at the given order index seeded from a heading-led document", async () => {
+describe("insertEditableWorkSection", () => {
+  it("inserts a heading-led unit and shifts every following unit atomically", async () => {
     const { unitEntryId: firstUnit } = await seedWorkWithContent();
 
-    const appended = await db.transaction(async (tx) =>
-      appendEditableWorkSection(tx, {
+    const later = await db.transaction(async (tx) =>
+      insertEditableWorkSection(tx, {
         createEntryId,
-        document: doc(heading(2, "Chapter One"), para("Body")),
+        headingLevel: 2,
+        orderIndex: 1,
+        workEntryId: WORK_ID
+      })
+    );
+    const inserted = await db.transaction(async (tx) =>
+      insertEditableWorkSection(tx, {
+        createEntryId,
+        headingLevel: 1,
         orderIndex: 1,
         workEntryId: WORK_ID
       })
     );
 
-    // A second reading unit exists, ordered after the first, with no source file.
+    // The new unit occupies index 1 and the existing later unit shifts to index 2 without changing identity.
     const units = await db
       .select()
       .from(readingUnits)
@@ -490,34 +496,261 @@ describe("appendEditableWorkSection", () => {
     expect(units).toEqual([
       { entryId: firstUnit, orderIndex: 0, sourceFile: null, title: null, workEntryId: WORK_ID },
       {
-        entryId: appended.unitEntryId,
+        entryId: inserted.unitEntryId,
         orderIndex: 1,
+        sourceFile: null,
+        title: null,
+        workEntryId: WORK_ID
+      },
+      {
+        entryId: later.unitEntryId,
+        orderIndex: 2,
         sourceFile: null,
         title: null,
         workEntryId: WORK_ID
       }
     ]);
 
-    // The section's blocks are its own id-stamped heading and paragraph, in order, under the new unit.
+    // The inserted section is seeded as the planned heading level plus an empty paragraph.
     const storedBlocks = await db
       .select({
         id: docBlocks.id,
+        nodeJson: docBlocks.nodeJson,
         orderIndex: docBlocks.orderIndex,
         type: docBlocks.type
       })
       .from(docBlocks)
-      .where(eq(docBlocks.readingUnitEntryId, appended.unitEntryId))
+      .where(eq(docBlocks.readingUnitEntryId, inserted.unitEntryId))
       .orderBy(docBlocks.orderIndex);
     expect(storedBlocks.map((row) => row.type)).toEqual(["heading", "paragraph"]);
-    expect(storedBlocks[0]?.id).toBe(blockId(appended.document, 0));
+    expect((storedBlocks[0]?.nodeJson as DocumentNodeJSON).attrs?.level).toBe(1);
+    expect(storedBlocks[0]?.id).toBe(blockId(inserted.document, 0));
     expect(storedBlocks[0]?.id).not.toBe("");
 
     // The new unit and its blocks are linked under the work.
-    expect(await entryExists(appended.unitEntryId)).toBe(true);
+    expect(await entryExists(inserted.unitEntryId)).toBe(true);
     const links = await db
       .select()
       .from(entryLinks)
-      .where(eq(entryLinks.fromEntryId, appended.unitEntryId));
+      .where(eq(entryLinks.fromEntryId, inserted.unitEntryId));
     expect(links.map((link) => link.type)).toEqual(["contains", "contains"]);
+  });
+});
+
+// A replacement unit built the way an ingestion adapter builds one: canonical PM `doc_blocks` only, no
+// legacy mdast blocks, no per-unit source file.
+function replacementUnit(
+  title: string,
+  blockSpecs: ReadonlyArray<Readonly<{ id: string; text: string }>>
+): PersistableReadingUnit {
+  return {
+    blocks: [],
+    docBlocks: blockSpecs.map((spec) => ({
+      anchorId: null,
+      anchors: [],
+      id: spec.id,
+      node: para(spec.text, spec.id),
+      type: "paragraph"
+    })),
+    evidence: [],
+    sourceFile: null,
+    title
+  };
+}
+
+async function replace(units: ReadonlyArray<PersistableReadingUnit>) {
+  return db.transaction(async (tx) =>
+    replaceWorkContent(tx, { createEntryId, units, workEntryId: WORK_ID })
+  );
+}
+
+async function storedUnits(): Promise<ReadonlyArray<Readonly<{ entryId: string; title: string }>>> {
+  const rows = await db
+    .select({ entryId: readingUnits.entryId, title: readingUnits.title })
+    .from(readingUnits)
+    .where(eq(readingUnits.workEntryId, WORK_ID))
+    .orderBy(readingUnits.orderIndex);
+  return rows.map((row) => ({ entryId: row.entryId, title: String(row.title) }));
+}
+
+describe("replaceWorkContent", () => {
+  it("swaps the Work's whole content for the replacement units and reports both counts", async () => {
+    const { document, unitEntryId } = await seedWorkWithContent();
+    const oldBlockId = blockId(document, 0);
+
+    const counts = await replace([
+      replacementUnit("One", [
+        { id: "new-a", text: "first" },
+        { id: "new-b", text: "second" }
+      ]),
+      replacementUnit("Two", [{ id: "new-c", text: "third" }])
+    ]);
+
+    // Counted from the rows: one unit and one block before, two units and three blocks after.
+    expect(counts).toEqual({ after: { blocks: 3, units: 2 }, before: { blocks: 1, units: 1 } });
+
+    // The replacement is the Work's whole content, densely ordered from zero; the old unit and block are
+    // gone, entries and all.
+    expect((await storedUnits()).map((unit) => unit.title)).toEqual(["One", "Two"]);
+    const stored = await db
+      .select({
+        id: docBlocks.id,
+        orderIndex: docBlocks.orderIndex,
+        plaintext: docBlocks.plaintext,
+        unit: docBlocks.readingUnitEntryId
+      })
+      .from(docBlocks)
+      .where(eq(docBlocks.workEntryId, WORK_ID))
+      .orderBy(docBlocks.readingUnitEntryId, docBlocks.orderIndex);
+    expect(stored.map((row) => `${row.id}@${row.orderIndex}:${row.plaintext}`)).toEqual([
+      "new-a@0:first",
+      "new-b@1:second",
+      "new-c@0:third"
+    ]);
+    expect(await entryExists(oldBlockId)).toBe(false);
+    expect(await entryExists(unitEntryId)).toBe(false);
+
+    // Containment is rebuilt: the Work contains exactly the two new units, each containing its blocks.
+    const workLinks = await db
+      .select({ toEntryId: entryLinks.toEntryId })
+      .from(entryLinks)
+      .where(eq(entryLinks.fromEntryId, WORK_ID));
+    expect(workLinks.map((link) => link.toEntryId).sort()).toEqual(
+      (await storedUnits()).map((unit) => unit.entryId).sort()
+    );
+  });
+
+  it("replaces the content of a Work that has none yet", async () => {
+    await db.insert(entries).values({ id: WORK_ID, type: "work" });
+
+    const counts = await replace([replacementUnit("Only", [{ id: "solo", text: "text" }])]);
+
+    expect(counts).toEqual({ after: { blocks: 1, units: 1 }, before: { blocks: 0, units: 0 } });
+    expect((await storedUnits()).map((unit) => unit.title)).toEqual(["Only"]);
+  });
+
+  it("retains every replaced block Entry that durable history still references", async () => {
+    const { document, unitEntryId } = await seedWorkWithContent();
+    const anchoredId = blockId(document, 0);
+    // The Work's ONLY block carries a note anchor, so nothing is deletable: a re-map improves rendering,
+    // it must never destroy a learner's anchor target.
+    await seedNoteEntry("note-1");
+    await db.insert(noteAnchors).values({
+      blockEntryId: anchoredId,
+      contextSnapshot: "ctx",
+      endBlockEntryId: anchoredId,
+      endOffset: null,
+      noteEntryId: "note-1",
+      selectedText: "text",
+      startOffset: null
+    });
+
+    await replace([replacementUnit("Fresh", [{ id: "fresh-a", text: "rebuilt" }])]);
+
+    // Its content row is gone (the anchor no longer resolves to rendered text) but the Entry — and the
+    // note anchored to it — survive, and its stale `contains` edge from the deleted unit is cleared.
+    expect(await db.select().from(docBlocks).where(eq(docBlocks.id, anchoredId))).toHaveLength(0);
+    expect(await entryExists(anchoredId)).toBe(true);
+    expect(
+      await db.select().from(noteAnchors).where(eq(noteAnchors.noteEntryId, "note-1"))
+    ).toHaveLength(1);
+    expect(
+      await db.select().from(entryLinks).where(eq(entryLinks.fromEntryId, unitEntryId))
+    ).toHaveLength(0);
+  });
+
+  it("detaches a replaced block's harvested chunk before deleting its Entry", async () => {
+    const { document } = await seedWorkWithContent();
+    const harvestedId = blockId(document, 0);
+    await db.insert(domains).values({ id: "dom-1", name: "d", orderIndex: 0, weight: 1 });
+    await db.insert(cases).values({
+      communicativeFunction: "fn",
+      domainId: "dom-1",
+      id: "case-1",
+      orderIndex: 0,
+      situation: "s"
+    });
+    await db.insert(chunks).values({
+      caseId: "case-1",
+      id: "chunk-1",
+      orderIndex: 0,
+      sourceBlockEntryId: harvestedId,
+      text: "t"
+    });
+
+    await replace([replacementUnit("Fresh", [{ id: "fresh-a", text: "rebuilt" }])]);
+
+    expect(await entryExists(harvestedId)).toBe(false);
+    const chunkRows = await db
+      .select({ sourceBlockEntryId: chunks.sourceBlockEntryId })
+      .from(chunks)
+      .where(eq(chunks.id, "chunk-1"));
+    expect(chunkRows).toEqual([{ sourceBlockEntryId: null }]);
+  });
+
+  it("lands a reader proportionally through the replacement instead of clamping them to the end", async () => {
+    // Four units before, two after: a reader at the top of the last old unit should resume in the second
+    // half of the new sequence, not be dumped on the final unit by a positional clamp.
+    await db.insert(entries).values({ id: WORK_ID, type: "work" });
+    await replace([
+      replacementUnit("A", [{ id: "a", text: "a" }]),
+      replacementUnit("B", [{ id: "b", text: "b" }]),
+      replacementUnit("C", [{ id: "c", text: "c" }]),
+      replacementUnit("D", [{ id: "d", text: "d" }])
+    ]);
+    const before = await storedUnits();
+    await db.insert(readingPositions).values({
+      anchorBlockEntryId: null,
+      unitEntryId: before[2]!.entryId,
+      updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+      userId: "user-1",
+      workEntryId: WORK_ID
+    });
+
+    await replace([
+      replacementUnit("X", [{ id: "x", text: "x" }]),
+      replacementUnit("Y", [{ id: "y", text: "y" }])
+    ]);
+
+    // Third of four (index 2) maps to floor(2 * 2 / 4) = 1 — the second of the two new units.
+    const after = await storedUnits();
+    const positions = await db
+      .select({
+        anchorBlockEntryId: readingPositions.anchorBlockEntryId,
+        unitEntryId: readingPositions.unitEntryId
+      })
+      .from(readingPositions)
+      .where(eq(readingPositions.workEntryId, WORK_ID));
+    expect(positions).toEqual([{ anchorBlockEntryId: null, unitEntryId: after[1]!.entryId }]);
+  });
+
+  it("drops a replaced anchor and lands the reader in the proportional unit", async () => {
+    await db.insert(entries).values({ id: WORK_ID, type: "work" });
+    await replace([
+      replacementUnit("A", [{ id: "a", text: "a" }]),
+      replacementUnit("B", [{ id: "b", text: "b" }])
+    ]);
+    const before = await storedUnits();
+    await db.insert(readingPositions).values({
+      anchorBlockEntryId: "b",
+      unitEntryId: before[1]!.entryId,
+      updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+      userId: "user-1",
+      workEntryId: WORK_ID
+    });
+
+    await replace([replacementUnit("Merged", [{ id: "m", text: "m" }])]);
+
+    // Block `b` did not survive, so the anchor is dropped rather than left dangling, and the position
+    // lands on the only remaining unit.
+    const after = await storedUnits();
+    const positions = await db
+      .select({
+        anchorBlockEntryId: readingPositions.anchorBlockEntryId,
+        unitEntryId: readingPositions.unitEntryId
+      })
+      .from(readingPositions)
+      .where(eq(readingPositions.workEntryId, WORK_ID));
+    expect(positions).toEqual([{ anchorBlockEntryId: null, unitEntryId: after[0]!.entryId }]);
   });
 });

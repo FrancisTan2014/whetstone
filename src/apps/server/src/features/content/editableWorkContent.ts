@@ -1,11 +1,13 @@
 import {
   diffBlockSequences,
   planSectionRepartition,
+  planWorkContentReplacement,
   type BlockChangeSet,
   type BlockSequenceEntry,
   type EntryId,
   type RepartitionBlock,
-  type RepartitionPlan
+  type RepartitionPlan,
+  type WorkSectionHeadingLevel
 } from "@whetstone/domain";
 import {
   assignNodeIds,
@@ -13,7 +15,7 @@ import {
   documentText,
   type DocumentNodeJSON
 } from "@whetstone/document";
-import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
+import { and, asc, count, eq, gte, inArray, or, sql } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import {
@@ -28,6 +30,7 @@ import {
   reviewCards,
   reviewEvents
 } from "../../db/schema.js";
+import { writeReadingUnits, type PersistableReadingUnit } from "./blockWriter.js";
 
 // The transaction the caller opened. Every operation writes through the caller's transaction so the
 // origin-specific command owns atomicity, authorization, and lifecycle — this boundary only touches the
@@ -47,21 +50,26 @@ export type InitializeEditableWorkContentResult = Readonly<{
   unitEntryId: string;
 }>;
 
-// The already-authorized Work context an appended section runs under. The caller has verified ownership
-// and origin and computed the next `orderIndex`; this boundary writes one more reading unit and its
-// blocks from `document` (a manual Work's new section starts at a heading block — issue #697).
-export type AppendEditableWorkSectionContext = Readonly<{
+// The already-authorized insertion plan. The caller owns authorization, revision fencing, and placement
+// planning; this boundary shifts later units and writes the new heading-led section in the same transaction.
+export type InsertEditableWorkSectionContext = Readonly<{
   createEntryId: () => string;
-  document: DocumentNodeJSON;
+  headingLevel: WorkSectionHeadingLevel;
   orderIndex: number;
   workEntryId: EntryId;
 }>;
 
-export type AppendEditableWorkSectionResult = Readonly<{
+export type InsertEditableWorkSectionResult = Readonly<{
   document: DocumentNodeJSON;
-  // Every block written for the new section (all genuinely new), so a correction caller can mark them.
   insertedBlockIds: readonly string[];
   unitEntryId: string;
+}>;
+
+type WriteEditableWorkSectionContext = Readonly<{
+  createEntryId: () => string;
+  document: DocumentNodeJSON;
+  orderIndex: number;
+  workEntryId: EntryId;
 }>;
 
 // The already-authorized Work+unit context a reconciliation runs under. The caller has verified ownership
@@ -105,6 +113,26 @@ type EditableBlock = Readonly<{
   plaintext: string;
   type: string;
 }>;
+
+// The already-authorized Work context a whole-content replacement runs under (#861). The caller has
+// verified the Work is eligible, claimed its `content_revision`, and produced the replacement units; this
+// boundary swaps the Work's canonical content for them in the caller's transaction.
+export type ReplaceWorkContentContext = Readonly<{
+  createEntryId: () => string;
+  // The replacement reading units in reading order. Non-empty: a caller with nothing to write refuses
+  // rather than emptying the Work.
+  units: readonly PersistableReadingUnit[];
+  workEntryId: EntryId;
+}>;
+
+// What the Work held before the replacement and what it holds after, so an operator can see exactly what
+// changed. Counted from the rows, not from the input, so the numbers are what actually landed.
+export type ReplaceWorkContentResult = Readonly<{
+  after: WorkContentCounts;
+  before: WorkContentCounts;
+}>;
+
+export type WorkContentCounts = Readonly<{ blocks: number; units: number }>;
 
 // A stable, order-independent serialization of a block's node used only to decide whether two blocks have
 // identical content (#762). PostgreSQL `jsonb` does not preserve object key order, so a stored node read
@@ -167,16 +195,32 @@ export async function initializeEditableWorkContent(
   });
 }
 
-// Append one more reading unit to an editable Work at `orderIndex`, seeded from `document` — the manual
-// Work's "Add section" (#697) hands in a heading-led document so the new section is a real, navigable
-// outline node from the first save. Same graph as an initialization (an `entries` row, a `reading_units`
-// row, a `contains` link, one `doc_blocks` row per top-level node), written in the caller's transaction.
-// The caller owns ownership/origin/concurrency; this boundary only writes the section's content.
-export async function appendEditableWorkSection(
+// Insert one real outline section at the planner's dense source-order index. Every following unit shifts
+// atomically before the shared writer creates the new Entry/unit/blocks graph. Existing units, block ids,
+// source provenance, and annotations are otherwise untouched.
+export async function insertEditableWorkSection(
   tx: Transaction,
-  context: AppendEditableWorkSectionContext
-): Promise<AppendEditableWorkSectionResult> {
-  return writeEditableWorkSection(tx, context);
+  context: InsertEditableWorkSectionContext
+): Promise<InsertEditableWorkSectionResult> {
+  await tx
+    .update(readingUnits)
+    .set({ orderIndex: sql`${readingUnits.orderIndex} + 1` })
+    .where(
+      and(
+        eq(readingUnits.workEntryId, context.workEntryId),
+        gte(readingUnits.orderIndex, context.orderIndex)
+      )
+    );
+
+  return writeEditableWorkSection(tx, {
+    createEntryId: context.createEntryId,
+    document: {
+      content: [{ attrs: { level: context.headingLevel }, type: "heading" }, { type: "paragraph" }],
+      type: "doc"
+    },
+    orderIndex: context.orderIndex,
+    workEntryId: context.workEntryId
+  });
 }
 
 // Insert one reading unit (its Entry, `reading_units` row, and `contains` link) plus its id-stamped
@@ -184,8 +228,8 @@ export async function appendEditableWorkSection(
 // written identically.
 async function writeEditableWorkSection(
   tx: Transaction,
-  context: AppendEditableWorkSectionContext
-): Promise<AppendEditableWorkSectionResult> {
+  context: WriteEditableWorkSectionContext
+): Promise<InsertEditableWorkSectionResult> {
   const unitEntryId = context.createEntryId();
   const { blocks, document } = documentToBlocks(context.document);
 
@@ -557,6 +601,123 @@ export async function repartitionEditableWorkContent(
   return {
     activeUnitEntryId: plan.blockUnitEntryId.get(firstDraft.id) as string,
     changeSet
+  };
+}
+
+// Replace a Work's WHOLE canonical content with freshly produced reading units (#861). Unlike the edit
+// paths above — which preserve block identity because a human changed part of the text — this rebuilds the
+// Work from a source projection: every replacement block carries a newly minted id, so no existing block
+// survives and no unit identity is inherited. Used by the PDF re-map command, which re-runs the improved
+// mapper over the retained converted payload; the caller owns authorization, the `content_revision` claim,
+// and the transaction, and only ever calls this for a Work whose readable content is canonical
+// `doc_blocks` (a legacy mdast `blocks` row pointing at a replaced unit would fail loudly on the delete
+// rather than be silently orphaned).
+//
+// The order is what keeps it FK-safe: write the replacement first, move every saved reading position onto
+// it, and only then delete what it replaced. A removed block's Entry is RETAINED whenever durable history
+// still references it (a note, a link, a Recitation range endpoint, a review card or event), exactly as the
+// edit paths do — a re-map improves rendering, it never destroys learner-owned material — so an anchor to
+// replaced text survives as an Entry that no longer resolves to rendered content. Returns the before/after
+// unit and block counts read from the rows themselves.
+export async function replaceWorkContent(
+  tx: Transaction,
+  context: ReplaceWorkContentContext
+): Promise<ReplaceWorkContentResult> {
+  const { workEntryId } = context;
+
+  const previousUnitRows = await tx
+    .select({ entryId: readingUnits.entryId })
+    .from(readingUnits)
+    .where(eq(readingUnits.workEntryId, workEntryId))
+    .orderBy(asc(readingUnits.orderIndex));
+  const previousUnitEntryIds = previousUnitRows.map((row) => row.entryId);
+  const previousBlockRows = await tx
+    .select({ id: docBlocks.id })
+    .from(docBlocks)
+    .where(eq(docBlocks.workEntryId, workEntryId));
+  const previousBlockIds = previousBlockRows.map((row) => row.id);
+
+  // The shared block writer (#311) owns every insert, so the replacement's rows are written exactly like a
+  // fresh ingestion's. Order indices restart at 0: the units they replace are deleted below, in this same
+  // transaction, so the committed Work is a dense sequence.
+  const written = await writeReadingUnits(tx, {
+    createEntryId: context.createEntryId,
+    startOrder: 0,
+    units: context.units,
+    workEntryId
+  });
+
+  // Reading positions move BEFORE the old units are deleted, so no position ever dangles off a removed
+  // unit Entry. The pure planner decides where each one lands; this is the same remapper the section-edit
+  // path uses, never a second implementation of that rule.
+  const plan = planWorkContentReplacement({
+    previousUnitEntryIds,
+    replacementUnits: written.map((unit) => ({ blockIds: unit.docBlockIds, entryId: unit.entryId }))
+  });
+  await remapReadingPositions(
+    tx,
+    workEntryId,
+    plan,
+    new Set(previousUnitEntryIds),
+    new Set(previousBlockIds)
+  );
+
+  if (previousBlockIds.length > 0) {
+    // Dropping the `doc_blocks` rows also drops their additive per-block evidence (`pdf_block_evidence`
+    // cascades on the block id), so stale geometry can never outlive the block it described.
+    await tx.delete(docBlocks).where(inArray(docBlocks.id, previousBlockIds));
+    const referencedIds = await stillReferencedBlockEntryIds(tx, previousBlockIds);
+    const deletableIds = previousBlockIds.filter((id) => !referencedIds.has(id));
+    if (deletableIds.length > 0) {
+      await tx
+        .delete(entryLinks)
+        .where(
+          or(
+            inArray(entryLinks.fromEntryId, deletableIds),
+            inArray(entryLinks.toEntryId, deletableIds)
+          )
+        );
+      await tx
+        .update(chunks)
+        .set({ sourceBlockEntryId: null })
+        .where(inArray(chunks.sourceBlockEntryId, deletableIds));
+      await tx.delete(entries).where(inArray(entries.id, deletableIds));
+    }
+  }
+
+  if (previousUnitEntryIds.length > 0) {
+    // A retained block Entry keeps its `contains` edge from its old unit, so those edges are cleared here
+    // (not with the deletable blocks above) before the unit Entries they point out of are removed.
+    await tx
+      .delete(entryLinks)
+      .where(
+        and(inArray(entryLinks.fromEntryId, previousUnitEntryIds), eq(entryLinks.type, "contains"))
+      );
+    await tx
+      .delete(entryLinks)
+      .where(
+        and(
+          eq(entryLinks.fromEntryId, workEntryId),
+          inArray(entryLinks.toEntryId, previousUnitEntryIds)
+        )
+      );
+    await tx.delete(readingUnits).where(inArray(readingUnits.entryId, previousUnitEntryIds));
+    await tx.delete(entries).where(inArray(entries.id, previousUnitEntryIds));
+  }
+
+  const afterRows = await tx
+    .select({ value: count() })
+    .from(docBlocks)
+    .where(eq(docBlocks.workEntryId, workEntryId));
+
+  return {
+    after: {
+      // The Work's own rows are the only truth about what landed, so a replacement that wrote fewer blocks
+      // than it was handed cannot be reported as a clean success.
+      blocks: afterRows.reduce((total, row) => total + row.value, 0),
+      units: written.length
+    },
+    before: { blocks: previousBlockIds.length, units: previousUnitEntryIds.length }
   };
 }
 

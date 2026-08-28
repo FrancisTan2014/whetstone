@@ -157,6 +157,58 @@ const CAPTION_LABEL = "caption";
 // keeps the pre-#812 behavior of one visible `unknown` node, which is reported and therefore auditable.
 const MAX_UNMAPPED_EXPANSION_DEPTH = 16;
 
+// Heading sanity rule (#856): detect when a heading's text is actually a code listing absorbed during
+// PDF extraction. A real heading is typically brief (legitimate headings across imported corpus: 27 char
+// average, 94-char max in Clean Code, 185-char max in DDIA). A heading > 150 chars that contains
+// numbered lines (code pattern: "1 " / "2 " at line starts, with optional leading whitespace) is almost
+// certainly a mislabeled code block, not a heading. Split it: treat the first line as caption heading,
+// everything after as code block. Fail-safe: if no numbered line pattern is found, keep the original
+// heading (no magic-number threshold without structural signal).
+//
+// Returns { caption?: string, code?: string } when split is justified, else undefined.
+function detectAndSplitCodeListing(
+  headingText: string
+): { caption: string; code: string } | undefined {
+  if (headingText.length < 150) {
+    return undefined;
+  }
+
+  // Look for numbered-line pattern: lines starting with digits followed by space or other code delimiter.
+  // Split on the first occurrence of this pattern.
+  const lines = headingText.split("\n");
+  if (lines.length < 2) {
+    // Single-line heading, even if long, without structural indication of code
+    return undefined;
+  }
+
+  // Find the first line that looks like a numbered code line: "1 " or "2 " or similar, optionally with
+  // leading whitespace. Also match lines starting with common code delimiters: /*, //, {, #, etc.
+  const codeLine = lines.findIndex((line) => {
+    const trimmed = line.trim();
+    return (
+      /^\d+\s/.test(trimmed) || // line number: "1 ", "42 ", etc.
+      /^\/[/*]/.test(trimmed) || // C-style comment: //, /*, etc.
+      /^[{#;]/.test(trimmed) || // common code block starts
+      /^\*\s/.test(trimmed) // continuation comment line: " * ..."
+    );
+  });
+
+  if (codeLine <= 0) {
+    return undefined;
+  }
+
+  // Join lines before the code line as the caption (heading), everything from the code line onward as
+  // the code block.
+  const caption = lines.slice(0, codeLine).join("\n").trim();
+  const code = lines.slice(codeLine).join("\n").trim();
+
+  if (caption.length === 0 || code.length === 0) {
+    return undefined;
+  }
+
+  return { caption, code };
+}
+
 function inlineContent(text: string): DocumentNodeJSON[] {
   return text.length === 0 ? [] : [{ text, type: "text" }];
 }
@@ -442,6 +494,26 @@ function expandUnmappedContainers(
 // came from is tallied so the caller can report derived-versus-assumed depth. The body it walks is the
 // EXPANDED one (#812), so a descendant lifted out of an unrecognized container is an ordinary body item
 // here: it takes the same rules, joins a neighbouring `list_item` run, and keys its own evidence.
+// How many consecutive body items, starting at `startIndex`, resolve to the outline entry `entryIndex`
+// (#867) — always >= 1, since the item AT `startIndex` is assumed to already match by the caller. Reads
+// `outlineEntry` identity alone, never a heading's own text, shape, or position: a bookmark names ONE
+// heading (#815), so any further adjacent item still claiming that SAME entry can only be the other half
+// of that one converter-mangled heading, never a coincidentally neighboring but genuinely distinct one.
+function countOutlineHeadingRun(
+  headings: readonly (ResolvedHeading | null)[],
+  startIndex: number,
+  entryIndex: number
+): number {
+  let length = 1;
+  while (
+    startIndex + length < headings.length &&
+    headings[startIndex + length]?.outlineEntry?.index === entryIndex
+  ) {
+    length += 1;
+  }
+  return length;
+}
+
 function walkBody(
   body: readonly StructuredDocItem[],
   outline: readonly PdfOutlineEntry[]
@@ -468,7 +540,58 @@ function walkBody(
     }
     const heading = headings[index]!;
     if (heading !== null) {
+      // Recombine a converter-split chapter opener (#867): docling routinely emits one heading as two
+      // adjacent items — a bare division label ("10", "Appendix A") and its name ("Classes", "Concurrency
+      // II") — and #815's own matcher resolves BOTH to the SAME outline entry (the label by substring:
+      // "chapter 10: classes" contains "10"). Left as two blocks, the reader shows the chapter's identity
+      // three times over: the unit's eyebrow, then each mangled half at full heading weight. Collapsing
+      // the whole run into one block named from the bookmark fixes that for free, because the merged
+      // heading's text now exactly matches the unit title the eyebrow already suppresses against.
+      if (heading.outlineEntry !== null) {
+        const runLength = countOutlineHeadingRun(headings, index, heading.outlineEntry.index);
+        if (runLength > 1) {
+          sources.outline += runLength;
+          out.push({
+            heading,
+            label: item.label,
+            node: {
+              attrs: { level: heading.level },
+              content: inlineContent(heading.outlineEntry.title),
+              type: "heading"
+            },
+            source: item
+          });
+          index += runLength;
+          continue;
+        }
+      }
+
       sources[heading.outlineEntry === null ? "label" : "outline"] += 1;
+
+      // Apply heading sanity rule (#856): if heading text is a code listing, split it into caption + code.
+      const split = detectAndSplitCodeListing(item.text);
+      if (split !== undefined) {
+        // Add the caption as a heading block.
+        out.push({
+          heading,
+          label: item.label,
+          node: {
+            attrs: { level: heading.level },
+            content: inlineContent(split.caption),
+            type: "heading"
+          },
+          source: item
+        });
+        // Add the code as a code block.
+        out.push({
+          heading: null,
+          label: "code",
+          node: { content: inlineContent(split.code), type: "codeBlock" },
+          source: item
+        });
+        index += 1;
+        continue;
+      }
     }
     // Expansion already decided that an item reaching the fallback path here is one that SHOULD show as
     // an `unknown` node: a leaf carrying its own text, or a container held back at the depth bound.

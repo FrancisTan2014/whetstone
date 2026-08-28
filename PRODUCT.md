@@ -427,8 +427,21 @@ owning source flow:
   Outline never reserves a column, and below that breakpoint section navigation opens over the document
   from a 44px control so the writing surface keeps the available width.
 - Outline is a live navigator derived only from canonical heading nodes. Heading 1/2/3 controls
-  structure, selection opens the corresponding section, and the active section is highlighted.
-  Whetstone stores no second editable TOC and offers no outline drag/reorder in v0.
+  structure, selection opens the corresponding section, and the exact active row plus its ancestor
+  path show where the open section sits.
+- Section creation is contextual, never a global append. At the end of the active unit-start entry's
+  branch, the primary **Add next section** inserts a same-level sibling after that branch; the quieter
+  **Add subsection** appends a child one heading level deeper. **Start** only permits a next root
+  section, Heading 3 is the deepest level the editor creates, and in-unit heading anchors remain
+  navigation targets rather than section-creation owners. With no useful Outline, one proper secondary
+  **Add section after current** button sits above the canvas because there is only one unambiguous
+  location.
+- The client names the canonical target unit and relation, never a heading level, parent, or order
+  index. The origin-authorized command derives placement from the saved heading stream and shifts source
+  order atomically, so hierarchy remains one projection rather than a stored editable TOC. A successful
+  add selects the new **Untitled section**, closes a narrow Outline drawer, and focuses its empty heading
+  with a **Section title** hint; leaving it blank keeps an explicit selectable untitled section rather
+  than silently deleting or renaming it. Whetstone offers no outline drag/reorder in v0.
 - A novel is edited one heading-delimited ReadingUnit at a time rather than mounted as one enormous
   editor document. Adding/removing headings transactionally repartitions the affected contiguous
   blocks; surviving block ids preserve notes, surviving section boundaries preserve unit ids, and a

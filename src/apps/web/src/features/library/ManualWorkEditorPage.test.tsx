@@ -123,7 +123,7 @@ function unitA(): ManualWorkUnitDto {
   return { document: loadedDocument, unitEntryId: "unit-a" };
 }
 
-// A freshly added section's document: a single empty heading, exactly what "Add section" inserts. The
+// A freshly added section's document: a single empty heading, exactly what contextual insertion creates. The
 // live-draft Outline projects it as an "Untitled section" until the learner names it.
 const emptyHeadingDocument: DocumentNodeJSON = {
   type: "doc",
@@ -478,14 +478,37 @@ describe("ManualWorkEditorPage", () => {
 
   // ---- #697 live Outline ---------------------------------------------------
 
-  it("shows an above-canvas Add section control and no Outline track for a single-section work", async () => {
+  it("shows an above-canvas section action and no Outline track for a single-section work", async () => {
     await renderReadyEditor();
 
     // No headings yet → the Outline renders nothing (no sidebar/drawer track); section creation is a single
     // control above the canvas instead of an empty outline.
     expect(screen.queryByRole("navigation", { name: "Outline" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Outline" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Add section" })).toBeDefined();
+    expect(screen.getByRole("button", { name: "Add section after current" })).toBeDefined();
+  });
+
+  it("does not expose section creation for a single section deeper than Heading 3", async () => {
+    const headingFour: DocumentNodeJSON = {
+      content: [
+        {
+          attrs: { anchorId: null, id: "blk-h4", level: 4 },
+          content: [{ text: "Deep heading", type: "text" }],
+          type: "heading"
+        }
+      ],
+      type: "doc"
+    };
+    mockedFetch.mockResolvedValue(
+      makeWork({
+        document: headingFour,
+        sections: [{ headingLevel: 4, orderIndex: 0, title: "Deep heading", unitEntryId: "work-2" }]
+      })
+    );
+    renderPage();
+    await screen.findByRole("textbox", { name: "Edit A Tale of Two Cities" });
+
+    expect(screen.queryByRole("button", { name: "Add section after current" })).toBeNull();
   });
 
   it("renders the derived outline and marks the opened section active", async () => {
@@ -578,7 +601,7 @@ describe("ManualWorkEditorPage", () => {
       expect(screen.getByRole("status").textContent).toContain("Saving…");
     });
 
-    await user.click(screen.getByRole("button", { name: "Add section" }));
+    await user.click(screen.getByRole("button", { name: "Add next section after Start" }));
     expect(mockedAdd).not.toHaveBeenCalled();
 
     resolveSave({ status: "saved", work: makeMultiWork({ revision: 1 }) });
@@ -659,16 +682,40 @@ describe("ManualWorkEditorPage", () => {
     renderPage();
     await screen.findByRole("textbox", { name: "Edit A Tale of Two Cities" });
 
-    await user.click(screen.getByRole("button", { name: "Add section" }));
+    await user.click(screen.getByRole("button", { name: "Add next section after Start" }));
 
     await waitFor(() => {
-      expect(mockedAdd).toHaveBeenCalledWith("work-1", 0);
+      expect(mockedAdd).toHaveBeenCalledWith("work-1", "unit-a", "next", 0);
     });
     // The new empty-heading section is the active outline entry.
     await waitFor(() => {
       expect(
         screen.getByRole("button", { name: "Untitled section" }).getAttribute("aria-current")
       ).toBe("true");
+    });
+    await waitFor(() => {
+      expect(
+        document.querySelector(".richContentEditorContent h1")?.getAttribute("data-placeholder")
+      ).toBe("Section title");
+    });
+  });
+
+  it("passes the active unit and child placement when adding a subsection", async () => {
+    mockedFetch.mockResolvedValue(
+      makeMultiWork({ document: sectionBDocument, unitEntryId: "unit-b" })
+    );
+    mockedAdd.mockResolvedValue({
+      status: "added",
+      work: makeMultiWork({ revision: 1, unitEntryId: "unit-b" })
+    });
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByRole("textbox", { name: "Edit A Tale of Two Cities" });
+
+    await user.click(screen.getByRole("button", { name: "Add subsection under Chapter One" }));
+
+    await waitFor(() => {
+      expect(mockedAdd).toHaveBeenCalledWith("work-1", "unit-b", "child", 0);
     });
   });
 
@@ -685,7 +732,7 @@ describe("ManualWorkEditorPage", () => {
 
     await user.click(textbox);
     await user.type(textbox, "edit");
-    await user.click(screen.getByRole("button", { name: "Add section" }));
+    await user.click(screen.getByRole("button", { name: "Add next section after Start" }));
 
     await waitFor(() => {
       expect(mockedAdd).toHaveBeenCalledTimes(1);
@@ -706,7 +753,7 @@ describe("ManualWorkEditorPage", () => {
 
     await user.click(textbox);
     await user.type(textbox, "edit");
-    await user.click(screen.getByRole("button", { name: "Add section" }));
+    await user.click(screen.getByRole("button", { name: "Add next section after Start" }));
 
     await waitFor(() => {
       expect(screen.getByRole("alert").textContent).toContain("This work changed elsewhere");
@@ -722,7 +769,7 @@ describe("ManualWorkEditorPage", () => {
     renderPage();
     await screen.findByRole("textbox", { name: "Edit A Tale of Two Cities" });
 
-    await user.click(screen.getByRole("button", { name: "Add section" }));
+    await user.click(screen.getByRole("button", { name: "Add next section after Start" }));
 
     await waitFor(() => {
       expect(screen.getByRole("alert").textContent).toContain("This work changed elsewhere");
@@ -732,9 +779,9 @@ describe("ManualWorkEditorPage", () => {
       status: "added",
       work: makeMultiWork({ revision: 1, unitEntryId: "unit-b" })
     });
-    await user.click(screen.getByRole("button", { name: "Add section" }));
+    await user.click(screen.getByRole("button", { name: "Add next section after Start" }));
     await waitFor(() => {
-      expect(mockedAdd).toHaveBeenLastCalledWith("work-1", 2);
+      expect(mockedAdd).toHaveBeenLastCalledWith("work-1", "unit-a", "next", 2);
     });
   });
 
@@ -746,7 +793,7 @@ describe("ManualWorkEditorPage", () => {
     renderPage();
     await screen.findByRole("textbox", { name: "Edit A Tale of Two Cities" });
 
-    await user.click(screen.getByRole("button", { name: "Add section" }));
+    await user.click(screen.getByRole("button", { name: "Add next section after Start" }));
 
     await waitFor(() => {
       expect(screen.getByRole("alert").textContent).toContain("Save failed");
@@ -760,7 +807,7 @@ describe("ManualWorkEditorPage", () => {
     renderPage();
     await screen.findByRole("textbox", { name: "Edit A Tale of Two Cities" });
 
-    await user.click(screen.getByRole("button", { name: "Add section" }));
+    await user.click(screen.getByRole("button", { name: "Add next section after Start" }));
 
     await waitFor(() => {
       expect(screen.getByRole("alert").textContent).toContain("Save failed");
@@ -780,9 +827,10 @@ describe("ManualWorkEditorPage", () => {
     renderPage();
     await screen.findByRole("textbox", { name: "Edit A Tale of Two Cities" });
 
-    await user.click(screen.getByRole("button", { name: "Add section" }));
-    const pending = await screen.findByRole("button", { name: "Adding…" });
+    await user.click(screen.getByRole("button", { name: "Add next section after Start" }));
+    const pending = await screen.findByRole("button", { name: "Add next section after Start" });
     expect((pending as HTMLButtonElement).disabled).toBe(true);
+    expect(pending.textContent).toContain("Adding…");
 
     // Selecting a section while an add is pending is ignored (no section load).
     await user.click(screen.getByRole("button", { name: "Chapter One" }));
@@ -790,7 +838,7 @@ describe("ManualWorkEditorPage", () => {
 
     resolveAdd({ status: "added", work: makeMultiWork({ revision: 1, unitEntryId: "unit-b" }) });
     await waitFor(() => {
-      expect(screen.queryByRole("button", { name: "Adding…" })).toBeNull();
+      expect(screen.queryByText("Adding…")).toBeNull();
     });
     expect(mockedAdd).toHaveBeenCalledTimes(1);
   });
