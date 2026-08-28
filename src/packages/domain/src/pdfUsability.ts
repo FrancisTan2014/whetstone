@@ -22,6 +22,35 @@ export const PDF_USABILITY_GATE_RATIO = 0.95;
 export const MAX_AUTOMATIC_UNKNOWN_BLOCK_RATIO = 0.1;
 export const MAX_AUTOMATIC_LOW_CONFIDENCE_RATIO = 0.25;
 
+// #817: the OLD proxies above are inert on real books — a mapper default makes `confidence` a constant
+// 1.00, and furniture-shaped text simply never became an `unknown` block — so a document that is a
+// quarter running-head debris with a completely flat outline still passed. These thresholds compare the
+// mapped body against the PDF's OWN text layer and its OWN declared outline instead: an external,
+// falsifiable reference neither proxy depends on.
+//
+// Document-level text coverage: mapped (whitespace-stripped) body characters over native (whitespace-
+// stripped) text-layer characters, summed across every MEASURED page (a page whose `nativeTextLength`
+// the worker recorded — #701/#817). Below this floor, the body is missing enough of the source's own
+// text that automatic import cannot be trusted.
+export const MIN_DOCUMENT_TEXT_COVERAGE_RATIO = 0.9;
+// One page's own coverage floor — independent of the document-wide ratio, so a few badly-mapped pages
+// cannot hide behind an otherwise-strong average.
+export const MIN_PAGE_TEXT_COVERAGE_RATIO = 0.8;
+// How many of the measured pages may fall below the per-page floor before the document itself is
+// unreliable, not just a couple of unlucky pages.
+export const MAX_LOW_COVERAGE_PAGE_RATIO = 0.05;
+// Furniture over-exclusion/under-exclusion is measured two ways, either of which is contamination:
+// too many SURVIVING blocks whose docling label was a furniture candidate (running heads that were kept
+// because they looked unique, but in bulk still read as layout debris), or too much of the native text
+// layer removed as furniture (an aggressive false-positive exclusion pattern deleting real prose).
+export const MAX_ADMITTED_FURNITURE_BLOCK_RATIO = 0.02;
+export const MAX_EXCLUDED_FURNITURE_CHARACTER_RATIO = 0.1;
+// A source outline this deep is a real, multi-level hierarchy (#815): when the mapped body's own
+// deepest heading never reaches this depth, the document's declared structure was NOT carried into the
+// canonical Work, whatever the label-derived headings suggest.
+export const MIN_STRUCTURED_OUTLINE_DEPTH = 2;
+export const MIN_STRUCTURED_BODY_HEADING_LEVEL = 2;
+
 // The three usability classes. `automatic-usable` counts toward the 95% gate; `correctable` is a
 // non-automatic result whose canonical text is recoverable through the shared correction workflow
 // (#762/#763); `unsupported` produced no usable canonical text at all (crash, timeout, memory, OCR-less
@@ -44,7 +73,21 @@ export type PdfUsabilityReason =
   // ceiling produces and the one worth converting into a fixture.
   | "incomplete-conversion"
   | "timed-out"
-  | "memory-exhausted";
+  | "memory-exhausted"
+  // #817: the mapped body omits too much of the PDF's own text layer, either document-wide or on too
+  // many individual pages — see MIN_DOCUMENT_TEXT_COVERAGE_RATIO / MIN_PAGE_TEXT_COVERAGE_RATIO /
+  // MAX_LOW_COVERAGE_PAGE_RATIO.
+  | "low-text-coverage"
+  // #817: too much surviving furniture-candidate text, or too much of the native text layer was removed
+  // as furniture — see MAX_ADMITTED_FURNITURE_BLOCK_RATIO / MAX_EXCLUDED_FURNITURE_CHARACTER_RATIO.
+  | "furniture-contamination"
+  // #817: the source PDF declares a real multi-level outline, but the mapped body's own heading depth
+  // never followed it down — see MIN_STRUCTURED_OUTLINE_DEPTH / MIN_STRUCTURED_BODY_HEADING_LEVEL.
+  | "flat-outline"
+  // #817: the document has pages the worker never measured a native text length for (an older cached
+  // range payload, or a probe path that does not record it), so text-coverage rules cannot be evaluated
+  // at all. Distinct from `low-text-coverage` — this is "unknown", not "known bad".
+  | "coverage-unmeasured";
 
 // The usability signals distilled from ONE mapped canonical Work (#702's `mapStructuredDocument`
 // projection). The harness computes these from the real mapping result; the rubric reads only these
@@ -64,6 +107,30 @@ export type MappedWorkSummary = Readonly<{
   unresolvedFigureCount: number;
   // Readable body code points across all blocks; 0 means a mapped-but-textless shell.
   plainTextLength: number;
+  // #817: per-page text-layer coverage, one entry per page the mapped Work drew content from.
+  // `nativeTextLength` is the worker's whitespace-stripped count of the PDF's OWN text layer for that
+  // page (StructuredPage#nativeTextLength — #701), or `null` when the worker did not record it (an
+  // older cached range payload). `mappedCharacters` is the whitespace-stripped canonical body text the
+  // mapper attributed to that page. A page missing from this list was never measured at all.
+  pageTextCoverage: readonly Readonly<{
+    page: number;
+    nativeTextLength: number | null;
+    mappedCharacters: number;
+  }>[];
+  // Surviving readable blocks whose docling label was a furniture candidate (page_header/page_footer)
+  // but were admitted into the body because they read as unique running text (#817's mapper-side count,
+  // alongside the pre-existing `excludedFurnitureCount`/`excludedFurnitureCharacters` below).
+  admittedFurnitureCandidateBlockCount: number;
+  // Native text-layer characters the mapper excluded as page furniture (headers/footers) — the character
+  // counterpart to the pre-existing `excludedFurnitureCount` (block counterpart), so over-exclusion is
+  // measurable against the text layer's own size, not just a block tally.
+  excludedFurnitureCharacters: number;
+  // Deepest canonical heading level actually produced in the mapped body (0 when the Work has no
+  // headings at all).
+  deepestHeadingLevel: number;
+  // Deepest level declared by the PDF's OWN outline/bookmarks (StructuredDocument#outline — #815), 0 when
+  // the source PDF has no outline.
+  sourceOutlineDepth: number;
 }>;
 
 // The typed outcome of running one corpus PDF through the supported import pipeline, reduced to what the
@@ -137,6 +204,56 @@ function classifyMappedWork(summary: MappedWorkSummary): PdfUsabilityVerdict {
   if (lowConfidenceRatio > MAX_AUTOMATIC_LOW_CONFIDENCE_RATIO) {
     return { class: "correctable", reason: "low-confidence-extraction" };
   }
+
+  // #817: the checks above are label/confidence proxies that stay quiet on furniture-heavy or
+  // flat-outline books (see the thresholds' own doc comment). These compare the mapped body against the
+  // PDF's OWN text layer and outline instead, and run only once the mapped Work has already cleared every
+  // check above.
+  const measuredPages = summary.pageTextCoverage.filter(
+    (page): page is { page: number; nativeTextLength: number; mappedCharacters: number } =>
+      page.nativeTextLength !== null
+  );
+  if (measuredPages.length === 0) {
+    return { class: "correctable", reason: "coverage-unmeasured" };
+  }
+  const totalNativeLength = measuredPages.reduce((sum, page) => sum + page.nativeTextLength, 0);
+  const totalMappedLength = measuredPages.reduce((sum, page) => sum + page.mappedCharacters, 0);
+  // A page can be legitimately text-less (a plate, a blank leaf): zero native text contributes nothing to
+  // either sum, so it can neither help nor hurt the ratio.
+  const documentCoverageRatio = totalNativeLength === 0 ? 1 : totalMappedLength / totalNativeLength;
+  if (documentCoverageRatio < MIN_DOCUMENT_TEXT_COVERAGE_RATIO) {
+    return { class: "correctable", reason: "low-text-coverage" };
+  }
+  const lowCoveragePageCount = measuredPages.filter((page) => {
+    if (page.nativeTextLength === 0) {
+      return false;
+    }
+    return page.mappedCharacters / page.nativeTextLength < MIN_PAGE_TEXT_COVERAGE_RATIO;
+  }).length;
+  if (lowCoveragePageCount / measuredPages.length > MAX_LOW_COVERAGE_PAGE_RATIO) {
+    return { class: "correctable", reason: "low-text-coverage" };
+  }
+  const admittedFurnitureBlockRatio =
+    summary.admittedFurnitureCandidateBlockCount / summary.blockCount;
+  const excludedFurnitureCharacterRatio =
+    totalNativeLength === 0 ? 0 : summary.excludedFurnitureCharacters / totalNativeLength;
+  if (
+    admittedFurnitureBlockRatio > MAX_ADMITTED_FURNITURE_BLOCK_RATIO ||
+    excludedFurnitureCharacterRatio > MAX_EXCLUDED_FURNITURE_CHARACTER_RATIO
+  ) {
+    return { class: "correctable", reason: "furniture-contamination" };
+  }
+  // A real multi-level source outline whose depth the mapped body never reached, or a source outline
+  // that exists at all while the mapped body produced NO headings whatsoever: either way the document's
+  // own declared structure did not make it into the canonical Work.
+  const flatOutline =
+    (summary.sourceOutlineDepth >= MIN_STRUCTURED_OUTLINE_DEPTH &&
+      summary.deepestHeadingLevel < MIN_STRUCTURED_BODY_HEADING_LEVEL) ||
+    (summary.headingCount === 0 && summary.sourceOutlineDepth > 0);
+  if (flatOutline) {
+    return { class: "correctable", reason: "flat-outline" };
+  }
+
   return { class: "automatic-usable", reason: "clean-canonical-work" };
 }
 
@@ -250,7 +367,11 @@ const USABILITY_REASONS: readonly PdfUsabilityReason[] = [
   "conversion-failed",
   "incomplete-conversion",
   "timed-out",
-  "memory-exhausted"
+  "memory-exhausted",
+  "low-text-coverage",
+  "furniture-contamination",
+  "flat-outline",
+  "coverage-unmeasured"
 ];
 
 export type CorpusReport = Readonly<{

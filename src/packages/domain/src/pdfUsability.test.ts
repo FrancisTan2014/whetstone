@@ -19,7 +19,8 @@ import type {
 
 const BOUNDS: CorpusBounds = { maxBytes: 128 * 1024 * 1024, maxPages: 3000 };
 
-// A clean mapped Work: readable text, no fallback blocks, all high-confidence.
+// A clean mapped Work: readable text, no fallback blocks, all high-confidence, full #817 text coverage,
+// no admitted/excluded furniture, and a source outline the mapped body's headings actually reached.
 function cleanSummary(overrides: Partial<MappedWorkSummary> = {}): MappedWorkSummary {
   return {
     blockCount: 20,
@@ -28,6 +29,11 @@ function cleanSummary(overrides: Partial<MappedWorkSummary> = {}): MappedWorkSum
     plainTextLength: 5000,
     unknownBlockCount: 0,
     unresolvedFigureCount: 0,
+    pageTextCoverage: [{ page: 1, nativeTextLength: 5000, mappedCharacters: 5000 }],
+    admittedFurnitureCandidateBlockCount: 0,
+    excludedFurnitureCharacters: 0,
+    deepestHeadingLevel: 0,
+    sourceOutlineDepth: 0,
     ...overrides
   };
 }
@@ -153,6 +159,188 @@ describe("classifyPdfUsability", () => {
       class: "unsupported",
       reason: "memory-exhausted"
     });
+  });
+});
+
+// #817: the text-coverage, furniture, and outline rules that run AFTER a mapped Work clears every
+// proxy check above. Each test overrides only the field(s) its own rule reads, leaving every other
+// field at cleanSummary's safe #817 baseline, so a boundary test here cannot accidentally also cross a
+// different rule's threshold.
+describe("classifyPdfUsability — #817 text coverage, furniture, and outline", () => {
+  it("treats zero measured pages as unmeasured coverage rather than a failure", () => {
+    const verdict = classifyPdfUsability({
+      kind: "mapped",
+      summary: cleanSummary({ pageTextCoverage: [] })
+    });
+    expect(verdict).toEqual({ class: "correctable", reason: "coverage-unmeasured" });
+  });
+
+  it("treats a page whose native length was never recorded as unmeasured, not a failure", () => {
+    const verdict = classifyPdfUsability({
+      kind: "mapped",
+      summary: cleanSummary({
+        pageTextCoverage: [{ page: 1, nativeTextLength: null, mappedCharacters: 5000 }]
+      })
+    });
+    expect(verdict).toEqual({ class: "correctable", reason: "coverage-unmeasured" });
+  });
+
+  it("keeps a mapped Work at exactly the document text-coverage floor automatic", () => {
+    // 900/1000 = 90% exactly, not below the 90% floor.
+    const verdict = classifyPdfUsability({
+      kind: "mapped",
+      summary: cleanSummary({
+        pageTextCoverage: [{ page: 1, nativeTextLength: 1000, mappedCharacters: 900 }]
+      })
+    });
+    expect(verdict.class).toBe("automatic-usable");
+  });
+
+  it("marks a mapped Work below the document text-coverage floor as low coverage", () => {
+    // 899/1000 = 89.9%, just below the 90% floor.
+    const verdict = classifyPdfUsability({
+      kind: "mapped",
+      summary: cleanSummary({
+        pageTextCoverage: [{ page: 1, nativeTextLength: 1000, mappedCharacters: 899 }]
+      })
+    });
+    expect(verdict).toEqual({ class: "correctable", reason: "low-text-coverage" });
+  });
+
+  it("treats a document with no measurable native text on any page as fully covered", () => {
+    // Every measured page is native-textless: there is no text layer to be short of, so both the
+    // document-coverage and excluded-furniture-character ratios default safely instead of dividing by
+    // zero into a false failure.
+    const verdict = classifyPdfUsability({
+      kind: "mapped",
+      summary: cleanSummary({
+        pageTextCoverage: [{ page: 1, nativeTextLength: 0, mappedCharacters: 0 }]
+      })
+    });
+    expect(verdict.class).toBe("automatic-usable");
+  });
+
+  // 20 measured pages, each either full coverage (100/100) or badly under-mapped (50/100 — below the
+  // 80% per-page floor). The split keeps the DOCUMENT-level ratio comfortably above 90% in both cases,
+  // so only the per-page share rule (MAX_LOW_COVERAGE_PAGE_RATIO) is under test here.
+  function pagesWithLowCoverageShare(
+    lowCoveragePageCount: number
+  ): MappedWorkSummary["pageTextCoverage"] {
+    const pages: Array<{ page: number; nativeTextLength: number; mappedCharacters: number }> = [];
+    for (let page = 1; page <= 20; page += 1) {
+      pages.push({
+        page,
+        nativeTextLength: 100,
+        mappedCharacters: page <= lowCoveragePageCount ? 50 : 100
+      });
+    }
+    return pages;
+  }
+
+  it("keeps a mapped Work at exactly the low-coverage-page-share ceiling automatic", () => {
+    // 1/20 = 5% of pages under the per-page floor, exactly at the ceiling.
+    const verdict = classifyPdfUsability({
+      kind: "mapped",
+      summary: cleanSummary({ pageTextCoverage: pagesWithLowCoverageShare(1) })
+    });
+    expect(verdict.class).toBe("automatic-usable");
+  });
+
+  it("marks a mapped Work above the low-coverage-page-share ceiling as low coverage", () => {
+    // 2/20 = 10% of pages under the per-page floor, above the 5% ceiling.
+    const verdict = classifyPdfUsability({
+      kind: "mapped",
+      summary: cleanSummary({ pageTextCoverage: pagesWithLowCoverageShare(2) })
+    });
+    expect(verdict).toEqual({ class: "correctable", reason: "low-text-coverage" });
+  });
+
+  it("does not count a native-textless page (a blank leaf) toward the low-coverage page share", () => {
+    const verdict = classifyPdfUsability({
+      kind: "mapped",
+      summary: cleanSummary({
+        pageTextCoverage: [
+          { page: 1, nativeTextLength: 100, mappedCharacters: 100 },
+          { page: 2, nativeTextLength: 0, mappedCharacters: 0 }
+        ]
+      })
+    });
+    expect(verdict.class).toBe("automatic-usable");
+  });
+
+  it("keeps a mapped Work at exactly the admitted-furniture-block ceiling automatic", () => {
+    // 2/100 = 2% admitted furniture-candidate blocks, exactly at the ceiling.
+    const verdict = classifyPdfUsability({
+      kind: "mapped",
+      summary: cleanSummary({ blockCount: 100, admittedFurnitureCandidateBlockCount: 2 })
+    });
+    expect(verdict.class).toBe("automatic-usable");
+  });
+
+  it("marks a mapped Work above the admitted-furniture-block ceiling as furniture contamination", () => {
+    const verdict = classifyPdfUsability({
+      kind: "mapped",
+      summary: cleanSummary({ blockCount: 100, admittedFurnitureCandidateBlockCount: 3 })
+    });
+    expect(verdict).toEqual({ class: "correctable", reason: "furniture-contamination" });
+  });
+
+  it("keeps a mapped Work at exactly the excluded-furniture-character ceiling automatic", () => {
+    // 500/5000 = 10% of the native text layer excluded as furniture, exactly at the ceiling.
+    const verdict = classifyPdfUsability({
+      kind: "mapped",
+      summary: cleanSummary({ excludedFurnitureCharacters: 500 })
+    });
+    expect(verdict.class).toBe("automatic-usable");
+  });
+
+  it("marks a mapped Work above the excluded-furniture-character ceiling as furniture contamination", () => {
+    const verdict = classifyPdfUsability({
+      kind: "mapped",
+      summary: cleanSummary({ excludedFurnitureCharacters: 501 })
+    });
+    expect(verdict).toEqual({ class: "correctable", reason: "furniture-contamination" });
+  });
+
+  it("keeps a mapped Work at exactly the structured-outline depth boundary automatic", () => {
+    // A 2-level source outline whose mapped body reached level 2 exactly — not shallower than declared.
+    const verdict = classifyPdfUsability({
+      kind: "mapped",
+      summary: cleanSummary({ sourceOutlineDepth: 2, deepestHeadingLevel: 2 })
+    });
+    expect(verdict.class).toBe("automatic-usable");
+  });
+
+  it("marks a mapped Work whose headings never reached a real source outline's depth as flat", () => {
+    const verdict = classifyPdfUsability({
+      kind: "mapped",
+      summary: cleanSummary({ sourceOutlineDepth: 2, deepestHeadingLevel: 1 })
+    });
+    expect(verdict).toEqual({ class: "correctable", reason: "flat-outline" });
+  });
+
+  it("does not require heading depth to follow a single-level (depth 1) source outline", () => {
+    const verdict = classifyPdfUsability({
+      kind: "mapped",
+      summary: cleanSummary({ sourceOutlineDepth: 1, deepestHeadingLevel: 0 })
+    });
+    expect(verdict.class).toBe("automatic-usable");
+  });
+
+  it("marks a mapped Work with zero headings as flat when the source declares any outline at all", () => {
+    const verdict = classifyPdfUsability({
+      kind: "mapped",
+      summary: cleanSummary({ headingCount: 0, sourceOutlineDepth: 1 })
+    });
+    expect(verdict).toEqual({ class: "correctable", reason: "flat-outline" });
+  });
+
+  it("does not flag zero headings as flat when the source PDF has no outline at all", () => {
+    const verdict = classifyPdfUsability({
+      kind: "mapped",
+      summary: cleanSummary({ headingCount: 0 })
+    });
+    expect(verdict.class).toBe("automatic-usable");
   });
 });
 
@@ -408,6 +596,11 @@ describe("USABILITY_REASONS matches the reasons the canonical mapping can produc
   // keyed on an existing field -- e.g. a `headingCount === 0` rule producing a new reason -- is
   // exercised automatically, so that reason lands in producibleReasons and the direction-A test below
   // catches it if USABILITY_REASONS was not updated to match.
+  //
+  // The #817 fields are held at a fixed SAFE baseline throughout this sweep (full text coverage, no
+  // furniture, a flat-but-unmeasured-outline default) rather than swept themselves: they are varied by
+  // the small, targeted `newReasonSweep` below instead, one field-combination per new reason, which is
+  // enough to satisfy direction B without multiplying this sweep's size by every #817 boundary.
   const mappedSweep: MappedWorkSummary[] = [];
   for (const blockCount of [1, 10]) {
     for (const headingCount of [0, 1, 3]) {
@@ -415,14 +608,16 @@ describe("USABILITY_REASONS matches the reasons the canonical mapping can produc
         for (const lowConfidenceBlockCount of [0, 1, 3]) {
           for (const unresolvedFigureCount of [0, 2]) {
             for (const plainTextLength of [0, 500]) {
-              mappedSweep.push({
-                blockCount,
-                headingCount,
-                lowConfidenceBlockCount,
-                plainTextLength,
-                unknownBlockCount,
-                unresolvedFigureCount
-              });
+              mappedSweep.push(
+                cleanSummary({
+                  blockCount,
+                  headingCount,
+                  lowConfidenceBlockCount,
+                  plainTextLength,
+                  unknownBlockCount,
+                  unresolvedFigureCount
+                })
+              );
             }
           }
         }
@@ -430,11 +625,27 @@ describe("USABILITY_REASONS matches the reasons the canonical mapping can produc
     }
   }
 
+  // #817: one targeted scenario per NEW reason, each built from the same clean baseline with only the
+  // field(s) that one rule reads overridden — isolating exactly the branch that reason needs, rather
+  // than crossing the new fields into the sweep above.
+  const newReasonSweep: MappedWorkSummary[] = [
+    // Zero measured pages: coverage cannot be judged at all.
+    cleanSummary({ pageTextCoverage: [] }),
+    // Document-wide mapped/native ratio below MIN_DOCUMENT_TEXT_COVERAGE_RATIO.
+    cleanSummary({
+      pageTextCoverage: [{ page: 1, nativeTextLength: 1000, mappedCharacters: 500 }]
+    }),
+    // Too many surviving furniture-candidate blocks (MAX_ADMITTED_FURNITURE_BLOCK_RATIO).
+    cleanSummary({ admittedFurnitureCandidateBlockCount: 1 }),
+    // A real source outline depth the mapped body's headings never reached.
+    cleanSummary({ sourceOutlineDepth: 3, deepestHeadingLevel: 1 })
+  ];
+
   const producibleReasons = new Set<PdfUsabilityReason>();
   for (const observation of nonMappedObservations) {
     producibleReasons.add(classifyPdfUsability(observation).reason);
   }
-  for (const summary of mappedSweep) {
+  for (const summary of [...mappedSweep, ...newReasonSweep]) {
     producibleReasons.add(classifyPdfUsability({ kind: "mapped", summary }).reason);
   }
 

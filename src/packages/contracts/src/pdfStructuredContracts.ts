@@ -77,7 +77,15 @@ export interface StructuredDocItem {
   readonly imageArtifact?: PdfImageArtifactRef | undefined;
 }
 
-export type StructuredPage = Readonly<{ pageNumber: number; hasNativeText: boolean }>;
+export type StructuredPage = Readonly<{
+  pageNumber: number;
+  hasNativeText: boolean;
+  // #817: whitespace-stripped count of characters pypdfium2's own text layer holds for this page, or
+  // absent for a payload committed before the worker measured it (an older cached range payload). The
+  // usability rubric compares this external, worker-independent reference against the mapped body's own
+  // character count to detect under-mapping the label/confidence proxies stay quiet on.
+  nativeTextLength?: number | undefined;
+}>;
 
 // Cleaned document-level bibliographic metadata (#702): the PDF's own Title/Author from its info
 // dictionary, trimmed with empty values normalized to null by the worker. Consumed as the MIDDLE layer
@@ -173,7 +181,13 @@ const docItemSchema: z.ZodType<StructuredDocItem> = z.lazy(() =>
 );
 
 const pageSchema = z
-  .object({ pageNumber: z.number().int().positive(), hasNativeText: z.boolean() })
+  .object({
+    pageNumber: z.number().int().positive(),
+    hasNativeText: z.boolean(),
+    // #817: absent for a payload committed before the worker measured it; whitespace-stripping happens
+    // worker-side so this is always a plain non-negative character count, never raw/untrimmed length.
+    nativeTextLength: z.number().int().nonnegative().optional()
+  })
   .strict();
 
 // Cleaned document metadata: nullable title/author, both present (the worker emits explicit nulls when

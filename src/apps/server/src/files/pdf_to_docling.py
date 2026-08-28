@@ -1013,6 +1013,7 @@ def build_range_payload(
     metadata: Optional[Mapping[str, Any]] = None,
     sink: Optional[ArtifactSink] = None,
     outline: Optional[Sequence[Mapping[str, Any]]] = None,
+    native_text_length: Optional[Callable[[int], int]] = None,
 ) -> dict[str, Any]:
     """Assemble one range payload from a converted DoclingDocument.
 
@@ -1025,17 +1026,22 @@ def build_range_payload(
     page outside its own window (#813). When the caller supplies the document's already-projected
     bookmark records, attaches them as ``outline`` (#815's declared heading hierarchy) — document-level
     evidence repeated on every range, exactly like ``metadata``, so the Node side takes the first
-    non-empty one.
+    non-empty one. When the caller supplies a ``native_text_length`` seam, each page also carries the
+    PDF's own whitespace-stripped character count as ``nativeTextLength`` (#817's usability rubric
+    measures the mapped body against this independent, worker-side count); without one it is omitted,
+    exactly like ``metadata``/``outline``, so an older run is never mistaken for a measured-zero page.
     """
     version = str(getattr(doc, "version", ""))
     if version not in SUPPORTED_SCHEMA_VERSIONS:
         raise UnsupportedSchema(version)
 
     page_confidences = page_confidence_map(doc)
-    pages = [
-        {"pageNumber": page, "hasNativeText": bool(native_text(page))}
-        for page in range(start_page, end_page + 1)
-    ]
+    pages = []
+    for page in range(start_page, end_page + 1):
+        page_payload: dict[str, Any] = {"pageNumber": page, "hasNativeText": bool(native_text(page))}
+        if native_text_length is not None:
+            page_payload["nativeTextLength"] = int(native_text_length(page))
+        pages.append(page_payload)
     payload: dict[str, Any] = {
         "schemaVersion": RANGE_SCHEMA_VERSION,
         "doclingSchema": {"name": DOCLING_SCHEMA_NAME, "version": version},
@@ -1214,6 +1220,7 @@ def convert_range(
     read_metadata: Optional[Callable[[], Mapping[str, Any]]] = None,
     sink: Optional[ArtifactSink] = None,
     read_outline: Optional[Callable[[], Any]] = None,
+    native_text_length: Optional[Callable[[int], int]] = None,
 ) -> dict[str, Any]:
     """Convert one bounded page range to a range payload using a converter from ``converter_factory``.
 
@@ -1222,6 +1229,9 @@ def convert_range(
     When an ``ArtifactSink`` is supplied, renderable body pictures are extracted to PNG artifacts (#807).
     When a ``read_outline`` seam is supplied, the PDF's bookmark tree is projected onto the payload as
     ``outline`` (#815), fail-soft: a bookmark-less or unreadable outline is an empty list, never an error.
+    When a ``native_text_length`` seam is supplied, each page's own whitespace-stripped character count
+    is attached as ``nativeTextLength`` (#817), the worker-side half of the usability rubric's coverage
+    comparison.
 
     The converter's REPORTED STATUS is checked before anything is read off the result (#832): docling
     returns a truncated document rather than raising when individual pages fail, so a payload is built
@@ -1237,7 +1247,7 @@ def convert_range(
     metadata = read_metadata() if read_metadata is not None else None
     outline = read_outline_entries(read_outline)
     return build_range_payload(
-        result.document, start_page, end_page, native_text, metadata, sink, outline
+        result.document, start_page, end_page, native_text, metadata, sink, outline, native_text_length
     )
 
 
@@ -1255,6 +1265,35 @@ def native_text_prober(pdf_path: str, opener: Callable[[str], Any]) -> Callable[
         return textpage.count_chars() > 0
 
     return has_text
+
+
+def _stripped_text_length(text: str) -> int:
+    """Whitespace-stripped character count: every whitespace RUN removed, never merely collapsed.
+
+    Pure and backend-free so #817's "coverage ignores formatting whitespace" rule is unit-tested
+    directly. Mirrors the mapper's own character count on the mapped side of the same comparison
+    (``strippedTextLength`` in ``pdfCanonicalMapping.ts``), so a page's native/mapped coverage ratio is
+    never skewed by one side collapsing whitespace differently than the other.
+    """
+    return len("".join(text.split()))
+
+
+def native_text_length_prober(pdf_path: str, opener: Callable[[str], Any]) -> Callable[[int], int]:
+    """A per-page native TEXT LENGTH: the page's own text layer, whitespace-stripped (#817).
+
+    Uses the same backend as ``native_text_prober``/the page count. This is the worker-side half of
+    #817's usability rubric: an independent measurement of how much text the PDF's OWN text layer holds
+    for a page, taken before mapping, so the rubric can compare it against how much of that text made it
+    into the mapped document without either side's own losses hiding the other's.
+    """
+    document = opener(pdf_path)  # pragma: no cover - real backend; logic below tested via fake.
+
+    def text_length(page_number: int) -> int:  # pragma: no cover - real backend page access.
+        page = document[page_number - 1]
+        textpage = page.get_textpage()
+        return _stripped_text_length(textpage.get_text_range())
+
+    return text_length
 
 
 def page_geometry_prober(
@@ -1349,6 +1388,7 @@ def run_range(
     artifact_dir: Optional[str] = None,
     image_reader: Callable[[Any, Any], Any] = _picture_image_reader,
     outline_reader_factory: Optional[Callable[[str], Callable[[], Any]]] = None,
+    length_prober_factory: Optional[Callable[[str], Callable[[int], int]]] = None,
 ) -> int:
     """``--range`` mode: emit one validated range payload, classifying each failure distinctly.
 
@@ -1358,6 +1398,8 @@ def run_range(
     and referenced from the payload (#807); without one (a probe/back-compat run) no picture is extracted.
     When an ``outline_reader_factory`` is wired, the payload carries the PDF's bookmark outline (#815);
     without one it is omitted, and a PDF that simply has no bookmarks carries an empty one.
+    When a ``length_prober_factory`` is wired, every page also carries its own whitespace-stripped native
+    text length (#817); without one it is omitted, exactly like metadata/outline.
     """
     try:
         native_text = prober_factory(pdf_path)
@@ -1366,6 +1408,9 @@ def run_range(
         )
         read_outline = (
             outline_reader_factory(pdf_path) if outline_reader_factory is not None else None
+        )
+        native_text_length = (
+            length_prober_factory(pdf_path) if length_prober_factory is not None else None
         )
         sink = ArtifactSink(artifact_dir, image_reader) if artifact_dir is not None else None
         payload = convert_range(
@@ -1377,6 +1422,7 @@ def run_range(
             read_metadata,
             sink,
             read_outline,
+            native_text_length,
         )
     except PasswordRequired:
         _write(stderr, "pdf is encrypted; a password is required to open it.\n")
@@ -1464,6 +1510,7 @@ def main(
     ] = None,
     metrics_writer: Callable[..., None] = write_metrics_sidecar,
     outline_reader_factory: Optional[Callable[[str], Callable[[], Any]]] = None,
+    length_prober_factory: Optional[Callable[[str], Callable[[int], int]]] = None,
 ) -> int:
     """Parse args, apply the memory ceiling through the platform boundary, and dispatch the requested mode."""
     argv = sys.argv[1:] if argv is None else list(argv)
@@ -1480,6 +1527,8 @@ def main(
         metadata_reader_factory = lambda path: pdf_metadata_reader(path, opener)
     if outline_reader_factory is None:
         outline_reader_factory = lambda path: pdf_outline_reader(path, opener)
+    if length_prober_factory is None:
+        length_prober_factory = lambda path: native_text_length_prober(path, opener)
 
     # Every return below — including the early readiness-probe, unenforceable-ceiling and usage returns —
     # leaves through this `finally`, so the boundary's teardown-time enforcement is stood down on EVERY
@@ -1518,6 +1567,7 @@ def main(
                     metadata_reader_factory,
                     artifact_dir,
                     outline_reader_factory=outline_reader_factory,
+                    length_prober_factory=length_prober_factory,
                 )
             else:
                 _write(
