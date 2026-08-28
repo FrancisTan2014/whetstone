@@ -1731,6 +1731,45 @@ describe("heading sanity rule (#856): detect and split code listings absorbed in
       expect(headingTexts(result)).toContain(captionLine);
     }
   });
+
+  it("preserves a long heading that wraps across lines but has no code structure signal", () => {
+    // A heading can legitimately span multiple lines (e.g. a subtitle wrapped during extraction)
+    // without being a code listing. No line here starts with a line number or code delimiter, so the
+    // heading must survive unsplit even though it is multi-line and exceeds the length threshold.
+    const wrappedButClean =
+      "A Very Long Chapter Heading That Somehow Wrapped Across Two Lines During Extraction\n" +
+      "But Still Contains Only Ordinary Prose Text With No Code Patterns Whatsoever Present";
+    const result = mapped(
+      mapEn(
+        doc([
+          item({ label: "section_header", text: wrappedButClean }),
+          item({ label: "text", text: "Body." })
+        ])
+      )
+    );
+    expect(headingTexts(result)).toEqual([wrappedButClean]);
+    expect(unitTypes(result, 0)).toEqual(["heading", "paragraph"]);
+  });
+
+  it("keeps the original heading when the text before the first code line is blank", () => {
+    // A stray leading blank line before the code pattern leaves no real caption text once trimmed.
+    // Splitting would produce an empty heading, so the rule must fall back to the original heading
+    // rather than emit a blank one.
+    const blankCaptionListing =
+      "\n" +
+      "1 /* JCommon : a free general purpose class library for the Java platform, padded well past " +
+      "the one hundred fifty character detection threshold so this line alone satisfies the rule */";
+    const result = mapped(
+      mapEn(
+        doc([
+          item({ label: "section_header", text: blankCaptionListing }),
+          item({ label: "text", text: "Body." })
+        ])
+      )
+    );
+    expect(headingTexts(result)).toEqual([blankCaptionListing]);
+    expect(unitTypes(result, 0)).toEqual(["heading", "paragraph"]);
+  });
 });
 
 // #816: a ReadingUnit is a CHAPTER, not a heading. Measured on the real Clean Code (462pp) import:
