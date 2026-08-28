@@ -6,6 +6,7 @@ import type {
 } from "@whetstone/contracts";
 import {
   assignNodeIds,
+  documentText,
   parseDocument,
   serializeDocument,
   type DocumentNodeJSON
@@ -14,6 +15,7 @@ import {
   MAX_PDF_HEADING_LEVEL,
   decidePageFurniture,
   decidePdfReadingUnits,
+  isPageFurnitureCandidate,
   matchOutlineHeading,
   type PageFurnitureExclusionRule,
   type PdfOutlineHeadingMatch
@@ -104,6 +106,23 @@ export type PdfCanonicalMappingResult =
       excludedFurniture: readonly PdfExcludedFurniture[];
       excludedFurnitureCount: number;
       excludedFurnitureCharacters: number;
+      // #817: readable top-level blocks whose docling label was a furniture candidate
+      // (`isPageFurnitureCandidate`) but were admitted into the body rather than excluded above — the
+      // count the usability rubric compares against total blocks to catch running-head debris that
+      // survived because each instance looked unique. Counted at partition time (one candidate item is
+      // one admitted block for every label this mapper resolves directly, never expanded into children),
+      // so it is an approximation of the final block count, not a re-walk of the built tree.
+      admittedFurnitureCandidateCount: number;
+      // Deepest canonical heading level the mapped body actually produced (0 when the Work has no
+      // headings at all) and the deepest level the PDF's OWN outline declares (0 when it has none) —
+      // the usability rubric's #817 flat-outline check compares these two independently of any label.
+      deepestHeadingLevel: number;
+      sourceOutlineDepth: number;
+      // Whitespace-stripped canonical body characters attributed to each source page (#817), keyed by
+      // the same 1-based `pageNumber` StructuredPage/PdfBlockEvidence use. A page with no mapped content
+      // (entirely furniture, or no body item landed there) is simply absent from this list; the caller
+      // combines it with the page's own `StructuredPage#nativeTextLength` to measure text coverage.
+      mappedCharactersByPage: readonly Readonly<{ page: number; characters: number }>[];
     }>;
 
 // A body item paired with the canonical block node it projected to, carrying the source item so the
@@ -672,6 +691,13 @@ function buildUnit(unit: DraftUnit): {
   };
 }
 
+// #817: discard EVERY whitespace run rather than collapsing it, mirroring the worker's own
+// `_stripped_text_length` (pdf_to_docling.py) exactly, so a mapped-vs-native character ratio is not
+// skewed by formatting differences (line breaks, indentation) that carry no reading content.
+function strippedTextLength(text: string): number {
+  return text.replace(/\s+/gu, "").length;
+}
+
 // Split a document's ordered top-level body into the items that are readable content and the page
 // furniture excluded from it (#811). The rules are evaluated over the WHOLE document (repetition and
 // heading restatement are only visible across pages), and every exclusion is returned so the caller can
@@ -680,15 +706,23 @@ function partitionPageFurniture(body: readonly StructuredDocItem[]): {
   readable: StructuredDocItem[];
   excluded: PdfExcludedFurniture[];
   excludedCharacters: number;
+  admittedFurnitureCandidateCount: number;
 } {
   const decisions = decidePageFurniture(body);
   const readable: StructuredDocItem[] = [];
   const excluded: PdfExcludedFurniture[] = [];
   let excludedCharacters = 0;
+  let admittedFurnitureCandidateCount = 0;
   body.forEach((item, index) => {
     const decision = decisions[index]!;
     if (decision.kind === "body") {
       readable.push(item);
+      // #817: a furniture-CANDIDATE label (page_header/page_footer) that this rule chose to keep is
+      // still worth counting — the usability rubric catches the case where "unique enough to keep" was
+      // decided many times over and the surviving body is still mostly running-head debris.
+      if (isPageFurnitureCandidate(item.label)) {
+        admittedFurnitureCandidateCount += 1;
+      }
       return;
     }
     excluded.push({
@@ -699,7 +733,7 @@ function partitionPageFurniture(body: readonly StructuredDocItem[]): {
     });
     excludedCharacters += item.text.length;
   });
-  return { excluded, excludedCharacters, readable };
+  return { admittedFurnitureCandidateCount, excluded, excludedCharacters, readable };
 }
 
 // Map a reconstructed structured PDF document to canonical reading units + block evidence, or refuse the
@@ -738,6 +772,8 @@ export function mapStructuredDocument(document: StructuredDocument): PdfCanonica
   const walked = walkBody(expandedBody, document.outline ?? []);
 
   let unresolvedFigureCount = 0;
+  let deepestHeadingLevel = 0;
+  const mappedCharactersByPageMap = new Map<number, number>();
   for (const block of walked.blocks) {
     // Only a figure whose image was NOT preserved (#806 placeholder) is an unresolved-figure review
     // warning. A figure whose artifact was adopted (#807) carries a resolved `imageResourceId`, so it is
@@ -745,7 +781,28 @@ export function mapStructuredDocument(document: StructuredDocument): PdfCanonica
     if (block.node.type === "figure" && block.source.imageArtifact === undefined) {
       unresolvedFigureCount += 1;
     }
+    if (block.heading !== null && block.heading.level > deepestHeadingLevel) {
+      deepestHeadingLevel = block.heading.level;
+    }
+    // #817: attribute each block's whitespace-stripped canonical text to its source page, so the
+    // usability rubric can compare it against that same page's native text-layer length. Computed from
+    // the mapped node directly (before id assignment/serialization, which do not change block text).
+    const characters = strippedTextLength(documentText(block.node));
+    if (characters > 0) {
+      const page = block.source.pageNumber;
+      mappedCharactersByPageMap.set(page, (mappedCharactersByPageMap.get(page) ?? 0) + characters);
+    }
   }
+  const mappedCharactersByPage = [...mappedCharactersByPageMap.entries()]
+    .map(([page, characters]) => ({ characters, page }))
+    .sort((a, b) => a.page - b.page);
+
+  // #817: the deepest level the PDF's OWN outline declares — 0 for a bookmark-less PDF. NOT clamped to
+  // MAX_PDF_HEADING_LEVEL, which only bounds a RESOLVED canonical heading; this is the source's raw claim.
+  const sourceOutlineDepth = (document.outline ?? []).reduce(
+    (deepest, entry) => Math.max(deepest, entry.level),
+    0
+  );
 
   const units: PersistableReadingUnit[] = [];
   const evidence: PdfBlockEvidence[] = [];
@@ -770,6 +827,10 @@ export function mapStructuredDocument(document: StructuredDocument): PdfCanonica
     excludedFurniture: furniture.excluded,
     excludedFurnitureCharacters: furniture.excludedCharacters,
     excludedFurnitureCount: furniture.excluded.length,
+    admittedFurnitureCandidateCount: furniture.admittedFurnitureCandidateCount,
+    deepestHeadingLevel,
+    sourceOutlineDepth,
+    mappedCharactersByPage,
     status: "mapped",
     unmappedLabels: [...unmapped],
     unresolvedFigureCount,

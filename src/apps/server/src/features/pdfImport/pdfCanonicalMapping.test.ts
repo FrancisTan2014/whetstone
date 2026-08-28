@@ -648,6 +648,10 @@ describe("mapStructuredDocument page-furniture exclusion", () => {
     expect(result.excludedFurniture).toEqual([]);
     expect(result.excludedFurnitureCount).toBe(0);
     expect(result.excludedFurnitureCharacters).toBe(0);
+    // #817: both the page_header and page_footer are furniture-candidate labels that were admitted
+    // (kept, not excluded) — the usability rubric catches this in bulk even though each instance here
+    // looks unique enough to keep on its own.
+    expect(result.admittedFurnitureCandidateCount).toBe(2);
   });
 
   it("keeps surviving blocks in source order with their own page, geometry, and confidence", () => {
@@ -725,6 +729,115 @@ describe("mapStructuredDocument page-furniture exclusion", () => {
     expect(result.excludedFurniture).toEqual([]);
     expect(result.excludedFurnitureCount).toBe(0);
     expect(result.excludedFurnitureCharacters).toBe(0);
+    expect(result.admittedFurnitureCandidateCount).toBe(0);
+  });
+});
+
+// #817: the usability-rubric signals the mapper reports alongside the existing furniture/heading
+// evidence above — per-page mapped character totals, and the mapped body's own deepest heading level
+// versus the PDF's own declared outline depth. The rubric itself (pdfUsability.ts) decides what these
+// numbers MEAN; this mapper only reports them.
+describe("mapStructuredDocument #817 usability signals", () => {
+  it("reports whitespace-stripped mapped characters attributed to each source page", () => {
+    const result = mapped(
+      mapEn(
+        doc(
+          [
+            item({ label: "text", pageNumber: 1, text: "Hello  world" }),
+            item({ label: "text", pageNumber: 1, text: "Two." }),
+            item({ label: "text", pageNumber: 2, text: "Second page." })
+          ],
+          [
+            { hasNativeText: true, pageNumber: 1 },
+            { hasNativeText: true, pageNumber: 2 }
+          ]
+        )
+      )
+    );
+    // "Hello  world" (12) strips to "Helloworld" (10); "Two." (4) has no whitespace to strip.
+    expect(result.mappedCharactersByPage).toEqual([
+      { page: 1, characters: 14 },
+      { page: 2, characters: 11 }
+    ]);
+  });
+
+  it("omits a page with no mapped content from the per-page character report", () => {
+    // Page 2's only items are excluded as furniture (a repeated running head, and a numeric folio), so
+    // nothing was mapped FROM it — it must be absent, not a false zero that would look measured.
+    const result = mapped(
+      mapEn(
+        doc(
+          [
+            item({ label: "text", pageNumber: 1, text: "Body." }),
+            item({ label: "page_header", pageNumber: 1, text: "Running Head" }),
+            item({ label: "page_header", pageNumber: 2, text: "Running Head" }),
+            item({ label: "page_footer", pageNumber: 2, text: "2" })
+          ],
+          [
+            { hasNativeText: true, pageNumber: 1 },
+            { hasNativeText: true, pageNumber: 2 }
+          ]
+        )
+      )
+    );
+    expect(result.mappedCharactersByPage).toEqual([{ page: 1, characters: 5 }]);
+  });
+
+  it("reports the deepest heading level the mapped body actually produced, from the source outline", () => {
+    const outline: readonly PdfOutlineEntry[] = [
+      { level: 1, pageNumber: 1, title: "Chapter 1" },
+      { level: 2, pageNumber: 1, title: "Section 1.1" },
+      { level: 3, pageNumber: 1, title: "Subsection 1.1.1" }
+    ];
+    const result = mapped(
+      mapEn(
+        doc(
+          [
+            item({ label: "section_header", pageNumber: 1, text: "Chapter 1" }),
+            item({ label: "section_header", pageNumber: 1, text: "Section 1.1" }),
+            item({ label: "section_header", pageNumber: 1, text: "Subsection 1.1.1" }),
+            item({ label: "text", pageNumber: 1, text: "Body." })
+          ],
+          [{ hasNativeText: true, pageNumber: 1 }],
+          outline
+        )
+      )
+    );
+    expect(headingLevels(result)).toEqual([1, 2, 3]);
+    expect(result.deepestHeadingLevel).toBe(3);
+    expect(result.sourceOutlineDepth).toBe(3);
+  });
+
+  it("reports zero heading depth and zero source outline depth when neither exists", () => {
+    const result = mapped(mapEn(doc([item({ label: "text", text: "Just prose." })])));
+    expect(result.deepestHeadingLevel).toBe(0);
+    expect(result.sourceOutlineDepth).toBe(0);
+  });
+
+  it("lets the source outline depth exceed the mapped body's own heading depth", () => {
+    // The outline declares 3 levels, but the body docling emitted only printed (and this mapper only
+    // resolved) the top one. deepestHeadingLevel and sourceOutlineDepth are free to diverge here — the
+    // #817 usability rubric is what compares them, not the mapper.
+    const outline: readonly PdfOutlineEntry[] = [
+      { level: 1, pageNumber: 1, title: "Chapter 1" },
+      { level: 2, pageNumber: 1, title: "Section 1.1" },
+      { level: 3, pageNumber: 1, title: "Subsection 1.1.1" }
+    ];
+    const result = mapped(
+      mapEn(
+        doc(
+          [
+            item({ label: "section_header", pageNumber: 1, text: "Chapter 1" }),
+            item({ label: "text", pageNumber: 1, text: "Body." })
+          ],
+          [{ hasNativeText: true, pageNumber: 1 }],
+          outline
+        )
+      )
+    );
+    expect(headingLevels(result)).toEqual([1]);
+    expect(result.deepestHeadingLevel).toBe(1);
+    expect(result.sourceOutlineDepth).toBe(3);
   });
 });
 

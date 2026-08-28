@@ -58,6 +58,7 @@ from pdf_to_docling import (  # noqa: E402  (path set above)
     _WindowsMemoryBoundary,
     _encode_png,
     _picture_image_reader,
+    _stripped_text_length,
     build_converter,
     build_document_metadata,
     build_document_outline,
@@ -72,6 +73,7 @@ from pdf_to_docling import (  # noqa: E402  (path set above)
     main,
     map_group,
     map_item,
+    native_text_length_prober,
     page_confidence_map,
     processed_page_numbers,
     read_outline_entries,
@@ -212,16 +214,20 @@ class FakeConverter:
 
 
 class FakeBackendPage:
-    def __init__(self, chars=1, size=(612.0, 792.0), rotation=0):
+    def __init__(self, chars=1, size=(612.0, 792.0), rotation=0, text=""):
         self._chars = chars
         self._size = size
         self._rotation = rotation
+        self._text = text
 
     def get_textpage(self):
         return self
 
     def count_chars(self):
         return self._chars
+
+    def get_text_range(self):
+        return self._text
 
     def get_size(self):
         return self._size
@@ -866,6 +872,91 @@ class RangeOutlinePayloadTests(unittest.TestCase):
             io.StringIO(),
         )
         self.assertNotIn("outline", json.loads(stdout.getvalue()))
+
+
+# --- Native text length / coverage (#817) -------------------------------------------------------
+
+
+class StrippedTextLengthTests(unittest.TestCase):
+    def test_removes_every_whitespace_run_rather_than_collapsing_it(self):
+        self.assertEqual(_stripped_text_length("Hello   world\n\tfoo"), len("Helloworldfoo"))
+
+    def test_empty_and_whitespace_only_text_is_zero(self):
+        self.assertEqual(_stripped_text_length(""), 0)
+        self.assertEqual(_stripped_text_length("   \n\t  "), 0)
+
+
+class NativeTextLengthPayloadTests(unittest.TestCase):
+    def test_build_range_payload_attaches_native_text_length_when_supplied(self):
+        payload = build_range_payload(
+            FakeDoc(),
+            1,
+            2,
+            native_text=lambda _p: True,
+            native_text_length=lambda page: 42 if page == 1 else 7,
+        )
+        self.assertEqual(
+            payload["pages"],
+            [
+                {"pageNumber": 1, "hasNativeText": True, "nativeTextLength": 42},
+                {"pageNumber": 2, "hasNativeText": True, "nativeTextLength": 7},
+            ],
+        )
+
+    def test_build_range_payload_attaches_a_zero_native_text_length_distinctly_from_omitted(self):
+        payload = build_range_payload(
+            FakeDoc(), 1, 1, native_text=lambda _p: False, native_text_length=lambda _p: 0
+        )
+        self.assertIn("nativeTextLength", payload["pages"][0])
+        self.assertEqual(payload["pages"][0]["nativeTextLength"], 0)
+
+    def test_build_range_payload_omits_native_text_length_when_absent(self):
+        payload = build_range_payload(FakeDoc(), 1, 1, native_text=lambda _p: True)
+        self.assertNotIn("nativeTextLength", payload["pages"][0])
+
+    def test_convert_range_projects_the_native_text_length_seam(self):
+        converter = FakeConverter(FakeDoc(body=FakeGroup([FakeItem(text="x")])))
+        payload = convert_range(
+            "/tmp/a.pdf",
+            1,
+            1,
+            lambda: converter,
+            native_text=lambda _p: True,
+            native_text_length=lambda _p: 55,
+        )
+        self.assertEqual(payload["pages"][0]["nativeTextLength"], 55)
+
+    def test_run_range_emits_native_text_length_from_its_factory(self):
+        doc = FakeDoc(body=FakeGroup([FakeItem(text="ok")]))
+        stdout = io.StringIO()
+        code = run_range(
+            "/tmp/a.pdf",
+            1,
+            2,
+            lambda: FakeConverter(doc),
+            lambda _p: (lambda page: True),
+            stdout,
+            io.StringIO(),
+            length_prober_factory=lambda _path: (lambda page: 100 + page),
+        )
+        self.assertEqual(code, EXIT_OK)
+        self.assertEqual(
+            [p["nativeTextLength"] for p in json.loads(stdout.getvalue())["pages"]], [101, 102]
+        )
+
+    def test_run_range_omits_native_text_length_without_a_factory(self):
+        doc = FakeDoc(body=FakeGroup([FakeItem(text="ok")]))
+        stdout = io.StringIO()
+        run_range(
+            "/tmp/a.pdf",
+            1,
+            1,
+            lambda: FakeConverter(doc),
+            lambda _p: (lambda page: True),
+            stdout,
+            io.StringIO(),
+        )
+        self.assertNotIn("nativeTextLength", json.loads(stdout.getvalue())["pages"][0])
 
 
 # --- Page counting -----------------------------------------------------------------------------
@@ -1943,6 +2034,7 @@ class MainTests(unittest.TestCase):
             outline_reader_factory=lambda _path: (
                 lambda: [{"title": "Chapter 1", "level": 0, "pageIndex": 0}]
             ),
+            length_prober_factory=lambda _path: (lambda page: 30 if page == 1 else 0),
             boundary=None,
             stdout=stdout,
             stderr=io.StringIO(),
@@ -1954,6 +2046,26 @@ class MainTests(unittest.TestCase):
         self.assertEqual(
             payload["outline"], [{"title": "Chapter 1", "level": 1, "pageNumber": 1}]
         )
+        self.assertEqual([p["nativeTextLength"] for p in payload["pages"]], [30, 0])
+
+    def test_default_length_prober_factory_is_wired_for_range_mode_when_not_injected(self):
+        # Exercise the branch that builds the default native-text-length factory from the opener, so a
+        # range payload reports each page's own whitespace-stripped character count without an injected
+        # factory (#817) — the only production path that calls the real get_text_range() backend method.
+        doc = FakeDoc(body=FakeGroup([FakeItem(text="ok")]))
+        stdout = io.StringIO()
+        code = main(
+            ["--range", "/tmp/a.pdf", "1", "1"],
+            converter_factory=lambda: FakeConverter(doc),
+            opener=lambda _p: FakeBackendDoc(1, page=FakeBackendPage(text="ab  cd\tef")),
+            metadata_reader_factory=lambda _path: (lambda: {}),
+            boundary=None,
+            stdout=stdout,
+            stderr=io.StringIO(),
+        )
+        self.assertEqual(code, EXIT_OK)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["pages"][0]["nativeTextLength"], len("abcdef"))
 
     def test_range_rejects_non_positive_pages(self):
         stderr = io.StringIO()
@@ -2473,6 +2585,7 @@ class MainRangeArtifactDispatchTests(unittest.TestCase):
                 prober_factory=lambda _path: (lambda page: True),
                 metadata_reader_factory=lambda _path: (lambda: {"Title": None, "Author": None}),
                 outline_reader_factory=lambda _path: (lambda: []),
+                length_prober_factory=lambda _path: (lambda page: 0),
                 boundary=None,
                 stdout=stdout,
                 stderr=io.StringIO(),

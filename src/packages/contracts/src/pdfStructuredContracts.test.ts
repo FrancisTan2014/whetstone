@@ -156,6 +156,31 @@ describe("parseRangeConversion", () => {
     );
     expect(result.status).toBe("malformed");
   });
+
+  it("accepts a page carrying its native text length", () => {
+    const result = parseRangeConversion(
+      rangePayload({ pages: [{ pageNumber: 1, hasNativeText: true, nativeTextLength: 240 }] })
+    );
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") throw new Error("expected ok");
+    expect(result.value.pages).toEqual([
+      { pageNumber: 1, hasNativeText: true, nativeTextLength: 240 }
+    ]);
+  });
+
+  it("accepts a page with no native text length at all (committed before the worker measured it)", () => {
+    const result = parseRangeConversion(rangePayload());
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") throw new Error("expected ok");
+    expect(result.value.pages[0]?.nativeTextLength).toBeUndefined();
+  });
+
+  it("rejects a negative native text length", () => {
+    const result = parseRangeConversion(
+      rangePayload({ pages: [{ pageNumber: 1, hasNativeText: true, nativeTextLength: -1 }] })
+    );
+    expect(result.status).toBe("malformed");
+  });
 });
 
 describe("parseProbeClassification", () => {

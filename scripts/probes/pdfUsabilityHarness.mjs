@@ -440,8 +440,10 @@ function nodeTextLength(node) {
   return node.content.reduce((total, child) => total + nodeTextLength(child), 0);
 }
 
-// Distil a mapped canonical Work into the rubric's MappedWorkSummary.
-function summarizeMapped(mapping) {
+// Distil a mapped canonical Work into the rubric's MappedWorkSummary. `document` supplies each page's own
+// `nativeTextLength` (#701/#817) so it can be correlated with the mapper's per-page mapped character
+// counts into `pageTextCoverage` — the coverage ratio the rubric compares against the source text layer.
+function summarizeMapped(mapping, document) {
   let blockCount = 0;
   let headingCount = 0;
   let unknownBlockCount = 0;
@@ -457,26 +459,41 @@ function summarizeMapped(mapping) {
   const lowConfidenceBlockCount = mapping.evidence.filter(
     (item) => item.confidence < LOW_CONFIDENCE_THRESHOLD
   ).length;
+  // A page absent from the document (should not happen for an in-range page) or one the worker did not
+  // measure both read as `null` — "unmeasured", never a false zero-coverage page.
+  const nativeTextLengthByPage = new Map(
+    document.pages.map((page) => [page.pageNumber, page.nativeTextLength ?? null])
+  );
+  const pageTextCoverage = mapping.mappedCharactersByPage.map(({ page, characters }) => ({
+    page,
+    nativeTextLength: nativeTextLengthByPage.get(page) ?? null,
+    mappedCharacters: characters
+  }));
   return {
     blockCount,
     headingCount,
     lowConfidenceBlockCount,
     plainTextLength,
     unknownBlockCount,
-    unresolvedFigureCount: mapping.unresolvedFigureCount
+    unresolvedFigureCount: mapping.unresolvedFigureCount,
+    pageTextCoverage,
+    admittedFurnitureCandidateBlockCount: mapping.admittedFurnitureCandidateCount,
+    excludedFurnitureCharacters: mapping.excludedFurnitureCharacters,
+    deepestHeadingLevel: mapping.deepestHeadingLevel,
+    sourceOutlineDepth: mapping.sourceOutlineDepth
   };
 }
 
 // Convert a mapping result into a rubric observation. A mapped document carrying unresolved figures (#806)
 // stays a `mapped` observation — the summary's unresolvedFigureCount drives its correctable verdict.
-function observationForMapping(mapping) {
+function observationForMapping(mapping, document) {
   switch (mapping.status) {
     case "ocr_validation_failed":
       return { kind: "ocr_required", pagesNeedingOcr: mapping.pagesNeedingOcr };
     case "no_content":
       return { kind: "no_content" };
     default:
-      return { kind: "mapped", summary: summarizeMapped(mapping) };
+      return { kind: "mapped", summary: summarizeMapped(mapping, document) };
   }
 }
 
@@ -670,7 +687,7 @@ async function convertOne(python, contracts, mapStructuredDocument, adoptRangeAr
     );
     const mapping = mapStructuredDocument(document);
     return {
-      observation: observationForMapping(mapping),
+      observation: observationForMapping(mapping, document),
       pageCount,
       peakBytes,
       elapsedMs: elapsed()
