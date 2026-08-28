@@ -17,6 +17,8 @@ import {
   decidePdfReadingUnits,
   isPageFurnitureCandidate,
   matchOutlineHeading,
+  normalizePageFurnitureText,
+  stripEmbeddedFolio,
   type PageFurnitureExclusionRule,
   type PdfOutlineHeadingMatch
 } from "@whetstone/domain";
@@ -447,7 +449,19 @@ function resolveHeadingLevels(
     if (!OUTLINE_PROMOTABLE_LABELS.has(item.label)) {
       return;
     }
-    const match = matchOutlineHeading({ pageNumber: item.pageNumber, text: item.text }, outline);
+    // #828: a chapter opener docling mislabelled `page_header`/`page_footer` sometimes carries its own
+    // printed folio ("Chapter 3: Out of Order · 60"), which the raw text never matches — the outline's
+    // own title has no trailing page number. Retrying with the folio stripped lets such an item still
+    // claim its bookmark; the raw match is tried first so an ordinary (non-folio) candidate is unaffected.
+    const match =
+      matchOutlineHeading({ pageNumber: item.pageNumber, text: item.text }, outline) ??
+      matchOutlineHeading(
+        {
+          pageNumber: item.pageNumber,
+          text: stripEmbeddedFolio(normalizePageFurnitureText(item.text))
+        },
+        outline
+      );
     if (match === null || claimedEntries.has(match.entryIndex)) {
       return;
     }
@@ -698,17 +712,53 @@ function strippedTextLength(text: string): number {
   return text.replace(/\s+/gu, "").length;
 }
 
+// Which outline entries the document's REAL (label-derived) headings claim, ignoring page furniture
+// entirely. Mirrors `resolveHeadingLevels`'s own first pass (#815): a heading docling actually labelled
+// `title`/`section_header` claims its bookmark before anything else may use that entry. Computed here,
+// over the WHOLE body, so `partitionPageFurniture` can tell a candidate restating an ALREADY-CLAIMED
+// bookmark apart from one naming a bookmark nothing has claimed yet (#828).
+function claimedOutlineEntriesForHeadings(
+  body: readonly StructuredDocItem[],
+  outline: readonly PdfOutlineEntry[]
+): ReadonlySet<number> {
+  const claimed = new Set<number>();
+  for (const item of body) {
+    if (HEADING_LEVEL_BY_LABEL[item.label] === undefined) {
+      continue;
+    }
+    const match = matchOutlineHeading({ pageNumber: item.pageNumber, text: item.text }, outline);
+    if (match !== null) {
+      claimed.add(match.entryIndex);
+    }
+  }
+  return claimed;
+}
+
 // Split a document's ordered top-level body into the items that are readable content and the page
 // furniture excluded from it (#811). The rules are evaluated over the WHOLE document (repetition and
 // heading restatement are only visible across pages), and every exclusion is returned so the caller can
 // account for what was removed.
-function partitionPageFurniture(body: readonly StructuredDocItem[]): {
+//
+// #811's own rules (`decidePageFurniture`) only ever compare a candidate against text ON THE PAGE RANGE
+// they scan: an exact repeat elsewhere, or an exact same-page heading. A once-seen candidate can still
+// restate a heading printed on a DIFFERENT page under a DIFFERENT label — the residual leak #828
+// measured after #811/#826 (Seven Concurrency Models in Seven Weeks pp.40-62: 11 -> 3 -> 1). The PDF's
+// own bookmark outline is authored once for the whole book, so it can name that heading even when the
+// page range cannot: a candidate whose folio-stripped text matches an outline entry a REAL heading
+// already claimed is excluded here, on top of `decidePageFurniture`'s own decision. An entry NOTHING has
+// claimed is left alone — it is very likely the chapter's own opener under a mislabel, not debris, and
+// `resolveHeadingLevels`'s own second pass is what protects and promotes it.
+function partitionPageFurniture(
+  body: readonly StructuredDocItem[],
+  outline: readonly PdfOutlineEntry[]
+): {
   readable: StructuredDocItem[];
   excluded: PdfExcludedFurniture[];
   excludedCharacters: number;
   admittedFurnitureCandidateCount: number;
 } {
   const decisions = decidePageFurniture(body);
+  const claimedByHeadings = claimedOutlineEntriesForHeadings(body, outline);
   const readable: StructuredDocItem[] = [];
   const excluded: PdfExcludedFurniture[] = [];
   let excludedCharacters = 0;
@@ -716,6 +766,24 @@ function partitionPageFurniture(body: readonly StructuredDocItem[]): {
   body.forEach((item, index) => {
     const decision = decisions[index]!;
     if (decision.kind === "body") {
+      if (isPageFurnitureCandidate(item.label)) {
+        const normalizedText = normalizePageFurnitureText(item.text);
+        const comparisonText = stripEmbeddedFolio(normalizedText);
+        const outlineMatch = matchOutlineHeading(
+          { pageNumber: item.pageNumber, text: comparisonText },
+          outline
+        );
+        if (outlineMatch !== null && claimedByHeadings.has(outlineMatch.entryIndex)) {
+          excluded.push({
+            label: item.label,
+            normalizedText,
+            page: item.pageNumber,
+            rule: "claimed-outline-entry"
+          });
+          excludedCharacters += item.text.length;
+          return;
+        }
+      }
       readable.push(item);
       // #817: a furniture-CANDIDATE label (page_header/page_footer) that this rule chose to keep is
       // still worth counting — the usability rubric catches the case where "unique enough to keep" was
@@ -751,7 +819,7 @@ export function mapStructuredDocument(document: StructuredDocument): PdfCanonica
   // removed BEFORE the body is walked, so they never become addressable blocks (and never reach the
   // `unknown` fallback that rendered them as dashed debris). They are returned as evidence instead —
   // docling's own `furniture` group is deprecated and empty, so this result is their only record.
-  const furniture = partitionPageFurniture(document.body);
+  const furniture = partitionPageFurniture(document.body, document.outline ?? []);
 
   // A construct the canonical schema cannot name is still a CONTAINER of content (#812), so every
   // unrecognized parent is expanded into its children before the walk: its descendants become ordinary
