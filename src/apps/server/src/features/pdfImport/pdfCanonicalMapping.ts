@@ -662,6 +662,17 @@ function splitIntoUnits(blocks: readonly MappedBlock[]): DraftUnit[] {
   }));
 }
 
+// #865: a deterministic, unique-per-work anchor for an in-unit heading — one that does not start the
+// unit (`order > 0`) — so the Reader's TOC can link straight to it. Derived from the source item's page
+// number and starting character offset, both intrinsic to the PDF's raw structured-document extraction
+// and untouched by anything this mapper itself decides (furniture partitioning, heading-level
+// resolution, unit-boundary placement), so the anchor survives a mapper-only code change to the same
+// PDF. Neither a random id nor insertion order would do: either could silently repoint a previously
+// saved link the next time this work is re-imported.
+function inUnitHeadingAnchor(source: StructuredDocItem): string {
+  return `sec-${source.pageNumber}-${source.charSpan[0]}`;
+}
+
 // Assign stable node ids to a unit's blocks and decompose them into persistable `doc_blocks`, collecting
 // each top-level block's evidence keyed by its assigned id. The unit doc is validated and normalized
 // through `parseDocument` first, so an invalid node shape fails loudly here rather than at persistence.
@@ -682,7 +693,17 @@ function buildUnit(unit: DraftUnit): {
   topLevel.forEach((node, order) => {
     const id = String((node.attrs as { id?: unknown } | undefined)?.id);
     const block = unit.blocks[order]!;
-    docBlocks.push({ anchorId: null, anchors: [], id, node, type: node.type });
+    // The unit's OWN heading (if any) is always the first block (`order === 0`, per
+    // `loadDocHeadingByUnit`'s convention) and needs no anchor — the unit's TOC entry already targets it
+    // via `entryId`. Only a LATER heading within the unit (#865) is an in-unit section worth anchoring.
+    const anchor = order > 0 && block.heading !== null ? inUnitHeadingAnchor(block.source) : null;
+    docBlocks.push({
+      anchorId: anchor,
+      anchors: anchor === null ? [] : [{ anchor, nodeId: id }],
+      id,
+      node,
+      type: node.type
+    });
     evidence.push({
       blockId: id,
       boundingBox: block.source.boundingBox,

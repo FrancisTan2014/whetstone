@@ -657,7 +657,15 @@ can navigate them from another package.
   derives the `tableOfContents` at query time from the units' heading levels via the pure
   `domain/headingOutline.ts` `buildHeadingOutline` (first-block `heading` mdast `depth` → nested
   entries, each `targetUnitEntryId` = its own unit, no anchor; a headingless preface → a root "Start"
-  entry). The sibling pure planner `domain/workRepartition.ts` `planSectionRepartition` partitions an
+  entry; a chapter-scale PDF unit's OWN in-unit headings — #816's sections that stayed inside one
+  chapter rather than becoming units of their own — nest under it too, each a `HeadingOutlineSection`
+  carrying a `targetAnchor` (#865): `pdfCanonicalMapping.ts`'s `buildUnit` assigns every in-unit
+  heading block (order > 0 within its unit) a deterministic, work-unique `sec-{page}-{charStart}` id —
+  derived from the PDF's raw structured-document extraction, so it survives any mapper-only code
+  change — and `contentQueries.ts`'s `loadInUnitHeadingsByUnit` reads those anchored heading
+  `doc_blocks` back into the unit's `sections` before it reaches `buildHeadingOutline`, so both the
+  unit's own heading and its in-unit sections nest through one shared stack and a continuous
+  `orderIndex`). The sibling pure planner `domain/workRepartition.ts` `planSectionRepartition` partitions an
   edited block span at the same heading boundaries, preserving unit identity where a leading heading
   survives (the manual-save repartition, #698). Nothing is persisted, so re-ingestion recomputes with no stale entry; single-unit or
   headingless works yield no TOC (#680). `ReadingUnitDto`/`ReadingUnitStructureDto` also carry the

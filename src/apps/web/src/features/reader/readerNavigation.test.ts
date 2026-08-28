@@ -354,3 +354,73 @@ describe("activeTocEntryIdForPosition", () => {
     expect(activeTocEntryIdForPosition(sectionsOnly, "u-1", blocks, "b0")).toBe("e-sec");
   });
 });
+
+// #865: a chapter-scale PDF unit's in-unit sections need no new Reader mechanism — the existing
+// null-`sourceFile` anchor resolution and deepest-section highlighting (exercised generically above)
+// already cover a PDF work exactly as they do a Markdown or manual one. This test exists purely to
+// pin that integration against a realistic PDF chapter shape, using the mapper's own `sec-{page}-{
+// charStart}` anchor scheme (`pdfCanonicalMapping.ts`), rather than to add new resolution logic.
+describe("a PDF chapter's in-unit section selects and highlights correctly (#865)", () => {
+  const pdfStructure: ReaderStructure = {
+    units: [
+      {
+        blockCount: 4,
+        entryId: "u-ch6",
+        hasSubstantiveText: true,
+        orderIndex: 0,
+        title: "Chapter 6: Objects and Data Structures"
+      }
+    ],
+    workEntryId: "work-pdf"
+  };
+
+  const pdfAnchorIndex: AnchorIndex = buildAnchorIndex({
+    anchors: [
+      {
+        anchor: "sec-128-0",
+        blockEntryId: "block-demeter",
+        nodeId: "block-demeter",
+        sourceFile: null,
+        unitEntryId: "u-ch6"
+      }
+    ],
+    workEntryId: "work-pdf"
+  });
+
+  const pdfEntries: ReadonlyArray<ReaderTocEntry> = [
+    tocEntry({ depth: 0, entryId: "e-ch6", targetUnitEntryId: "u-ch6" }),
+    tocEntry({
+      depth: 1,
+      entryId: "e-demeter",
+      label: "The Law of Demeter",
+      parentEntryId: "e-ch6",
+      targetAnchor: "sec-128-0",
+      targetUnitEntryId: "u-ch6"
+    })
+  ];
+
+  // The chapter's ordered blocks: its own heading (b0), intro prose (b1), then "The Law of Demeter"
+  // section starting at the anchored block (b2), followed by its own prose (b3).
+  const pdfUnitBlocks = [
+    { entryId: "b0" },
+    { entryId: "b1" },
+    { anchorId: "sec-128-0", entryId: "b2" },
+    { entryId: "b3" }
+  ];
+
+  it("selecting the in-unit section entry jumps straight to its anchored heading block", () => {
+    expect(
+      resolveTocEntryNavigation(
+        pdfStructure,
+        pdfAnchorIndex,
+        pdfEntries.find((entry) => entry.entryId === "e-demeter")!
+      )
+    ).toEqual({ blockEntryId: "block-demeter", kind: "block" });
+  });
+
+  it("highlights the in-unit section once reading reaches its anchored block", () => {
+    expect(activeTocEntryIdForPosition(pdfEntries, "u-ch6", pdfUnitBlocks, "b1")).toBe("e-ch6");
+    expect(activeTocEntryIdForPosition(pdfEntries, "u-ch6", pdfUnitBlocks, "b2")).toBe("e-demeter");
+    expect(activeTocEntryIdForPosition(pdfEntries, "u-ch6", pdfUnitBlocks, "b3")).toBe("e-demeter");
+  });
+});

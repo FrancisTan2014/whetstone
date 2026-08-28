@@ -6,15 +6,26 @@ import {
   HEADING_OUTLINE_PREFACE_LABEL,
   HEADING_OUTLINE_UNTITLED_LABEL,
   planWorkSectionInsertion,
+  type HeadingOutlineSection,
   type HeadingOutlineUnit
 } from "./headingOutline.js";
 
-function unit(entryId: string, headingLevel?: number, title?: string): HeadingOutlineUnit {
+function unit(
+  entryId: string,
+  headingLevel?: number,
+  title?: string,
+  sections?: ReadonlyArray<HeadingOutlineSection>
+): HeadingOutlineUnit {
   return {
     entryId,
     ...(headingLevel === undefined ? {} : { headingLevel }),
+    ...(sections === undefined ? {} : { sections }),
     ...(title === undefined ? {} : { title })
   };
+}
+
+function section(anchor: string, level: number, title?: string): HeadingOutlineSection {
+  return { anchor, level, ...(title === undefined ? {} : { title }) };
 }
 
 describe("buildHeadingOutline", () => {
@@ -133,6 +144,115 @@ describe("buildHeadingOutline", () => {
     const outline = buildHeadingOutline([unit("a", 1, "A"), unit("b", 2, "B"), unit("c", 1, "C")]);
 
     expect(outline.map((entry) => entry.orderIndex)).toEqual([0, 1, 2]);
+  });
+
+  // #865: a chapter-scale PDF unit's own in-unit sections — headings that do not start a new reading
+  // unit — nest under it in the derived outline rather than vanishing into a flat unit list.
+  describe("in-unit sections (#865)", () => {
+    it("nests a chapter's sections under it, targeting the unit with the section's anchor", () => {
+      const outline = buildHeadingOutline([
+        unit("c1", 1, "Chapter 1", [
+          section("s1", 2, "Section 1.1"),
+          section("s2", 2, "Section 1.2")
+        ]),
+        unit("c2", 1, "Chapter 2")
+      ]);
+
+      expect(outline).toEqual([
+        { depth: 0, entryId: "c1", label: "Chapter 1", orderIndex: 0, targetUnitEntryId: "c1" },
+        {
+          depth: 1,
+          entryId: "s1",
+          label: "Section 1.1",
+          orderIndex: 1,
+          parentEntryId: "c1",
+          targetAnchor: "s1",
+          targetUnitEntryId: "c1"
+        },
+        {
+          depth: 1,
+          entryId: "s2",
+          label: "Section 1.2",
+          orderIndex: 2,
+          parentEntryId: "c1",
+          targetAnchor: "s2",
+          targetUnitEntryId: "c1"
+        },
+        { depth: 0, entryId: "c2", label: "Chapter 2", orderIndex: 3, targetUnitEntryId: "c2" }
+      ]);
+    });
+
+    it("compresses a section that skips levels the same way a unit-level heading would", () => {
+      const outline = buildHeadingOutline([
+        unit("c1", 1, "Chapter 1", [section("deep", 3, "Deep section")]),
+        unit("c2", 1, "Chapter 2")
+      ]);
+
+      expect(outline.map((entry) => [entry.entryId, entry.depth, entry.parentEntryId])).toEqual([
+        ["c1", 0, undefined],
+        ["deep", 1, "c1"],
+        ["c2", 0, undefined]
+      ]);
+    });
+
+    it("nests a deeper section under a shallower one within the same chapter", () => {
+      const outline = buildHeadingOutline([
+        unit("c1", 1, "Chapter 1", [
+          section("s1", 2, "Section 1"),
+          section("s1a", 3, "Section 1.a")
+        ]),
+        unit("c2", 1, "Chapter 2")
+      ]);
+
+      expect(outline.map((entry) => [entry.entryId, entry.depth, entry.parentEntryId])).toEqual([
+        ["c1", 0, undefined],
+        ["s1", 1, "c1"],
+        ["s1a", 2, "s1"],
+        ["c2", 0, undefined]
+      ]);
+    });
+
+    it("labels an untitled section with the untitled fallback", () => {
+      const outline = buildHeadingOutline([
+        unit("c1", 1, "Chapter 1", [section("s1", 2)]),
+        unit("c2", 1, "Chapter 2")
+      ]);
+
+      expect(outline[1]).toMatchObject({ entryId: "s1", label: HEADING_OUTLINE_UNTITLED_LABEL });
+    });
+
+    it("closes a trailing open section branch when the next chapter starts", () => {
+      const outline = buildHeadingOutline([
+        unit("c1", 1, "Chapter 1", [section("s1", 2, "Section 1")]),
+        unit("c2", 1, "Chapter 2", [section("s2", 2, "Section 2")])
+      ]);
+
+      expect(outline.map((entry) => [entry.entryId, entry.depth, entry.parentEntryId])).toEqual([
+        ["c1", 0, undefined],
+        ["s1", 1, "c1"],
+        ["c2", 0, undefined],
+        ["s2", 1, "c2"]
+      ]);
+    });
+
+    it("keeps orderIndex continuous across units and their sections", () => {
+      const outline = buildHeadingOutline([
+        unit("c1", 1, "Chapter 1", [section("s1", 2, "Section 1")]),
+        unit("c2", 1, "Chapter 2")
+      ]);
+
+      expect(outline.map((entry) => entry.orderIndex)).toEqual([0, 1, 2]);
+    });
+
+    it("leaves a unit-starting entry's targetAnchor absent", () => {
+      const outline = buildHeadingOutline([
+        unit("c1", 1, "Chapter 1", [section("s1", 2, "Section 1")]),
+        unit("c2", 1, "Chapter 2")
+      ]);
+
+      expect(outline[0]?.targetAnchor).toBeUndefined();
+      expect(outline[1]?.targetAnchor).toBe("s1");
+    });
   });
 });
 

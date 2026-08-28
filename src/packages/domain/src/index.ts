@@ -60,6 +60,7 @@ export {
 } from "./headingOutline.js";
 export type {
   HeadingOutlineEntry,
+  HeadingOutlineSection,
   HeadingOutlineUnit,
   WorkSectionHeadingLevel,
   WorkSectionInsertionPlan,

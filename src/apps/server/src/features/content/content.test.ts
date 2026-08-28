@@ -2322,6 +2322,104 @@ describe("heading-derived table of contents (#680)", () => {
     // No unit contributes a level, so there is nothing to nest — the outline stays absent.
     expect(structure.tableOfContents).toBeUndefined();
   });
+
+  it("nests a chapter-scale PDF unit's in-unit sections under it, with a served targetAnchor (#865)", async () => {
+    // A chapter-scale PDF-canonical unit (#816) keeps a whole chapter — including sections deeper than
+    // its own opening heading — as ONE reading unit; #865 requires those in-unit sections to surface in
+    // the served tableOfContents, nested under their chapter, each carrying the anchor the Reader
+    // scrolls to. The chapter's OWN heading (order 0) carries no anchor — its unit's TOC entry already
+    // targets it directly.
+    function headingNode(level: number, text: string): DocumentNodeJSON {
+      return { attrs: { level }, content: [{ text, type: "text" }], type: "heading" };
+    }
+    function paragraphNode(text: string): DocumentNodeJSON {
+      return { content: [{ text, type: "text" }], type: "paragraph" };
+    }
+
+    const workEntryId = await createWork();
+    let nextId = 0;
+    await context.db.transaction(async (tx) => {
+      await writeReadingUnits(tx, {
+        createEntryId: () => `pdf-unit-${(nextId += 1)}`,
+        startOrder: 0,
+        units: [
+          {
+            blocks: [],
+            docBlocks: [
+              {
+                anchorId: null,
+                anchors: [],
+                id: "c1-heading",
+                node: headingNode(1, "Chapter One"),
+                type: "heading"
+              },
+              {
+                anchorId: null,
+                anchors: [],
+                id: "c1-intro",
+                node: paragraphNode("Intro prose."),
+                type: "paragraph"
+              },
+              {
+                anchorId: "sec-1-100",
+                anchors: [{ anchor: "sec-1-100", nodeId: "c1-section" }],
+                id: "c1-section",
+                node: headingNode(2, "Section 1.1"),
+                type: "heading"
+              },
+              {
+                anchorId: null,
+                anchors: [],
+                id: "c1-section-body",
+                node: paragraphNode("Section prose."),
+                type: "paragraph"
+              }
+            ],
+            evidence: [],
+            sourceFile: null,
+            title: "Chapter One"
+          },
+          {
+            blocks: [],
+            docBlocks: [
+              {
+                anchorId: null,
+                anchors: [],
+                id: "c2-heading",
+                node: headingNode(1, "Chapter Two"),
+                type: "heading"
+              }
+            ],
+            evidence: [],
+            sourceFile: null,
+            title: "Chapter Two"
+          }
+        ],
+        workEntryId: toEntryId(workEntryId)
+      });
+    });
+
+    const structure = await getStructure(workEntryId);
+    const toc = structure.tableOfContents ?? [];
+
+    expect(toc.map((entry) => [entry.label, entry.depth])).toEqual([
+      ["Chapter One", 0],
+      ["Section 1.1", 1],
+      ["Chapter Two", 0]
+    ]);
+
+    const chapterOne = toc.find((entry) => entry.label === "Chapter One")!;
+    const section = toc.find((entry) => entry.label === "Section 1.1")!;
+    const chapterTwo = toc.find((entry) => entry.label === "Chapter Two")!;
+
+    // The chapter's own entry targets its unit's top and carries no anchor; the in-unit section targets
+    // the SAME unit but carries the anchor the Reader scrolls to.
+    expect(chapterOne.targetAnchor).toBeUndefined();
+    expect(section.targetAnchor).toBe("sec-1-100");
+    expect(section.targetUnitEntryId).toBe(chapterOne.targetUnitEntryId);
+    expect(section.parentEntryId).toBe(chapterOne.entryId);
+    expect(chapterTwo.targetAnchor).toBeUndefined();
+  });
 });
 
 describe("manual-origin Work rejects legacy content ingestion (#720)", () => {
