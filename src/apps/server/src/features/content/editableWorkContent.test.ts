@@ -211,6 +211,86 @@ describe("reconcileEditableWorkContent stable-id diff", () => {
   });
 });
 
+// #871: reconcile never repartitions, so these mirror `editableWorkRepartition.test.ts`'s "change set"
+// block one-for-one, minus the multi-unit/merge-left arms that do not apply to a single reconciled unit.
+describe("reconcileEditableWorkContent — change set", () => {
+  async function changeSetOf(
+    unitEntryId: string,
+    document: DocumentNodeJSON
+  ): Promise<{ changed: string[]; inserted: string[]; moved: string[]; removed: string[] }> {
+    return db.transaction(async (tx) => {
+      const { changeSet } = await reconcileEditableWorkContent(tx, {
+        document,
+        unitEntryId,
+        workEntryId: WORK_ID
+      });
+      return {
+        changed: [...changeSet.changed],
+        inserted: [...changeSet.inserted],
+        moved: [...changeSet.moved],
+        removed: [...changeSet.removed]
+      };
+    });
+  }
+
+  it("reports an empty change set when the unit is saved unchanged", async () => {
+    const { document, unitEntryId } = await seedWorkWithContent();
+    const id0 = blockId(document, 0);
+    const seeded = await reconcile(unitEntryId, doc(para("first", id0), para("second")));
+    const id1 = blockId(seeded, 1);
+
+    // Re-saving the exact same blocks touches nothing, even though the caller may advance the revision.
+    const changeSet = await changeSetOf(unitEntryId, doc(para("first", id0), para("second", id1)));
+
+    expect(changeSet).toEqual({ changed: [], inserted: [], moved: [], removed: [] });
+  });
+
+  it("reports only the block whose content the edit changed", async () => {
+    const { document, unitEntryId } = await seedWorkWithContent();
+    const id0 = blockId(document, 0);
+    await reconcile(unitEntryId, doc(para("first", id0)));
+
+    const changeSet = await changeSetOf(unitEntryId, doc(para("first, corrected", id0)));
+
+    expect(changeSet).toEqual({ changed: [id0], inserted: [], moved: [], removed: [] });
+  });
+
+  it("reports a newly inserted block", async () => {
+    const { document, unitEntryId } = await seedWorkWithContent();
+    const id0 = blockId(document, 0);
+    await reconcile(unitEntryId, doc(para("first", id0)));
+
+    const changeSet = await changeSetOf(unitEntryId, doc(para("first", id0), para("second")));
+
+    expect(changeSet.changed).toEqual([]);
+    expect(changeSet.inserted).toHaveLength(1);
+    expect(changeSet.moved).toEqual([]);
+    expect(changeSet.removed).toEqual([]);
+  });
+
+  it("reports a removed block", async () => {
+    const { document, unitEntryId } = await seedWorkWithContent();
+    const id0 = blockId(document, 0);
+    const seeded = await reconcile(unitEntryId, doc(para("first", id0), para("second")));
+    const id1 = blockId(seeded, 1);
+
+    const changeSet = await changeSetOf(unitEntryId, doc(para("first", id0)));
+
+    expect(changeSet).toEqual({ changed: [], inserted: [], moved: [], removed: [id1] });
+  });
+
+  it("reports a reorder among surviving blocks as a move, not a change", async () => {
+    const { document, unitEntryId } = await seedWorkWithContent();
+    const id0 = blockId(document, 0);
+    const seeded = await reconcile(unitEntryId, doc(para("first", id0), para("second")));
+    const id1 = blockId(seeded, 1);
+
+    const changeSet = await changeSetOf(unitEntryId, doc(para("second", id1), para("first", id0)));
+
+    expect(changeSet).toEqual({ changed: [], inserted: [], moved: [id1, id0], removed: [] });
+  });
+});
+
 describe("reconcileEditableWorkContent retention arms", () => {
   // Each arm seeds a durable reference to the removed block and asserts its Entry is retained (its
   // doc_blocks content is gone, but the referencing FK stays valid).

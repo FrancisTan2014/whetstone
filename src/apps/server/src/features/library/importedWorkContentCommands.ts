@@ -12,7 +12,7 @@ import { and, eq } from "drizzle-orm";
 import type { DbClient } from "../../db/dbClient.js";
 import {
   insertEditableWorkSection,
-  repartitionEditableWorkContent
+  reconcileEditableWorkContent
 } from "../content/editableWorkContent.js";
 import { stampCorrectionMarkers } from "../content/workCorrectionMarkers.js";
 import { claimWorkContentRevision } from "../content/workContentRevision.js";
@@ -83,6 +83,12 @@ async function findCorrectableWork(tx: Transaction, workEntryId: EntryId): Promi
 // stamps the correction markers from the precise change set — an unchanged Save advances the revision but
 // stamps no marker, so it never fabricates false correction evidence. The immutable source/hash and
 // extraction evidence are untouched: correction only rewrites canonical block rows.
+//
+// Deliberately reconciles rather than repartitions (#871): an imported Work's units were divided once from
+// the source's own navigation (an EPUB's spine or a PDF's bookmark outline, #862), and a correction must
+// preserve that division, not silently re-derive it from whatever headings the edited draft happens to
+// contain. `manualWorkContentCommands.ts`'s save calls `repartitionEditableWorkContent` instead, because a
+// manual Work's units ARE heading-led by construction — that divergence is intentional, not an oversight.
 export async function correctImportedWorkContent(
   dependencies: ImportedWorkContentDependencies,
   workEntryId: EntryId,
@@ -111,19 +117,19 @@ export async function correctImportedWorkContent(
       return { status: "conflict" as const };
     }
 
-    // Substitute the corrected section's draft into the Work's block stream and repartition the affected
-    // span at heading boundaries, exactly as the manual editor does; the returned change set names the
-    // precise inserted/changed/removed/moved blocks so the markers record real correction evidence only.
+    // Substitute the corrected draft into the unit's blocks WITHOUT repartitioning: the unit named by
+    // `unitEntryId` stays the only unit touched, so a heading typed into the draft becomes an in-unit
+    // heading block, never a new unit boundary. The returned change set names the precise
+    // inserted/changed/removed/moved blocks so the markers record real correction evidence only.
     const normalized = normalizeManualWorkDocument(document);
-    const { activeUnitEntryId, changeSet } = await repartitionEditableWorkContent(tx, {
-      createEntryId: dependencies.createEntryId,
+    const { changeSet } = await reconcileEditableWorkContent(tx, {
       document: normalized,
-      editedUnitEntryId: unitEntryId,
+      unitEntryId,
       workEntryId
     });
     await stampCorrectionMarkers(tx, workEntryId, changeSet, now);
 
-    return { activeUnitEntryId, status: "corrected" as const };
+    return { status: "corrected" as const };
   });
 
   if (outcome.status !== "corrected") {
@@ -132,7 +138,7 @@ export async function correctImportedWorkContent(
 
   return {
     status: "corrected",
-    work: await buildDto(dependencies.db, workEntryId, toEntryId(outcome.activeUnitEntryId))
+    work: await buildDto(dependencies.db, workEntryId, unitEntryId)
   };
 }
 

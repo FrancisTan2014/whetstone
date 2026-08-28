@@ -19,6 +19,7 @@ import {
 } from "../../db/schema.js";
 import {
   initializeEditableWorkContent,
+  insertEditableWorkSection,
   reconcileEditableWorkContent
 } from "../content/editableWorkContent.js";
 import {
@@ -84,6 +85,53 @@ async function seedCanonicalImported(
     })
   );
   return { headingId, paraId, unitEntryId, workEntryId: toEntryId(entryId) };
+}
+
+// A canonical imported Work (origin=imported) with THREE reading units, each carrying its own heading and
+// paragraph — modeling a book whose chapters were divided once by the source's own navigation (an EPUB
+// spine or a PDF bookmark outline, #862). Returns every unit's ids in reading order so a test can correct
+// one unit and assert the other two, and the total unit count, are left untouched (#871).
+async function seedMultiUnitImported(entryId: string): Promise<{
+  units: ReadonlyArray<{ headingId: string; paraId: string; unitEntryId: string }>;
+  workEntryId: EntryId;
+}> {
+  await db.insert(authors).values({ id: `author-${entryId}`, name: entryId, nameKey: entryId });
+  await db.insert(entries).values({ id: entryId, type: "work" });
+  await db.insert(workMeta).values({
+    authorId: `author-${entryId}`,
+    entryId,
+    language: "en",
+    origin: "imported",
+    title: `Work ${entryId}`,
+    workType: "book"
+  });
+  const workEntryId = toEntryId(entryId);
+
+  const { unitEntryId: unit0 } = await db.transaction((tx) =>
+    initializeEditableWorkContent(tx, { createEntryId, workEntryId })
+  );
+  const { unitEntryId: unit1 } = await db.transaction((tx) =>
+    insertEditableWorkSection(tx, { createEntryId, headingLevel: 1, orderIndex: 1, workEntryId })
+  );
+  const { unitEntryId: unit2 } = await db.transaction((tx) =>
+    insertEditableWorkSection(tx, { createEntryId, headingLevel: 1, orderIndex: 2, workEntryId })
+  );
+
+  const units = [];
+  for (const [index, unitEntryId] of [unit0, unit1, unit2].entries()) {
+    const headingId = `${entryId}-h${index}`;
+    const paraId = `${entryId}-p${index}`;
+    await db.transaction((tx) =>
+      reconcileEditableWorkContent(tx, {
+        document: doc(heading(`Chapter ${index}`, headingId), para(`Body ${index}`, paraId)),
+        unitEntryId,
+        workEntryId
+      })
+    );
+    units.push({ headingId, paraId, unitEntryId });
+  }
+
+  return { units, workEntryId };
 }
 
 async function seedManualWork(entryId: string): Promise<string> {
@@ -176,6 +224,25 @@ async function blockMarkers(
 
 async function blockIds(workEntryId: string): Promise<string[]> {
   const rows = await blockMarkers(workEntryId);
+  return rows.map((row) => row.id);
+}
+
+async function unitCount(workEntryId: string): Promise<number> {
+  const rows = await db
+    .select({ entryId: readingUnits.entryId })
+    .from(readingUnits)
+    .where(eq(readingUnits.workEntryId, workEntryId));
+  return rows.length;
+}
+
+// Blocks belonging to exactly one unit, in that unit's own order — unlike `blockIds`, which orders across
+// the whole Work and is only unambiguous for a single-unit fixture.
+async function unitBlockIds(unitEntryId: string): Promise<string[]> {
+  const rows = await db
+    .select({ id: docBlocks.id })
+    .from(docBlocks)
+    .where(eq(docBlocks.readingUnitEntryId, unitEntryId))
+    .orderBy(asc(docBlocks.orderIndex));
   return rows.map((row) => row.id);
 }
 
@@ -398,6 +465,66 @@ describe("correctImportedWorkContent — save semantics and markers", () => {
       .from(uploadedSourceClaims)
       .where(eq(uploadedSourceClaims.sha256, "abc123"));
     expect(claim).toMatchObject({ sha256: "abc123", workEntryId });
+  });
+
+  it("keeps a multi-unit Work's division when a correction adds a new heading (#871)", async () => {
+    const { units, workEntryId } = await seedMultiUnitImported("m-1");
+    const [first, middle, last] = units;
+    if (first === undefined || middle === undefined || last === undefined) {
+      throw new Error("expected three seeded units");
+    }
+
+    const result = await correctImportedWorkContent(
+      dependencies(),
+      workEntryId,
+      toEntryId(middle.unitEntryId),
+      doc(
+        heading("Chapter 1", middle.headingId),
+        para("Body 1", middle.paraId),
+        heading("New subheading", "new-heading"),
+        para("New paragraph", "new-para")
+      ),
+      0
+    );
+
+    expect(result.status).toBe("corrected");
+    // The Work still has exactly three units: correcting one unit never mints or merges a unit, even
+    // though the draft now contains a second heading.
+    expect(await unitCount(workEntryId)).toBe(3);
+    // The new heading landed as an in-unit block inside the corrected unit, not a new unit boundary.
+    expect(await unitBlockIds(middle.unitEntryId)).toEqual([
+      middle.headingId,
+      middle.paraId,
+      "new-heading",
+      "new-para"
+    ]);
+    // The neighboring units are untouched: same ids, and no correction marker.
+    expect(await unitBlockIds(first.unitEntryId)).toEqual([first.headingId, first.paraId]);
+    expect(await unitBlockIds(last.unitEntryId)).toEqual([last.headingId, last.paraId]);
+  });
+
+  it("keeps a corrected unit separate even when its leading heading is removed (#871)", async () => {
+    const { units, workEntryId } = await seedMultiUnitImported("m-2");
+    const [first, middle, last] = units;
+    if (first === undefined || middle === undefined || last === undefined) {
+      throw new Error("expected three seeded units");
+    }
+
+    const result = await correctImportedWorkContent(
+      dependencies(),
+      workEntryId,
+      toEntryId(middle.unitEntryId),
+      doc(para("Body 1 without its heading", middle.paraId)),
+      0
+    );
+
+    expect(result.status).toBe("corrected");
+    // Removing the unit's own leading heading does not merge it into the preceding unit — the manual
+    // editor's repartition would merge left here, but an imported correction must not.
+    expect(await unitCount(workEntryId)).toBe(3);
+    expect(await unitBlockIds(middle.unitEntryId)).toEqual([middle.paraId]);
+    expect(await unitBlockIds(first.unitEntryId)).toEqual([first.headingId, first.paraId]);
+    expect(await unitBlockIds(last.unitEntryId)).toEqual([last.headingId, last.paraId]);
   });
 });
 

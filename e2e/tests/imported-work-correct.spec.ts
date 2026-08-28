@@ -8,13 +8,14 @@ import { expect, test } from "../fixtures";
 
 // The imported-Work correction journey (#762): open a canonical imported Work (a per-test EPUB) in the
 // SHARED Library editor from its "Correct content" action, correct a stored block and change a block's type
-// (a heading that repartitions a new ReadingUnit), save behind the Work-revision fence, and prove the
-// corrected blocks are readable everywhere — reopened in the editor and rendered in the Reader. The same
-// run proves the administrative affordance ("Open in Reader") is present on the correction surface yet
-// ABSENT from the owner-scoped manual editor, so the shared editor never leaks administrative reach into
-// the manual path. jsdom cannot lay out the persistent toolbar, drive the Radix overflow menu, or run the
-// ProseMirror save/repartition transactions a real save/reload exercises, so this proves the whole loop in
-// the actual browser, in BOTH the Day and Night themes and at BOTH a desktop and a 320px viewport.
+// (a heading, which stays an in-unit block and never mints a new ReadingUnit — #871), save behind the
+// Work-revision fence, and prove the corrected blocks are readable everywhere — reopened in the editor and
+// rendered in the Reader. The same run proves the administrative affordance ("Open in Reader") is present
+// on the correction surface yet ABSENT from the owner-scoped manual editor, so the shared editor never
+// leaks administrative reach into the manual path. jsdom cannot lay out the persistent toolbar, drive the
+// Radix overflow menu, or run the ProseMirror save/reconcile transactions a real save/reload exercises, so
+// this proves the whole loop in the actual browser, in BOTH the Day and Night themes and at BOTH a desktop
+// and a 320px viewport.
 //
 // Each cell seeds its OWN canonical imported Work by uploading a uniquely titled minimal EPUB, so the four
 // cells never contend on shared state and never contaminate other specs that read the shared setup fixture.
@@ -179,8 +180,9 @@ for (const theme of ["day", "night"] as const) {
 
       // Change a block's type: promote the body paragraph to a Heading 2 by clicking its line to place the
       // caret (the proven, viewport-independent way to target a specific block in this editor) and choosing
-      // the style from the persistent toolbar's "Block style" menu. This transactionally repartitions a new
-      // ReadingUnit at the promoted heading.
+      // the style from the persistent toolbar's "Block style" menu. An imported-Work correction reconciles
+      // the unit in place rather than repartitioning (#871), so this stays an in-unit heading block — it
+      // must NOT mint a new ReadingUnit/section, unlike the same action in the manual editor.
       await editor.getByText(promotedTitle, { exact: true }).click();
       await chooseBlockStyle(page, "Heading 2");
       await expect(editor.getByRole("heading", { name: promotedTitle })).toBeVisible();
@@ -189,23 +191,39 @@ for (const theme of ["day", "night"] as const) {
       await page.getByRole("button", { exact: true, name: "Save" }).click();
       await expect(page.getByRole("status")).toHaveText("Saved");
 
-      // The correction persisted to the canonical blocks: the promotion created a Heading-2 section, and the
-      // first ReadingUnit still carries the corrected marker text on its heading.
+      // The correction persisted to the canonical blocks (#871): promoting the paragraph kept the Work's
+      // original, single-chapter division — no new section was minted — and the first ReadingUnit now
+      // carries BOTH the corrected marker text on its own heading AND the promoted text as an in-unit
+      // Heading-2 block.
       const worksResponse = await page.request.get(
         `${setup.baseURL}api/imported-works/${encodeURIComponent(workId)}`
       );
       expect(worksResponse.ok()).toBe(true);
       const savedWork = (await worksResponse.json()) as { sections: ReadonlyArray<Section> };
-      const newSection = savedWork.sections.find((section) => section.title === promotedTitle);
-      expect(newSection, `section titled "${promotedTitle}"`).toBeDefined();
-      expect(newSection!.headingLevel).toBe(2);
+      expect(savedWork.sections, "no new section minted by the promotion").toHaveLength(1);
 
       const firstUnit = savedWork.sections[0]!.unitEntryId;
       const firstUnitContent = await page.request.get(
         `${setup.baseURL}api/works/${encodeURIComponent(workId)}/units/${encodeURIComponent(firstUnit)}/content`
       );
       expect(firstUnitContent.ok()).toBe(true);
-      expect(JSON.stringify(await firstUnitContent.json())).toContain(marker);
+      const unitBody = (await firstUnitContent.json()) as {
+        docBlocks: ReadonlyArray<{
+          node: Readonly<{
+            attrs?: Readonly<{ level?: number }>;
+            content?: ReadonlyArray<Readonly<{ text?: string }>>;
+          }>;
+          type: string;
+        }>;
+      };
+      expect(JSON.stringify(unitBody)).toContain(marker);
+      const promotedHeading = unitBody.docBlocks.find(
+        (block) =>
+          block.type === "heading" &&
+          block.node.attrs?.level === 2 &&
+          (block.node.content ?? []).some((child) => child.text === promotedTitle)
+      );
+      expect(promotedHeading, `an in-unit Heading 2 block with text "${promotedTitle}"`).toBeDefined();
 
       // Reopen the correction editor from a clean navigation: the active section reloads from the persisted
       // blocks with the corrected marker.

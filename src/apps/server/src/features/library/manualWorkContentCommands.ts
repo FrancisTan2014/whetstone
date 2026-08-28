@@ -127,6 +127,13 @@ async function claimContentRevision(
 // `revision` (the Work's `content_revision`) must still be the stored one, or the save is a conflict and
 // nothing is written. The whole claim-reconcile runs in one transaction, so a save never lands
 // half-applied; the recomputed section list is read back after commit so the editor's Outline refreshes.
+//
+// Deliberately repartitions rather than reconciles (#871): a manual Work's units are heading-led by
+// construction (there is no external source division to preserve), so re-deriving unit boundaries from
+// whatever headings the saved draft contains is correct, expected editor behavior here. This is the mirror
+// image of `importedWorkContentCommands.ts`'s correction command, which reconciles a single unit in place
+// specifically to preserve an imported Work's original, author-independent division — that divergence is
+// intentional, not an oversight.
 export async function updateManualWorkContent(
   dependencies: ManualWorkContentDependencies,
   workEntryId: EntryId,
