@@ -1872,22 +1872,26 @@ describe("chapter-scale reading units", () => {
     expect(result.evidence.map((row) => row.blockId)).toEqual(ids);
   });
 
-  it("opens ONE unit when docling split the chapter opener into a number and a title", () => {
+  it("opens ONE unit when docling split the chapter opener into a number and a title, recombined into one heading (#867)", () => {
     // Measured: `10` and `Classes` are two level-1 headings resolving to the SAME bookmark. A bookmark
-    // names one division, so the second joins the first's unit — 27 chapters, not 39 fragments.
+    // names one division, so the second joins the first's unit — 27 chapters, not 39 fragments. #867: the
+    // same signal means the two ARE one converter-mangled heading, so they collapse into a single block
+    // rather than each rendering the chapter's identity again beside the unit's own eyebrow.
     const result = mapped(mapEn(doc(classesBody, classesPages, classesOutline)));
 
     expect(result.units.map((unit) => unit.title)).toEqual(["Chapter 10: Classes"]);
-    // The unit is titled from the bookmark, so no unit is called `10` even though its first block is.
+    // The recombined heading takes the bookmark's own title, not either mangled half.
     expect(headingTexts(result)).toEqual([
-      "10",
-      "Classes",
+      "Chapter 10: Classes",
       "Class Organization",
       "Encapsulation",
       "Classes Should Be Small!"
     ]);
-    expect(headingLevels(result)).toEqual([1, 1, 2, 3, 2]);
-    expect(blockIds(result)).toHaveLength(classesBody.length);
+    expect(headingLevels(result)).toEqual([1, 2, 3, 2]);
+    // Two input heading items collapsed into one block: one block fewer than input items.
+    expect(blockIds(result)).toHaveLength(classesBody.length - 1);
+    // Both consumed items are still counted as outline-derived — merging changes blocks, not provenance.
+    expect(result.headingLevelSources).toEqual({ label: 0, outline: 5 });
   });
 
   it("divides an outline-less PDF at its shallowest heading level, joining a bare chapter label", () => {
@@ -1906,5 +1910,53 @@ describe("chapter-scale reading units", () => {
     expect(headingLevels(result)).toEqual([2, 2, 2, 2, 2]);
     expect(result.headingLevelSources).toEqual({ label: 5, outline: 0 });
     expect(blockIds(result)).toHaveLength(classesBody.length);
+  });
+});
+
+// #867: a split chapter opener announced its identity three times over — the unit's eyebrow, then each
+// converter-mangled half at full heading weight. The fix reads ONLY outline-entry identity (never a
+// heading's text, shape, or page position): a run of consecutive headings resolved from the SAME
+// non-null bookmark is one heading docling tore in two, and collapses into one block titled from the
+// bookmark. That is deliberately narrower than "two headings in a row" — two headings that merely sit
+// next to each other but name DIFFERENT (or no) bookmark stay exactly as printed.
+describe("recombining a converter-split chapter opener (#867)", () => {
+  it("collapses a run of more than two headings sharing one bookmark into a single heading", () => {
+    // A three-way split is rarer than docling's usual number+title pair, but the signal generalizes: every
+    // fragment here independently names the same "Appendix A: Concurrency II" bookmark.
+    const outline: readonly PdfOutlineEntry[] = [
+      { level: 1, pageNumber: 5, title: "Appendix A: Concurrency II" }
+    ];
+    const body: readonly StructuredDocItem[] = [
+      item({ label: "section_header", pageNumber: 5, text: "Appendix" }),
+      item({ label: "section_header", pageNumber: 5, text: "A" }),
+      item({ label: "section_header", pageNumber: 5, text: "Concurrency II" }),
+      item({ label: "text", pageNumber: 5, text: "Appendix body." })
+    ];
+    const result = mapped(mapEn(doc(body, [{ hasNativeText: true, pageNumber: 5 }], outline)));
+
+    expect(result.units).toHaveLength(1);
+    expect(result.units[0]!.title).toBe("Appendix A: Concurrency II");
+    expect(headingTexts(result)).toEqual(["Appendix A: Concurrency II"]);
+    expect(headingLevels(result)).toEqual([1]);
+    expect(unitTypes(result, 0)).toEqual(["heading", "paragraph"]);
+    // Three consumed heading items collapsed into one block — merging changes blocks, not provenance.
+    expect(result.headingLevelSources).toEqual({ label: 0, outline: 3 });
+  });
+
+  it("does not merge a heading run unless every member names the SAME bookmark (front-matter title + series subtitle)", () => {
+    // The real shape that must stay untouched: the half-title's "Clean Code" exactly names the book's own
+    // top-level bookmark, but the very next heading — the publisher's series line — names no bookmark at
+    // all. It is not a fragment of "Clean Code" the way "10"/"Classes" are fragments of one chapter
+    // opener, so outline-entry identity correctly leaves it as its own heading rather than absorbing it.
+    const outline: readonly PdfOutlineEntry[] = [{ level: 1, pageNumber: 1, title: "Clean Code" }];
+    const body: readonly StructuredDocItem[] = [
+      item({ label: "title", pageNumber: 1, text: "Clean Code" }),
+      item({ label: "section_header", pageNumber: 1, text: "Robert C. Martin Series" })
+    ];
+    const result = mapped(mapEn(doc(body, [{ hasNativeText: true, pageNumber: 1 }], outline)));
+
+    expect(headingTexts(result)).toEqual(["Clean Code", "Robert C. Martin Series"]);
+    expect(headingLevels(result)).toEqual([1, 2]);
+    expect(result.headingLevelSources).toEqual({ label: 1, outline: 1 });
   });
 });
