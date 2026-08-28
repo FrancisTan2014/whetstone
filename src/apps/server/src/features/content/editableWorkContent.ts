@@ -83,6 +83,11 @@ export type ReconcileEditableWorkContentContext = Readonly<{
 
 export type ReconcileEditableWorkContentResult = Readonly<{
   document: DocumentNodeJSON;
+  // The precise before/after block change set over the unit (#762, #871): which current blocks were
+  // inserted, had their content changed, were removed, or only reordered. An imported-Work correction
+  // caller uses it to stamp correction markers; an authored-Work save ignores it. An unchanged save
+  // reports an empty set.
+  changeSet: BlockChangeSet;
 }>;
 
 // The already-authorized Work+section context a repartition runs under (#698). The caller has verified
@@ -252,17 +257,27 @@ async function writeEditableWorkSection(
   return { document, insertedBlockIds: blocks.map((block) => block.id), unitEntryId };
 }
 
-// Reconcile an editable Work's single reading unit to match `document`, preserving the id of every block
-// that survives the edit so notes anchored to an unchanged block stay valid across saves. A set diff over
-// block ids: surviving nodes are UPDATEd in place; genuinely new nodes are INSERTed (entries + doc_blocks +
-// a `contains` edge); removed nodes have their `doc_blocks` row and containment edge deleted. A removed
+// Reconcile an editable Work's reading unit to match `document`, preserving the id of every block that
+// survives the edit so notes anchored to an unchanged block stay valid across saves. A set diff over block
+// ids: surviving nodes are UPDATEd in place; genuinely new nodes are INSERTed (entries + doc_blocks + a
+// `contains` edge); removed nodes have their `doc_blocks` row and containment edge deleted. A removed
 // block's Entry is retained whenever durable history still references it (see `blockEntryStillReferenced`)
 // — a note, a link, a reading position, a Recitation range endpoint, a review card, or a review event —
 // so no learner-owned material or review schedule is destroyed as cleanup collateral; the anchor simply no
 // longer resolves to rendered content. Only a genuinely unreferenced Entry is deleted, and its nullable
 // provenance references (harvested chunks, `derived_from` links) are detached first so the delete is
-// FK-safe. Runs entirely in the caller's transaction, so a save never lands half-applied. Returns the
-// stamped document.
+// FK-safe. Runs entirely in the caller's transaction, so a save never lands half-applied.
+//
+// This never repartitions: the unit named by `unitEntryId` is the only unit touched, whether the caller is
+// an authored Work (always single-unit) or an imported-Work correction (#871) saving one existing chapter.
+// A heading typed into the draft becomes an in-unit heading block, exactly like any other block — it is
+// never treated as a new unit boundary. That is a deliberate difference from `repartitionEditableWorkContent`
+// below: a manual Work's units are heading-led by construction, so repartitioning at every heading is its
+// correct, undifferentiated behavior, but an imported Work's units were divided once by the author's own
+// navigation (an EPUB's spine or a PDF's bookmark outline, #862) and correction must preserve that division
+// rather than silently re-deriving it from whatever headings the correction happens to contain. Returns the
+// stamped document and the precise before/after change set over the unit (#762), for a caller that needs to
+// tell a real content edit from an unchanged save.
 export async function reconcileEditableWorkContent(
   tx: Transaction,
   context: ReconcileEditableWorkContentContext
@@ -272,10 +287,15 @@ export async function reconcileEditableWorkContent(
   const newIds = new Set(blocks.map((block) => block.id));
 
   const existingRows = await tx
-    .select({ id: docBlocks.id })
+    .select({ id: docBlocks.id, nodeJson: docBlocks.nodeJson, orderIndex: docBlocks.orderIndex })
     .from(docBlocks)
     .where(eq(docBlocks.readingUnitEntryId, unitEntryId));
   const existingIds = new Set(existingRows.map((row) => row.id));
+  // Each existing block's content key BEFORE the edit, so the change set can tell a genuine content change
+  // from a pure reorder (#762), mirroring `repartitionEditableWorkContent` below.
+  const beforeContentById = new Map<string, string>(
+    existingRows.map((row) => [row.id, canonicalContentKey(row.nodeJson)])
+  );
 
   for (const block of blocks) {
     if (existingIds.has(block.id)) {
@@ -294,6 +314,15 @@ export async function reconcileEditableWorkContent(
       await insertBlock(tx, workEntryId, unitEntryId, block);
     }
   }
+
+  const beforeStream: BlockSequenceEntry[] = [...existingRows]
+    .sort((a, b) => a.orderIndex - b.orderIndex)
+    .map((row) => ({ contentKey: beforeContentById.get(row.id) as string, id: row.id }));
+  const afterStream: BlockSequenceEntry[] = blocks.map((block) => ({
+    contentKey: canonicalContentKey(block.node),
+    id: block.id
+  }));
+  const changeSet = diffBlockSequences(beforeStream, afterStream);
 
   const removedIds = [...existingIds].filter((id) => !newIds.has(id));
   if (removedIds.length > 0) {
@@ -328,7 +357,7 @@ export async function reconcileEditableWorkContent(
     }
   }
 
-  return { document: withIds };
+  return { changeSet, document: withIds };
 }
 
 // Repartition a manual Work's block stream after one section was saved (#698). ReadingUnits are bounded
