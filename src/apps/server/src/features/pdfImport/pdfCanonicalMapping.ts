@@ -494,6 +494,26 @@ function expandUnmappedContainers(
 // came from is tallied so the caller can report derived-versus-assumed depth. The body it walks is the
 // EXPANDED one (#812), so a descendant lifted out of an unrecognized container is an ordinary body item
 // here: it takes the same rules, joins a neighbouring `list_item` run, and keys its own evidence.
+// How many consecutive body items, starting at `startIndex`, resolve to the outline entry `entryIndex`
+// (#867) — always >= 1, since the item AT `startIndex` is assumed to already match by the caller. Reads
+// `outlineEntry` identity alone, never a heading's own text, shape, or position: a bookmark names ONE
+// heading (#815), so any further adjacent item still claiming that SAME entry can only be the other half
+// of that one converter-mangled heading, never a coincidentally neighboring but genuinely distinct one.
+function countOutlineHeadingRun(
+  headings: readonly (ResolvedHeading | null)[],
+  startIndex: number,
+  entryIndex: number
+): number {
+  let length = 1;
+  while (
+    startIndex + length < headings.length &&
+    headings[startIndex + length]?.outlineEntry?.index === entryIndex
+  ) {
+    length += 1;
+  }
+  return length;
+}
+
 function walkBody(
   body: readonly StructuredDocItem[],
   outline: readonly PdfOutlineEntry[]
@@ -520,6 +540,32 @@ function walkBody(
     }
     const heading = headings[index]!;
     if (heading !== null) {
+      // Recombine a converter-split chapter opener (#867): docling routinely emits one heading as two
+      // adjacent items — a bare division label ("10", "Appendix A") and its name ("Classes", "Concurrency
+      // II") — and #815's own matcher resolves BOTH to the SAME outline entry (the label by substring:
+      // "chapter 10: classes" contains "10"). Left as two blocks, the reader shows the chapter's identity
+      // three times over: the unit's eyebrow, then each mangled half at full heading weight. Collapsing
+      // the whole run into one block named from the bookmark fixes that for free, because the merged
+      // heading's text now exactly matches the unit title the eyebrow already suppresses against.
+      if (heading.outlineEntry !== null) {
+        const runLength = countOutlineHeadingRun(headings, index, heading.outlineEntry.index);
+        if (runLength > 1) {
+          sources.outline += runLength;
+          out.push({
+            heading,
+            label: item.label,
+            node: {
+              attrs: { level: heading.level },
+              content: inlineContent(heading.outlineEntry.title),
+              type: "heading"
+            },
+            source: item
+          });
+          index += runLength;
+          continue;
+        }
+      }
+
       sources[heading.outlineEntry === null ? "label" : "outline"] += 1;
 
       // Apply heading sanity rule (#856): if heading text is a code listing, split it into caption + code.
