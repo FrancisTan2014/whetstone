@@ -33,7 +33,12 @@ function runningView(): PdfImportViewDto {
 function publishedView(workEntryId: string): PdfImportViewDto {
   return {
     ...runningView(),
-    publication: { status: "published", unresolvedFigureCount: 0, workEntryId }
+    publication: {
+      status: "published",
+      unresolvedFigureCount: 0,
+      headingLevelSources: { label: 0, outline: 0 },
+      workEntryId
+    }
   };
 }
 

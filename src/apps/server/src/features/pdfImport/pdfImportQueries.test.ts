@@ -5,6 +5,7 @@ import { RANGE_CONVERSION_SCHEMA_VERSION, type RangeConversion } from "@whetston
 
 import { createDbClient, type DbClient } from "../../db/dbClient.js";
 import { runMigrations } from "../../db/migrate.js";
+import { entries } from "../../db/schema.js";
 import { DEFAULT_USER_ID } from "../../identity/currentUser.js";
 import { getPdfImportStatus, buildPdfImportPublicationOutcome } from "./pdfImportQueries.js";
 import {
@@ -14,6 +15,7 @@ import {
   commitRange,
   insertPublicationIntent,
   insertQueuedAttempt,
+  linkPublishedWork,
   markFailed,
   markPublicationImagesUnsupported,
   markPublicationNoContent,
@@ -244,5 +246,47 @@ describe("buildPdfImportPublicationOutcome", () => {
     });
 
     expect(await buildPdfImportPublicationOutcome(db, "a1")).toEqual({ status: "pending" });
+  });
+
+  it("reports `published` with the linked Work and its figure/outline-gap warning counts (#806, #870)", async () => {
+    await seedQueued("a1");
+    await insertPublicationIntent(db, {
+      attemptId: "a1",
+      enteredTitle: null,
+      enteredAuthor: null,
+      enteredLanguage: null,
+      fileName: "book.pdf"
+    });
+    await db.insert(entries).values({ id: "work-a1", type: "work" });
+    await linkPublishedWork(db, "a1", "work-a1", new Date(), 2, 3, 5);
+
+    expect(await buildPdfImportPublicationOutcome(db, "a1")).toEqual({
+      status: "published",
+      unresolvedFigureCount: 2,
+      headingLevelSources: { label: 3, outline: 5 },
+      workEntryId: "work-a1"
+    });
+  });
+
+  it("reports `published` with zeroed warning counts once a Work with no figures or outline gap links", async () => {
+    await seedQueued("a1");
+    await insertPublicationIntent(db, {
+      attemptId: "a1",
+      enteredTitle: null,
+      enteredAuthor: null,
+      enteredLanguage: null,
+      fileName: "clean.pdf"
+    });
+    await db.insert(entries).values({ id: "work-a1", type: "work" });
+    // A Work with nothing to warn about stores every count as null (#806, #870); the outcome still
+    // reports 0 rather than null so the Library never has to special-case an absent warning.
+    await linkPublishedWork(db, "a1", "work-a1", new Date(), null, null, null);
+
+    expect(await buildPdfImportPublicationOutcome(db, "a1")).toEqual({
+      status: "published",
+      unresolvedFigureCount: 0,
+      headingLevelSources: { label: 0, outline: 0 },
+      workEntryId: "work-a1"
+    });
   });
 });

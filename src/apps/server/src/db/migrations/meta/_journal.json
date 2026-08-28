@@ -575,6 +575,13 @@
       "when": 1785389991309,
       "tag": "0081_pdf_unresolved_figures",
       "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1785450000000,
+      "tag": "0082_pdf_outline_gap",
+      "breakpoints": true
     }
   ]
 }

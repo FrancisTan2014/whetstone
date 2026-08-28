@@ -412,6 +412,10 @@ export type PdfImportPublicationRecord = Readonly<{
   // A warning on a successful publication (#806): unresolved figure placeholders in the published Work,
   // or null when there were none. Positive only alongside a non-null `workEntryId`.
   unresolvedFigureCount: number | null;
+  // Outline-gap review warning (#870): heading depths from labels (the gap) and from the embedded
+  // outline, or null when the Work carried no gap. Same semantics as `unresolvedFigureCount`.
+  outlineGapHeadings: number | null;
+  outlineResolvedHeadings: number | null;
   publishedAt: Date | null;
 }>;
 
@@ -429,6 +433,8 @@ function toPublicationRecord(row: PublicationRow): PdfImportPublicationRecord {
     noContent: row.noContent,
     unpreservableImages: row.unpreservableImages,
     unresolvedFigureCount: row.unresolvedFigureCount,
+    outlineGapHeadings: row.outlineGapHeadings,
+    outlineResolvedHeadings: row.outlineResolvedHeadings,
     publishedAt: row.publishedAt
   });
 }
@@ -516,14 +522,20 @@ export async function linkPublishedWork(
   // The unresolved-figure warning count (#806) for this publication, or null when the Work carried no
   // unresolved figures. Recorded atomically with the linked Work so a successful publication always
   // exposes its figure-review workload.
-  unresolvedFigureCount: number | null = null
+  unresolvedFigureCount: number | null = null,
+  // The outline-gap warning counts (#870): how many heading depths came from labels rather than the
+  // embedded outline (the gap), and how many came from the outline. Null when the Work carries no gap.
+  outlineGapHeadings: number | null = null,
+  outlineResolvedHeadings: number | null = null
 ): Promise<void> {
   await tx
     .update(pdfImportPublications)
     .set({
       workEntryId,
       publishedAt: now,
-      unresolvedFigureCount: unresolvedFigureCount === 0 ? null : unresolvedFigureCount
+      unresolvedFigureCount: unresolvedFigureCount === 0 ? null : unresolvedFigureCount,
+      outlineGapHeadings: outlineGapHeadings === 0 ? null : outlineGapHeadings,
+      outlineResolvedHeadings: outlineResolvedHeadings === 0 ? null : outlineResolvedHeadings
     })
     .where(pendingPublicationGuard(attemptId));
 }

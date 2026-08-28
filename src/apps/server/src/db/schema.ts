@@ -1037,6 +1037,14 @@ export const pdfImportPublications = pgTable(
     // present; a positive count coexists with `workEntryId` (it is a warning, not a terminal outcome), so
     // it is deliberately excluded from the single-outcome check below.
     unresolvedFigureCount: integer("unresolved_figure_count"),
+    // Outline-gap review warning (#870): how many heading depths were derived from labels rather than
+    // the PDF's embedded outline, and how many came from the outline itself. `outlineGapHeadings > 0`
+    // with `outlineResolvedHeadings === 0` means the book has no outline at all; `outlineGapHeadings > 0`
+    // with `outlineResolvedHeadings > 0` means an outline exists but some headings were unmatched. Same
+    // non-refusing warning semantics as `unresolvedFigureCount`: null when there is nothing to warn
+    // about, positive count only alongside a published Work.
+    outlineGapHeadings: integer("outline_gap_headings"),
+    outlineResolvedHeadings: integer("outline_resolved_headings"),
     createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull().defaultNow(),
     publishedAt: timestamp("published_at", { mode: "date", withTimezone: true })
   },
@@ -1063,6 +1071,16 @@ export const pdfImportPublications = pgTable(
     check(
       "pdf_import_publications_unresolved_figures_ck",
       sql`${table.unresolvedFigureCount} is null or (${table.unresolvedFigureCount} > 0 and ${table.workEntryId} is not null)`
+    ),
+    // An outline-gap warning (#870), when present, is a positive count and only accompanies a published
+    // Work — same shape as the unresolved-figure warning.
+    check(
+      "pdf_import_publications_outline_gap_ck",
+      sql`${table.outlineGapHeadings} is null or (${table.outlineGapHeadings} > 0 and ${table.workEntryId} is not null)`
+    ),
+    check(
+      "pdf_import_publications_outline_resolved_ck",
+      sql`${table.outlineResolvedHeadings} is null or (${table.outlineResolvedHeadings} > 0 and ${table.workEntryId} is not null)`
     )
   ]
 );

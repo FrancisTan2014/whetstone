@@ -17,7 +17,7 @@ import { claimUploadedSource, findClaimedWork } from "../content/sourceClaims.js
 import { resolveNamedAuthor } from "../library/authorResolver.js";
 import { collectAdoptedArtifacts } from "./pdfImportArtifacts.js";
 import { writeBlockEvidence } from "./pdfBlockEvidenceWriter.js";
-import { mapStructuredDocument } from "./pdfCanonicalMapping.js";
+import { mapStructuredDocument, type PdfHeadingLevelSources } from "./pdfCanonicalMapping.js";
 import {
   bindStagedPdfAttempt,
   discardStagedPdfUpload,
@@ -183,6 +183,7 @@ export type PublishConvertedResult =
       work: WorkDto;
       reopened: boolean;
       unresolvedFigureCount: number;
+      headingLevelSources: PdfHeadingLevelSources;
     }>;
 
 // The document metadata resolution ladder (#702): entered value first, then the source PDF's own cleaned
@@ -335,8 +336,11 @@ export async function publishConvertedPdfImport(
 
   // A mapped document may carry unresolved picture/figure placeholders (#806): they publish as visible,
   // correctable figures and are recorded as a review warning on the successful publication, never a
-  // refusal.
+  // refusal. An outline gap (#870) is the same kind of signal: heading depths derived from labels
+  // instead of the embedded outline are worth an administrator's attention before the Work is presented
+  // to a reader, and are recorded the same way.
   const unresolvedFigureCount = mapping.unresolvedFigureCount;
+  const headingLevelSources = mapping.headingLevelSources;
 
   // Persist every adopted rendered-figure PNG (#807) into the content-addressed image store BEFORE the
   // Work is committed, so each resolved figure's `imageResourceId` (its sha256) already resolves when the
@@ -405,8 +409,17 @@ export async function publishConvertedPdfImport(
       });
       await writeBlockEvidence(tx, workEntryId, mapping.evidence, ocrProvenance);
       // Terminal job state, atomic with the Work: a failure anywhere above leaves no readable Work and
-      // no linked publication. The unresolved-figure count rides along as a review warning (#806).
-      await linkPublishedWork(tx, attemptId, workEntryId, deps.now(), unresolvedFigureCount);
+      // no linked publication. The unresolved-figure count and the outline-gap counts ride along as
+      // review warnings (#806, #870).
+      await linkPublishedWork(
+        tx,
+        attemptId,
+        workEntryId,
+        deps.now(),
+        unresolvedFigureCount,
+        headingLevelSources.label,
+        headingLevelSources.outline
+      );
       return {
         expectedBlockCount,
         work: {
@@ -424,14 +437,16 @@ export async function publishConvertedPdfImport(
 
   // Identical bytes reopened the owning Work (a concurrent creation's loser, or a genuine re-upload): the
   // Work already exists, so link this attempt's publication to it as its terminal state. Identical bytes
-  // map to the same figures, so this attempt records the same unresolved-figure warning (#806).
+  // map to the same figures and the same outline, so this attempt records the same warnings (#806, #870).
   if (outcome.status === "exact_existing") {
     await linkPublishedWork(
       deps.db,
       attemptId,
       outcome.work.entryId,
       deps.now(),
-      unresolvedFigureCount
+      unresolvedFigureCount,
+      headingLevelSources.label,
+      headingLevelSources.outline
     );
   }
   // The Work's source bytes now live durably in the source-file store (a fresh create) or already did (a
@@ -444,6 +459,7 @@ export async function publishConvertedPdfImport(
     reopened: outcome.status === "exact_existing",
     status: "published",
     unresolvedFigureCount,
+    headingLevelSources,
     work: outcome.work
   };
 }

@@ -11,6 +11,7 @@ import {
   figuresToReviewMessage,
   noReadableContentMessage,
   ocrValidationFailedMessage,
+  outlineGapMessage,
   recognizingTextLabel
 } from "./pdfImportProgress";
 
@@ -47,11 +48,17 @@ function view(
 describe("describePdfImport", () => {
   it("reports a published Work with no unresolved figures so the caller can open the Reader", () => {
     const progress = describePdfImport(
-      view({ status: "published", unresolvedFigureCount: 0, workEntryId: "work-9" })
+      view({
+        status: "published",
+        unresolvedFigureCount: 0,
+        headingLevelSources: { label: 0, outline: 0 },
+        workEntryId: "work-9"
+      })
     );
 
     expect(progress).toEqual({
       figuresToReview: 0,
+      headingLevelSources: { label: 0, outline: 0 },
       kind: "published",
       terminal: true,
       workEntryId: "work-9"
@@ -60,11 +67,17 @@ describe("describePdfImport", () => {
 
   it("carries the unresolved-figure warning count on a published Work (#806)", () => {
     const progress = describePdfImport(
-      view({ status: "published", unresolvedFigureCount: 2, workEntryId: "work-fig" })
+      view({
+        status: "published",
+        unresolvedFigureCount: 2,
+        headingLevelSources: { label: 0, outline: 0 },
+        workEntryId: "work-fig"
+      })
     );
 
     expect(progress).toEqual({
       figuresToReview: 2,
+      headingLevelSources: { label: 0, outline: 0 },
       kind: "published",
       terminal: true,
       workEntryId: "work-fig"
@@ -74,6 +87,33 @@ describe("describePdfImport", () => {
   it("phrases the figures-to-review message, pluralized (#806)", () => {
     expect(figuresToReviewMessage(1)).toBe("Imported with 1 figure to review.");
     expect(figuresToReviewMessage(3)).toBe("Imported with 3 figures to review.");
+  });
+
+  it("carries the outline-gap warning counts on a published Work (#870)", () => {
+    const progress = describePdfImport(
+      view({
+        status: "published",
+        unresolvedFigureCount: 0,
+        headingLevelSources: { label: 2, outline: 0 },
+        workEntryId: "work-gap"
+      })
+    );
+
+    expect(progress).toEqual({
+      figuresToReview: 0,
+      headingLevelSources: { label: 2, outline: 0 },
+      kind: "published",
+      terminal: true,
+      workEntryId: "work-gap"
+    });
+  });
+
+  it("distinguishes a book with no outline at all from one with an outline but unmatched headings (#870)", () => {
+    expect(outlineGapMessage(2, 0)).toBe("Imported with 2 headings from labels (no outline).");
+    expect(outlineGapMessage(2, 3)).toBe(
+      "Imported with 2 headings from labels (outline present; some headings unmatched)."
+    );
+    expect(outlineGapMessage(1, 0)).toBe("Imported with 1 heading from labels (no outline).");
   });
 
   it("refuses a single validation-failed page with the recognition-failed copy", () => {
