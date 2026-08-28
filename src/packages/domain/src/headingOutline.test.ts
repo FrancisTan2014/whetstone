@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  availableWorkSectionPlacements,
   buildHeadingOutline,
   HEADING_OUTLINE_PREFACE_LABEL,
   HEADING_OUTLINE_UNTITLED_LABEL,
+  planWorkSectionInsertion,
   type HeadingOutlineUnit
 } from "./headingOutline.js";
 
@@ -131,5 +133,97 @@ describe("buildHeadingOutline", () => {
     const outline = buildHeadingOutline([unit("a", 1, "A"), unit("b", 2, "B"), unit("c", 1, "C")]);
 
     expect(outline.map((entry) => entry.orderIndex)).toEqual([0, 1, 2]);
+  });
+});
+
+describe("planWorkSectionInsertion", () => {
+  const sections = (
+    ...items: ReadonlyArray<readonly [unitEntryId: string, headingLevel?: number]>
+  ) => items.map(([unitEntryId, headingLevel]) => ({ headingLevel, unitEntryId }));
+
+  it("exposes creation only through Start and heading levels 1-3", () => {
+    expect(availableWorkSectionPlacements(undefined)).toEqual(["next"]);
+    expect(availableWorkSectionPlacements(1)).toEqual(["next", "child"]);
+    expect(availableWorkSectionPlacements(2)).toEqual(["next", "child"]);
+    expect(availableWorkSectionPlacements(3)).toEqual(["next"]);
+    expect(availableWorkSectionPlacements(4)).toEqual([]);
+  });
+
+  it("creates Heading 1 immediately after Start and rejects a child of Start", () => {
+    const units = sections(["start"], ["part", 1]);
+
+    expect(planWorkSectionInsertion(units, "start", "next")).toEqual({
+      headingLevel: 1,
+      orderIndex: 1,
+      status: "planned"
+    });
+    expect(planWorkSectionInsertion(units, "start", "child")).toEqual({
+      status: "invalid_placement"
+    });
+  });
+
+  it("places a same-level sibling after the complete descendant branch", () => {
+    const units = sections(
+      ["part-1", 1],
+      ["chapter-1", 2],
+      ["section-1", 3],
+      ["chapter-2", 2],
+      ["part-2", 1]
+    );
+
+    expect(planWorkSectionInsertion(units, "chapter-1", "next")).toEqual({
+      headingLevel: 2,
+      orderIndex: 3,
+      status: "planned"
+    });
+    expect(planWorkSectionInsertion(units, "part-1", "next")).toEqual({
+      headingLevel: 1,
+      orderIndex: 4,
+      status: "planned"
+    });
+  });
+
+  it("appends the last child one level deeper, including across a skipped level", () => {
+    const units = sections(["part", 1], ["deep-child", 3], ["next-part", 1]);
+
+    expect(planWorkSectionInsertion(units, "part", "child")).toEqual({
+      headingLevel: 2,
+      orderIndex: 2,
+      status: "planned"
+    });
+    expect(
+      planWorkSectionInsertion(sections(["part", 1], ["chapter", 2]), "chapter", "child")
+    ).toEqual({
+      headingLevel: 3,
+      orderIndex: 2,
+      status: "planned"
+    });
+  });
+
+  it("allows an H3 sibling but refuses children of H3 and all creation below H3", () => {
+    expect(planWorkSectionInsertion(sections(["h3", 3]), "h3", "next")).toEqual({
+      headingLevel: 3,
+      orderIndex: 1,
+      status: "planned"
+    });
+    expect(planWorkSectionInsertion(sections(["h3", 3]), "h3", "child")).toEqual({
+      status: "invalid_placement"
+    });
+    expect(planWorkSectionInsertion(sections(["h4", 4]), "h4", "next")).toEqual({
+      status: "invalid_placement"
+    });
+  });
+
+  it("stops a branch at a following headless unit and rejects an unknown target", () => {
+    const units = sections(["part", 1], ["chapter", 2], ["headless"]);
+
+    expect(planWorkSectionInsertion(units, "part", "next")).toEqual({
+      headingLevel: 1,
+      orderIndex: 2,
+      status: "planned"
+    });
+    expect(planWorkSectionInsertion(units, "missing", "next")).toEqual({
+      status: "target_not_found"
+    });
   });
 });

@@ -34,16 +34,23 @@ export const updateManualWorkContentRequestSchema = z
 
 export type UpdateManualWorkContentRequest = z.infer<typeof updateManualWorkContentRequestSchema>;
 
-// Adding a section appends a new reading unit (with a real heading block) to a manual Work (#697). It
-// carries the loaded `revision` (the Work-scoped content revision) for the same optimistic-concurrency
-// protection as a save, so a section is never appended on top of another session's concurrent write.
-export const addManualWorkSectionRequestSchema = z
+export const workSectionPlacementSchema = z.enum(["next", "child"]);
+
+// A contextual section insertion names only the canonical target, its relation, and the loaded Work
+// revision. The server owns heading level and source order; clients cannot forge either.
+export const addWorkSectionRequestSchema = z
   .object({
-    revision: workContentRevisionSchema
+    placement: workSectionPlacementSchema,
+    revision: workContentRevisionSchema,
+    targetUnitEntryId: z.string().min(1)
   })
   .strict();
 
-export type AddManualWorkSectionRequest = z.infer<typeof addManualWorkSectionRequestSchema>;
+export type AddWorkSectionRequest = z.infer<typeof addWorkSectionRequestSchema>;
+export type WorkSectionPlacement = z.infer<typeof workSectionPlacementSchema>;
+
+export const addManualWorkSectionRequestSchema = addWorkSectionRequestSchema;
+export type AddManualWorkSectionRequest = AddWorkSectionRequest;
 
 // One entry of a manual Work's live Outline (#697): the ordered reading unit a section occupies, plus
 // the heading identity DERIVED from its first persisted block — the heading `level` (1-6) it starts at

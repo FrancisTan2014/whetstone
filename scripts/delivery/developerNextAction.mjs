@@ -2,13 +2,13 @@
 // Deterministic "what should the developer do next" decision for the whetstone developer workflow.
 //
 // The developer completes ONE unit of work per run and otherwise stops. Whether that unit is "fix a
-// PR the reviewer sent back" or "start the next issue" must be a pure function of the GitHub queue,
-// not a choice left to a non-deterministic LLM session -- the same reason mergeApprovedPrs.mjs
+// PR the maintainer sent back" or "start the next issue" must be a pure function of the GitHub queue,
+// not a choice left to a non-deterministic LLM session -- the same reason mergeReadyPrs.mjs
 // decides merges in code. The rule keeps work-in-progress at 1:
 //
-//   * a workflow PR is open and labeled `changes-requested`  -> fix that PR (reviewer handed it back)
+//   * a workflow PR is open and labeled `changes-requested`  -> fix that PR (maintainer handed it back)
 //   * a workflow PR has a completed failing blocking check   -> fix/triage that exact-head CI failure
-//   * a workflow PR is otherwise open                         -> wait (in review or awaiting merge)
+//   * a workflow PR is otherwise open                         -> wait (CI or deterministic merge)
 //   * no workflow PR, but an issue is still `in-progress`     -> resume THAT issue (a prior run started it
 //                                                               but stopped before opening a PR). This is
 //                                                               the work-in-progress guard: without it,
@@ -29,9 +29,9 @@
 //   node scripts/delivery/developerNextAction.mjs
 //
 // stdout: exactly one decision line -- one of:
-//   fix <pr>        address the reviewer's change requests on this PR, then stop
+//   fix <pr>        address the maintainer's change requests on this PR, then stop
 //   fix-ci <pr>     triage a completed failing blocking check on this PR, then stop
-//   wait <pr>       a PR is open and awaiting review/merge; do not start new work
+//   wait <pr>       a PR is open and awaiting CI/merge; do not start new work
 //   implement <n>   no PR is open; implement this issue end to end
 //   idle            nothing to do
 // stderr: human-readable diagnostics.
@@ -108,7 +108,7 @@ switch (d.action) {
     break;
   case "wait":
     console.error(
-      `developerNextAction: ${openSummary} -> wait (PR #${d.pr} in review / awaiting merge); not starting new work.`
+      `developerNextAction: ${openSummary} -> wait (PR #${d.pr} awaiting CI / deterministic merge); not starting new work.`
     );
     console.log(`wait ${d.pr}`);
     break;

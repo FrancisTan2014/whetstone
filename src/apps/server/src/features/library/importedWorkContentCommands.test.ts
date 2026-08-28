@@ -48,8 +48,8 @@ function para(text: string, id: string): DocumentNodeJSON {
   return { attrs: { id }, content: [{ text, type: "text" }], type: "paragraph" };
 }
 
-function heading(text: string, id: string): DocumentNodeJSON {
-  return { attrs: { id, level: 1 }, content: [{ text, type: "text" }], type: "heading" };
+function heading(text: string, id: string, level = 1): DocumentNodeJSON {
+  return { attrs: { id, level }, content: [{ text, type: "text" }], type: "heading" };
 }
 
 function doc(...nodes: ReadonlyArray<DocumentNodeJSON>): DocumentNodeJSON {
@@ -402,10 +402,16 @@ describe("correctImportedWorkContent — save semantics and markers", () => {
 });
 
 describe("addImportedWorkSection", () => {
-  it("appends a section, opens it, and stamps the new blocks", async () => {
-    const { workEntryId } = await seedCanonicalImported("a-1");
+  it("inserts a contextual child, opens it, preserves existing ids, and stamps only new blocks", async () => {
+    const { headingId, paraId, unitEntryId, workEntryId } = await seedCanonicalImported("a-1");
 
-    const result = await addImportedWorkSection(dependencies(), workEntryId, 0);
+    const result = await addImportedWorkSection(
+      dependencies(),
+      workEntryId,
+      toEntryId(unitEntryId),
+      "child",
+      0
+    );
 
     expect(result.status).toBe("added");
     if (result.status !== "added") {
@@ -413,8 +419,10 @@ describe("addImportedWorkSection", () => {
     }
     expect(result.work.revision).toBe(1);
     expect(result.work.sections).toHaveLength(2);
+    expect(result.work.sections[1]?.headingLevel).toBe(2);
     // The Work opens at the freshly added section.
     expect(result.work.sections.at(-1)?.unitEntryId).toBe(result.work.unitEntryId);
+    expect(await blockIds(workEntryId)).toEqual(expect.arrayContaining([headingId, paraId]));
     expect(await workMarker(workEntryId)).toEqual(clock);
     // Every block of the new section is stamped as inserted; the original section stays untouched.
     const markers = await blockMarkers(workEntryId);
@@ -428,19 +436,72 @@ describe("addImportedWorkSection", () => {
   it("rejects a non-correctable Work with not_found", async () => {
     await seedMarkdownImported("a-2");
 
-    const result = await addImportedWorkSection(dependencies(), toEntryId("a-2"), 0);
+    const result = await addImportedWorkSection(
+      dependencies(),
+      toEntryId("a-2"),
+      toEntryId("a-2-unit"),
+      "next",
+      0
+    );
 
     expect(result.status).toBe("not_found");
   });
 
   it("refuses a stale revision as a conflict and writes nothing", async () => {
-    const { workEntryId } = await seedCanonicalImported("a-3");
+    const { unitEntryId, workEntryId } = await seedCanonicalImported("a-3");
     const before = await blockIds(workEntryId);
 
-    const result = await addImportedWorkSection(dependencies(), workEntryId, 42);
+    const result = await addImportedWorkSection(
+      dependencies(),
+      workEntryId,
+      toEntryId(unitEntryId),
+      "next",
+      42
+    );
 
     expect(result.status).toBe("conflict");
     expect(await revisionOf(workEntryId)).toBe(0);
     expect(await blockIds(workEntryId)).toEqual(before);
+  });
+
+  it("rejects a cross-work target before claiming the revision", async () => {
+    const host = await seedCanonicalImported("a-4");
+    const other = await seedCanonicalImported("a-5");
+
+    const result = await addImportedWorkSection(
+      dependencies(),
+      host.workEntryId,
+      toEntryId(other.unitEntryId),
+      "next",
+      0
+    );
+
+    expect(result.status).toBe("not_found");
+    expect(await revisionOf(host.workEntryId)).toBe(0);
+  });
+
+  it("rejects a child of Heading 3 without changing content or correction evidence", async () => {
+    const { headingId, paraId, unitEntryId, workEntryId } = await seedCanonicalImported("a-6");
+    await db.transaction((tx) =>
+      reconcileEditableWorkContent(tx, {
+        document: doc(heading("Deep section", headingId, 3), para("Body", paraId)),
+        unitEntryId,
+        workEntryId
+      })
+    );
+    const before = await blockIds(workEntryId);
+
+    const result = await addImportedWorkSection(
+      dependencies(),
+      workEntryId,
+      toEntryId(unitEntryId),
+      "child",
+      0
+    );
+
+    expect(result.status).toBe("invalid_placement");
+    expect(await revisionOf(workEntryId)).toBe(0);
+    expect(await blockIds(workEntryId)).toEqual(before);
+    expect(await workMarker(workEntryId)).toBeNull();
   });
 });

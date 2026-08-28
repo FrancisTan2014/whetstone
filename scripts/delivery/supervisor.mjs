@@ -9,14 +9,13 @@ const deliveryDir = dirname(fileURLToPath(import.meta.url));
 const scriptsDir = resolve(deliveryDir, "..");
 const repoRoot = resolve(deliveryDir, "..", "..");
 const launchers = {
-  developer: "run-developer.cmd",
-  reviewer: "run-reviewer.cmd"
+  developer: "run-developer.cmd"
 };
 
 export function parseSupervisorArgs(argv) {
   const role = argv[0];
   if (!(role in launchers)) {
-    throw new Error("role must be `developer` or `reviewer`");
+    throw new Error("role must be `developer`");
   }
   const intervalIndex = argv.indexOf("--interval");
   const intervalSeconds =

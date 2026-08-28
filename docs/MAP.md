@@ -1273,7 +1273,7 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   max 88rem, centered) — the editing analogue of Reader (#791). A **populated** Outline is a sticky 14rem
   sidebar ≥80rem (1.5rem gap) and a 44px-toggle overlay drawer <80rem (20rem 48–79.999rem, full width
   <48rem; Escape/backdrop dismiss + focus restore); an **empty** Outline renders nothing and reserves no
-  track — the parent shows a 44px "Add section" control above the canvas instead. It loads the section
+  track — the parent shows a proper 44px **Add section after current** action above the canvas instead. It loads the section
   list (`manualWorkApi.fetchManualWork`),
   edits one section at a time in the shared `RichContentEditor` (`fetchManualWorkUnit`, `presentation="work"`:
   one bordered paper surface, focus-within ring, blank-margin press focuses the caret at doc end) with a
@@ -1281,8 +1281,11 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   Text/Heading 1-3/Quote/Code block — plus marks, lists, undo/redo as 44px controls; roving-tabindex, no-wrap
   horizontal scroll), navigates sections with save-before-switch and stale-revision conflict
   retention (`saveManualWorkContent(workEntryId, unitEntryId, document, revision)` → `PUT
-  /api/manual-works/:id/units/:unitId/content`), and **Add section** appends a heading-seeded section
-  (`addManualWorkSection` → `POST /api/manual-works/:id/units`) then focuses it. The revision is the
+  /api/manual-works/:id/units/:unitId/content`). Contextual **Add next section** / **Add subsection**
+  actions send only the active `targetUnitEntryId`, relation, and revision
+  (`addManualWorkSection` → `POST /api/manual-works/:id/units`); the server derives heading level and
+  inserts after the target branch through `domain/headingOutline.planWorkSectionInsertion`, then focuses
+  the new untitled heading. The revision is the
   Work-scoped `work_meta.content_revision` (a monotonic non-negative integer), claimed atomically by both
   save and add; `personal_entries.updatedAt` is owner chronology only, never the revision truth. On save the draft's
   ordered PM blocks are substituted into the Work's block stream and the affected span is
@@ -1295,8 +1298,8 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   derives each unit's heading level + title from its first `doc_block` so the Reader hierarchy matches the
   editor Outline. Server: `library/manualWorkContentQueries` (`loadManualWorkForEditing` +
   `loadManualWorkUnit`, deriving section outline from first blocks) + `manualWorkContentCommands`
-  (`updateManualWorkContent` per unit + `addManualWorkSection` via
-  `content/editableWorkContent.appendEditableWorkSection`) own the owner/origin guard; the stale-revision
+  (`updateManualWorkContent` per unit + `addManualWorkSection` via the shared
+  `content/editableWorkContent.insertEditableWorkSection` order-shifting writer) own the owner/origin guard; the stale-revision
   check is the origin-neutral `content/workContentRevision.claimWorkContentRevision` compare-and-set over
   `work_meta.content_revision` (#703 — a monotonic non-negative integer, also reused by imported-Work
   correction, #762), and a successful claim bumps the owner-only `personal_entries.updated_at` chronology in the
@@ -1306,14 +1309,14 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   `ImportedWorkCorrectionPage.tsx` (#762) is the administrative counterpart at
   `/library/works/:id/correct`, reached from **Correct content** on a canonical imported Work (`imported`
   origin, fully `doc_blocks`, exposed by `WorkListItemDto.correctable` from the `listWorks` projection). It
-  reuses the SAME shared `WorkContentEditor` (Outline, save/Ctrl+S, conflict/draft retention, add-section,
+  reuses the SAME shared `WorkContentEditor` (Outline, save/Ctrl+S, conflict/draft retention, contextual insertion,
   heading repartition) bound to `importedWorkApi.ts` against `/api/imported-works/:id{,/units/:unitId
   ,/units/:unitId/content,/units}`, plus an **Open in Reader** header action the manual editor omits.
   Correction never creates a personal Entry and never rewrites the immutable source: server
   `library/importedWorkContentQueries` (`correctableImportedWorkSql`, `findCorrectableImportedWork`,
   `loadImportedWorkForCorrection`, `loadImportedWorkUnit`) + `importedWorkContentCommands`
-  (`correctImportedWorkContent`, `addImportedWorkSection`) reuse the same repartition and origin-neutral
-  `workContentRevision` fence, then stamp durable correction markers via `content/workCorrectionMarkers`
+  (`correctImportedWorkContent`, `addImportedWorkSection`) reuse the same insertion planner/writer,
+  correction repartition path, and origin-neutral `workContentRevision` fence, then stamp durable correction markers via `content/workCorrectionMarkers`
   (`work_meta.manual_corrections_at` set once on the first real change; `doc_blocks.corrected_at` on each
   inserted/changed block; a no-op save advances the revision but stamps nothing). A re-upload of the exact
   same source reopens through `content/sourceClaims.claimUploadedSource`'s `exact_existing` branch without
@@ -1522,6 +1525,17 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
 - Deploy (continuous, to a personal MacBook): `.github/workflows/deploy.yml` runs **only on push to `main`**, `runs-on: self-hosted`, gated on the `DEPLOY_ENABLED` repo variable (skips until set). It builds, then restarts a `launchd` app service that serves the single origin (web `dist` + `/api`) and migrates on boot; `DATABASE_DIR` persists across deploys; private HTTPS via Tailscale `serve` when `TAILSCALE_SERVE_ENABLED=true`. Setup runbook: `docs/DEPLOY.md`.
 - E2E smoke (merge gate): `pnpm e2e` (`e2e/`, `@playwright/test`) boots the real stack — Fastify + in-memory PGlite + the Vite **dev** server (React dev mode) — seeded with a fixture EPUB and a small Markdown work, then drives the core reader loop in Chromium (open work → chapter; select in paragraph/blockquote/list → toolbar; add note → reload-persists; look up a word → definition). Every test fails on any console error, app-origin HTTP 4xx/5xx, or React hydration/DOM-nesting warning (`e2e/fixtures.ts`). Boot/seed harness: `e2e/stack.ts` + `e2e/globalSetup.ts`. CI installs Chromium (`playwright install --with-deps chromium`). Deterministic in-page visual probes for the tester (`e2e/probes.ts`: `contrast` / `geometry` / `contentPresent` + an `overlaps` helper, each self-contained for `page.evaluate`) and their integration spec (`e2e/tests/probes.spec.ts`, static `setContent` fixtures) let a visual `[Bug]` be filed on a computed value/rect instead of a screenshot.
 - Screenshots (manual, outside the gate): `pnpm screenshots` (`scripts/screenshots.mjs`) boots the real stack on an ephemeral in-memory DB, ingests the public-domain `fixtures/epub/` files through the live pipeline, serves the production build via `vite preview`, and drives Playwright Chromium to write per-stage PNGs to `artifacts/screenshots/` (git-ignored): Today at the root route, Library at `#/library`, and the Reader — each across the Day/Night × desktop/mobile matrix — plus the selection → note-editor → note-saved annotation moment. `scripts/make-fixture-epub.mjs` regenerates the English fixture. Needs `pnpm exec playwright install chromium` once.
-- Workflow roles: `.github/agents/*.agent.md` (design, developer, reviewer, tester). The **tester** (QA) is the exploratory bug-discovery layer above the E2E gate — `scripts/run-tester.cmd` / `run-tester-auto.cmd` + `scripts/delivery/testerNextAction.mjs` (queue-driven per-run filing budget); it boots the real stack on `main`, drives the app beyond the smoke, and files de-duplicated `[Bug]`s (read-only on code). Operational quick-reference: the
+- Workflow roles: `.github/agents/*.agent.md` (one developer owns design through a merge-ready PR;
+  tester remains independent read-only QA). The **tester** is the exploratory bug-discovery layer
+  above the E2E gate — `scripts/run-tester.cmd` / `run-tester-auto.cmd` +
+  `scripts/delivery/testerNextAction.mjs` (queue-driven per-run filing budget); it boots the real stack
+  on `main`, drives the app beyond the smoke, and files de-duplicated `[Bug]`s. Operational quick-reference: the
   `whetstone-engineering` skill in `.github/skills/`.
-- Delivery harness: operator entrypoints stay at `scripts/run-*.cmd` (stable muscle-memory commands); every internal is under **`scripts/delivery/`** — `supervisor.mjs` (no-model polling loop), `workflow.mjs` (shared queue/check-state selectors + merge gate), `health.mjs` (`pnpm delivery:health`), `developerNextAction.mjs` / `reviewerNextAction.mjs` / `testerNextAction.mjs` (per-role next-action selectors), `pickNextIssue.mjs` (dependency-ready issue selection), `mergeApprovedPrs.mjs` (deterministic merge), `unblockReadyIssues.mjs` (dependency unblocking), plus their `*.test.mjs`. Launchers depend inward into `scripts/delivery/`, never back out. Workflow/supervisor source is held at 100% coverage by `pnpm test:workflow`.
+- Delivery harness: operator entrypoints stay at `scripts/run-*.cmd`; every internal is under
+  **`scripts/delivery/`** — `supervisor.mjs` (no-model polling loop), `workflow.mjs` (shared
+  queue/check-state selectors + merge gate), `health.mjs` (`pnpm delivery:health`),
+  `developerNextAction.mjs` / `testerNextAction.mjs` (per-role selectors), `pickNextIssue.mjs`
+  (dependency-ready issue selection), `mergeReadyPrs.mjs` (deterministic exact-head CI merge), and
+  `unblockReadyIssues.mjs` (dependency unblocking), plus their `*.test.mjs`. Launchers depend inward
+  into `scripts/delivery/`, never back out. Workflow/supervisor source is held at 100% coverage by
+  `pnpm test:workflow`.

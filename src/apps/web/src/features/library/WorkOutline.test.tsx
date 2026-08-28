@@ -30,12 +30,12 @@ function renderOutline(overrides: Partial<React.ComponentProps<typeof WorkOutlin
   onAddSection: ReturnType<typeof vi.fn>;
   onSelect: ReturnType<typeof vi.fn>;
 } {
-  const onAddSection = vi.fn();
+  const onAddSection = vi.fn(async () => true);
   const onSelect = vi.fn();
   render(
     <WorkOutline
       activeUnitEntryId="unit-a"
-      addPending={false}
+      addPending={null}
       entries={deriveWorkOutline(multiSections)}
       onAddSection={onAddSection}
       onSelect={onSelect}
@@ -247,18 +247,93 @@ describe("WorkOutline (drawer, < 80rem)", () => {
     expect(screen.queryByRole("list")).toBeNull();
   });
 
-  it("invokes the add-section callback and reflects the pending label", () => {
+  it("offers a targeted next action after Start", async () => {
     const { onAddSection } = renderOutline();
 
-    fireEvent.click(screen.getByRole("button", { name: "Add section" }));
-    expect(onAddSection).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Add next section after Start" }));
+    expect(onAddSection).toHaveBeenCalledWith("next");
   });
 
-  it("disables the add control while an add is pending", () => {
-    renderOutline({ addPending: true });
+  it("shows Adding only on the invoked action and disables the action group", () => {
+    renderOutline({
+      activeHeadingLevel: 1,
+      activeUnitEntryId: "unit-b",
+      addPending: "child"
+    });
 
-    const add = screen.getByRole("button", { name: "Adding…" });
-    expect((add as HTMLButtonElement).disabled).toBe(true);
+    const next = screen.getByRole("button", { name: "Add next section after Chapter One" });
+    const child = screen.getByRole("button", { name: "Add subsection under Chapter One" });
+    expect((next as HTMLButtonElement).disabled).toBe(true);
+    expect((child as HTMLButtonElement).disabled).toBe(true);
+    expect(next.textContent).toContain("Add next section");
+    expect(child.textContent).toContain("Adding…");
+  });
+
+  it("places actions after the active descendant branch in next-then-child order", () => {
+    const nested: readonly ManualWorkSectionDto[] = [
+      { headingLevel: 1, orderIndex: 0, title: "Part One", unitEntryId: "unit-p" },
+      { headingLevel: 2, orderIndex: 1, title: "Chapter One", unitEntryId: "unit-c1" },
+      { headingLevel: 3, orderIndex: 2, title: "Section One", unitEntryId: "unit-s" },
+      { headingLevel: 2, orderIndex: 3, title: "Chapter Two", unitEntryId: "unit-c2" }
+    ];
+    renderOutline({
+      activeHeadingLevel: 2,
+      activeUnitEntryId: "unit-c1",
+      entries: deriveWorkOutline(nested)
+    });
+
+    const children = document.querySelectorAll(".workOutlineList > li");
+    expect(children[2]?.textContent).toContain("Section One");
+    expect(children[3]?.classList.contains("workOutlineActionsNode")).toBe(true);
+    expect(children[4]?.textContent).toContain("Chapter Two");
+    const actions = screen.getByRole("group", { name: "Section actions for Chapter One" });
+    const buttons = actions.querySelectorAll("button");
+    expect(buttons[0]?.textContent).toContain("Add next section");
+    expect(buttons[1]?.textContent).toContain("Add subsection");
+  });
+
+  it("offers only next at H3 and no creation actions below H3", () => {
+    const nested: readonly ManualWorkSectionDto[] = [
+      { headingLevel: 1, orderIndex: 0, title: "Part", unitEntryId: "unit-p" },
+      { headingLevel: 3, orderIndex: 1, title: "Section", unitEntryId: "unit-s" }
+    ];
+    const { unmount } = render(
+      <WorkOutline
+        activeHeadingLevel={3}
+        activeUnitEntryId="unit-s"
+        addPending={null}
+        entries={deriveWorkOutline(nested)}
+        onAddSection={async () => true}
+        onSelect={() => {}}
+      />
+    );
+    expect(screen.getByRole("button", { name: "Add next section after Section" })).toBeDefined();
+    expect(screen.queryByRole("button", { name: /Add subsection/ })).toBeNull();
+
+    unmount();
+    renderOutline({
+      activeHeadingLevel: 4,
+      activeUnitEntryId: "unit-s",
+      entries: deriveWorkOutline(nested)
+    });
+    expect(screen.queryByRole("group", { name: /Section actions/ })).toBeNull();
+  });
+
+  it("closes the drawer after a successful insertion but keeps it open after a refusal", async () => {
+    const user = userEvent.setup();
+    renderOutline();
+    const toggle = screen.getByRole("button", { name: "Outline" });
+    await user.click(toggle);
+    await user.click(screen.getByRole("button", { name: "Add next section after Start" }));
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+
+    cleanup();
+    mockMatchMedia(false);
+    renderOutline({ onAddSection: vi.fn(async () => false) });
+    const refusedToggle = screen.getByRole("button", { name: "Outline" });
+    await user.click(refusedToggle);
+    await user.click(screen.getByRole("button", { name: "Add next section after Start" }));
+    expect(refusedToggle.getAttribute("aria-expanded")).toBe("true");
   });
 });
 

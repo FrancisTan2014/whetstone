@@ -1,6 +1,6 @@
 # Whetstone Guidelines
 
-This is the single durable engineering and review guide for whetstone. It exists so agents do not pattern-match arbitrary TypeScript app structures or rely on generic LLM review instincts.
+This is the single durable engineering and delivery guide for whetstone. It exists so agents do not pattern-match arbitrary TypeScript app structures or rely on generic LLM instincts.
 
 These guidelines are inspired by practical TypeScript style guides such as the Google TypeScript Style Guide, then adapted to whetstone's product, stack, and local-agent workflow. When a rule here conflicts with a generic external style guide, this file wins for this repository.
 
@@ -8,7 +8,7 @@ These guidelines are inspired by practical TypeScript style guides such as the G
 
 whetstone is built like a small, **design-led product team** (think Apple): the bar is a crafted, coherent whole assembled from **mature, proven components**, not a pile of bespoke code. This is the project's posture; the rules below operationalize it.
 
-- **Design leads.** Start from the product/UX/experience and the durable bedrock, not from what is quickest to hand-code. The reviewer and developer serve that intent.
+- **Design leads.** The single delivery agent starts from the product/UX experience and durable bedrock, then carries that intent through implementation.
 - **Integrate, don't reinvent.** Default to adopting a mature framework/library through its designed seams and combining proven pieces with taste. Hand-rolling a solution to a solved problem (parsing, document model, editing, tree traversal) is the **exception**, and the PR must justify why no mature option fit.
 - **Strong bedrock first; depth over deadline.** Foundational/architecture choices (storage, document model, ingestion) are near-irreversible — research them against real inputs and prove them on a hard real case before adopting. It is acceptable to delay a milestone to get the bedrock right.
 - **Taste is restraint.** Prefer fewer, well-resolved elements that fit one coherent design language; reject sprawl, speculative abstraction, and per-case special-casing.
@@ -20,7 +20,7 @@ Use this order when rules appear to conflict:
 
 1. **Security, privacy, and data integrity win first.** Do not leak secrets/user content, allow path traversal, corrupt Markdown/database consistency, or hide operational failures to satisfy another rule.
 2. **`PRODUCT.md` defines product behavior.** If an issue contradicts `PRODUCT.md`, stop and move it back to design unless the issue explicitly includes a product-doc update.
-3. **`GUIDELINES.md` defines engineering and review rules.** If an issue needs to violate these rules, the issue must say why and include a guideline update or explicit human decision.
+3. **`GUIDELINES.md` defines engineering and delivery rules.** If an issue needs to violate these rules, the issue must say why and include a guideline update or explicit human decision.
 4. **The linked issue defines scope.** Acceptance criteria decide what the PR should deliver, but only after fitting `PRODUCT.md` and this guide.
 5. **Existing code patterns are evidence, not authority.** Follow them when they match this guide; improve them only when the issue asks or the touched code requires it.
 
@@ -140,7 +140,7 @@ Practical SOLID mapping for this project:
 - **Interface segregation** -> keep contracts small. Do not create broad interfaces with methods consumers do not use.
 - **Dependency inversion** -> keep pure domain code independent. Infrastructure depends on domain/contracts; domain does not depend on infrastructure. Do not create interfaces merely to satisfy the acronym.
 
-Reviewers should enforce these concrete rules, not generic SOLID phrasing.
+The delivery agent's acceptance self-check enforces these concrete rules, not generic SOLID phrasing.
 
 ## TypeScript source style
 
@@ -548,10 +548,17 @@ Testing styled/animated UI: do not assert pixels, colors, fonts, or animation fr
 
 ## Functional verification
 
-The loop so far verifies the **code** (types, lint, unit/jsdom tests, build) and reviews the **diff** — but nothing boots the running product and exercises it, so runtime/integration bugs (a hydration error on chapter open, a stale-build 404, an 11 MB load, broken selection) escape every gate. Close that blind spot with a functional-verification layer in two parts.
+The loop verifies the **code** (types, lint, unit/jsdom tests, build) and self-checks the **diff** — but those steps do not boot the running product, so runtime/integration bugs (a hydration error on chapter open, a stale-build 404, an 11 MB load, broken selection) need a functional-verification layer in two parts.
 
 - **Deterministic E2E smoke — gate in CI.** A Playwright suite boots the **real stack** (reuse the screenshot harness's real-server + in-memory PGlite boot) and drives the core loop: open a work → open a chapter → **assert no console errors, no 4xx, no React hydration/DOM-nesting warnings** → select text → toolbar → add note → note persists → look up a word. These are **correctness** assertions (deterministic, not timing), so unlike flaky runtime perf numbers they **block the merge** (`pnpm validate`/CI). Keep the suite small, stable, and fast; prefer role/label selectors. **Author and maintain it with Playwright Test Agents** — the planner/generator/healer set (`npx playwright init-agents`) with a seed test that boots the real stack — but the gate stays the deterministic generated tests, not the agents themselves. This is the regression net for the integrated app.
-- **Independent Tester (QA) agent — exploratory, files bugs.** A tester role runs **against `main` after merges** (and/or on a schedule), driving the booted app **beyond the scripted smoke** like a real tester, and files `[Bug]` issues for what it finds. It is **decoupled from the reviewer** (static diff review vs dynamic runtime testing — different skills, cadence, and ideally model). It holds the **same high-signal bar** as the reviewer: reproduce before filing, **dedupe against open `[Bug]`s**, and file only genuine, reproducible defects with clear repro steps — each `[Bug]` shipping a **runnable repro** (a deterministic script that fails on the tested SHA, asserting the product contract, saved as a run artifact) that the developer promotes into the committed regression test — an over-eager bug-filer that floods the backlog is a regression, not a feature. Its safety lives in its **own guardrails, not a human gate** (the loop is fully autonomous): its only action is **filing issues** (read-only on code and runtime — it never merges or edits code), it **self-limits** each run (a cap on bugs filed, plus the reproduce/dedupe/high-signal bar above), and any bad output is cheaply reversible by closing the issue. Crucially, **a clean run is a success: the tester is measured by the surface it exercises and the evidence it leaves, not by a bug count** (counting filed bugs would only reward noise). So every run — including a zero-bug one — must leave an **observable evidence trail**: a short report of the flows/surfaces driven, the console/HTTP/hydration capture (or "none"), and screenshots, saved as a run artifact and surfaced where the maintainer can see it; otherwise a clean run is indistinguishable from a run that did nothing. Its discovery surface is **dynamic functional and accessibility** behavior — console/4xx/5xx/hydration warnings, flows that violate `PRODUCT.md`, focus/contrast/target-size, responsiveness at realistic scale — **decoupled from the design agent's static product/UX review**: design owns visual/UX quality, the tester owns runtime defect discovery, so the two never duplicate each other.
+- **Independent Tester (QA) agent — exploratory, files bugs.** A tester role runs **against `main`
+  after merges** (and/or on a schedule), drives the booted app **beyond the scripted smoke**, and files
+  `[Bug]` issues for genuine defects. It is decoupled from delivery: the delivery agent owns static
+  product/UX decisions, implementation, and acceptance; the tester owns dynamic functional and
+  accessibility discovery. The tester reproduces before filing, deduplicates against open bugs,
+  attaches a runnable repro against the tested SHA, and remains read-only on code. It self-limits its
+  filing budget, and every run leaves evidence of the surfaces exercised, console/HTTP/hydration
+  results, and screenshots. A clean run is success; bug count is never the metric.
 - **Bug-first prioritization.** The developer picks ready `[Bug]`s before ready `[Task]`s (`scripts/delivery/developerNextAction.mjs`), so verified defects are paid down before new feature work.
 
 ## Performance
@@ -601,7 +608,7 @@ A **foundation PR** is the one allowed exception to vertical-only: it may delive
 
 ### Landability gate
 
-The unit of delivery is one fresh developer process ending in one reviewable PR that passes the
+The unit of delivery is one fresh delivery-agent process ending in one merge-ready PR that passes the
 changed-scope handoff gate with 100% coverage over changed production files. Exact-head CI is the
 sole exhaustive gate and must pass before merge. One issue owns one primary user journey or one stable
 foundation boundary. A
@@ -617,10 +624,10 @@ them still count. A warned issue is split unless its `## Landability` section ex
 inseparable invariant, why an earlier cut would be unusable or unsafe, and the exact named successor
 boundary. Boilerplate does not satisfy the gate.
 
-If implementation crosses a warning unexpectedly, the developer stops after a coherent commit and
-returns the issue to design before opening a PR. The developer maps acceptance criteria to concrete
-evidence; the independent reviewer is the sole fresh-context code review and starts concurrently with
-CI. Do not duplicate that review inside the developer process.
+If implementation crosses a warning unexpectedly, the delivery agent stops after a coherent commit
+and updates the design and issue before opening a PR. The same agent maps acceptance criteria to
+concrete evidence and performs the full gate-by-gate self-check; CI independently validates the exact
+head before merge.
 
 ### Validation scopes and orchestration
 
@@ -630,14 +637,15 @@ CI. Do not duplicate that review inside the developer process.
   Run the issue's named E2E spec separately.
 - **Exact-head merge authority:** CI runs the exhaustive required lanes on the PR head. A local full
   run is optional, not duplicated on every handoff. Merge still requires all blocking checks, the
-  exact reviewed SHA, valid labels, mergeability, and a linked issue.
+  exact PR head, valid labels, mergeability, and a linked issue.
 - **Independent exhaustive lanes:** CI runs quality (typecheck, lint, full 100% source coverage),
   runtime (build, size, smoke, E2E), and isolated real-process/filesystem contracts in parallel. Every
   lane is blocking. Isolation changes resource scheduling, never assertions or source exclusions; a
   failure in one lane does not prevent the others from returning evidence.
-- **Concurrent review:** pending checks do not block code review. A reviewer may approve the exact
-  head while CI runs; the deterministic merge step waits. Completed failed blocking checks route back
-  through `fix-ci`; pending, neutral, skipped, and explicitly non-blocking checks do not.
+- **CI handoff:** the delivery agent may mark its exact head `merge-ready` after local validation and
+  the acceptance self-check; the deterministic merge step still waits for every required check.
+  Completed failed blocking checks route back through `fix-ci`; pending, neutral, skipped, and
+  explicitly non-blocking checks do not.
 - **Fresh-context supervisor:** auto launchers poll deterministically without a model and start a new
   one-shot process only for real work. Waiting creates no model turn, workers never overlap, and no
   model context survives into the next unit.
@@ -646,13 +654,14 @@ CI. Do not duplicate that review inside the developer process.
 
 Measure active delivery stages, not issue creation-to-close: dependency-gated issues may be designed
 days before they are eligible. `pnpm delivery:health` reports `ready-for-dev` to `in-progress`,
-implementation start to PR, PR to merge, approval to merge, review-return rounds, raw diff signals,
+implementation start to PR, PR to merge, merge-ready to merge, CI-fix rounds, raw diff signals,
 and the current queue. Run it before a broad queue redesign and after each delivered batch; use its
 trend to recalibrate landability warnings rather than relaxing quality gates.
 
-## Review gates
+## Delivery self-check gates
 
-Reviewer agents enforce this same spec. Review comments should be high-signal: only material issues that affect correctness, safety, maintainability, product fit, or validation.
+Before applying `merge-ready`, the single delivery agent enforces this same spec against its issue,
+diff, and validation evidence. Exact-head CI is the independent executable gate.
 
 ### Issue fit
 
@@ -795,7 +804,7 @@ Reviewer agents enforce this same spec. Review comments should be high-signal: o
 ### Setup steps (bootstrap framework)
 
 - Any change that introduces a **runtime dependency or external tool the app needs to run** (beyond what `pnpm install` provides — e.g. a browser, a local model, a system binary) MUST add a setup step under `scripts/setup/steps/` that **fails loud with an actionable remedy** (a `StepResult` carrying `what` + `remedy`, never a bare throw), is covered by `pnpm setup:doctor`, has tests for its failure paths, and is documented.
-- The reviewer **blocks** a change that adds such a dependency without a compliant setup step.
+- The delivery agent must not mark a change merge-ready when it adds such a dependency without a compliant setup step.
 - Steps stay independent and declarative (`{ id, title, optional?, check, provision?, verify? }`); the runner is not edited merely to register a step (steps are auto-discovered — a framework-level capability such as a consent prompt or a new flag is a legitimate runner change). Heavy/optional capabilities are opt-in (an `optional` step behind a `--<capability>` flag), so the base `pnpm setup` stays fast with no heavy downloads. System prerequisites are never *silently* installed: a step may install one **only after an explicit Y/N consent prompt** (`ctx.confirm`), and MUST fall back to an instruct-only remedy when consent is declined, when no package manager is present, or when running non-interactively without `--yes`. Node and pnpm themselves stay instruct-only (the runner needs them to run).
 
 ### Durable-surface upkeep
@@ -816,40 +825,32 @@ Reviewer agents enforce this same spec. Review comments should be high-signal: o
 - Coverage thresholds remain at 100% for included source files once coverage tooling exists.
 - Coverage is meaningful: tests assert behavior/invariants and do not merely execute lines.
 
-### Review output
+### Delivery output
 
-Use one of:
-
-- **Request changes**: material issue blocks merge. Add label `changes-requested`, remove `needs-review`.
-- **Ready to merge**: no material blockers. Add label `review-approved`, remove `needs-review` and `changes-requested`.
-
-Every review must include marker:
-
-```text
-reviewer-run-reviewed: <head-sha>
-```
+- **Blocked by a material issue:** add `changes-requested`, remove `merge-ready`, and record the exact
+  required correction.
+- **Ready for deterministic merge:** remove `changes-requested` and add `merge-ready` only after the
+  acceptance self-check and local handoff gate pass for the current head.
 
 ### Merge gates
 
-The reviewer records its verdict (labels + the `reviewer-run-reviewed` marker); a **deterministic merge
-step** (`scripts/delivery/mergeApprovedPrs.mjs`, run by the reviewer launcher) — not an LLM session's
-discretion — merges a PR only when **every** gate below passes. The reviewer agent itself does not merge.
+The delivery agent records readiness with a label; a **deterministic merge step**
+(`scripts/delivery/mergeReadyPrs.mjs`, run by the developer launcher) — not an LLM session's
+discretion — merges a PR only when **every** gate below passes. The agent never merges by hand.
 
-- The PR has a `review-approved` label.
-- The PR does not have `needs-review` or `changes-requested`.
-- The latest PR head SHA matches the `reviewer-run-reviewed: <head-sha>` marker from the approving review.
+- The PR has a `merge-ready` label.
+- The PR does not have `blocked` or `changes-requested`.
 - Required checks are green. If checks are pending or failing, do not merge.
 - The PR has no merge conflicts (`mergeable` is `MERGEABLE` and the merge state is `CLEAN`).
 - The PR still links the intended issue.
-- The review found no unresolved material findings under this guide (encoded by `review-approved`
-  without `changes-requested`).
+- The merge command uses `--match-head-commit`, so a push after the gate read cannot race into merge.
 
 If any gate fails, the step leaves the PR open and reports the failing gate instead of merging. It uses
 the repository default merge strategy (merge commit) and deletes the branch when GitHub reports it is safe.
 
 ### Dependency unblock
 
-After the merge step, the reviewer launcher runs a sibling **deterministic unblock step**
+After the merge step, the developer launcher runs a sibling **deterministic unblock step**
 (`scripts/delivery/unblockReadyIssues.mjs`) — again code, not an LLM session's discretion. Merging a PR closes
 its linked issue, which can satisfy another issue's dependency; this step rejoins those issues to the
 developer queue. It flips every open `blocked` issue whose `Depends on: #N` references are **all** closed

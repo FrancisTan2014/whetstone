@@ -26,8 +26,8 @@ import {
 } from "../../db/schema.js";
 import type { PersistableReadingUnit } from "./blockWriter.js";
 import {
-  appendEditableWorkSection,
   initializeEditableWorkContent,
+  insertEditableWorkSection,
   reconcileEditableWorkContent,
   replaceWorkContent
 } from "./editableWorkContent.js";
@@ -466,24 +466,28 @@ describe("reconcileEditableWorkContent transaction and input safety", () => {
   });
 });
 
-function heading(level: number, text: string): DocumentNodeJSON {
-  return { attrs: { level }, content: [{ text, type: "text" }], type: "heading" };
-}
-
-describe("appendEditableWorkSection", () => {
-  it("appends a reading unit at the given order index seeded from a heading-led document", async () => {
+describe("insertEditableWorkSection", () => {
+  it("inserts a heading-led unit and shifts every following unit atomically", async () => {
     const { unitEntryId: firstUnit } = await seedWorkWithContent();
 
-    const appended = await db.transaction(async (tx) =>
-      appendEditableWorkSection(tx, {
+    const later = await db.transaction(async (tx) =>
+      insertEditableWorkSection(tx, {
         createEntryId,
-        document: doc(heading(2, "Chapter One"), para("Body")),
+        headingLevel: 2,
+        orderIndex: 1,
+        workEntryId: WORK_ID
+      })
+    );
+    const inserted = await db.transaction(async (tx) =>
+      insertEditableWorkSection(tx, {
+        createEntryId,
+        headingLevel: 1,
         orderIndex: 1,
         workEntryId: WORK_ID
       })
     );
 
-    // A second reading unit exists, ordered after the first, with no source file.
+    // The new unit occupies index 1 and the existing later unit shifts to index 2 without changing identity.
     const units = await db
       .select()
       .from(readingUnits)
@@ -492,34 +496,43 @@ describe("appendEditableWorkSection", () => {
     expect(units).toEqual([
       { entryId: firstUnit, orderIndex: 0, sourceFile: null, title: null, workEntryId: WORK_ID },
       {
-        entryId: appended.unitEntryId,
+        entryId: inserted.unitEntryId,
         orderIndex: 1,
+        sourceFile: null,
+        title: null,
+        workEntryId: WORK_ID
+      },
+      {
+        entryId: later.unitEntryId,
+        orderIndex: 2,
         sourceFile: null,
         title: null,
         workEntryId: WORK_ID
       }
     ]);
 
-    // The section's blocks are its own id-stamped heading and paragraph, in order, under the new unit.
+    // The inserted section is seeded as the planned heading level plus an empty paragraph.
     const storedBlocks = await db
       .select({
         id: docBlocks.id,
+        nodeJson: docBlocks.nodeJson,
         orderIndex: docBlocks.orderIndex,
         type: docBlocks.type
       })
       .from(docBlocks)
-      .where(eq(docBlocks.readingUnitEntryId, appended.unitEntryId))
+      .where(eq(docBlocks.readingUnitEntryId, inserted.unitEntryId))
       .orderBy(docBlocks.orderIndex);
     expect(storedBlocks.map((row) => row.type)).toEqual(["heading", "paragraph"]);
-    expect(storedBlocks[0]?.id).toBe(blockId(appended.document, 0));
+    expect((storedBlocks[0]?.nodeJson as DocumentNodeJSON).attrs?.level).toBe(1);
+    expect(storedBlocks[0]?.id).toBe(blockId(inserted.document, 0));
     expect(storedBlocks[0]?.id).not.toBe("");
 
     // The new unit and its blocks are linked under the work.
-    expect(await entryExists(appended.unitEntryId)).toBe(true);
+    expect(await entryExists(inserted.unitEntryId)).toBe(true);
     const links = await db
       .select()
       .from(entryLinks)
-      .where(eq(entryLinks.fromEntryId, appended.unitEntryId));
+      .where(eq(entryLinks.fromEntryId, inserted.unitEntryId));
     expect(links.map((link) => link.type)).toEqual(["contains", "contains"]);
   });
 });

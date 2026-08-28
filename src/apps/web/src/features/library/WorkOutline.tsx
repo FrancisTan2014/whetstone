@@ -1,10 +1,13 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { CornerDownRight, Plus } from "lucide-react";
 
 import type { ManualWorkSectionDto } from "@whetstone/contracts";
 import {
+  availableWorkSectionPlacements,
   buildHeadingOutline,
   type HeadingOutlineEntry,
-  type HeadingOutlineUnit
+  type HeadingOutlineUnit,
+  type WorkSectionPlacement
 } from "@whetstone/domain";
 import type { DocumentNodeJSON } from "@whetstone/document";
 
@@ -14,7 +17,7 @@ import { useMediaQuery } from "../../shared/ui/useMediaQuery.js";
 // heading blocks — never a stored or client-cached TOC copy. At 80rem+ it is a sticky 14rem sidebar always
 // in view beside the editor canvas; below 80rem it collapses to a single 44px control that opens a drawer
 // (full-width below 48rem, a 20rem side panel above it) with Escape/outside dismissal and focus restoration.
-// When the Work has no headings the outline is empty and renders NOTHING — the parent shows an "Add section"
+// When the Work has no headings the outline is empty and renders NOTHING — the parent shows an "Add section after current"
 // control above the canvas instead, so no empty sidebar track is reserved. Selecting an entry loads that
 // section and the parent focuses its heading. The outline owns no save/navigation logic; it reports
 // selection and the add-section request and reflects the active section.
@@ -109,16 +112,18 @@ export function projectDraftOutline(
 }
 
 export function WorkOutline({
+  activeHeadingLevel,
   activeUnitEntryId,
   addPending,
   entries,
   onAddSection,
   onSelect
 }: Readonly<{
+  activeHeadingLevel?: number | undefined;
   activeUnitEntryId: string;
-  addPending: boolean;
+  addPending: WorkSectionPlacement | null;
   entries: ReadonlyArray<HeadingOutlineEntry>;
-  onAddSection: () => void;
+  onAddSection: (placement: WorkSectionPlacement) => Promise<boolean>;
   onSelect: (unitEntryId: string) => void;
 }>): React.JSX.Element | null {
   const isSidebar = useMediaQuery(OUTLINE_SIDEBAR_QUERY);
@@ -141,6 +146,18 @@ export function WorkOutline({
     }
     return path;
   }, [entries, activeUnitEntryId]);
+  const activeEntry = entries.find((entry) => entry.entryId === activeUnitEntryId);
+  const placements = availableWorkSectionPlacements(activeHeadingLevel);
+  let actionAfterIndex = -1;
+  if (activeEntry !== undefined && placements.length > 0) {
+    actionAfterIndex = entries.findIndex((entry) => entry.entryId === activeEntry.entryId);
+    while (
+      actionAfterIndex + 1 < entries.length &&
+      entries[actionAfterIndex + 1]!.depth > activeEntry.depth
+    ) {
+      actionAfterIndex += 1;
+    }
+  }
 
   // The drawer is only ever open below the sidebar breakpoint. Deriving the open state (rather than
   // resetting it in an effect) means growing to sidebar width simply hands navigation to the always-
@@ -181,8 +198,15 @@ export function WorkOutline({
     }
   };
 
+  const addSection = async (placement: WorkSectionPlacement): Promise<void> => {
+    const added = await onAddSection(placement);
+    if (added && !isSidebar) {
+      dismiss(false);
+    }
+  };
+
   // An empty Outline (a Work with no headings) renders nothing at all, so the workspace reserves no sidebar
-  // track and no drawer toggle; the parent surfaces an "Add section" control above the canvas instead. Placed
+  // track and no drawer toggle; the parent surfaces a contextual action above the canvas instead. Placed
   // after every hook so the hook order stays stable across the populated/empty transition.
   if (entries.length === 0) {
     return null;
@@ -215,34 +239,67 @@ export function WorkOutline({
       >
         <p className="workOutlineHeading">Outline</p>
         <ul className="workOutlineList">
-          {entries.map((entry) => (
-            <li
-              className="workOutlineNode"
-              data-depth={entry.depth}
-              key={entry.entryId}
-              style={{ "--outline-depth": entry.depth } as React.CSSProperties}
-            >
-              <button
-                aria-current={entry.targetUnitEntryId === activeUnitEntryId ? "true" : undefined}
-                className="workOutlineItem"
-                data-active-path={activePathEntryIds.has(entry.entryId) ? "true" : undefined}
-                onClick={() => select(entry.targetUnitEntryId)}
-                title={entry.label}
-                type="button"
+          {entries.map((entry, index) => (
+            <Fragment key={entry.entryId}>
+              <li
+                className="workOutlineNode"
+                data-depth={entry.depth}
+                style={{ "--outline-depth": entry.depth } as React.CSSProperties}
               >
-                <span className="workOutlineLabel">{entry.label}</span>
-              </button>
-            </li>
+                <button
+                  aria-current={entry.entryId === activeUnitEntryId ? "true" : undefined}
+                  className="workOutlineItem"
+                  data-active-path={activePathEntryIds.has(entry.entryId) ? "true" : undefined}
+                  onClick={() => select(entry.targetUnitEntryId)}
+                  title={entry.label}
+                  type="button"
+                >
+                  <span className="workOutlineLabel">{entry.label}</span>
+                </button>
+              </li>
+              {index === actionAfterIndex && activeEntry !== undefined ? (
+                <li
+                  className="workOutlineActionsNode"
+                  data-depth={activeEntry.depth}
+                  style={{ "--outline-depth": activeEntry.depth } as React.CSSProperties}
+                >
+                  <div
+                    aria-label={`Section actions for ${activeEntry.label}`}
+                    className="workOutlineActions"
+                    role="group"
+                  >
+                    <button
+                      aria-label={`Add next section after ${activeEntry.label}`}
+                      className="workOutlineAction workOutlineAction--next"
+                      disabled={addPending !== null}
+                      onClick={() => {
+                        void addSection("next");
+                      }}
+                      type="button"
+                    >
+                      <Plus aria-hidden size={18} strokeWidth={1.75} />
+                      <span>{addPending === "next" ? "Adding…" : "Add next section"}</span>
+                    </button>
+                    {placements.includes("child") ? (
+                      <button
+                        aria-label={`Add subsection under ${activeEntry.label}`}
+                        className="workOutlineAction workOutlineAction--child"
+                        disabled={addPending !== null}
+                        onClick={() => {
+                          void addSection("child");
+                        }}
+                        type="button"
+                      >
+                        <CornerDownRight aria-hidden size={18} strokeWidth={1.75} />
+                        <span>{addPending === "child" ? "Adding…" : "Add subsection"}</span>
+                      </button>
+                    ) : null}
+                  </div>
+                </li>
+              ) : null}
+            </Fragment>
           ))}
         </ul>
-        <button
-          className="workOutlineAdd"
-          disabled={addPending}
-          onClick={onAddSection}
-          type="button"
-        >
-          {addPending ? "Adding…" : "Add section"}
-        </button>
       </nav>
     </div>
   );
