@@ -676,6 +676,123 @@ def _table_rows(
     return rows
 
 
+# The docling ``DocItemLabel`` value a code listing's mapped item carries (``map_item``'s own
+# ``label`` variable is always this exact string for a code item — see #815/#811 for the same
+# raw-label-comparison style applied to headings/furniture).
+CODE_CLUSTER_LABEL = "code"
+
+# Half a point summed across all four bbox coordinates: generous enough to absorb any floating-point
+# accumulation from the coordinate-origin round trip (see ``_cluster_bbox_bottom_left``), far below
+# the scale (tens of points) that would indicate two genuinely different clusters on the same page.
+CODE_CLUSTER_MATCH_TOLERANCE = 0.5
+
+
+def _cluster_code_lines(cluster: Any) -> Optional[str]:
+    """One CODE layout cluster's per-line text, joined with real newlines and indentation intact (#876).
+
+    Docling's OWN page-assembly step (``PageAssembleModel.__call__``) builds this exact same list from
+    ``cluster.cells`` but calls ``.strip()`` on every line before joining them with a single space —
+    correct for a prose paragraph, and the reason every code listing is flattened to one line with its
+    indentation gone (measured: 520 of 520 `codeBlock`s, 0 containing a newline). Reusing docling's own
+    blank-line filter (skip a cell that is blank after stripping) but keeping each SURVIVING cell's
+    original, unstripped text reconstructs the listing exactly as extracted — the indentation was never
+    lost upstream of this cluster, only downstream of it. Returns ``None`` when the cluster carries no
+    non-blank cell, so the caller falls back to the flattened ``item.text`` rather than emit an empty
+    block (#876's mandatory fallback).
+    """
+    lines = [
+        str(getattr(cell, "text", "") or "").replace("\x02", "-")
+        for cell in getattr(cluster, "cells", None) or []
+        if str(getattr(cell, "text", "") or "").strip() != ""
+    ]
+    return "\n".join(lines) if lines else None
+
+
+def _cluster_bbox_bottom_left(bbox: Any, page_height: float) -> dict[str, float]:
+    """A layout cluster's bounding box, converted from its native top-left origin to the SAME
+    bottom-left origin the final document item's own provenance bbox carries.
+
+    Docling's reading-order stage builds a ``CodeItem``'s provenance as
+    ``cluster.bbox.to_bottom_left_origin(page_height)`` (left/right unchanged, top/bottom mirrored
+    through the page height, origin relabelled). Reproducing that exact arithmetic here lets a cluster
+    be matched against the mapped item's own ``boundingBox`` (``_bounding_box_from``'s identical
+    ``{left, top, right, bottom}`` shape) without depending on docling's own conversion helper or
+    constructing a real ``BoundingBox``.
+    """
+    return {
+        "left": float(bbox.l),
+        "right": float(bbox.r),
+        "top": page_height - float(bbox.t),
+        "bottom": page_height - float(bbox.b),
+    }
+
+
+def build_code_cluster_index(result: Any) -> dict[int, list[tuple[dict[str, float], str]]]:
+    """Every CODE-labelled layout cluster's reconstructed text, keyed by the 1-based page it is on (#876).
+
+    ``ConversionResult.pages[*].predictions.layout.clusters`` is the converter's own per-page layout
+    record — never released after assembly (only ``parsed_page`` and the page backend are, when
+    ``generate_parsed_pages`` is off, which this worker's converter leaves at its default) — and the
+    ONLY place a code listing's per-line breakdown with its original indentation still exists; the
+    document item docling ultimately builds carries just the one space-joined string this index is
+    used to replace (see ``map_item``). Fails soft at every level (missing/invalid page number,
+    predictions/layout/size/bbox), exactly like ``page_confidence_map``, since a code-formatting
+    improvement must never turn a missing or unexpected docling field into a conversion failure — an
+    empty result here just means every code item falls back to its flattened text, today's existing
+    behavior. Reuses ``_evidence_page_number``'s exact page-number validity rule (#840) so the same
+    entry is never trusted as a page here that ``processed_page_numbers`` would refuse to count.
+    """
+    index: dict[int, list[tuple[dict[str, float], str]]] = {}
+    for page in getattr(result, "pages", None) or []:
+        page_no = _evidence_page_number(page)
+        if page_no is None:
+            continue
+        size = getattr(page, "size", None)
+        page_height = getattr(size, "height", None) if size is not None else None
+        if not isinstance(page_height, (int, float)) or isinstance(page_height, bool):
+            continue
+        predictions = getattr(page, "predictions", None)
+        layout = getattr(predictions, "layout", None) if predictions is not None else None
+        clusters = getattr(layout, "clusters", None) if layout is not None else None
+        entries: list[tuple[dict[str, float], str]] = []
+        for cluster in clusters or []:
+            if str(getattr(cluster, "label", "")) != CODE_CLUSTER_LABEL:
+                continue
+            bbox = getattr(cluster, "bbox", None)
+            if bbox is None:
+                continue
+            text = _cluster_code_lines(cluster)
+            if text is None:
+                continue
+            entries.append((_cluster_bbox_bottom_left(bbox, float(page_height)), text))
+        if entries:
+            index[page_no] = entries
+    return index
+
+
+def _match_code_cluster_text(
+    bounding_box: dict[str, float], candidates: Sequence[tuple[dict[str, float], str]]
+) -> Optional[str]:
+    """The reconstructed text of whichever candidate cluster's bbox is closest to ``bounding_box``, or
+    ``None`` when nothing is close enough to trust (#876's mandatory fallback: a code item is never
+    emitted empty because its cluster could not be found). Ties resolve to the first closest candidate;
+    real code listings on one page never share a bounding box, so a tie never arises in practice.
+    """
+    best_text: Optional[str] = None
+    best_distance = CODE_CLUSTER_MATCH_TOLERANCE
+    for candidate_box, text in candidates:
+        distance = (
+            abs(candidate_box["left"] - bounding_box["left"])
+            + abs(candidate_box["top"] - bounding_box["top"])
+            + abs(candidate_box["right"] - bounding_box["right"])
+            + abs(candidate_box["bottom"] - bounding_box["bottom"])
+        )
+        if distance <= best_distance:
+            best_distance = distance
+            best_text = text
+    return best_text
+
+
 def _picture_image_reader(item: Any, doc: Any) -> Any:
     """Render a docling picture item to a PIL image, or None when it carries no renderable image.
 
@@ -767,6 +884,7 @@ def map_item(
     page_confidences: dict[int, float],
     inherited_page: int,
     sink: Optional[ArtifactSink] = None,
+    code_cluster_index: Optional[dict[int, list[tuple[dict[str, float], str]]]] = None,
 ) -> dict[str, Any]:
     """Project one DoclingDocument node (and its subtree) into a contract item.
 
@@ -781,6 +899,11 @@ def map_item(
     ``inherited_page`` is only the LAST resort: a node with no provenance of its own borrows page, box,
     and span from the content it holds first (``_resolve_geometry``), so a group reports the page its
     content is actually on rather than a page nothing on it came from (#813).
+
+    When a ``code_cluster_index`` (``build_code_cluster_index``) is supplied and this item is a code
+    listing, its flattened ``item.text`` is replaced by the reconstructed multi-line text of whichever
+    indexed cluster's bbox matches this item's own resolved ``bounding_box`` (#876) — every other label,
+    and a code item with no confident match, is completely unaffected.
     """
     page_number, bounding_box, char_span = _resolve_geometry(item, doc, resolve, inherited_page)
     table_rows = _table_rows(item, page_number, page_confidences)
@@ -789,17 +912,24 @@ def map_item(
     else:
         children_refs = getattr(item, "children", None) or []
         children = [
-            map_item(resolve(ref, doc), doc, resolve, page_confidences, page_number, sink)
+            map_item(
+                resolve(ref, doc), doc, resolve, page_confidences, page_number, sink, code_cluster_index
+            )
             for ref in children_refs
         ]
     label = str(getattr(item, "label", "unknown"))
+    text = str(getattr(item, "text", "") or "")
+    if label == CODE_CLUSTER_LABEL and code_cluster_index is not None:
+        matched = _match_code_cluster_text(bounding_box, code_cluster_index.get(page_number, []))
+        if matched is not None:
+            text = matched
     mapped: dict[str, Any] = {
         "label": label,
         "pageNumber": page_number,
         "boundingBox": bounding_box,
         "charSpan": char_span,
         "confidence": _confidence(item, page_confidences, page_number),
-        "text": str(getattr(item, "text", "") or ""),
+        "text": text,
         "children": children,
     }
     if sink is not None and label in PICTURE_LABELS:
@@ -816,6 +946,7 @@ def map_group(
     page_confidences: dict[int, float],
     fallback_page: int,
     sink: Optional[ArtifactSink] = None,
+    code_cluster_index: Optional[dict[int, list[tuple[dict[str, float], str]]]] = None,
 ) -> list[dict[str, Any]]:
     """Map a top-level group's ordered children (body or furniture) into contract items.
 
@@ -825,11 +956,12 @@ def map_group(
     page it cannot be on (#813).
 
     An ``ArtifactSink`` is threaded only for the body group (the only source of canonical figures), so a
-    furniture picture is never extracted to a would-be-orphaned artifact.
+    furniture picture is never extracted to a would-be-orphaned artifact. A ``code_cluster_index``
+    (#876) is likewise meaningful only for the body group — page furniture is never a code listing.
     """
     children_refs = getattr(group, "children", None) or []
     return [
-        map_item(resolve(ref, doc), doc, resolve, page_confidences, fallback_page, sink)
+        map_item(resolve(ref, doc), doc, resolve, page_confidences, fallback_page, sink, code_cluster_index)
         for ref in children_refs
     ]
 
@@ -1014,6 +1146,7 @@ def build_range_payload(
     sink: Optional[ArtifactSink] = None,
     outline: Optional[Sequence[Mapping[str, Any]]] = None,
     native_text_length: Optional[Callable[[int], int]] = None,
+    code_cluster_index: Optional[dict[int, list[tuple[dict[str, float], str]]]] = None,
 ) -> dict[str, Any]:
     """Assemble one range payload from a converted DoclingDocument.
 
@@ -1030,6 +1163,9 @@ def build_range_payload(
     PDF's own whitespace-stripped character count as ``nativeTextLength`` (#817's usability rubric
     measures the mapped body against this independent, worker-side count); without one it is omitted,
     exactly like ``metadata``/``outline``, so an older run is never mistaken for a measured-zero page.
+    When the caller supplies a ``code_cluster_index`` (``build_code_cluster_index``), each code listing
+    in the BODY is reconstructed to its original multi-line, indented form (#876); furniture never
+    carries code, so it is mapped without one regardless.
     """
     version = str(getattr(doc, "version", ""))
     if version not in SUPPORTED_SCHEMA_VERSIONS:
@@ -1047,7 +1183,13 @@ def build_range_payload(
         "doclingSchema": {"name": DOCLING_SCHEMA_NAME, "version": version},
         "pages": pages,
         "body": map_group(
-            getattr(doc, "body", None), doc, _resolve_ref, page_confidences, start_page, sink
+            getattr(doc, "body", None),
+            doc,
+            _resolve_ref,
+            page_confidences,
+            start_page,
+            sink,
+            code_cluster_index,
         ),
         "furniture": map_group(
             getattr(doc, "furniture", None), doc, _resolve_ref, page_confidences, start_page
@@ -1239,6 +1381,12 @@ def convert_range(
     against the requested window (#840), so a converter that claims success while silently dropping
     pages is refused too — the payload's per-page records are only ever emitted for a window every page
     of which the converter's own record proves it processed.
+
+    Docling's OWN assembly step flattens every code listing to one whitespace-joined line before it ever
+    reaches ``result.document`` (#876) — the per-line text with its original indentation survives only
+    on ``result.pages[*].predictions.layout.clusters``, which ``_release_page_resources`` never clears.
+    ``build_code_cluster_index`` captures that evidence off the full ``result`` (never exposed to
+    ``build_range_payload``) so each mapped code item can recover its original multi-line form.
     """
     converter = converter_factory()
     result = converter.convert(pdf_path, page_range=(start_page, end_page))
@@ -1246,8 +1394,17 @@ def convert_range(
     ensure_pages_processed(result, start_page, end_page)
     metadata = read_metadata() if read_metadata is not None else None
     outline = read_outline_entries(read_outline)
+    code_cluster_index = build_code_cluster_index(result)
     return build_range_payload(
-        result.document, start_page, end_page, native_text, metadata, sink, outline, native_text_length
+        result.document,
+        start_page,
+        end_page,
+        native_text,
+        metadata,
+        sink,
+        outline,
+        native_text_length,
+        code_cluster_index,
     )
 
 
