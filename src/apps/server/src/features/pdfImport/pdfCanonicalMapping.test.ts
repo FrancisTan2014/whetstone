@@ -2018,10 +2018,11 @@ describe("heading sanity rule (#856): detect and split code listings absorbed in
   it("keeps the original heading when the text before the first code line is blank", () => {
     // A stray leading blank line before the code pattern leaves no real caption text once trimmed.
     // Splitting would produce an empty heading, so the rule must fall back to the original heading
-    // rather than emit a blank one.
+    // rather than emit a blank one. (No space-before-colon here — that defect is #874's concern,
+    // covered separately; this fixture stays clean so it tests only the blank-caption fallback.)
     const blankCaptionListing =
       "\n" +
-      "1 /* JCommon : a free general purpose class library for the Java platform, padded well past " +
+      "1 /* JCommon: a free general purpose class library for the Java platform, padded well past " +
       "the one hundred fifty character detection threshold so this line alone satisfies the rule */";
     const result = mapped(
       mapEn(
@@ -2287,5 +2288,135 @@ describe("recombining a converter-split chapter opener (#867)", () => {
     expect(headingTexts(result)).toEqual(["Clean Code", "Robert C. Martin Series"]);
     expect(headingLevels(result)).toEqual([1, 2]);
     expect(result.headingLevelSources).toEqual({ label: 1, outline: 1 });
+  });
+});
+
+describe("prose spacing normalization (#874): PDF kerning gaps fixed in prose, never in code", () => {
+  it("closes a space before minor punctuation in a paragraph", () => {
+    const result = mapped(
+      mapEn(doc([item({ label: "text", text: "God is in the details , said the architect." })]))
+    );
+    expect(blockTexts(result)).toEqual(["God is in the details, said the architect."]);
+  });
+
+  it("closes a space before ? and ! in a paragraph", () => {
+    const result = mapped(
+      mapEn(doc([item({ label: "text", text: "Have to say about that ? Wow !" })]))
+    );
+    expect(blockTexts(result)).toEqual(["Have to say about that? Wow!"]);
+  });
+
+  it("closes a broken contraction split by PDF kerning, straight or curly apostrophe alike", () => {
+    // The original apostrophe style is preserved (never forced straight-vs-curly) — only the SPACE
+    // between it and the bare suffix is a defect.
+    const result = mapped(
+      mapEn(
+        doc([
+          item({ label: "text", text: "That' s one' s business, we\u2019 d say we\u2019 ll go." })
+        ])
+      )
+    );
+    expect(blockTexts(result)).toEqual(["That's one's business, we\u2019d say we\u2019ll go."]);
+  });
+
+  it("closes space inside parentheses", () => {
+    const result = mapped(mapEn(doc([item({ label: "text", text: "( Map ) is hidden here." })])));
+    expect(blockTexts(result)).toEqual(["(Map) is hidden here."]);
+  });
+
+  it("fixes a heading's own spacing the same way as a paragraph", () => {
+    const result = mapped(
+      mapEn(
+        doc([
+          item({ label: "section_header", text: "Part I : Getting Started" }),
+          item({ label: "text", text: "Body." })
+        ])
+      )
+    );
+    expect(headingTexts(result)).toEqual(["Part I: Getting Started"]);
+  });
+
+  it("fixes a list item's text without a per-caller opt-in (shared paragraph() builder)", () => {
+    const result = mapped(
+      mapEn(
+        doc([
+          item({ label: "list_item", text: "First , item." }),
+          item({ label: "list_item", text: "Second item." })
+        ])
+      )
+    );
+    expect(unitTypes(result, 0)).toEqual(["bulletList"]);
+    expect(blockTexts(result)).toEqual(["First, item.Second item."]);
+  });
+
+  it("fixes a table cell's text the same way", () => {
+    const result = mapped(
+      mapEn(doc([tableShaped("table", [[item({ label: "table_cell", text: "Cell , text" })]])]))
+    );
+    expect(blockTexts(result)).toEqual(["Cell, text"]);
+  });
+
+  it("leaves a code/formula block byte-identical, including a defect-shaped space and a two-space indent", () => {
+    // `int x ;` and the two-space indent both LOOK exactly like the defects this rule fixes elsewhere —
+    // proving the exclusion actually holds, not merely that no test happens to trigger it.
+    const codeText = "  int x ;\n  int y ;";
+    const result = mapped(mapEn(doc([item({ label: "code", text: codeText })])));
+    expect(blockTexts(result)).toEqual([codeText]);
+  });
+
+  it("leaves the code half of a split heading-listing byte-identical while fixing its caption", () => {
+    const listing =
+      "Listing B-6 RelativeDayOfWeekRule.java , annotated\n" +
+      "1 /* =========================================\n" +
+      "2  int x ;  more code with a defect-shaped space\n" +
+      "3  * =========================================";
+    const result = mapped(
+      mapEn(
+        doc([
+          item({ label: "section_header", text: listing }),
+          item({ label: "text", text: "Body." })
+        ])
+      )
+    );
+    expect(unitTypes(result, 0)).toEqual(["heading", "codeBlock", "paragraph"]);
+    // The caption (heading) half is fixed...
+    expect(headingTexts(result)).toEqual(["Listing B-6 RelativeDayOfWeekRule.java, annotated"]);
+    // ...but the code half is untouched, defect-shaped space and all.
+    const codeBlock = result.units[0]!.docBlocks.find((b) => b.type === "codeBlock");
+    expect(codeBlock?.node.content?.[0]?.text).toBe(
+      "1 /* =========================================\n" +
+        "2  int x ;  more code with a defect-shaped space\n" +
+        "3  * ========================================="
+    );
+  });
+
+  it("preserves legitimate spacing: closing quote before a real word, a spaced ellipsis, and an initial", () => {
+    const text = "The 'debate' on style is old. Wait . . . really? James 0. Coplien said so.";
+    const result = mapped(mapEn(doc([item({ label: "text", text })])));
+    expect(blockTexts(result)).toEqual([text]);
+  });
+
+  it("does not touch an unknown/unmapped node's raw preserved text", () => {
+    // `unknown` nodes preserve their source verbatim for diagnosis (#812) — #874 must not add an
+    // opt-in there, since that text is evidence for review, not reader-facing prose.
+    const result = mapped(
+      mapEn(doc([item({ label: "totally_unrecognized_label", text: "Odd , label , text ." })]))
+    );
+    expect(blockTexts(result)).toEqual(["Odd , label , text ."]);
+  });
+
+  it("fixes a recombined multi-part heading's outline-sourced title the same way", () => {
+    // The merged run's heading text comes from `heading.outlineEntry.title` (the PDF's own bookmark),
+    // a different call site from a plain heading's `item.text` — this proves that site is fixed too.
+    const outline: readonly PdfOutlineEntry[] = [
+      { level: 1, pageNumber: 1, title: "Chapter 10 : Classes" }
+    ];
+    const body: readonly StructuredDocItem[] = [
+      item({ label: "section_header", pageNumber: 1, text: "10" }),
+      item({ label: "section_header", pageNumber: 1, text: "Classes" }),
+      item({ label: "text", pageNumber: 1, text: "Body." })
+    ];
+    const result = mapped(mapEn(doc(body, [{ hasNativeText: true, pageNumber: 1 }], outline)));
+    expect(headingTexts(result)).toEqual(["Chapter 10: Classes"]);
   });
 });

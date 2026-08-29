@@ -230,12 +230,49 @@ function detectAndSplitCodeListing(
   return { caption, code };
 }
 
+// #874: intra-sentence spacing defects docling's text extraction leaves in PROSE — a kerning gap in the
+// PDF read as a token boundary that does not exist in the author's actual sentence ("details , said",
+// "one' s", "( Map )"). Measured at 910 occurrences across a 462-page book, roughly one every 1.5
+// paragraphs. Each rule is anchored on the SPECIFIC adjacent characters that make a space provably
+// spurious, so the two things that must survive untouched do: a spaced ellipsis ("wait . . . what") and a
+// closing quote/paren followed by a real word ("'debate' on") never match any rule below.
+//
+// "Word" is a Unicode letter or number (`\p{L}`/`\p{N}`, not ASCII-only `\w`), matching the apostrophe
+// handling `diaryTidy.ts` already establishes for this codebase, so an accented name is fixed exactly
+// like an ASCII one.
+const SPACE_BEFORE_MINOR_PUNCTUATION = /([\p{L}\p{N}])[ \t]+([,;:?!])/gu;
+// A period only loses its leading space when it is NOT part of a spaced ellipsis: the lookahead refuses
+// to touch a `.` immediately followed by another spaced `.`, so "wait . . . what" is never touched (there
+// is no word character directly before the run's LATER dots, and the FIRST dot fails the lookahead).
+const SPACE_BEFORE_PERIOD = /([\p{L}\p{N}])[ \t]+\.(?!\s*\.)/gu;
+// A straight or curly apostrophe followed by a space then a BARE contraction suffix is always a kerning
+// artifact ("we' d", "That' s"), never two real words: `\b` immediately after the suffix requires it to
+// end there, so "'debate' on" and "we' vent" (a real word, not a suffix) are left alone.
+const SPACE_IN_CONTRACTION = /(['\u2019])[ \t]+(s|t|d|ll|re|ve|m)\b/gu;
+const SPACE_AFTER_OPEN_PAREN = /\([ \t]+/g;
+const SPACE_BEFORE_CLOSE_PAREN = /[ \t]+\)/g;
+
+// Apply the #874 spacing rules to PROSE text taken from a docling item. Never call this on code/formula
+// text: `pre-wrap` makes every space in a listing significant, and this function's whole job is removing
+// spaces a reader cannot otherwise tell are wrong.
+function normalizeProseSpacing(text: string): string {
+  return text
+    .replace(SPACE_BEFORE_MINOR_PUNCTUATION, "$1$2")
+    .replace(SPACE_BEFORE_PERIOD, "$1.")
+    .replace(SPACE_IN_CONTRACTION, "$1$2")
+    .replace(SPACE_AFTER_OPEN_PAREN, "(")
+    .replace(SPACE_BEFORE_CLOSE_PAREN, ")");
+}
+
 function inlineContent(text: string): DocumentNodeJSON[] {
   return text.length === 0 ? [] : [{ text, type: "text" }];
 }
 
+// The canonical prose paragraph: every caller (a plain body paragraph, a list item, a table cell, a
+// footnote target) gets the #874 spacing fix for free here, with no per-caller opt-in. `codeBlock` never
+// calls this — it builds its content straight from `inlineContent` so a listing's spacing stays verbatim.
 function paragraph(text: string): DocumentNodeJSON {
-  return { content: inlineContent(text), type: "paragraph" };
+  return { content: inlineContent(normalizeProseSpacing(text)), type: "paragraph" };
 }
 
 function unknownNode(item: StructuredDocItem): DocumentNodeJSON {
@@ -357,7 +394,11 @@ function canonicalBodyNode(
   heading: ResolvedHeading | null
 ): DocumentNodeJSON | null {
   if (heading !== null) {
-    return { attrs: { level: heading.level }, content: inlineContent(item.text), type: "heading" };
+    return {
+      attrs: { level: heading.level },
+      content: inlineContent(normalizeProseSpacing(item.text)),
+      type: "heading"
+    };
   }
   if (PICTURE_LABELS.has(item.label)) {
     return figureNode(item);
@@ -589,7 +630,7 @@ function walkBody(
             label: item.label,
             node: {
               attrs: { level: heading.level },
-              content: inlineContent(heading.outlineEntry.title),
+              content: inlineContent(normalizeProseSpacing(heading.outlineEntry.title)),
               type: "heading"
             },
             source: item
@@ -610,12 +651,13 @@ function walkBody(
           label: item.label,
           node: {
             attrs: { level: heading.level },
-            content: inlineContent(split.caption),
+            content: inlineContent(normalizeProseSpacing(split.caption)),
             type: "heading"
           },
           source: item
         });
-        // Add the code as a code block.
+        // Add the code as a code block. Never normalized: `split.code` is a listing, and `pre-wrap`
+        // makes every one of its spaces significant.
         out.push({
           heading: null,
           label: "code",
