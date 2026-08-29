@@ -271,15 +271,15 @@ async function loadInUnitHeadingsByUnit(
 
   const byUnit = new Map<string, HeadingOutlineSection[]>();
   for (const row of rows) {
-    const heading = documentBlockHeading(row.node as DocumentNodeJSON);
-    // `anchorId` is guaranteed non-null by the `isNotNull` filter above; the check keeps the type
-    // narrowed without a non-null assertion.
-    if (heading === undefined || row.anchorId === null) {
-      continue;
-    }
+    // Both assertions are guaranteed by the query above, not merely assumed: `isNotNull(anchorId)`
+    // rules out `null`, and `blockWriter` always sets a row's `type` column from that same node's
+    // `type` field (#311), so a `type = "heading"` row's node always parses to a defined heading.
+    // Narrowing this way (rather than a defensive branch) avoids an unreachable, untestable branch.
+    const heading = documentBlockHeading(row.node as DocumentNodeJSON)!;
+    const anchor = row.anchorId!;
     const sections = byUnit.get(row.readingUnitEntryId) ?? [];
     sections.push({
-      anchor: row.anchorId,
+      anchor,
       level: heading.level,
       ...(heading.title === undefined ? {} : { title: heading.title })
     });
@@ -434,8 +434,10 @@ export async function loadWorkStructure(
   // null-`source_file` unit surfaces (via `docByUnit`); an EPUB chapter with no mdast — an unknown-only
   // or unstorable-figure-only chapter — has a non-null `source_file` and is excluded.
   const structureUnits = rows.flatMap((row) => {
-    const sections = resolveSections(row.entryId);
     if (row.mdastCount > 0) {
+      // In-unit anchors (#865) are only ever assigned by the PDF-canonical mapper, whose units always
+      // carry `mdastCount === 0` (they hold no legacy mdast blocks) — so a unit reaching this mdast
+      // branch never has sections to thread through.
       return [
         {
           blockCount: row.mdastCount,
@@ -443,7 +445,6 @@ export async function loadWorkStructure(
           hasSubstantiveText: row.hasSubstantiveMdast,
           headingLevel: resolveHeadingLevel(row.entryId),
           orderIndex: row.orderIndex,
-          ...(sections === undefined ? {} : { sections }),
           sourceFile: row.sourceFile,
           title: resolveTitle(row.entryId, row.title)
         }
@@ -453,6 +454,7 @@ export async function loadWorkStructure(
     if (doc === undefined) {
       return [];
     }
+    const sections = resolveSections(row.entryId);
     return [
       {
         blockCount: doc.docCount,
