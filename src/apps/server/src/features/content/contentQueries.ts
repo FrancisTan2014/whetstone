@@ -1,4 +1,9 @@
-import { buildHeadingOutline, toEntryId, type EntryId } from "@whetstone/domain";
+import {
+  buildHeadingOutline,
+  toEntryId,
+  type EntryId,
+  type HeadingOutlineSection
+} from "@whetstone/domain";
 import {
   documentBlockHeading,
   type DocumentBlockHeading,
@@ -15,7 +20,7 @@ import type {
   WorkContentDto,
   WorkStructureDto
 } from "@whetstone/contracts";
-import { and, asc, count, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, count, eq, isNotNull, isNull, sql } from "drizzle-orm";
 
 import type { DbClient } from "../../db/dbClient.js";
 import { addressableBlocks } from "../../db/addressableBlocks.js";
@@ -236,6 +241,53 @@ async function loadDocHeadingByUnit(
   return byUnit;
 }
 
+// A chapter-scale PDF unit's IN-UNIT headings (#865) — anchored heading blocks after the unit's own
+// (order-0) heading — read into the domain's `HeadingOutlineSection` shape, in source order, so
+// `headingOutlineToc` can nest them under their unit exactly as a deeper unit-level heading would.
+// Scoped to null-`source_file` units exactly like `loadDocHeadingByUnit`: only a PDF-canonical (or
+// manual) unit's heading structure lives in `doc_blocks`, and `pdfCanonicalMapping`'s `buildUnit` is the
+// only writer that ever assigns a non-null `anchor_id` to a heading block.
+async function loadInUnitHeadingsByUnit(
+  db: DbClient,
+  workEntryId: EntryId
+): Promise<Map<string, HeadingOutlineSection[]>> {
+  const rows = await db
+    .select({
+      anchorId: docBlocks.anchorId,
+      node: docBlocks.nodeJson,
+      readingUnitEntryId: docBlocks.readingUnitEntryId
+    })
+    .from(docBlocks)
+    .innerJoin(readingUnits, eq(docBlocks.readingUnitEntryId, readingUnits.entryId))
+    .where(
+      and(
+        eq(docBlocks.workEntryId, workEntryId),
+        eq(docBlocks.type, "heading"),
+        isNotNull(docBlocks.anchorId),
+        isNull(readingUnits.sourceFile)
+      )
+    )
+    .orderBy(asc(docBlocks.orderIndex));
+
+  const byUnit = new Map<string, HeadingOutlineSection[]>();
+  for (const row of rows) {
+    // Both assertions are guaranteed by the query above, not merely assumed: `isNotNull(anchorId)`
+    // rules out `null`, and `blockWriter` always sets a row's `type` column from that same node's
+    // `type` field (#311), so a `type = "heading"` row's node always parses to a defined heading.
+    // Narrowing this way (rather than a defensive branch) avoids an unreachable, untestable branch.
+    const heading = documentBlockHeading(row.node as DocumentNodeJSON)!;
+    const anchor = row.anchorId!;
+    const sections = byUnit.get(row.readingUnitEntryId) ?? [];
+    sections.push({
+      anchor,
+      level: heading.level,
+      ...(heading.title === undefined ? {} : { title: heading.title })
+    });
+    byUnit.set(row.readingUnitEntryId, sections);
+  }
+  return byUnit;
+}
+
 function toReadingUnitDto(
   unit: ReadingUnitRow,
   unitBlocks: ReadonlyArray<BlockDto>,
@@ -371,12 +423,21 @@ export async function loadWorkStructure(
   const resolveTitle = (entryId: string, title: string | null): string | null =>
     title ?? docHeadingByUnit.get(entryId)?.title ?? null;
 
+  // #865: a chapter-scale PDF unit's own in-unit sections, so the outline nests them under it instead
+  // of leaving a chapter-scale unit as one flat, undifferentiated TOC entry.
+  const inUnitHeadingsByUnit = await loadInUnitHeadingsByUnit(db, workEntryId);
+  const resolveSections = (entryId: string): ReadonlyArray<HeadingOutlineSection> | undefined =>
+    inUnitHeadingsByUnit.get(entryId);
+
   // A unit is readable when it has content in the substrate that owns it. Mdast is authoritative for
   // count and substantiveness when present (EPUB/Markdown behavior unchanged). With no mdast, only a
   // null-`source_file` unit surfaces (via `docByUnit`); an EPUB chapter with no mdast — an unknown-only
   // or unstorable-figure-only chapter — has a non-null `source_file` and is excluded.
   const structureUnits = rows.flatMap((row) => {
     if (row.mdastCount > 0) {
+      // In-unit anchors (#865) are only ever assigned by the PDF-canonical mapper, whose units always
+      // carry `mdastCount === 0` (they hold no legacy mdast blocks) — so a unit reaching this mdast
+      // branch never has sections to thread through.
       return [
         {
           blockCount: row.mdastCount,
@@ -393,6 +454,7 @@ export async function loadWorkStructure(
     if (doc === undefined) {
       return [];
     }
+    const sections = resolveSections(row.entryId);
     return [
       {
         blockCount: doc.docCount,
@@ -400,6 +462,7 @@ export async function loadWorkStructure(
         hasSubstantiveText: doc.hasSubstantiveDoc,
         headingLevel: resolveHeadingLevel(row.entryId),
         orderIndex: row.orderIndex,
+        ...(sections === undefined ? {} : { sections }),
         sourceFile: row.sourceFile,
         title: resolveTitle(row.entryId, row.title)
       }
@@ -421,14 +484,17 @@ export async function loadWorkStructure(
   };
 }
 
-// A Markdown-pipeline work's heading-derived table of contents (#680): the shared domain projection
-// over the units' heading levels, mapped to the served TOC shape. Each entry opens its own unit's top
-// (no sub-unit anchor), so `targetUnitEntryId` is the unit's own id. Empty for a single-unit or
-// headingless work — the reader then uses the flat reading-unit list.
+// A Markdown-pipeline or PDF-canonical work's heading-derived table of contents (#680, extended by
+// #865): the shared domain projection over the units' heading levels AND their own in-unit sections,
+// mapped to the served TOC shape. A unit-starting entry opens its own unit's top (no anchor), so its
+// `targetUnitEntryId` is the unit's own id; a section-derived entry targets the SAME unit but carries
+// `targetAnchor` so the Reader scrolls straight to it. Empty for a single-unit or headingless work — the
+// reader then uses the flat reading-unit list.
 function headingOutlineToc(
   structureUnits: ReadonlyArray<{
     entryId: string;
     headingLevel: number | undefined;
+    sections?: ReadonlyArray<HeadingOutlineSection>;
     title: string | null;
   }>
 ): ReadonlyArray<TocEntryDto> {
@@ -436,6 +502,7 @@ function headingOutlineToc(
     structureUnits.map((unit) => ({
       entryId: unit.entryId,
       ...(unit.headingLevel === undefined ? {} : { headingLevel: unit.headingLevel }),
+      ...(unit.sections === undefined ? {} : { sections: unit.sections }),
       ...(unit.title === null ? {} : { title: unit.title })
     }))
   );
@@ -446,6 +513,7 @@ function headingOutlineToc(
     label: entry.label,
     orderIndex: entry.orderIndex,
     ...(entry.parentEntryId === undefined ? {} : { parentEntryId: entry.parentEntryId }),
+    ...(entry.targetAnchor === undefined ? {} : { targetAnchor: entry.targetAnchor }),
     targetUnitEntryId: entry.targetUnitEntryId
   }));
 }

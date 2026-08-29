@@ -2175,6 +2175,71 @@ describe("chapter-scale reading units", () => {
     expect(result.headingLevelSources).toEqual({ label: 5, outline: 0 });
     expect(blockIds(result)).toHaveLength(classesBody.length);
   });
+
+  // #865: a chapter's in-unit sections (headings that do not start the unit) need a deterministic,
+  // unique-per-work anchor so the sidebar can nest and link straight to them — the unit's OWN heading
+  // needs none, since its unit's TOC entry already targets it directly.
+  describe("in-unit heading anchors (#865)", () => {
+    function blockAnchorIds(
+      result: Extract<PdfCanonicalMappingResult, { status: "mapped" }>
+    ): (string | null)[] {
+      return result.units.flatMap((unit) => unit.docBlocks.map((block) => block.anchorId));
+    }
+
+    it("anchors every in-unit heading, leaving the block that starts a unit and every non-heading block anchor-less", () => {
+      const result = mapped(mapEn(doc(chapterBody, chapterPages, chapterOutline)));
+
+      // One entry per mapped block, in order: heading, paragraph, heading, paragraph, heading, heading,
+      // paragraph | heading, paragraph, heading, paragraph — matching `unitTypes` for both units above.
+      expect(blockAnchorIds(result)).toEqual([
+        null, // "Objects and Data Structures" — starts unit 0
+        null, // paragraph
+        "sec-124-0", // "Data Abstraction" — in-unit
+        null, // paragraph
+        "sec-128-0", // "The Law of Demeter" — in-unit
+        "sec-129-0", // "Train Wrecks" — in-unit
+        null, // paragraph
+        null, // "Error Handling" — starts unit 1
+        null, // paragraph
+        "sec-135-0", // "Use Exceptions Rather Than Return Codes" — in-unit
+        null // paragraph
+      ]);
+    });
+
+    it("carries the anchor as the block's own nodeId-addressed entry", () => {
+      const result = mapped(mapEn(doc(chapterBody, chapterPages, chapterOutline)));
+      const dataAbstraction = result.units[0]!.docBlocks[2]!;
+
+      expect(dataAbstraction.anchorId).toBe("sec-124-0");
+      expect(dataAbstraction.anchors).toEqual([
+        { anchor: "sec-124-0", nodeId: dataAbstraction.id }
+      ]);
+    });
+
+    it("assigns identical anchors when the same document is mapped twice", () => {
+      const first = blockAnchorIds(mapped(mapEn(doc(chapterBody, chapterPages, chapterOutline))));
+      const second = blockAnchorIds(mapped(mapEn(doc(chapterBody, chapterPages, chapterOutline))));
+
+      expect(second).toEqual(first);
+    });
+
+    it("gives two in-unit headings on the same page different anchors", () => {
+      const outline: readonly PdfOutlineEntry[] = [
+        { level: 1, pageNumber: 1, title: "Chapter 1" },
+        { level: 2, pageNumber: 1, title: "First section" },
+        { level: 2, pageNumber: 1, title: "Second section" }
+      ];
+      const body: readonly StructuredDocItem[] = [
+        item({ charSpan: [0, 10], label: "section_header", pageNumber: 1, text: "Chapter 1" }),
+        item({ charSpan: [10, 30], label: "section_header", pageNumber: 1, text: "First section" }),
+        item({ charSpan: [30, 55], label: "section_header", pageNumber: 1, text: "Second section" })
+      ];
+
+      const result = mapped(mapEn(doc(body, [{ hasNativeText: true, pageNumber: 1 }], outline)));
+
+      expect(blockAnchorIds(result)).toEqual([null, "sec-1-10", "sec-1-30"]);
+    });
+  });
 });
 
 // #867: a split chapter opener announced its identity three times over — the unit's eyebrow, then each
