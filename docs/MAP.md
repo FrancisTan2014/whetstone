@@ -446,10 +446,15 @@ can navigate them from another package.
   local adapter and stable boundary** (#799): config is only `{ binaryPath, modelIdentifier }`; builds
   the neutral protocol args `--model <id> --output json <audio>` (no forced language, no engine-specific
   flag), exposes the `--contract-version` readiness protocol, leniently validates transcript-first JSON
-  at the boundary and maps to a `Transcription`), `whisperSpeechInput.ts` (the **legacy** OSS Whisper
+  at the boundary and maps to a `Transcription`; lazily auto-detects and dispatches to persistent mode,
+  #884), `persistentSpeechManager.ts` (the **persistent local-process lifecycle manager**, #884: lazy
+  start on first capture, kept warm across captures, killed outright after a fixed 5-minute sliding idle
+  window (`IDLE_UNLOAD_MS`), crash mid-request fails cleanly and respawns transparently on the next
+  capture), `whisperSpeechInput.ts` (the **legacy** OSS Whisper
   adapter kept working only as a migration fallback — builds the offline CLI args always with
   `--language auto` (#647); it does not implement the new protocol), `speechProcess.ts` (the injected,
-  provider-neutral execFile runner shared by both adapters) and `speechConfig.ts` (env-driven,
+  provider-neutral one-shot `execFile` runner shared by both adapters, plus the injected `spawn`-based
+  persistent-process launcher `persistentSpeechManager.ts` drives) and `speechConfig.ts` (env-driven,
   absent-config-safe `readSpeechConfig` + `resolveSpeechInput`: the `LOCAL_ASR_BINARY`+`LOCAL_ASR_MODEL`
   pair is authoritative, a partial new pair is an explicit config error, the legacy
   `WHISPER_BINARY`+`WHISPER_MODEL_PATH` pair is a fallback only when neither new key is present, and a

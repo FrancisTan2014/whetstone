@@ -74,6 +74,10 @@ import { resolveStructuredPdfRunner } from "./files/pdfStructuredRunnerResolutio
 import { resolvePdfOcrAdapter } from "./files/pdfOcrRunnerResolution.js";
 import { createFakeSpeechInput } from "./speech/fakeSpeechInput.js";
 import { createLocalSpeechInput } from "./speech/localSpeechInput.js";
+import {
+  createPersistentSpeechManager,
+  type PersistentSpeechManager
+} from "./speech/persistentSpeechManager.js";
 import { readSpeechConfig, resolveSpeechInput } from "./speech/speechConfig.js";
 import { checkSpeechHealth } from "./speech/speechHealth.js";
 import { createWhisperSpeechInput } from "./speech/whisperSpeechInput.js";
@@ -297,9 +301,17 @@ try {
           : { transcript: "", words: [] }
       )
     : createFakeSpeechInput({ transcript: "", words: [] });
+  // Set only when the resolved provider is the provider-neutral local adapter (#884): the persistent
+  // lifecycle manager it was built with, so `fullShutdown` can kill any resident process it spawned
+  // rather than leaving an orphaned child process behind a restart. Never set for whisper/fake.
+  let localPersistentSpeech: PersistentSpeechManager | undefined;
   const speech = resolveSpeechInput({
     config: speechConfig,
-    createLocal: (config) => createLocalSpeechInput({ config }),
+    createLocal: (config) => {
+      const persistent = createPersistentSpeechManager({ config });
+      localPersistentSpeech = persistent;
+      return createLocalSpeechInput({ config, persistent });
+    },
     createWhisper: (config) => createWhisperSpeechInput({ config }),
     fake: fakeSpeech
   });
@@ -619,6 +631,9 @@ try {
     for (const interval of backgroundIntervals) {
       clearInterval(interval);
     }
+    // Kill any resident persistent local-speech process (#884) so a restart never leaves an orphaned
+    // child process warm in the background after this one exits.
+    localPersistentSpeech?.close();
     let code = exitCode;
     try {
       if (httpServerListening) {

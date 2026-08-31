@@ -20,14 +20,25 @@ the same seam.
 - `LocalSpeechInput` (`localSpeechInput.ts`) — **the provider-neutral local adapter and stable
   boundary.** Runs a configured local speech executable over the audio file and maps its JSON into a
   `Transcription`. Its config is only `{ binaryPath, modelIdentifier }`. Untrusted process output is
-  validated at the boundary before anything is trusted inward.
+  validated at the boundary before anything is trusted inward. When the configured executable's
+  readiness probe declares persistent-mode support (see below), captures are lazily routed through
+  `PersistentSpeechManager` instead of a fresh spawn per capture; an executable that does not declare
+  support keeps using the original one-shot spawn, unchanged.
+- `PersistentSpeechManager` (`persistentSpeechManager.ts`) — **the persistent local-process lifecycle
+  manager (#884).** Starts the configured executable in `--persistent` mode lazily on the first
+  capture, keeps it warm across a burst of captures, and kills it outright after a fixed 5-minute idle
+  window (`IDLE_UNLOAD_MS`) with no new capture, sliding the window forward on every completed capture.
+  An unexpected process death mid-request fails that one capture cleanly (its existing
+  `transcription_failed` retryable path) and transparently respawns on the next capture. Still only one
+  capture at a time (#565) — no concurrent multiplexing.
 - Legacy Whisper adapter (`whisperSpeechInput.ts`) — the pre-#799 adapter, **kept working only as a
   migration fallback**. It does not implement the new provider protocol and will be retired once
   installations move to `LOCAL_ASR_*`.
 - `FakeSpeechInput` (`fakeSpeechInput.ts`) — deterministic; the `pnpm validate` gate has no mic, so
   the loop tests on the fake (inject a fixed transcription, or a function of the audio).
-- `speechProcess.ts` — the provider-neutral OS-process boundary (the injected `execFile` runner) shared
-  by both adapters.
+- `speechProcess.ts` — the provider-neutral OS-process boundary: the injected `execFile`-based
+  one-shot `CommandRunner`, and the injected `spawn`-based `PersistentProcessLauncher` that keeps a
+  persistent process's stdin/stdout open across many captures.
 - Derived timing (`@whetstone/domain` `deriveSpeechTiming`) — response **latency** (ms to the first
   word) and **inter-word pauses** (ms gaps), the basic automaticity signal.
 
@@ -91,6 +102,44 @@ A `LOCAL_ASR_BINARY` executable must honour this provider-neutral protocol:
   A transcript-first provider with no aligner may return just `{ "text": "Help yourself now" }`; it is
   a valid transcript with empty word evidence.
 
+### Persistent mode protocol (#884, optional, auto-detected)
+
+A provider **may** additionally support a persistent, warm-process mode instead of exiting after every
+single transcription. Support is **auto-detected** from the readiness probe — there is no new env var
+and no configuration to opt in — so an older build or a custom third-party executable that only
+implements the one-shot protocol above keeps working unchanged.
+
+- **Capability declaration:** the `--contract-version` probe response includes `"persistent": true`
+  when the executable understands the flag below. Absent, `false`, or any non-boolean value means
+  "not supported" — this is **never assumed**, only read from the probe.
+- **Starting persistent mode:** the runtime invokes the binary with the model identifier and **no
+  audio positional** (each capture's audio path arrives later, one per stdin line):
+
+  ```
+  <LOCAL_ASR_BINARY> --persistent --model <LOCAL_ASR_MODEL>
+  ```
+
+  The binary loads the model exactly once, then serves one request at a time over a plain
+  stdin/stdout line protocol: a **request** is one audio path per stdin line; the corresponding
+  **response** is one line on stdout containing the *exact same* transcript-first JSON contract
+  described above (never an error-shaped variant). Blank input lines are ignored.
+- **Failure is fatal, by design:** a transcription failure inside persistent mode is not signalled as
+  an error line — the process prints to stderr and exits non-zero instead. This keeps the response
+  shape to exactly one contract (never an error variant) and reuses the same crash-detection/respawn
+  path for both a genuine crash and a per-request failure.
+- **Lifecycle (`persistentSpeechManager.ts`):** started lazily on the first capture, never at boot.
+  Kept warm across a burst of captures. After a fixed **5-minute idle window** (`IDLE_UNLOAD_MS`) with
+  no new capture, the process is **killed outright** — not unloaded in-process — so its resident memory
+  is reliably handed back to the OS; the window slides forward on every completed capture. The next
+  capture after an idle-unload transparently respawns and pays the cold-start cost again. An
+  unexpected process death mid-request fails that one capture cleanly through the existing
+  `transcription_failed` retryable path; the next capture respawns. Still only one capture at a time
+  (#565) — no concurrent multiplexing.
+- **Resource cost recurs, not once:** because the process is kept resident for up to 5 idle minutes
+  after a capture, the resource floor below is **not** a one-time install-time cost for a
+  persistent-capable provider — it applies whenever a capture has landed recently, and is released
+  automatically once idle. `pnpm setup:doctor` states this explicitly.
+
 ## One-command setup (`pnpm setup:voice`)
 
 The fastest way to enable voice is the setup framework's voice step:
@@ -114,7 +163,10 @@ Python). The step:
   run **repairs** (rebuilds) an incomplete or version-mismatched environment instead of trusting it.
 - **Runs a resource preflight before any heavy download or model load** (via `ctx.resources`): it
   requires **12 GiB free disk** and **12 GiB available memory** and fails with the exact requirement and
-  remedy — never a silent fallback to a smaller/other provider.
+  remedy — never a silent fallback to a smaller/other provider. This preflight is a one-time,
+  install-time check; the **runtime** memory floor recurs afterward whenever the persistent process is
+  resident (see [Persistent mode protocol](#persistent-mode-protocol-884-optional-auto-detected)
+  above) — `pnpm setup:doctor` reports both.
 - Writes the provider-neutral pair to the root `.env`: `LOCAL_ASR_BINARY` (the venv's managed
   `whetstone-qwen` launcher) + `LOCAL_ASR_MODEL` (`Qwen/Qwen3-ASR-1.7B`), and **removes the legacy
   `WHISPER_*` pair** so a stale key can never be honoured or reported as a mixed config.
@@ -148,6 +200,7 @@ it prints compact JSON on stdout, exits `0`, and **loads no model**. Beyond the 
   "contractVersion": "1",
   "provider": "qwen3-asr-1.7b",
   "revision": "7278e1e70fe206f11671096ffdd38061171dd6e5",
+  "persistent": true,
   "requirements": { "diskGiB": 12, "memoryGiB": 12 }
 }
 ```

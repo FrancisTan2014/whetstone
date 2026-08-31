@@ -207,13 +207,25 @@ function logProviderDescriptor(ctx, descriptor) {
   }
   const requirements = record.requirements;
   let needs = "";
+  let requirementNote = "";
   if (typeof requirements === "object" && requirements !== null) {
     const req = /** @type {Record<string, unknown>} */ (requirements);
     if (typeof req.diskGiB === "number" && typeof req.memoryGiB === "number") {
       needs = ` (needs ${req.diskGiB} GiB free disk, ${req.memoryGiB} GiB available memory)`;
+      requirementNote = `${req.diskGiB} GiB free disk, ${req.memoryGiB} GiB available memory`;
     }
   }
   ctx.log(`[setup] local speech provider: ${provider} @ ${revision}${needs}`);
+  // #884: a persistent-capable provider is kept resident for up to five idle minutes after a capture, so
+  // the memory floor above is no longer a one-time install-time cost - it recurs whenever a capture has
+  // landed recently. Say so explicitly rather than leaving doctor's earlier framing to imply otherwise.
+  if (record.persistent === true && requirementNote !== "") {
+    ctx.log(
+      "[setup] this provider keeps its model resident for up to 5 idle minutes after a capture, so " +
+        `${requirementNote} applies whenever a capture has landed in the last 5 minutes, not just once ` +
+        "at install time. It is released automatically once idle."
+    );
+  }
 }
 
 /**

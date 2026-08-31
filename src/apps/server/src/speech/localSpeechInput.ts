@@ -1,5 +1,6 @@
 import type { TranscribedWord, Transcription } from "@whetstone/contracts";
 
+import type { PersistentSpeechManager } from "./persistentSpeechManager.js";
 import type { SpeechAudio, SpeechInput } from "./speechInput.js";
 import { runCommand, type CommandRunner } from "./speechProcess.js";
 
@@ -26,6 +27,20 @@ export type LocalSpeechConfig = Readonly<{
 // JSON and loads no model. Setup/doctor use it to prove a provider is compatible before transcribing.
 export function buildContractVersionArgs(): ReadonlyArray<string> {
   return ["--contract-version"];
+}
+
+// Read the persistent-mode capability flag (#884) from a parsed `--contract-version` probe response.
+// Absent, non-boolean, or malformed output is "not supported" — NEVER assumed — so an older build, a
+// legacy Whisper adapter, or a custom third-party executable that only implements the one-shot protocol
+// keeps working unchanged rather than being treated as broken or hung waiting on a stdin line protocol it
+// never speaks.
+export function supportsPersistentMode(contractVersionStdout: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(contractVersionStdout);
+    return asRecord(parsed)?.persistent === true;
+  } catch {
+    return false;
+  }
 }
 
 // The CLI arguments for a transcription run: the model identifier, a JSON output request, and the saved
@@ -146,13 +161,43 @@ export function parseLocalSpeechOutput(stdout: string): Transcription {
 export type LocalSpeechInputDependencies = Readonly<{
   config: LocalSpeechConfig;
   run?: CommandRunner;
+  // The persistent-mode lifecycle manager (#884). Absent = persistent mode is never attempted (today's
+  // per-request spawn only) — this is how the existing tests and any caller that does not opt in keep
+  // their exact prior behavior unchanged. Present = capability is auto-detected once, lazily, on first
+  // capture; unsupported falls back to the one-shot `run` path exactly as before.
+  persistent?: PersistentSpeechManager;
 }>;
 
 export function createLocalSpeechInput(dependencies: LocalSpeechInputDependencies): SpeechInput {
   const run = dependencies.run ?? runCommand;
+  const { persistent } = dependencies;
+
+  // Capability detection is probed AT MOST ONCE, lazily, on first capture: booting never pays a process
+  // spawn, and a provider whose `--contract-version` probe fails outright (an old custom binary that
+  // does not implement it at all) is simply treated as one-shot-only rather than failing capture.
+  let persistentSupported: boolean | undefined;
+
+  async function usesPersistentMode(): Promise<boolean> {
+    if (persistent === undefined) {
+      return false;
+    }
+    if (persistentSupported === undefined) {
+      try {
+        const stdout = await run(dependencies.config.binaryPath, buildContractVersionArgs());
+        persistentSupported = supportsPersistentMode(stdout);
+      } catch {
+        persistentSupported = false;
+      }
+    }
+    return persistentSupported;
+  }
 
   return Object.freeze({
     async transcribe(audio: SpeechAudio): Promise<Transcription> {
+      const useThePersistentProcess = await usesPersistentMode();
+      if (persistent !== undefined && useThePersistentProcess) {
+        return parseLocalSpeechOutput(await persistent.transcribe(audio.path));
+      }
       const stdout = await run(
         dependencies.config.binaryPath,
         buildLocalSpeechArgs(dependencies.config, audio.path)
