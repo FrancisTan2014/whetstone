@@ -12,7 +12,7 @@ Every launcher invocation is one-shot and foreground. `run-developer-auto.cmd` i
 deterministic supervisor that launches a fresh process only when work exists. Never schedule, poll,
 detach, or begin a second unit yourself. GitHub is the handoff and state store.
 
-The supported runtime is **GPT-5.6 Sol with high reasoning effort**, pinned by the launcher.
+The supported runtime is **Claude Sonnet 5 with high reasoning effort**, pinned by the launcher.
 
 ## English-learning logging guardrail
 

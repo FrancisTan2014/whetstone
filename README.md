@@ -152,7 +152,7 @@ The developer runs as a **one-shot** delivery or under the deterministic **foreg
 The supervisor polls GitHub without a model, blocks while a worker runs, and launches every
 implementation or CI fix in a fresh Copilot process. It also invokes deterministic merge and
 dependency-unblock steps. No timer tick enters an active worker's context; Ctrl+C stops the
-supervisor. Developer workers use GPT-5.6 Sol with high reasoning effort.
+supervisor. Developer workers use Claude Sonnet 5 with high reasoning effort.
 
 The **Tester (QA)** is the exploratory discovery layer above the deterministic E2E gate
 ([GUIDELINES.md](./GUIDELINES.md) "Functional verification"). It runs **independently** of delivery,
