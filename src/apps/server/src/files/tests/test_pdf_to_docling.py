@@ -49,6 +49,8 @@ from pdf_to_docling import (  # noqa: E402  (path set above)
     PasswordRequired,
     UnsupportedSchema,
     ArtifactSink,
+    CODE_CLUSTER_LABEL,
+    CODE_CLUSTER_MATCH_TOLERANCE,
     apply_memory_limit,
     release_memory_boundary,
     resolve_memory_boundary,
@@ -56,9 +58,13 @@ from pdf_to_docling import (  # noqa: E402  (path set above)
     write_metrics_sidecar,
     _PosixMemoryBoundary,
     _WindowsMemoryBoundary,
+    _cluster_bbox_bottom_left,
+    _cluster_code_lines,
     _encode_png,
+    _match_code_cluster_text,
     _picture_image_reader,
     _stripped_text_length,
+    build_code_cluster_index,
     build_converter,
     build_document_metadata,
     build_document_outline,
@@ -174,12 +180,55 @@ class FakePage:
     evidence. A page the converter lost is ABSENT from ``pages`` entirely, never present-and-empty.
     """
 
-    def __init__(self, page_no, predictions="PagePredictions", assembled="AssembledUnit"):
+    def __init__(self, page_no, predictions="PagePredictions", assembled="AssembledUnit", size="Size"):
         self.page_no = page_no
         self.predictions = predictions
         self.assembled = assembled
         self.parsed_page = None
-        self.size = "Size"
+        self.size = size
+
+
+# --- Fakes for a page's layout-cluster record (#876: the pre-flattening code-listing evidence) -----
+
+
+class FakeCodeCell:
+    def __init__(self, text):
+        self.text = text
+
+
+class FakeCluster:
+    def __init__(self, label, bbox, cells):
+        self.label = label
+        self.bbox = bbox
+        self.cells = cells
+
+
+class FakeLayout:
+    def __init__(self, clusters):
+        self.clusters = clusters
+
+
+class FakePredictions:
+    def __init__(self, layout):
+        self.layout = layout
+
+
+class FakeSize:
+    def __init__(self, height, width=612.0):
+        self.width = width
+        self.height = height
+
+
+def fake_cluster(label, bbox, cell_texts):
+    """A FakeCluster whose cells are plain strings wrapped as FakeCodeCells, in reading order."""
+    return FakeCluster(label, bbox, [FakeCodeCell(text) for text in cell_texts])
+
+
+def code_cluster_page(page_no, clusters, page_height=792.0):
+    """A FakePage exposing real ``predictions.layout.clusters`` (#876), unlike the placeholder string
+    ``FakePage`` otherwise carries — used only where a test needs the pre-flattening layout evidence.
+    """
+    return FakePage(page_no, predictions=FakePredictions(FakeLayout(clusters)), size=FakeSize(page_height))
 
 
 def page_evidence(page_range, processed_pages=None):
@@ -194,8 +243,9 @@ def page_evidence(page_range, processed_pages=None):
 
 
 class FakeConverter:
-    def __init__(self, doc):
+    def __init__(self, doc, pages=None):
         self._doc = doc
+        self._pages = pages
         self.calls = []
 
     def convert(self, pdf_path, page_range=None):
@@ -209,7 +259,7 @@ class FakeConverter:
             document=self._doc,
             status=FakeConversionStatus.SUCCESS,
             errors=[],
-            pages=page_evidence(page_range),
+            pages=self._pages if self._pages is not None else page_evidence(page_range),
         )
 
 
@@ -588,6 +638,269 @@ class RangePayloadTests(unittest.TestCase):
             read_metadata=lambda: {"Title": "  Trimmed  ", "Author": ""},
         )
         self.assertEqual(payload["metadata"], {"title": "Trimmed", "author": None})
+
+
+# --- Code-listing text reconstruction from the pre-flattening layout clusters (#876) ------------
+
+
+class ClusterCodeLinesTests(unittest.TestCase):
+    def test_joins_non_blank_cells_with_newlines_keeping_original_indentation(self):
+        cluster = fake_cluster(CODE_CLUSTER_LABEL, FakeBBox(0, 0, 0, 0), ["def foo():", "    return 1"])
+        self.assertEqual(_cluster_code_lines(cluster), "def foo():\n    return 1")
+
+    def test_skips_blank_and_whitespace_only_cells(self):
+        cluster = fake_cluster(CODE_CLUSTER_LABEL, FakeBBox(0, 0, 0, 0), ["a", "   ", "", "b"])
+        self.assertEqual(_cluster_code_lines(cluster), "a\nb")
+
+    def test_replaces_the_soft_hyphen_marker_with_a_hyphen(self):
+        cluster = fake_cluster(CODE_CLUSTER_LABEL, FakeBBox(0, 0, 0, 0), ["foo\x02bar"])
+        self.assertEqual(_cluster_code_lines(cluster), "foo-bar")
+
+    def test_returns_none_when_every_cell_is_blank(self):
+        cluster = fake_cluster(CODE_CLUSTER_LABEL, FakeBBox(0, 0, 0, 0), ["  ", ""])
+        self.assertIsNone(_cluster_code_lines(cluster))
+
+    def test_returns_none_for_a_cluster_with_no_cells(self):
+        self.assertIsNone(_cluster_code_lines(FakeCluster(CODE_CLUSTER_LABEL, FakeBBox(0, 0, 0, 0), [])))
+
+
+class ClusterBboxBottomLeftTests(unittest.TestCase):
+    def test_mirrors_top_and_bottom_through_the_page_height_leaving_left_and_right_unchanged(self):
+        self.assertEqual(
+            _cluster_bbox_bottom_left(FakeBBox(10, 20, 110, 60), 792.0),
+            {"left": 10.0, "right": 110.0, "top": 772.0, "bottom": 732.0},
+        )
+
+    def test_coerces_every_field_to_a_float(self):
+        result = _cluster_bbox_bottom_left(FakeBBox(1, 2, 3, 4), 100)
+        for value in result.values():
+            self.assertIsInstance(value, float)
+
+
+class MatchCodeClusterTextTests(unittest.TestCase):
+    def test_returns_the_closest_candidates_text_within_tolerance(self):
+        box = {"left": 10.0, "top": 20.0, "right": 110.0, "bottom": 60.0}
+        candidates = [
+            ({"left": 10.0, "top": 20.0, "right": 110.0, "bottom": 60.0}, "exact"),
+            ({"left": 50.0, "top": 20.0, "right": 110.0, "bottom": 60.0}, "far"),
+        ]
+        self.assertEqual(_match_code_cluster_text(box, candidates), "exact")
+
+    def test_returns_none_when_nothing_is_within_tolerance(self):
+        box = {"left": 10.0, "top": 20.0, "right": 110.0, "bottom": 60.0}
+        candidates = [({"left": 999.0, "top": 999.0, "right": 999.0, "bottom": 999.0}, "far")]
+        self.assertIsNone(_match_code_cluster_text(box, candidates))
+
+    def test_returns_none_for_no_candidates(self):
+        box = {"left": 0.0, "top": 0.0, "right": 0.0, "bottom": 0.0}
+        self.assertIsNone(_match_code_cluster_text(box, []))
+
+    def test_accepts_a_match_right_at_the_tolerance_boundary(self):
+        box = {"left": 0.0, "top": 0.0, "right": 0.0, "bottom": 0.0}
+        candidates = [
+            ({"left": CODE_CLUSTER_MATCH_TOLERANCE, "top": 0.0, "right": 0.0, "bottom": 0.0}, "close")
+        ]
+        self.assertEqual(_match_code_cluster_text(box, candidates), "close")
+
+    def test_rejects_a_match_just_beyond_the_tolerance_boundary(self):
+        box = {"left": 0.0, "top": 0.0, "right": 0.0, "bottom": 0.0}
+        candidates = [
+            ({"left": CODE_CLUSTER_MATCH_TOLERANCE + 0.01, "top": 0.0, "right": 0.0, "bottom": 0.0}, "far")
+        ]
+        self.assertIsNone(_match_code_cluster_text(box, candidates))
+
+
+class BuildCodeClusterIndexTests(unittest.TestCase):
+    def test_indexes_code_clusters_by_page_with_bottom_left_bbox_and_joined_text(self):
+        cluster = fake_cluster(CODE_CLUSTER_LABEL, FakeBBox(10, 20, 110, 60), ["def f():", "    pass"])
+        result = types.SimpleNamespace(pages=[code_cluster_page(3, [cluster], page_height=792.0)])
+        index = build_code_cluster_index(result)
+        self.assertEqual(list(index.keys()), [3])
+        bbox, text = index[3][0]
+        self.assertEqual(bbox, {"left": 10.0, "right": 110.0, "top": 772.0, "bottom": 732.0})
+        self.assertEqual(text, "def f():\n    pass")
+
+    def test_skips_non_code_labelled_clusters(self):
+        cluster = fake_cluster("text", FakeBBox(0, 0, 10, 10), ["paragraph"])
+        result = types.SimpleNamespace(pages=[code_cluster_page(1, [cluster])])
+        self.assertEqual(build_code_cluster_index(result), {})
+
+    def test_skips_a_code_cluster_whose_cells_are_all_blank(self):
+        cluster = fake_cluster(CODE_CLUSTER_LABEL, FakeBBox(0, 0, 10, 10), ["   ", ""])
+        result = types.SimpleNamespace(pages=[code_cluster_page(1, [cluster])])
+        self.assertEqual(build_code_cluster_index(result), {})
+
+    def test_skips_a_cluster_with_no_bbox(self):
+        cluster = FakeCluster(CODE_CLUSTER_LABEL, None, [FakeCodeCell("x")])
+        result = types.SimpleNamespace(pages=[code_cluster_page(1, [cluster])])
+        self.assertEqual(build_code_cluster_index(result), {})
+
+    def test_is_empty_without_pages_or_clusters(self):
+        self.assertEqual(build_code_cluster_index(types.SimpleNamespace(pages=[])), {})
+        self.assertEqual(build_code_cluster_index(types.SimpleNamespace()), {})
+        # The placeholder FakePage() shape every other test in this file uses (plain string
+        # predictions/size, no real layout) must degrade to empty too, never raise.
+        self.assertEqual(build_code_cluster_index(types.SimpleNamespace(pages=[FakePage(1)])), {})
+
+    def test_fails_soft_when_the_page_number_is_missing_or_invalid(self):
+        cluster = fake_cluster(CODE_CLUSTER_LABEL, FakeBBox(0, 0, 10, 10), ["x"])
+        for bad_page_no in (None, True, 0, -1, "1"):
+            page = code_cluster_page(bad_page_no, [cluster])
+            with self.subTest(page_no=bad_page_no):
+                self.assertEqual(build_code_cluster_index(types.SimpleNamespace(pages=[page])), {})
+
+    def test_fails_soft_when_predictions_layout_or_size_are_missing_or_malformed(self):
+        cluster = fake_cluster(CODE_CLUSTER_LABEL, FakeBBox(0, 0, 10, 10), ["x"])
+        cases = [
+            FakePage(1, predictions=None, size=FakeSize(792.0)),
+            FakePage(1, predictions=FakePredictions(None), size=FakeSize(792.0)),
+            FakePage(1, predictions=FakePredictions(FakeLayout(None)), size=FakeSize(792.0)),
+            FakePage(1, predictions=FakePredictions(FakeLayout([cluster])), size=None),
+            FakePage(1, predictions=FakePredictions(FakeLayout([cluster])), size=FakeSize("tall")),
+            FakePage(1, predictions=FakePredictions(FakeLayout([cluster])), size=FakeSize(True)),
+        ]
+        for index, page in enumerate(cases):
+            with self.subTest(case=index):
+                self.assertEqual(build_code_cluster_index(types.SimpleNamespace(pages=[page])), {})
+
+
+class MapItemCodeClusterTests(unittest.TestCase):
+    @staticmethod
+    def _index(page_no, clusters, page_height=792.0):
+        page = code_cluster_page(page_no, clusters, page_height=page_height)
+        return build_code_cluster_index(types.SimpleNamespace(pages=[page]))
+
+    def test_replaces_flattened_text_with_the_matching_clusters_reconstructed_lines(self):
+        cluster = fake_cluster(CODE_CLUSTER_LABEL, FakeBBox(10, 20, 110, 60), ["def f():", "    return 1"])
+        index = self._index(2, [cluster])
+        item = FakeItem(
+            label="code",
+            text="def f(): return 1",
+            prov=FakeProv(bbox=FakeBBox(10, 772, 110, 732), page_no=2),
+        )
+        mapped = map_item(item, FakeDoc(), identity_resolve, {}, 1, code_cluster_index=index)
+        self.assertEqual(mapped["text"], "def f():\n    return 1")
+
+    def test_falls_back_to_flattened_text_when_no_cluster_is_close_enough(self):
+        cluster = fake_cluster(CODE_CLUSTER_LABEL, FakeBBox(10, 20, 110, 60), ["def f():"])
+        index = self._index(2, [cluster])
+        item = FakeItem(
+            label="code",
+            text="def f(): return 1",
+            prov=FakeProv(bbox=FakeBBox(400, 400, 500, 450), page_no=2),
+        )
+        mapped = map_item(item, FakeDoc(), identity_resolve, {}, 1, code_cluster_index=index)
+        self.assertEqual(mapped["text"], "def f(): return 1")
+
+    def test_falls_back_when_the_items_page_has_no_indexed_clusters(self):
+        cluster = fake_cluster(CODE_CLUSTER_LABEL, FakeBBox(10, 20, 110, 60), ["def f():"])
+        index = self._index(2, [cluster])
+        item = FakeItem(
+            label="code", text="flat", prov=FakeProv(bbox=FakeBBox(10, 772, 110, 732), page_no=9)
+        )
+        mapped = map_item(item, FakeDoc(), identity_resolve, {}, 1, code_cluster_index=index)
+        self.assertEqual(mapped["text"], "flat")
+
+    def test_non_code_items_are_unaffected_even_with_a_populated_index(self):
+        cluster = fake_cluster(CODE_CLUSTER_LABEL, FakeBBox(10, 20, 110, 60), ["def f():"])
+        index = self._index(2, [cluster])
+        item = FakeItem(
+            label="text",
+            text="A paragraph.",
+            prov=FakeProv(bbox=FakeBBox(10, 772, 110, 732), page_no=2),
+        )
+        mapped = map_item(item, FakeDoc(), identity_resolve, {}, 1, code_cluster_index=index)
+        self.assertEqual(mapped["text"], "A paragraph.")
+
+    def test_two_same_page_code_items_each_match_their_own_cluster(self):
+        first = fake_cluster(CODE_CLUSTER_LABEL, FakeBBox(10, 20, 110, 60), ["first():"])
+        second = fake_cluster(CODE_CLUSTER_LABEL, FakeBBox(200, 20, 300, 60), ["second():"])
+        index = self._index(1, [first, second])
+        item_a = FakeItem(
+            label="code",
+            text="first(): flat",
+            prov=FakeProv(bbox=FakeBBox(10, 772, 110, 732), page_no=1),
+        )
+        item_b = FakeItem(
+            label="code",
+            text="second(): flat",
+            prov=FakeProv(bbox=FakeBBox(200, 772, 300, 732), page_no=1),
+        )
+        mapped_a = map_item(item_a, FakeDoc(), identity_resolve, {}, 1, code_cluster_index=index)
+        mapped_b = map_item(item_b, FakeDoc(), identity_resolve, {}, 1, code_cluster_index=index)
+        self.assertEqual(mapped_a["text"], "first():")
+        self.assertEqual(mapped_b["text"], "second():")
+
+    def test_without_an_index_the_item_keeps_its_flattened_text(self):
+        item = FakeItem(label="code", text="flat", prov=FakeProv(page_no=1))
+        mapped = map_item(item, FakeDoc(), identity_resolve, {}, 1)
+        self.assertEqual(mapped["text"], "flat")
+
+    def test_map_group_threads_the_index_to_every_child(self):
+        cluster = fake_cluster(CODE_CLUSTER_LABEL, FakeBBox(10, 20, 110, 60), ["def f():"])
+        index = self._index(1, [cluster])
+        item = FakeItem(
+            label="code", text="flat", prov=FakeProv(bbox=FakeBBox(10, 772, 110, 732), page_no=1)
+        )
+        mapped = map_group(
+            FakeGroup([item]), FakeDoc(), identity_resolve, {}, 1, code_cluster_index=index
+        )
+        self.assertEqual(mapped[0]["text"], "def f():")
+
+
+class BuildRangePayloadCodeClusterTests(unittest.TestCase):
+    def test_reconstructs_body_code_but_never_touches_furniture(self):
+        cluster = fake_cluster(CODE_CLUSTER_LABEL, FakeBBox(10, 20, 110, 60), ["def f():", "    pass"])
+        index = build_code_cluster_index(
+            types.SimpleNamespace(pages=[code_cluster_page(1, [cluster])])
+        )
+        body_code = FakeItem(
+            label="code",
+            text="def f(): pass",
+            prov=FakeProv(bbox=FakeBBox(10, 772, 110, 732), page_no=1),
+        )
+        # Furniture never carries a real code listing, but this one is deliberately given a bbox that
+        # WOULD match, to prove build_range_payload never threads the index into furniture at all
+        # (#876) — not merely that no furniture data happened to match.
+        furniture_code = FakeItem(
+            label="code",
+            text="def f(): pass",
+            prov=FakeProv(bbox=FakeBBox(10, 772, 110, 732), page_no=1),
+        )
+        doc = FakeDoc(body=FakeGroup([body_code]), furniture=FakeGroup([furniture_code]))
+        payload = build_range_payload(doc, 1, 1, native_text=lambda _p: True, code_cluster_index=index)
+        self.assertEqual(payload["body"][0]["text"], "def f():\n    pass")
+        self.assertEqual(payload["furniture"][0]["text"], "def f(): pass")
+
+    def test_without_a_code_cluster_index_body_code_keeps_its_flattened_text(self):
+        body_code = FakeItem(label="code", text="def f(): pass", prov=FakeProv(page_no=1))
+        payload = build_range_payload(
+            FakeDoc(body=FakeGroup([body_code])), 1, 1, native_text=lambda _p: True
+        )
+        self.assertEqual(payload["body"][0]["text"], "def f(): pass")
+
+
+class ConvertRangeCodeClusterTests(unittest.TestCase):
+    def test_builds_the_index_from_the_full_result_and_reconstructs_body_code(self):
+        cluster = fake_cluster(CODE_CLUSTER_LABEL, FakeBBox(10, 20, 110, 60), ["def f():", "    return 1"])
+        body_code = FakeItem(
+            label="code",
+            text="def f(): return 1",
+            prov=FakeProv(bbox=FakeBBox(10, 772, 110, 732), page_no=1),
+        )
+        doc = FakeDoc(body=FakeGroup([body_code]))
+        converter = FakeConverter(doc, pages=[code_cluster_page(1, [cluster])])
+        payload = convert_range("/tmp/a.pdf", 1, 1, lambda: converter, native_text=lambda _p: True)
+        self.assertEqual(payload["body"][0]["text"], "def f():\n    return 1")
+
+    def test_falls_back_to_flattened_text_when_the_layout_cluster_shape_is_absent(self):
+        # The plain FakePage() placeholder every OTHER convert_range test in this file relies on (a
+        # string predictions/size, no real layout) must still succeed end-to-end and emit the
+        # flattened text, never raise, when #876's layout-cluster evidence is not in the expected shape.
+        body_code = FakeItem(label="code", text="def f(): return 1", prov=FakeProv(page_no=1))
+        converter = FakeConverter(FakeDoc(body=FakeGroup([body_code])))
+        payload = convert_range("/tmp/a.pdf", 1, 1, lambda: converter, native_text=lambda _p: True)
+        self.assertEqual(payload["body"][0]["text"], "def f(): return 1")
 
 
 class DocumentMetadataTests(unittest.TestCase):
