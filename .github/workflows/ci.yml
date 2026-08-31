@@ -49,8 +49,13 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
 
+      # side-effects-cache reuses a package's cached (pre/post)install script output across
+      # runs. wordpos's postinstall writes generated index files into wordnet-db's own
+      # node_modules directory (a cross-package side effect); restoring that from a cached
+      # store can skip the write and leave wordnet-db's dict/ incomplete. Disabling it keeps
+      # the safe part of caching (package contents) and always re-runs install scripts.
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --side-effects-cache=false
 
       - name: Typecheck
         run: pnpm typecheck
@@ -101,8 +106,13 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
 
+      # side-effects-cache reuses a package's cached (pre/post)install script output across
+      # runs. wordpos's postinstall writes generated index files into wordnet-db's own
+      # node_modules directory (a cross-package side effect); restoring that from a cached
+      # store can skip the write and leave wordnet-db's dict/ incomplete. Disabling it keeps
+      # the safe part of caching (package contents) and always re-runs install scripts.
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --side-effects-cache=false
 
       - name: Install Playwright browser
         run: pnpm exec playwright install --with-deps chromium
@@ -159,8 +169,13 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
 
+      # side-effects-cache reuses a package's cached (pre/post)install script output across
+      # runs. wordpos's postinstall writes generated index files into wordnet-db's own
+      # node_modules directory (a cross-package side effect); restoring that from a cached
+      # store can skip the write and leave wordnet-db's dict/ incomplete. Disabling it keeps
+      # the safe part of caching (package contents) and always re-runs install scripts.
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --side-effects-cache=false
 
       - name: Real process and filesystem contracts
         run: pnpm test:isolated
