@@ -1,27 +1,39 @@
 """The `whetstone-qwen` console script: the provider-neutral local speech contract over Qwen3-ASR.
 
 The server's local speech adapter (`localSpeechInput.ts`, #799) invokes the configured
-`LOCAL_ASR_BINARY` two ways, and this launcher answers both:
+`LOCAL_ASR_BINARY` three ways, and this launcher answers all three:
 
 1. **Readiness probe** — `whetstone-qwen --contract-version` prints a compact JSON descriptor and exits
    0 WITHOUT loading a model or touching audio. It carries the exact contract version (required to
-   match) plus, for `pnpm setup:doctor`, the provider name, the pinned model revision, and the resource
-   requirements. Because it loads nothing, doctor stays cheap.
+   match) plus, for `pnpm setup:doctor`, the provider name, the pinned model revision, whether this
+   build supports persistent mode (#884, below), and the resource requirements. Because it loads
+   nothing, doctor stays cheap.
 
-2. **Transcription** — `whetstone-qwen --model <id> --output json <audio>` decodes the saved capture to a
-   16 kHz mono waveform (PyAV, content-sniffed) and hands that waveform to CPU float32 Qwen3-ASR with
-   automatic language detection, emitting the transcript-first JSON contract. No language is forced and
-   no aligner runs, so `segments` is always empty: the transcript is the payload and word timing is
-   optional evidence this provider does not produce.
+2. **One-shot transcription** — `whetstone-qwen --model <id> --output json <audio>` decodes the saved
+   capture to a 16 kHz mono waveform (PyAV, content-sniffed) and hands that waveform to CPU float32
+   Qwen3-ASR with automatic language detection, emitting the transcript-first JSON contract. No language
+   is forced and no aligner runs, so `segments` is always empty: the transcript is the payload and word
+   timing is optional evidence this provider does not produce.
 
    ```json
    {"text": "你好世界", "language": "Chinese", "segments": []}
    ```
 
+3. **Persistent mode (#884)** — `whetstone-qwen --persistent --model <id>` loads the model exactly ONCE
+   and then serves requests over a stdin/stdout line protocol instead of exiting: each stdin line is an
+   audio path, and each response is one stdout line carrying the SAME transcript-first JSON contract
+   above. This lets the Node-side persistent-process manager keep the model warm across a burst of
+   captures instead of paying the cold model load on every single one. The process serves one request at
+   a time (no concurrency) and keeps running until its stdin is closed or it is killed. A per-request
+   failure is deliberately fatal (prints to stderr, exits non-zero) rather than emitting an off-contract
+   line: process death is the documented signal the Node-side manager watches for to fail that capture
+   and transparently respawn on the next one (see `docs/SPEECH.md`).
+
 Loading the model and the native PyAV decode are the un-fakeable inference boundary (`_default_transcriber`
 / `whetstone_qwen.audio`), excluded from unit coverage; the argument contract, the JSON shaping, the cheap
-probe, and the decode→engine routing (`_transcribe_capture`) are what the tests pin against a fake engine
-and a fake decode, so no real model or network is needed.
+probe, the decode→engine routing (`_transcribe_capture`), and the persistent-mode line loop are what the
+tests pin against a fake engine, a fake decode, and in-memory stdin/stdout, so no real model or network is
+needed.
 """
 from __future__ import annotations
 
@@ -46,25 +58,37 @@ PROVIDER = "qwen3-asr-1.7b"
 MODEL_REVISION = "7278e1e70fe206f11671096ffdd38061171dd6e5"
 
 # Resource floor the provisioner preflights before a large download/load, surfaced to doctor here so the
-# operator sees the requirement from the cheap probe. Keep in lockstep with REQUIRED_* in voice.mjs.
+# operator sees the requirement from the cheap probe. Keep in lockstep with REQUIRED_* in voice.mjs. Under
+# persistent mode (#884) this is no longer a one-time install-time cost: it applies whenever a capture has
+# landed within the last IDLE_UNLOAD_MS (see persistentSpeechManager.ts) while the process stays resident.
 REQUIRED_DISK_GIB = 12
 REQUIRED_MEMORY_GIB = 12
 
+# The persistent-mode flag (#884): loads the model once, then serves one capture at a time over a
+# stdin/stdout line protocol instead of exiting after a single transcription. Kept as a constant so the
+# launcher and its tests agree on the token, mirroring CONTRACT_VERSION_FLAG above.
+PERSISTENT_FLAG = "--persistent"
+
 
 def contract_version_report() -> str:
-    """The machine-readable probe payload: the contract version plus the doctor descriptor, one line."""
+    """The machine-readable probe payload: the contract version plus the doctor descriptor, one line.
+
+    `persistent: true` (#884) declares that this build understands `--persistent`, so the Node-side
+    resolver can auto-use the warm-process protocol instead of falling back to a fresh spawn per capture.
+    """
     return json.dumps(
         {
             "contractVersion": CONTRACT_VERSION,
             "provider": PROVIDER,
             "revision": MODEL_REVISION,
+            "persistent": True,
             "requirements": {"diskGiB": REQUIRED_DISK_GIB, "memoryGiB": REQUIRED_MEMORY_GIB},
         }
     )
 
 
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
-    """Parse the provider-neutral transcription contract arguments (#799).
+    """Parse the provider-neutral one-shot transcription contract arguments (#799).
 
     The adapter passes `--model <id> --output json <audio>`. No `--language` and no alignment flag are
     part of the neutral protocol: this provider always auto-detects and emits no word timings.
@@ -74,6 +98,14 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     # Accepted for contract compatibility; output is always the JSON contract below.
     parser.add_argument("--output", default="json")
     parser.add_argument("audio")
+    return parser.parse_args(list(argv))
+
+
+def parse_persistent_args(argv: Sequence[str]) -> argparse.Namespace:
+    """Parse the persistent-mode invocation (#884): `--persistent --model <id>`, no audio positional —
+    each capture's audio path arrives later, one per stdin line."""
+    parser = argparse.ArgumentParser(prog="whetstone-qwen")
+    parser.add_argument("--model", required=True)
     return parser.parse_args(list(argv))
 
 
@@ -143,6 +175,40 @@ def _default_transcriber(model: str) -> Callable[[str], Dict[str, Any]]:  # prag
     return transcribe
 
 
+def run_persistent(
+    model: str,
+    transcriber_factory: Callable[[str], Callable[[str], Dict[str, Any]]],
+    stdin: Any,
+    stdout: Any,
+) -> int:
+    """Serve the #884 persistent-mode line protocol: load the model ONCE, then read one audio path per
+    stdin line and write one transcript-first JSON contract line per stdout response — the SAME contract
+    `build_contract` emits in one-shot mode, so the Node-side adapter's parser needs no persistent-mode
+    branch. Runs until stdin reaches EOF (the Node-side manager closes it, or the process is killed),
+    then returns 0.
+
+    A blank line is ignored (never an audio path a caller would send). Any transcription failure is
+    deliberately FATAL here rather than an off-contract response line: the wrapper prints the error to
+    stderr and returns 1, so the OS process exit is the signal the Node-side persistent-process manager
+    already watches for to fail that one in-flight capture and transparently respawn on the next one
+    (`docs/SPEECH.md`, `persistentSpeechManager.ts`) — no second failure protocol to keep in lockstep.
+    """
+    transcriber = transcriber_factory(model)
+    for raw_line in stdin:
+        audio_path = raw_line.rstrip("\n").rstrip("\r")
+        if audio_path == "":
+            continue
+        try:
+            contract = build_contract(transcriber(audio_path))
+        except Exception as exc:  # noqa: BLE001 - deliberately fatal; see docstring
+            print(f"whetstone-qwen persistent request failed: {exc}", file=sys.stderr)
+            return 1
+        stdout.write(json.dumps(contract, ensure_ascii=False))
+        stdout.write("\n")
+        stdout.flush()
+    return 0
+
+
 def main(
     argv: Optional[Sequence[str]] = None,
     transcriber_factory: Callable[[str], Callable[[str], Dict[str, Any]]] = _default_transcriber,
@@ -154,6 +220,12 @@ def main(
     if CONTRACT_VERSION_FLAG in raw:
         sys.stdout.write(contract_version_report())
         return 0
+    # Persistent mode (#884): checked ahead of the one-shot `parse_args` because it takes no audio
+    # positional — the audio path arrives per stdin line instead, after the model has loaded once.
+    if PERSISTENT_FLAG in raw:
+        remaining = [arg for arg in raw if arg != PERSISTENT_FLAG]
+        persistent_args = parse_persistent_args(remaining)
+        return run_persistent(persistent_args.model, transcriber_factory, sys.stdin, sys.stdout)
     args = parse_args(raw)
     transcriber = transcriber_factory(args.model)
     contract = build_contract(transcriber(args.audio))

@@ -31,6 +31,7 @@ const PROBE_STDOUT = JSON.stringify({
   contractVersion: "1",
   provider: "qwen3-asr-1.7b",
   revision: REVISION,
+  persistent: true,
   requirements: { diskGiB: 12, memoryGiB: 12 }
 });
 // A valid #799 transcript-first sample-inference payload (empty timing).
@@ -274,6 +275,46 @@ describe("voiceReadiness", () => {
       expect(logs.some((line) => line.includes("12 GiB free disk, 12 GiB available memory"))).toBe(
         true
       );
+    });
+
+    it("logs that a persistent-capable provider's memory floor recurs whenever a capture is recent", () => {
+      const { ctx, logs } = context({
+        files: [LAUNCHER],
+        defaultExec: { code: 0, stdout: PROBE_STDOUT, stderr: "" }
+      });
+      voiceReadiness(ctx, {
+        kind: "local",
+        binaryPath: LAUNCHER,
+        modelIdentifier: MODEL,
+        legacyAlsoPresent: false
+      });
+      expect(
+        logs.some(
+          (line) =>
+            line.includes("resident for up to 5 idle minutes") &&
+            line.includes("applies whenever a capture has landed in the last 5 minutes")
+        )
+      ).toBe(true);
+    });
+
+    it("logs no persistent-mode note when the descriptor does not declare persistent support", () => {
+      const nonPersistentProbe = JSON.stringify({
+        contractVersion: "1",
+        provider: "qwen3-asr-1.7b",
+        revision: REVISION,
+        requirements: { diskGiB: 12, memoryGiB: 12 }
+      });
+      const { ctx, logs } = context({
+        files: [LAUNCHER],
+        defaultExec: { code: 0, stdout: nonPersistentProbe, stderr: "" }
+      });
+      voiceReadiness(ctx, {
+        kind: "local",
+        binaryPath: LAUNCHER,
+        modelIdentifier: MODEL,
+        legacyAlsoPresent: false
+      });
+      expect(logs.some((line) => line.includes("resident for up to 5 idle minutes"))).toBe(false);
     });
 
     it("logs the mixed-config hint when legacy WHISPER_* is also present", () => {

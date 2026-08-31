@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   buildContractVersionArgs,
@@ -6,8 +6,10 @@ import {
   createLocalSpeechInput,
   LOCAL_SPEECH_CONTRACT_VERSION,
   parseLocalSpeechOutput,
+  supportsPersistentMode,
   type LocalSpeechConfig
 } from "./localSpeechInput.js";
+import type { PersistentSpeechManager } from "./persistentSpeechManager.js";
 import type { CommandRunner } from "./speechProcess.js";
 
 const config: LocalSpeechConfig = {
@@ -180,5 +182,108 @@ describe("createLocalSpeechInput", () => {
     });
     // Node rejects the local-speech-shaped args, exercising the default runner end-to-end.
     await expect(speech.transcribe({ path: "recordings\\a.wav" })).rejects.toThrow();
+  });
+});
+
+describe("supportsPersistentMode", () => {
+  it("reports true only when the probe declares persistent: true", () => {
+    expect(supportsPersistentMode(JSON.stringify({ persistent: true, version: "1" }))).toBe(true);
+  });
+
+  it.each([
+    ["persistent: false", JSON.stringify({ persistent: false, version: "1" })],
+    ["persistent omitted (an older/custom binary)", JSON.stringify({ version: "1" })],
+    ["a non-boolean persistent field", JSON.stringify({ persistent: "yes", version: "1" })],
+    ["a non-object root", "123"],
+    ["output that is not JSON at all", "not json"]
+  ])("reports false, never assuming support, for %s", (_label, stdout) => {
+    expect(supportsPersistentMode(stdout)).toBe(false);
+  });
+});
+
+function createFakePersistentManager(
+  transcribe: PersistentSpeechManager["transcribe"]
+): PersistentSpeechManager {
+  return { close: () => {}, transcribe };
+}
+
+describe("createLocalSpeechInput persistent-mode dispatch (#884)", () => {
+  const persistentProbe = JSON.stringify({
+    persistent: true,
+    version: LOCAL_SPEECH_CONTRACT_VERSION
+  });
+  const oneShotProbe = JSON.stringify({
+    persistent: false,
+    version: LOCAL_SPEECH_CONTRACT_VERSION
+  });
+
+  it("routes a capture through the persistent manager when the probe reports support", async () => {
+    const run = vi.fn<CommandRunner>(() => Promise.resolve(persistentProbe));
+    const persistentTranscribe = vi.fn(() => Promise.resolve(rawOutput));
+    const persistent = createFakePersistentManager(persistentTranscribe);
+
+    const speech = createLocalSpeechInput({ config, persistent, run });
+    const result = await speech.transcribe({ path: "a.wav" });
+
+    expect(result).toEqual(mapped);
+    expect(persistentTranscribe).toHaveBeenCalledWith("a.wav");
+    expect(run).toHaveBeenCalledExactlyOnceWith(config.binaryPath, buildContractVersionArgs());
+  });
+
+  it("probes capability at most once - subsequent captures never re-probe", async () => {
+    const run = vi.fn<CommandRunner>(() => Promise.resolve(persistentProbe));
+    const persistent = createFakePersistentManager(() => Promise.resolve(rawOutput));
+
+    const speech = createLocalSpeechInput({ config, persistent, run });
+    await speech.transcribe({ path: "a.wav" });
+    await speech.transcribe({ path: "b.wav" });
+
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to the one-shot runner when the probe reports no persistent support", async () => {
+    const run = vi.fn<CommandRunner>((_binaryPath, args) =>
+      args[0] === "--contract-version" ? Promise.resolve(oneShotProbe) : Promise.resolve(rawOutput)
+    );
+    const persistentTranscribe = vi.fn(() => Promise.resolve(rawOutput));
+    const persistent = createFakePersistentManager(persistentTranscribe);
+
+    const speech = createLocalSpeechInput({ config, persistent, run });
+    const result = await speech.transcribe({ path: "recordings\\utterance.wav" });
+
+    expect(result).toEqual(mapped);
+    expect(persistentTranscribe).not.toHaveBeenCalled();
+    expect(run).toHaveBeenCalledWith(
+      config.binaryPath,
+      buildLocalSpeechArgs(config, "recordings\\utterance.wav")
+    );
+  });
+
+  it("falls back to the one-shot runner, never throwing, when the probe itself fails", async () => {
+    const run = vi.fn<CommandRunner>((_binaryPath, args) =>
+      args[0] === "--contract-version"
+        ? Promise.reject(new Error("binary does not implement --contract-version"))
+        : Promise.resolve(rawOutput)
+    );
+    const persistentTranscribe = vi.fn(() => Promise.resolve(rawOutput));
+    const persistent = createFakePersistentManager(persistentTranscribe);
+
+    const speech = createLocalSpeechInput({ config, persistent, run });
+    const result = await speech.transcribe({ path: "recordings\\utterance.wav" });
+
+    expect(result).toEqual(mapped);
+    expect(persistentTranscribe).not.toHaveBeenCalled();
+  });
+
+  it("never probes at all when no persistent manager dependency is supplied (today's exact behavior)", async () => {
+    const run = vi.fn<CommandRunner>(() => Promise.resolve(rawOutput));
+
+    const speech = createLocalSpeechInput({ config, run });
+    await speech.transcribe({ path: "recordings\\utterance.wav" });
+
+    expect(run).toHaveBeenCalledExactlyOnceWith(
+      config.binaryPath,
+      buildLocalSpeechArgs(config, "recordings\\utterance.wav")
+    );
   });
 });
