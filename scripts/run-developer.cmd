@@ -52,7 +52,7 @@ echo Nothing to do: no workflow PR needs fixing and no dependency-ready issue is
 goto finalize
 
 :run
-copilot --agent=whetstone-developer --model gpt-5.6-sol --effort high --allow-all -p "%TASK%"
+copilot --agent=whetstone-developer --model claude-sonnet-5 --effort high --allow-all -p "%TASK%"
 if errorlevel 1 exit /b %errorlevel%
 
 :finalize
