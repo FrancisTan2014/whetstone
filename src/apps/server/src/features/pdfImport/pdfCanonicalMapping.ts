@@ -308,19 +308,32 @@ function listItemNode(child: StructuredDocItem): DocumentNodeJSON {
 }
 
 // Build a table from a docling table's `table_row` children (each row's children become cells), or null
-// when no row yields a cell so the caller can fall back to an `unknown` node rather than an empty table.
+// when the container is not PURELY row-shaped so the caller falls back to the `unknown`/expansion path
+// instead of a table that quietly ate part of the source.
 //
 // This keys on the `_table_rows` SHAPE, never on `label === "table"`, which is why `canonicalBodyNode`
 // can route its whole default branch here (#859): docling's table shape is label-agnostic, so a
 // `document_index` (a printed table of contents or index) arrives as `table_row`s of cells exactly like
 // a `table` does. Any construct that is really a table is therefore mapped as one whatever docling
 // called it, and one that is not still returns null and keeps the `unknown` fallback.
+//
+// #873: a container's OWN text and any non-`table_row` child both REFUSE the table (return null) rather
+// than being silently skipped. This is the same #812 "no silent drops" contract every other unmapped
+// construct already gets: `expandUnmappedContainers` shows the container's own text as a visible
+// `unknown` node and re-offers every child — row or not — to the ordinary per-item rules, so a genuine
+// non-row child (a stray caption) still maps to whatever it actually is instead of vanishing. The cost is
+// real and accepted: a container that is mostly a clean table but carries one stray child no longer
+// renders as a `table` at all, because a construct this mapper cannot fully trust is not partially
+// trusted.
 function tableNode(item: StructuredDocItem): DocumentNodeJSON | null {
+  if (item.text.trim().length > 0) {
+    return null;
+  }
+  if (item.children.some((child) => child.label !== "table_row")) {
+    return null;
+  }
   const rows: DocumentNodeJSON[] = [];
   for (const rowItem of item.children) {
-    if (rowItem.label !== "table_row") {
-      continue;
-    }
     const cells = rowItem.children.map((cell) => ({
       attrs: { colspan: 1, rowspan: 1 },
       content: [paragraph(cell.text)],

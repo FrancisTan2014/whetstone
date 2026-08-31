@@ -337,13 +337,12 @@ describe("mapStructuredDocument", () => {
     expect(result.unmappedLabels).toContain("table");
   });
 
-  it("skips non-row children and empty rows while still building a table", () => {
+  it("skips empty rows while still building a table", () => {
     const result = mapped(
       mapEn(
         doc([
           item({
             children: [
-              item({ label: "caption", text: "Table 1." }),
               item({ children: [], label: "table_row" }),
               item({ children: [item({ label: "table_cell", text: "Cell" })], label: "table_row" })
             ],
@@ -356,6 +355,49 @@ describe("mapStructuredDocument", () => {
     expect(table.type).toBe("table");
     // Only the non-empty row survives.
     expect(table.content).toHaveLength(1);
+  });
+
+  it("refuses a table whose container carries its own text, rather than silently dropping it (#873)", () => {
+    const result = mapped(
+      mapEn(
+        doc([
+          item({
+            children: [
+              item({ children: [item({ label: "table_cell", text: "Cell" })], label: "table_row" })
+            ],
+            label: "table",
+            text: "Table 1."
+          })
+        ])
+      )
+    );
+    // Refused entirely (never rendered as a `table`) so the container's own text stays visible instead
+    // of being silently skipped: it surfaces as an `unknown` node ahead of the row's own cell text.
+    expect(unitTypes(result, 0)).toEqual(["unknown", "unknown"]);
+    expect(blockTexts(result)).toEqual(["Table 1.", "Cell"]);
+    expect(result.unmappedLabels).toEqual(expect.arrayContaining(["table"]));
+  });
+
+  it("refuses a table whose container has a non-table_row child, rather than silently dropping it (#873)", () => {
+    const result = mapped(
+      mapEn(
+        doc([
+          item({
+            children: [
+              item({ label: "caption", text: "Table 1." }),
+              item({ children: [item({ label: "table_cell", text: "Cell" })], label: "table_row" })
+            ],
+            label: "table"
+          })
+        ])
+      )
+    );
+    // Refused entirely, so the `caption` maps by its OWN rule (a plain paragraph) instead of being
+    // skipped, and the row's cell text still surfaces (as an unknown node, since a lone `table_row` is
+    // not itself table-shaped).
+    expect(unitTypes(result, 0)).toEqual(["paragraph", "unknown"]);
+    expect(blockTexts(result)).toEqual(["Table 1.", "Cell"]);
+    expect(result.unmappedLabels).toEqual(expect.arrayContaining(["table"]));
   });
 
   it("projects an ordered list group with nested lists", () => {
