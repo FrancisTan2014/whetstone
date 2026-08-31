@@ -37,8 +37,25 @@ jobs:
           echo "corepack prepare pnpm failed after 5 attempts" >&2
           exit 1
 
+      - name: Get pnpm store directory
+        id: pnpm-cache-dir
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-cache-dir.outputs.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      # side-effects-cache reuses a package's cached (pre/post)install script output across
+      # runs. wordpos's postinstall writes generated index files into wordnet-db's own
+      # node_modules directory (a cross-package side effect); restoring that from a cached
+      # store can skip the write and leave wordnet-db's dict/ incomplete. Disabling it keeps
+      # the safe part of caching (package contents) and always re-runs install scripts.
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --side-effects-cache=false
 
       - name: Typecheck
         run: pnpm typecheck
@@ -77,8 +94,25 @@ jobs:
           echo "corepack prepare pnpm failed after 5 attempts" >&2
           exit 1
 
+      - name: Get pnpm store directory
+        id: pnpm-cache-dir
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-cache-dir.outputs.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      # side-effects-cache reuses a package's cached (pre/post)install script output across
+      # runs. wordpos's postinstall writes generated index files into wordnet-db's own
+      # node_modules directory (a cross-package side effect); restoring that from a cached
+      # store can skip the write and leave wordnet-db's dict/ incomplete. Disabling it keeps
+      # the safe part of caching (package contents) and always re-runs install scripts.
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --side-effects-cache=false
 
       - name: Install Playwright browser
         run: pnpm exec playwright install --with-deps chromium
@@ -123,8 +157,25 @@ jobs:
           echo "corepack prepare pnpm failed after 5 attempts" >&2
           exit 1
 
+      - name: Get pnpm store directory
+        id: pnpm-cache-dir
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-cache-dir.outputs.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      # side-effects-cache reuses a package's cached (pre/post)install script output across
+      # runs. wordpos's postinstall writes generated index files into wordnet-db's own
+      # node_modules directory (a cross-package side effect); restoring that from a cached
+      # store can skip the write and leave wordnet-db's dict/ incomplete. Disabling it keeps
+      # the safe part of caching (package contents) and always re-runs install scripts.
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --side-effects-cache=false
 
       - name: Real process and filesystem contracts
         run: pnpm test:isolated
