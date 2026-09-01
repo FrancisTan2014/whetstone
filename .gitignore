@@ -30,6 +30,7 @@ Thumbs.db
 node_modules/
 dist/
 coverage/
+.vitest-reports/
 *.tsbuildinfo
 pnpm-debug.log*
 npm-debug.log*

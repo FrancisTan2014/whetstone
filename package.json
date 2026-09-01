@@ -28,6 +28,8 @@
     "test:isolated": "vitest run --config vitest.isolated.config.ts",
     "test:python": "node scripts/run-python-tests.mjs -m unittest discover -s src/apps/server/src/files/tests -v",
     "test:quality": "vitest run --coverage",
+    "test:quality:shard": "vitest run --reporter=blob --coverage --coverage.thresholds.lines=0 --coverage.thresholds.functions=0 --coverage.thresholds.branches=0 --coverage.thresholds.statements=0",
+    "test:quality:merge": "vitest run --mergeReports --reporter=default --coverage",
     "test:workflow": "node --test --experimental-test-coverage --test-coverage-include=scripts/delivery/supervisor.mjs --test-coverage-include=scripts/delivery/workflow.mjs --test-coverage-lines=100 --test-coverage-branches=100 --test-coverage-functions=100 scripts/delivery/health.test.mjs scripts/delivery/launchers.test.mjs scripts/delivery/supervisor.test.mjs scripts/delivery/workflow.test.mjs",
     "mutation": "stryker run",
     "build": "pnpm --filter @whetstone/document build && pnpm --filter @whetstone/domain build && pnpm --filter @whetstone/contracts build && pnpm --filter @whetstone/server build && pnpm --filter @whetstone/web build",
