@@ -122,13 +122,15 @@ jobs:
       # merges every shard's blob and evaluates the real thresholds from vitest.config.ts once
       # the full picture is back together.
       - name: Coverage shard ${{ matrix.shard }}/4
-        run: pnpm test:quality:shard -- --shard=${{ matrix.shard }}/4
+        run: pnpm test:quality:shard --shard=${{ matrix.shard }}/4
 
       - name: Upload coverage shard report
         uses: actions/upload-artifact@v4
         with:
           name: quality-coverage-shard-${{ matrix.shard }}
           path: .vitest-reports
+          if-no-files-found: error
+          include-hidden-files: true
           retention-days: 1
 
   quality:
