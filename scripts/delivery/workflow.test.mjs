@@ -127,6 +127,27 @@ test("required merge checks are named, present, and successful", () => {
   );
 });
 
+test("quality coverage shards merge under the required gate and propagate failures", () => {
+  const workflow = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
+  for (const requiredFragment of [
+    "quality-lint:",
+    "quality-coverage:",
+    "shard: [1, 2, 3, 4]",
+    "run: pnpm test:quality:shard --shard=${{ matrix.shard }}/4",
+    "uses: actions/upload-artifact@v4",
+    "if-no-files-found: error",
+    "include-hidden-files: true",
+    "needs: [quality-lint, quality-coverage]",
+    "if: always()",
+    "if: needs.quality-lint.result != 'success' || needs.quality-coverage.result != 'success'",
+    "uses: actions/download-artifact@v4",
+    "merge-multiple: true",
+    "run: pnpm test:quality:merge"
+  ]) {
+    assert.equal(workflow.includes(requiredFragment), true, `missing ${requiredFragment}`);
+  }
+});
+
 test("workflow ownership and developer action preserve WIP ordering", () => {
   const workflow = workflowPullRequests([
     pullRequest({
