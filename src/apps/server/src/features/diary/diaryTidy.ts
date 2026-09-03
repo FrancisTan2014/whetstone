@@ -33,17 +33,45 @@ export function createDiaryTidy(chat: LlmModel): DiaryTidy {
   };
 }
 
-// Resolve the diary tidier from config: the real local-model tidier when BOTH a model is configured
-// (`DIARY_TIDY_MODEL`, or the `COACH_MODEL` alias) and a model factory is wired, otherwise an identity
-// tidier that returns the transcript unchanged. So with no model configured — the deterministic base
-// install — a diary capture is saved verbatim (faithful, never faked) with no Ollama call, exactly
-// like the "unavailable" explanation aid. Mirrors `resolveExplainer` (#341) so both optional AI
-// utilities share one absent-config-safe resolution shape, independent of the retiring coach.
-export function resolveDiaryTidy(dependencies: {
+export type DiaryTidyDependencies = Readonly<{
+  // A model backed by the local agent seam (#906), set only when a local agent CLI is configured
+  // (`AGENT_BINARY` + `AGENT_MODEL`). It takes precedence over the Ollama model below, because an agent
+  // CLI is what makes tidy reachable on a machine with no room for a resident local LLM. Explicitly
+  // `| undefined` so the composition root can pass the result of "is an agent configured?" directly,
+  // under `exactOptionalPropertyTypes`.
+  agentModel?: LlmModel | undefined;
   config: DiaryTidyConfig;
   createModel?: (modelName: string) => LlmModel;
-}): DiaryTidy {
-  const { config, createModel } = dependencies;
+}>;
+
+// Which backend serves tidy. Reported at boot next to the model's own health so an operator can tell
+// which one is in use, rather than reading a model line while an agent is quietly doing the work.
+// "model" covers the local Ollama model AND the no-model case: with no model name, that backend is
+// simply off and tidy keeps the raw transcript.
+export type DiaryTidyBackend = "agent" | "model";
+
+// The one precedence rule, as data: a configured local agent CLI wins over the local Ollama model.
+// `resolveDiaryTidy` follows exactly this order, so the boot report can never disagree with what the
+// worker actually calls.
+export function selectDiaryTidyBackend(dependencies: DiaryTidyDependencies): DiaryTidyBackend {
+  return dependencies.agentModel === undefined ? "model" : "agent";
+}
+
+// Resolve the diary tidier from config: the agent-backed model when a local agent CLI is configured;
+// otherwise the real local-model tidier when BOTH a model is configured (`DIARY_TIDY_MODEL`, or the
+// `COACH_MODEL` alias) and a model factory is wired; otherwise an identity tidier that returns the
+// transcript unchanged. So with neither configured — the deterministic base install — a diary capture is
+// saved verbatim (faithful, never faked) with no agent and no Ollama call, exactly like the
+// "unavailable" explanation aid. Mirrors `resolveExplainer` (#341) so both optional AI utilities share
+// one absent-config-safe resolution shape, independent of the retiring coach.
+export function resolveDiaryTidy(dependencies: DiaryTidyDependencies): DiaryTidy {
+  const { agentModel, config, createModel } = dependencies;
+
+  // Precedence, in one place: a configured local agent CLI wins. `selectDiaryTidyBackend` reports this
+  // same order to the boot log, and a test pins the two together.
+  if (agentModel !== undefined) {
+    return createDiaryTidy(agentModel);
+  }
 
   if (config.modelName === undefined || createModel === undefined) {
     return (transcript) => Promise.resolve(transcript);

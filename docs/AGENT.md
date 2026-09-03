@@ -11,8 +11,9 @@ It is the agent-level twin of the voice seam in `docs/SPEECH.md`, and deliberate
 small port, a provider-neutral executable protocol, a deterministic fake when nothing is configured, an
 injected OS-process boundary, and a boot health report that reports and never crashes.
 
-**Nothing in the product calls this yet.** #904 delivers the component only; wiring it into a product
-flow is a later issue that needs a product decision first.
+**Diary tidy is the seam's first and only client** (#906): when `AGENT_BINARY` + `AGENT_MODEL` are set,
+the voice-diary transcript tidy runs through a local agent CLI instead of a resident Ollama model. See
+[First client: diary tidy](#first-client-diary-tidy) below. No other product flow calls the seam.
 
 ## Components
 
@@ -114,7 +115,78 @@ error strings:
 A malformed or off-contract response **fails the turn**. The seam never fabricates, salvages, or
 partially trusts an answer.
 
+## Bundled shim: GitHub Copilot CLI (#906)
+
+`AGENT_BINARY` is the **protocol executable**, not the vendor CLI itself — no vendor speaks this
+protocol natively. `scripts/setup/copilot-wrapper/` is the reference shim, adapting an installed and
+authenticated [GitHub Copilot CLI](https://github.com/github/copilot-cli) to the protocol above. It is
+the agent twin of `scripts/setup/whisper-wrapper/` and follows the same rules: **Python standard library
+only**, no dependency added under `src/`, and it lives outside the app because it is per-machine setup.
+
+Install it into any Python 3.9+ environment; pip emits a native launcher (`whetstone-copilot`, or
+`whetstone-copilot.exe` on Windows), which is what `AGENT_BINARY` must point at:
+
+```bash
+pip install -e scripts/setup/copilot-wrapper
+```
+
+```
+AGENT_BINARY=<that launcher's absolute path>
+AGENT_MODEL=auto
+```
+
+`AGENT_MODEL` is passed straight through as Copilot's `--model`; `auto` lets Copilot pick. An identifier
+Copilot does not offer fails the turn by name (`Model "…" from --model flag is not available.`) rather
+than quietly falling back to a different model.
+
+A native launcher is required, not a convenience: `agentProcess.ts` spawns `AGENT_BINARY` **without a
+shell**, so a `.mjs`, `.cmd`, or `.bat` cannot be launched on Windows. `[project.scripts]` in
+`pyproject.toml` is what produces a real executable.
+
+What the shim does per invocation:
+
+- `--contract-version` → `{"contractVersion":"1","provider":"github-copilot-cli","sessions":true}`,
+  spawning nothing. The probe stays cheap and cannot hang on a signed-out CLI.
+- A turn reads the prompt from stdin, runs
+  `copilot -p <prompt> -s --no-color --log-level none --no-ask-user --disable-builtin-mcps
+  --no-custom-instructions --model <AGENT_MODEL> --session-id <sessionId>`, and prints `{"text": ...}`.
+  `--no-ask-user` and `--disable-builtin-mcps` keep the turn headless and toolless, matching
+  [No tools, by design](#no-tools-by-design). `--no-custom-instructions` stops Copilot from injecting an
+  `AGENTS.md` found near the server's working directory into a product prompt, which would otherwise make
+  the answer depend on where the server was started.
+- **Sessions:** Copilot's `--session-id` both *starts* a session with the given UUID and *resumes* one
+  that already exists, so the shim passes it on every turn and needs no separate resume flag and no state
+  file of its own. Conversation state lives in Copilot's own store.
+- Every failure exits non-zero with a named reason on stderr — a missing `copilot` on `PATH`, a non-zero
+  Copilot exit, a turn exceeding 110 seconds (deliberately inside the seam's own 120-second bound, so the
+  shim is what stops Copilot), an oversized prompt, or empty output. The shim never invents an answer.
+- `WHETSTONE_COPILOT_BINARY` overrides which executable is run, for a non-`PATH` install.
+
+Its own tests run from `scripts/setup/copilot-wrapper/` with `python -m unittest discover -s tests` and
+require no Copilot CLI, no credential, and no network. Like the whisper shim, it is outside the
+`pnpm validate` gate, which has no agent CLI installed.
+
+## First client: diary tidy
+
+Voice-diary tidy (`features/diary/diaryTidy.ts`) is the seam's first caller. Tidy needs one short,
+low-stakes completion, which is exactly what an agent turn is, and an agent CLI costs no resident RAM —
+so a machine that cannot host a local LLM can still tidy.
+
+- `llm/agentModel.ts` adapts `Agent` to the existing `LlmModel` port: one completion is
+  `open → send → close`, with `close()` in a `finally` so no session leaks on a failed turn. It requests
+  **no** standing instructions and refuses `{ json: true }` by name — the agent protocol's `text` is
+  free-form prose, and a caller that needs strict JSON must keep using an Ollama model rather than be
+  handed a hopeful string.
+- `resolveDiaryTidy` precedence: **agent model → `DIARY_TIDY_MODEL` (Ollama) → off**. `selectDiaryTidyBackend`
+  is the single exported decision, so the boot log and the wiring cannot disagree.
+- Every existing safety guarantee is unchanged: a failed turn, a blank reply, or a reply that fails the
+  faithfulness guard still saves the **raw transcript**. A diary entry is the user's own words; an agent
+  outage must never cost or alter them.
+- Because a failure is swallowed on purpose, the injected agent log sink is the only operational trace of
+  it — provider, status, duration only, per [Logging and privacy](#logging-and-privacy).
+
 ## No tools, by design
+
 
 The seam grants the agent **nothing**: no tool flag is passed and no tool allowlist is exposed. A local
 agent therefore cannot reach Whetstone's data — in particular it structurally cannot become a second
@@ -133,7 +205,9 @@ injected sink, so the server decides where they land.
 - **No warm/persistent session manager.** One-shot invocation per turn is enough; the probe already
   reports a `sessions` capability flag, so a warm mode can be auto-detected later exactly as #884 did
   for speech.
-- **No vendor adapter.** A GitHub Copilot SDK adapter (or any other vendor-specific integration) is a
-  separate issue; the generic adapter needs only `node:child_process` and adds no runtime dependency.
-- **No relationship to `src/llm/` yet.** A one-shot completion is `open → send → close`, so the two
-  seams are related, but unifying them is later work.
+- **No vendor adapter inside the app.** The generic adapter needs only `node:child_process` and adds no
+  runtime dependency; vendor-specific knowledge lives in an out-of-app shim
+  (`scripts/setup/copilot-wrapper/`), never under `src/`.
+- **No JSON-mode agent completions.** `agentModel.ts` refuses `{ json: true }` rather than hoping a prose
+  reply parses. A strict-JSON caller stays on an Ollama model until the protocol carries a structured
+  payload.

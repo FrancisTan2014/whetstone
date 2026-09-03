@@ -37,9 +37,16 @@ import { createServer } from "./http/createServer.js";
 import type { ContentDependencies } from "./features/content/contentCommands.js";
 import { createDefaultCurrentUserProvider } from "./identity/currentUser.js";
 import { createOllamaModel, probeOllamaModel } from "./llm/llmModel.js";
+import { createAgentModel } from "./llm/agentModel.js";
 import { readDiaryTidyConfig } from "./llm/aiUtilityConfig.js";
 import { checkAiUtilityHealth } from "./llm/aiUtilityHealth.js";
-import { resolveDiaryTidy } from "./features/diary/diaryTidy.js";
+import { readAgentConfig } from "./agent/agentConfig.js";
+import { createCliAgent } from "./agent/cliAgent.js";
+import {
+  resolveDiaryTidy,
+  selectDiaryTidyBackend,
+  type DiaryTidyDependencies
+} from "./features/diary/diaryTidy.js";
 import { createVoiceCaptureAudioStore } from "./features/diary/voiceCaptureAudioStore.js";
 import { backfillNoteMaterialFingerprints } from "./features/notes/noteMaterialFingerprintBackfill.js";
 import { backfillNoteNearMatchKeys } from "./features/notes/noteNearMatchBackfill.js";
@@ -275,6 +282,17 @@ try {
     throw new Error(`${speechConfigResult.error.message} ${speechConfigResult.error.remedy}`);
   }
   const speechConfig = speechConfigResult.config;
+
+  // The local agent seam (#904), config-gated the same way: AGENT_BINARY + AGENT_MODEL together enable a
+  // locally installed agentic CLI, exactly one of them is an explicit startup misconfiguration rather
+  // than a silent fallback, and neither leaves the seam off entirely. Diary tidy below is its first (and
+  // only) product client (#906) — nothing else is wired to it.
+  const agentConfigResult = readAgentConfig();
+  if (!agentConfigResult.ok) {
+    throw new Error(`${agentConfigResult.error.message} ${agentConfigResult.error.remedy}`);
+  }
+  const agentProvider = agentConfigResult.config.provider;
+
   // The deterministic headless fake (no model, no mic) the gate and CI run on. Off, it transcribes to empty
   // so a submitted clip fails as `voice_setup_required` (the honest "speech not set up" path). Under the
   // env-gated E2E flag (VOICE_CAPTURE_FIXTURE_TRANSCRIPT=1) it becomes a function of the audio: a real WAV
@@ -510,10 +528,30 @@ try {
 
   // The async Tap-and-Talk worker (#565): one in-process background loop that drains queued voice captures
   // one at a time (transcribe → tidy → ready). The diary "tidy" pass is an optional local AI utility now
-  // decoupled from the coach (#602): it uses the model named in DIARY_TIDY_MODEL (or the COACH_MODEL
-  // alias) through the shared `LlmModel` seam. With no model configured it resolves to an identity tidier,
-  // so a capture is persisted verbatim (faithful, never faked) with no Ollama call.
+  // decoupled from the coach (#602). Its backend is chosen by one precedence rule (#906): a configured
+  // local agent CLI first — the only way tidy runs on a machine with no room for a resident local LLM —
+  // then the model named in DIARY_TIDY_MODEL (or the COACH_MODEL alias) through the shared `LlmModel`
+  // seam. With neither configured it resolves to an identity tidier, so a capture is persisted verbatim
+  // (faithful, never faked) with no agent and no Ollama call.
   const diaryTidyConfig = readDiaryTidyConfig();
+  const diaryTidyDependencies: DiaryTidyDependencies = {
+    agentModel:
+      agentProvider === undefined
+        ? undefined
+        : createAgentModel(
+            createCliAgent({
+              config: agentProvider,
+              // The seam owns no logger, so the server decides where its records land. Only the
+              // provider identifier, the outcome status, and the duration are logged — never prompt
+              // text, response text, or an environment value (docs/AGENT.md). This is the only trace a
+              // failed turn leaves, because tidy itself degrades silently to the raw transcript.
+              log: ({ durationMs, event, provider, status }) =>
+                server.log.info({ durationMs, provider, status }, event)
+            })
+          ),
+    config: diaryTidyConfig,
+    createModel: createOllamaModel
+  };
   const voiceCaptureWorker: VoiceCaptureWorkerDependencies = {
     db,
     // Keep the raw adapter/process failure message in safe server logs only, tagged with the capture id and
@@ -524,7 +562,7 @@ try {
     // The speech boundary's report of whether a local provider is set up on this machine, so an empty
     // transcript is classified as genuine silence vs. missing voice setup (#675).
     speechConfigured: speechConfig.provider !== undefined,
-    tidy: resolveDiaryTidy({ config: diaryTidyConfig, createModel: createOllamaModel })
+    tidy: resolveDiaryTidy(diaryTidyDependencies)
   };
   const VOICE_CAPTURE_POLL_MS = 1_000;
   let voiceCaptureDraining = false;
@@ -682,12 +720,19 @@ try {
 
   // Report the optional AI utilities' model wiring (#602): diary "tidy" and the Reader "AI 解释" gloss.
   // A clean "run pnpm setup:ai" hint when a utility is off or its Ollama model is not serving, instead
-  // of a silent degrade (an un-tidied entry / an "unavailable" gloss tab). Neither blocks startup.
+  // of a silent degrade (an un-tidied entry / an "unavailable" gloss tab). Neither blocks startup. Diary
+  // tidy also reports WHICH backend it resolved to (#906), so an operator is never told about a model
+  // the local agent CLI has taken precedence over.
   for (const utility of [
-    { label: "Diary tidy", modelName: diaryTidyConfig.modelName },
-    { label: "AI 解释", modelName: explainConfig.modelName }
+    {
+      backend: selectDiaryTidyBackend(diaryTidyDependencies),
+      label: "Diary tidy",
+      modelName: diaryTidyConfig.modelName
+    },
+    { backend: "model" as const, label: "AI 解释", modelName: explainConfig.modelName }
   ]) {
     const utilityHealth = await checkAiUtilityHealth({
+      backend: utility.backend,
       label: utility.label,
       modelName: utility.modelName,
       probeModel: probeOllamaModel,

@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "whetstone-copilot"
+version = "0.1.0"
+description = "GitHub Copilot CLI shim for whetstone: honours the docs/AGENT.md provider-neutral local agent contract."
+requires-python = ">=3.9"
+# No dependencies, by design: the shim only parses arguments, spawns the already-installed `copilot`
+# executable, and shapes its answer into the protocol's turn JSON. Everything it needs is in the standard
+# library, so installing it pulls nothing and can never add a whetstone runtime dependency.
+dependencies = []
+
+# pip generates a native launcher executable for this entry point on every OS (`.../bin/whetstone-copilot`
+# or `...\Scripts\whetstone-copilot.exe`), which is what AGENT_BINARY must point at: the server's agent
+# process boundary calls `spawn` WITHOUT a shell, so on Windows a `.py`/`.mjs`/`.cmd`/`.bat` shim cannot be
+# launched at all. Same reason `whetstone-whisper` / `whetstone-qwen` are console scripts.
+[project.scripts]
+whetstone-copilot = "whetstone_copilot.cli:main"
+
+[tool.setuptools]
+packages = ["whetstone_copilot"]

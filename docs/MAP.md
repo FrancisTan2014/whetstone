@@ -439,6 +439,9 @@ can navigate them from another package.
   SDK over its OpenAI-compatible `/v1`, one shared `llmTimeoutMs`) and `probeOllamaModel(model)` (the
   boot health probe). This replaces the two former hand-rolled Ollama `fetch` clients and the hardcoded
   base URL; a later cloud model is a provider/base-URL swap behind the same `LlmModel` type.
+  `agentModel.ts` (`createAgentModel(agent)`, #906) is the second implementation: it adapts the local
+  agent seam below to the same `LlmModel` type (one completion = `open → send → close`, always closing),
+  and refuses `{ json: true }` by name because an agent turn returns free-form prose.
 - Local agent seam: `src/agent/` — the one provider-neutral boundary for a conversation with a locally
   installed agentic CLI (Qwen Code, Gemini CLI, Claude Code, Copilot CLI, …), #904. `agentSession.ts`
   (the port: `Agent.open({ instructions? })` → `AgentSession.send(prompt) -> { text }` / `close()`;
@@ -451,7 +454,11 @@ can navigate them from another package.
   fails by), `agentConfig.ts` (env-driven, absent-config-safe `readAgentConfig` + `resolveAgent`:
   `AGENT_BINARY`+`AGENT_MODEL` together enable a provider, exactly one is an explicit config error,
   neither stays on the fake) and `agentHealth.ts` (`checkAgentHealth`: a failed probe is reported, never
-  fatal). Not wired into any product flow yet; protocol in `docs/AGENT.md`.
+  fatal). Its one product client is **diary tidy** (#906, precedence below). `AGENT_BINARY` points at a
+  small out-of-app shim, never a vendor CLI directly: `scripts/setup/copilot-wrapper/` is the bundled
+  GitHub Copilot one (stdlib-only Python, `pip install -e` emits the native `whetstone-copilot` launcher
+  a shell-less `spawn` needs; `python -m unittest discover -s tests`, outside the agent-less gate).
+  Protocol, shim, and tidy wiring are all in `docs/AGENT.md`.
 - Voice input (STT) seam: `src/speech/` — `speechInput.ts` (the `SpeechInput`
   interface: `transcribe({ path }) -> { transcript, words[], language }`; transcript-first — `words` is
   optional timing evidence, empty when a provider has no aligner, #799), `fakeSpeechInput.ts`
@@ -501,8 +508,11 @@ can navigate them from another package.
   full-state read facet. Diary is the `kind === "diary"` filter over that result. `diaryRoutes.ts`:
   `POST /api/diary/entries`, `GET /api/diary/timeline?before&limit`,
   `PATCH`/`DELETE /api/diary/entries/:id` (all Zod-validated, current-user scoped). No proposal card is
-  returned. The tidy seam is wired in `index.ts` via `createDiaryTidy(createOllamaModel(...))`. Shapes in
-  `@whetstone/contracts` (`diaryContracts.ts`).
+  returned. The tidy seam is resolved in `index.ts` via `resolveDiaryTidy` (#906), whose backend precedence
+  is **local agent CLI (`AGENT_BINARY`+`AGENT_MODEL`, via `llm/agentModel.ts`) → `DIARY_TIDY_MODEL` Ollama
+  model → off**; `selectDiaryTidyBackend` is the one exported decision the boot log also reads, and every
+  backend keeps the same guarantee — a throw, a blank reply, or an unfaithful reply saves the raw
+  transcript. Shapes in `@whetstone/contracts` (`diaryContracts.ts`).
 - Voice source audit (#801): a **ready voice** diary entry is auditable against its retained recording in
   the editor — migration `0080_voice_audio_content_type.sql` adds nullable `diary_entries.raw_audio_content_type`
   (persists the validated recorded container type; the rest of the data already lived on `diary_entries`).
