@@ -6,15 +6,25 @@
 
 export type AiUtilityHealthStatus = "disabled" | "ready" | "unavailable";
 
+// Which backend serves the utility. "model" is the local Ollama model named by `modelName` (an unset
+// name means that backend is simply off). "agent" is the local agent CLI (#906): diary tidy prefers it
+// when `AGENT_BINARY` + `AGENT_MODEL` are set, so the boot line must name the backend actually in use
+// instead of reporting a model the utility no longer calls. The Reader gloss is Ollama-only and always
+// passes "model".
+export type AiUtilityBackend = "agent" | "model";
+
 export type AiUtilityHealthReport = Readonly<{
   message: string;
   status: AiUtilityHealthStatus;
 }>;
 
 export type AiUtilityHealthDependencies = Readonly<{
+  // The backend this utility resolved to, decided by the utility itself (diary tidy's
+  // `selectDiaryTidyBackend`); this report only echoes that decision.
+  backend: AiUtilityBackend;
   // Human label for the utility, e.g. "Diary tidy" or "AI 解释".
   label: string;
-  // The configured local model, or undefined when the utility is off (no env var set).
+  // The configured local model, or undefined when the model backend is off (no env var set).
   modelName: string | undefined;
   // Probe whether the local Ollama model is pulled and serving. A thrown error (daemon down) is
   // treated as unavailable so the check never throws on boot.
@@ -26,7 +36,18 @@ export type AiUtilityHealthDependencies = Readonly<{
 export async function checkAiUtilityHealth(
   dependencies: AiUtilityHealthDependencies
 ): Promise<AiUtilityHealthReport> {
-  const { label, modelName, probeModel, setupHint } = dependencies;
+  const { backend, label, modelName, probeModel, setupHint } = dependencies;
+
+  // The agent backend is not probed here: it is an external CLI reached one process at a time, and this
+  // report must stay cheap and non-blocking at boot. Naming it is what an operator needs — the seam
+  // reports every turn's outcome by name in the operational log, and tidy still degrades to the raw
+  // transcript if the CLI fails.
+  if (backend === "agent") {
+    return {
+      message: `${label} is using the local agent CLI (AGENT_BINARY) - it takes precedence over any local model. See docs/AGENT.md.`,
+      status: "ready"
+    };
+  }
 
   if (modelName === undefined) {
     return {
