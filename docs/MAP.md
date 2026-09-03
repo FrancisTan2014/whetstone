@@ -439,6 +439,19 @@ can navigate them from another package.
   SDK over its OpenAI-compatible `/v1`, one shared `llmTimeoutMs`) and `probeOllamaModel(model)` (the
   boot health probe). This replaces the two former hand-rolled Ollama `fetch` clients and the hardcoded
   base URL; a later cloud model is a provider/base-URL swap behind the same `LlmModel` type.
+- Local agent seam: `src/agent/` — the one provider-neutral boundary for a conversation with a locally
+  installed agentic CLI (Qwen Code, Gemini CLI, Claude Code, Copilot CLI, …), #904. `agentSession.ts`
+  (the port: `Agent.open({ instructions? })` → `AgentSession.send(prompt) -> { text }` / `close()`;
+  transcript-first, `text` is the only required field), `cliAgent.ts` (the **provider-neutral adapter
+  and stable boundary**: config is only `{ binaryPath, modelIdentifier }`; probes `--contract-version`,
+  runs `--model <id> --output json [--session <id>]` per turn with the prompt on the child's **stdin**,
+  validates the JSON response at the boundary, grants **no tools**), `fakeAgent.ts` (deterministic, for
+  the agent-less `pnpm validate` gate), `agentProcess.ts` (the injected `spawn`-based process boundary
+  that writes/closes stdin and bounds the run), `agentFailure.ts` (`AgentError` + the named codes a turn
+  fails by), `agentConfig.ts` (env-driven, absent-config-safe `readAgentConfig` + `resolveAgent`:
+  `AGENT_BINARY`+`AGENT_MODEL` together enable a provider, exactly one is an explicit config error,
+  neither stays on the fake) and `agentHealth.ts` (`checkAgentHealth`: a failed probe is reported, never
+  fatal). Not wired into any product flow yet; protocol in `docs/AGENT.md`.
 - Voice input (STT) seam: `src/speech/` — `speechInput.ts` (the `SpeechInput`
   interface: `transcribe({ path }) -> { transcript, words[], language }`; transcript-first — `words` is
   optional timing evidence, empty when a provider has no aligner, #799), `fakeSpeechInput.ts`
