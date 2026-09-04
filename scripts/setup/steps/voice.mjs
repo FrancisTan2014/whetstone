@@ -245,8 +245,14 @@ function logProviderDescriptor(ctx, descriptor) {
  * virtual environment that owns the configured launcher. The venv's Python interpreter is the launcher's
  * sibling (both live in the venv's `Scripts\` on win32 or `bin/` elsewhere), so the command is derived
  * from `binaryPath` at runtime — no machine-specific path is baked in at author time (#912 criterion 5) —
- * and force-reinstalls this repo's wrapper source into that venv, rebuilding the launcher from current
- * code. Platform-correct separators come from the `path` variant for `ctx.platform`.
+ * and force-reinstalls ONLY this repo's wrapper package (`--no-deps`) into that venv, rebuilding the
+ * `whetstone-whisper` launcher from current source. `--no-deps` is deliberate: this remedy is only ever
+ * reached for an ALREADY-installed wrapper (the whisper branch has already passed file-exists + the
+ * contract probe), so its dependencies are by construction present and still satisfy the unchanged
+ * `faster-whisper>=1.0` bound — only the wrapper's own source can have drifted. Dropping `--no-deps`
+ * would needlessly re-download hundreds of MB of unchanged dependencies (ctranslate2, onnxruntime,
+ * tokenizers, huggingface_hub) and can stall outright on a slow network, turning an exact remedy into
+ * one that hangs. Platform-correct separators come from the `path` variant for `ctx.platform`.
  *
  * @param {import("../step.mjs").SetupContext} ctx
  * @param {string} binaryPath  The configured WHISPER_BINARY launcher.
@@ -257,7 +263,7 @@ function whisperReinstallCommand(ctx, binaryPath) {
   const interpreter = ctx.platform === "win32" ? "python.exe" : "python";
   const venvPython = p.join(p.dirname(binaryPath), interpreter);
   const wrapperDir = p.join(ctx.root, "scripts", "setup", "whisper-wrapper");
-  return `"${venvPython}" -m pip install --force-reinstall "${wrapperDir}"`;
+  return `"${venvPython}" -m pip install --force-reinstall --no-deps "${wrapperDir}"`;
 }
 
 /**

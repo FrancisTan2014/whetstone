@@ -297,22 +297,26 @@ into `WHISPER_BINARY`'s virtual environment does not update itself when you pull
 build otherwise keeps transcribing with fixes that never take effect.
 
 There is no automatic installer for the legacy wrapper — `pnpm setup:voice` provisions the bundled
-Qwen3-ASR provider instead. To refresh a stale legacy wrapper, force-reinstall this repo's wrapper source
-into the **same virtual environment** that owns your configured `WHISPER_BINARY`. That venv's Python
+Qwen3-ASR provider instead. To refresh a stale legacy wrapper, force-reinstall **only** this repo's wrapper
+package (`--no-deps`, since its dependencies are already installed) into the **same virtual environment**
+that owns your configured `WHISPER_BINARY`. That venv's Python
 interpreter is the launcher's sibling (`.../bin/python` on macOS/Linux, `...\Scripts\python.exe` on
 Windows):
 
 ```
 # macOS / Linux
-"<venv>/bin/python" -m pip install --force-reinstall scripts/setup/whisper-wrapper
+"<venv>/bin/python" -m pip install --force-reinstall --no-deps scripts/setup/whisper-wrapper
 
 # Windows
-"<venv>\Scripts\python.exe" -m pip install --force-reinstall scripts\setup\whisper-wrapper
+"<venv>\Scripts\python.exe" -m pip install --force-reinstall --no-deps scripts\setup\whisper-wrapper
 ```
 
 `--force-reinstall` is required: pip otherwise treats the unchanged package version as already satisfied
 and leaves the old code in place (the pip package version is not bumped per behavior change — the build
-revision is). `pnpm setup:doctor` prints the exact command for your configured venv when it detects a
+revision is). `--no-deps` is required too: only the wrapper's own source drifts, so its already-installed
+dependencies (`faster-whisper` and its transitive `ctranslate2`, `onnxruntime`, `tokenizers`,
+`huggingface_hub`) must not be touched — reinstalling them would re-download hundreds of MB and can stall
+on a slow network. `pnpm setup:doctor` prints the exact command for your configured venv when it detects a
 stale wrapper. Reinstall whenever you pull changes under `scripts/setup/whisper-wrapper/`, or whenever
 doctor reports the wrapper stale. Alternatively, migrate off the legacy path entirely by unsetting
 `WHISPER_BINARY` + `WHISPER_MODEL_PATH` and running `pnpm setup:voice`.

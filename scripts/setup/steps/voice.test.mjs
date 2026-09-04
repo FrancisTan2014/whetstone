@@ -252,7 +252,7 @@ describe("voiceReadiness", () => {
       expect(result.status).not.toBe("ok");
       expect(result.what).toContain("stale");
       expect(result.what).toContain("909");
-      expect(result.remedy).toContain("pip install --force-reinstall");
+      expect(result.remedy).toContain("pip install --force-reinstall --no-deps");
       expect(result.remedy).toContain("pnpm setup:voice");
       // A stale wrapper must NOT be nudged as a ready migration — it is reported not ready instead.
       expect(logs.some((line) => line.includes("Legacy WHISPER_* is still configured"))).toBe(false);
@@ -266,7 +266,7 @@ describe("voiceReadiness", () => {
       const result = voiceReadiness(ctx, { kind: "whisper", binaryPath: "/bin/w", modelPath: "small" });
       expect(result.status).not.toBe("ok");
       expect(result.what).toContain("predates revision tracking");
-      expect(result.remedy).toContain("pip install --force-reinstall");
+      expect(result.remedy).toContain("pip install --force-reinstall --no-deps");
       expect(result.remedy).toContain("pnpm setup:voice");
     });
 
@@ -279,7 +279,9 @@ describe("voiceReadiness", () => {
         defaultExec: { code: 0, stdout: whisperProbe("stale"), stderr: "" }
       });
       const result = voiceReadiness(ctx, { kind: "whisper", binaryPath, modelPath: "small" });
-      expect(result.remedy).toContain('"/opt/asr/whisper-venv/bin/python" -m pip install');
+      expect(result.remedy).toContain(
+        '"/opt/asr/whisper-venv/bin/python" -m pip install --force-reinstall --no-deps'
+      );
       expect(result.remedy).not.toContain("/bin/w");
     });
 
@@ -292,7 +294,7 @@ describe("voiceReadiness", () => {
       });
       const result = voiceReadiness(ctx, { kind: "whisper", binaryPath, modelPath: "small" });
       expect(result.remedy).toContain(
-        '"C:\\repo\\.data\\whisper-venv\\Scripts\\python.exe" -m pip install'
+        '"C:\\repo\\.data\\whisper-venv\\Scripts\\python.exe" -m pip install --force-reinstall --no-deps'
       );
     });
   });
