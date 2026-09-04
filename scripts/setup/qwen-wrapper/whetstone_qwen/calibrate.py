@@ -173,7 +173,7 @@ def _posix_spawn_child(argv: Sequence[str]) -> Tuple[str, int]:  # pragma: no co
     proc.stdout.close()
     proc.stderr.close()
     # We reaped the child ourselves; tell Popen so it does not try to wait again or warn on cleanup.
-    proc.returncode = os.waitstatus_to_returncode(status)
+    proc.returncode = os.waitstatus_to_exitcode(status)
     if proc.returncode:
         raise subprocess.CalledProcessError(proc.returncode, list(argv), output=captured["out"], stderr=captured["err"])
     return captured["out"], _posix_peak_rss_bytes(usage.ru_maxrss)
