@@ -1,8 +1,9 @@
 """Unit tests for the whetstone-whisper wrapper — arg parsing + JSON shape against a mock model.
 
-No real inference or network: a fake model injected via `model_loader` returns canned segments plus a
-detected-language info, so the mapping logic is exercised deterministically. Run with
-`python -m unittest` from this folder.
+No real inference or network: a fake model injected via `model_loader` returns canned per-utterance
+segments plus a detected-language info, and a fake `segmenter` stands in for the Silero VAD, so the
+per-utterance mapping logic (#909) is exercised deterministically. Run with `python -m unittest` from
+this folder.
 """
 import io
 import json
@@ -49,14 +50,34 @@ class FakeInfo:
 
 
 class FakeModel:
-    def __init__(self, segments, detected_language="en"):
-        self._segments = segments
-        self._detected_language = detected_language
+    """A mock WhisperModel: returns queued ``(segments, detected_language)`` responses in call order.
+
+    ``transcribe`` is now called once per VAD utterance, so a test queues one response per utterance and
+    inspects ``calls`` to assert exactly which audio/clip and language each call received.
+    """
+
+    def __init__(self, *responses):
+        self._responses = list(responses)
         self.calls = []
 
     def transcribe(self, audio, language, word_timestamps):
         self.calls.append((audio, language, word_timestamps))
-        return iter(self._segments), FakeInfo(self._detected_language)
+        segments, detected = self._responses[len(self.calls) - 1]
+        return iter(segments), FakeInfo(detected)
+
+
+def segmenter_of(*utterances):
+    """A fake VAD seam: returns the given ``(offset_seconds, clip)`` utterances, ignoring the real audio.
+
+    ``clip`` is an opaque marker (the mock model never inspects it), so a test can assert which clip each
+    per-utterance ``transcribe`` call received and that word timings are shifted by ``offset_seconds``.
+    """
+    return lambda _audio: list(utterances)
+
+
+def exploding_segmenter(_audio):
+    """A VAD seam that must never run — proves the forced-language path skips segmentation entirely."""
+    raise AssertionError("segmenter must not run for a forced language")
 
 
 class ParseArgsTests(unittest.TestCase):
@@ -77,71 +98,209 @@ class ParseArgsTests(unittest.TestCase):
 
 
 class TranscribeTests(unittest.TestCase):
-    def test_maps_segments_to_the_contract_in_seconds(self):
+    def test_auto_detects_and_decodes_each_utterance_keeping_both_languages(self):
+        # AC: a mixed zh->en capture returns BOTH utterances (no dropped span); each segment reports the
+        # language detected for its own utterance, with word timings in absolute file time.
         model = FakeModel(
-            [
-                FakeSegment(" Help ", [FakeWord("Help", 0.0, 0.4)]),
-                FakeSegment("yourself", [FakeWord("yourself", 0.4, 0.9)]),
-            ],
-            detected_language="en",
+            ([FakeSegment("你好", [FakeWord("你好", 0.0, 0.8)])], "zh"),
+            ([FakeSegment(" Help", [FakeWord("Help", 0.2, 0.6)])], "en"),
         )
-        result = transcribe_to_contract(model, "/tmp/a.wav", "auto")
+        result = transcribe_to_contract(
+            model,
+            "cap.audio",
+            "auto",
+            segmenter=segmenter_of((0.0, "clip-zh"), (8.8, "clip-en")),
+        )
+        # Each utterance clip is detected independently (language=None reaches the model), in time order.
+        self.assertEqual(model.calls, [("clip-zh", None, True), ("clip-en", None, True)])
+        self.assertEqual(
+            result["segments"],
+            [
+                {"language": "zh", "words": [{"word": "你好", "start": 0.0, "end": 0.8}]},
+                {"language": "en", "words": [{"word": "Help", "start": 9.0, "end": 9.4}]},
+            ],
+        )
+        self.assertEqual(result["text"], "你好 Help")
+        self.assertEqual(result["language"], "zh")  # the recording's opening language
+
+    def test_word_timestamps_are_absolute_and_monotonic_across_boundaries(self):
+        # AC: timings stay in absolute file time and non-decreasing across utterance boundaries.
+        model = FakeModel(
+            ([FakeSegment("a", [FakeWord("a", 0.0, 0.5), FakeWord("a2", 0.5, 1.0)])], "en"),
+            ([FakeSegment("b", [FakeWord("b", 0.0, 0.4)])], "en"),
+        )
+        result = transcribe_to_contract(
+            model, "cap.audio", "auto", segmenter=segmenter_of((0.0, "u1"), (5.0, "u2"))
+        )
+        starts = [w["start"] for s in result["segments"] for w in s["words"]]
+        self.assertEqual(starts, [0.0, 0.5, 5.0])
+        self.assertEqual(starts, sorted(starts))
+
+    def test_ill_formed_backwards_utterances_are_clamped_monotonic(self):
+        # Defensive: even if a later clip's absolute time would fall BEFORE an earlier word (VAD never
+        # does this), word starts never move backwards, and end is pulled up so end >= start.
+        model = FakeModel(
+            ([FakeSegment("a", [FakeWord("a", 0.0, 0.5)])], "en"),
+            ([FakeSegment("b", [FakeWord("b", 0.0, 0.3)])], "en"),
+        )
+        result = transcribe_to_contract(
+            model, "cap.audio", "auto", segmenter=segmenter_of((5.0, "u1"), (1.0, "u2"))
+        )
+        first = result["segments"][0]["words"][0]
+        second = result["segments"][1]["words"][0]
+        self.assertEqual((first["start"], first["end"]), (5.0, 5.5))
+        self.assertEqual((second["start"], second["end"]), (5.0, 5.0))
+
+    def test_single_utterance_capture_is_unchanged_in_content(self):
+        # AC: a single-language capture keeps its content; one utterance -> one detected language.
+        model = FakeModel(
+            (
+                [
+                    FakeSegment(" Help ", [FakeWord("Help", 0.0, 0.4)]),
+                    FakeSegment("yourself", [FakeWord("yourself", 0.4, 0.9)]),
+                ],
+                "en",
+            )
+        )
+        result = transcribe_to_contract(
+            model, "cap.audio", "auto", segmenter=segmenter_of((0.0, "clip"))
+        )
         self.assertEqual(result["text"], "Help yourself")
         self.assertEqual(result["language"], "en")
         self.assertEqual(
             result["segments"],
             [
-                {"words": [{"word": "Help", "start": 0.0, "end": 0.4}]},
-                {"words": [{"word": "yourself", "start": 0.4, "end": 0.9}]},
+                {"language": "en", "words": [{"word": "Help", "start": 0.0, "end": 0.4}]},
+                {"language": "en", "words": [{"word": "yourself", "start": 0.4, "end": 0.9}]},
             ],
         )
 
-    def test_auto_maps_to_faster_whisper_detection_not_the_literal_string(self):
-        model = FakeModel(
-            [FakeSegment("你好", [FakeWord("你好", 0.0, 0.5)])], detected_language="zh"
+    def test_auto_falls_back_to_a_whole_file_decode_when_vad_finds_no_speech(self):
+        # A recording VAD finds no utterance in is still decoded once (auto), so nothing is dropped.
+        model = FakeModel(([FakeSegment("Hi", [FakeWord("Hi", 0.1, 0.3)])], "en"))
+        result = transcribe_to_contract(
+            model, "cap.audio", "auto", segmenter=segmenter_of()
         )
-        result = transcribe_to_contract(model, "/tmp/a.wav", "auto")
-        # `auto` must reach the model as `language=None` (detection), never the literal "auto".
-        self.assertEqual(model.calls, [("/tmp/a.wav", None, True)])
-        self.assertEqual(result["language"], "zh")
+        self.assertEqual(model.calls, [("cap.audio", None, True)])  # whole file, auto-detect
+        self.assertEqual(
+            result["segments"],
+            [{"language": "en", "words": [{"word": "Hi", "start": 0.1, "end": 0.3}]}],
+        )
+        self.assertEqual(result["language"], "en")
 
-    def test_an_explicit_language_is_forced_not_detected(self):
-        model = FakeModel(
-            [FakeSegment("Hi", [FakeWord("Hi", 0.1, 0.3)])], detected_language="en"
+    def test_a_forced_language_keeps_the_single_whole_file_call_and_skips_vad(self):
+        model = FakeModel(([FakeSegment("Hi", [FakeWord("Hi", 0.1, 0.3)])], "zh"))
+        result = transcribe_to_contract(
+            model, "cap.audio", "zh", segmenter=exploding_segmenter
         )
-        transcribe_to_contract(model, "/tmp/a.wav", "zh")
-        self.assertEqual(model.calls, [("/tmp/a.wav", "zh", True)])
+        # A forced language reaches the model verbatim on the whole file; VAD is never consulted.
+        self.assertEqual(model.calls, [("cap.audio", "zh", True)])
+        self.assertEqual(result["language"], "zh")
+        self.assertEqual(
+            result["segments"],
+            [{"language": "zh", "words": [{"word": "Hi", "start": 0.1, "end": 0.3}]}],
+        )
 
     def test_tolerates_a_segment_with_no_words(self):
-        model = FakeModel([FakeSegment("", None)])
-        result = transcribe_to_contract(model, "/tmp/a.wav", "auto")
-        self.assertEqual(result, {"text": "", "language": "en", "segments": [{"words": []}]})
-
-    def test_reports_null_language_when_the_model_detects_none(self):
-        model = FakeModel(
-            [FakeSegment("Hi", [FakeWord("Hi", 0.1, 0.3)])], detected_language=None
+        model = FakeModel(([FakeSegment("", None)], "en"))
+        result = transcribe_to_contract(
+            model, "cap.audio", "auto", segmenter=segmenter_of((0.0, "clip"))
         )
-        result = transcribe_to_contract(model, "/tmp/a.wav", "auto")
+        self.assertEqual(
+            result, {"text": "", "language": "en", "segments": [{"language": "en", "words": []}]}
+        )
+
+    def test_top_level_language_is_the_first_non_null_detection(self):
+        # If the opening utterance reports no language, the first utterance that did wins the top-level.
+        model = FakeModel(
+            ([FakeSegment("...", [FakeWord("x", 0.0, 0.1)])], None),
+            ([FakeSegment(" hi", [FakeWord("hi", 0.0, 0.2)])], "en"),
+        )
+        result = transcribe_to_contract(
+            model, "cap.audio", "auto", segmenter=segmenter_of((0.0, "u1"), (3.0, "u2"))
+        )
+        self.assertEqual([s["language"] for s in result["segments"]], [None, "en"])
+        self.assertEqual(result["language"], "en")
+
+    def test_top_level_language_is_null_when_no_utterance_detected_one(self):
+        model = FakeModel(([FakeSegment("x", [FakeWord("x", 0.0, 0.1)])], None))
+        result = transcribe_to_contract(
+            model, "cap.audio", "auto", segmenter=segmenter_of((0.0, "clip"))
+        )
         self.assertIsNone(result["language"])
+        self.assertEqual(
+            result["segments"],
+            [{"language": None, "words": [{"word": "x", "start": 0.0, "end": 0.1}]}],
+        )
 
 
 class MainTests(unittest.TestCase):
     def test_writes_contract_json_to_stdout(self):
-        model = FakeModel(
-            [FakeSegment("Hi", [FakeWord("Hi", 0.1, 0.3)])], detected_language="en"
-        )
+        model = FakeModel(([FakeSegment("Hi", [FakeWord("Hi", 0.1, 0.3)])], "en"))
         buffer = io.StringIO()
         with redirect_stdout(buffer):
             code = main(
                 ["--model", "small", "--language", "auto", "--output", "json",
                  "--word-timestamps", "/tmp/a.wav"],
                 model_loader=lambda _model: model,
+                segmenter=segmenter_of((0.0, "clip")),
             )
         self.assertEqual(code, 0)
         emitted = json.loads(buffer.getvalue())
         self.assertEqual(emitted["text"], "Hi")
         self.assertEqual(emitted["language"], "en")
+        self.assertEqual(emitted["segments"][0]["language"], "en")
         self.assertEqual(emitted["segments"][0]["words"][0]["word"], "Hi")
+
+    def test_passes_the_audio_path_into_the_segmenter(self):
+        # `main` must feed the real audio path to the VAD seam (not a hardcoded/placeholder), and the
+        # clip the seam returns is what actually reaches the model.
+        model = FakeModel(([FakeSegment("Hi", [FakeWord("Hi", 0.0, 0.2)])], "en"))
+        seen = {}
+
+        def recording_segmenter(audio):
+            seen["audio"] = audio
+            return [(0.0, "clip")]
+
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            code = main(
+                ["--model", "small", "--language", "auto", "--word-timestamps",
+                 "/tmp/cap.audio"],
+                model_loader=lambda _model: model,
+                segmenter=recording_segmenter,
+            )
+        self.assertEqual(code, 0)
+        self.assertEqual(seen["audio"], "/tmp/cap.audio")
+        self.assertEqual(model.calls, [("clip", None, True)])
+
+    def test_multi_utterance_mapping_end_to_end_through_the_model_loader(self):
+        # AC: the multi-utterance mapping is covered through `model_loader` with a mock model (no real
+        # inference, no network): a mixed zh->en capture is emitted with both utterances, each segment's
+        # own language, and absolute word times across the boundary.
+        model = FakeModel(
+            ([FakeSegment("你好", [FakeWord("你好", 0.0, 0.8)])], "zh"),
+            ([FakeSegment(" Help", [FakeWord("Help", 0.2, 0.6)])], "en"),
+        )
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            code = main(
+                ["--model", "medium", "--language", "auto", "--output", "json",
+                 "--word-timestamps", "/tmp/cap.audio"],
+                model_loader=lambda _model: model,
+                segmenter=segmenter_of((0.0, "clip-zh"), (8.8, "clip-en")),
+            )
+        self.assertEqual(code, 0)
+        emitted = json.loads(buffer.getvalue())
+        self.assertEqual(emitted["text"], "你好 Help")
+        self.assertEqual(emitted["language"], "zh")
+        self.assertEqual(
+            emitted["segments"],
+            [
+                {"language": "zh", "words": [{"word": "你好", "start": 0.0, "end": 0.8}]},
+                {"language": "en", "words": [{"word": "Help", "start": 9.0, "end": 9.4}]},
+            ],
+        )
 
 
 class ContractVersionProbeTests(unittest.TestCase):

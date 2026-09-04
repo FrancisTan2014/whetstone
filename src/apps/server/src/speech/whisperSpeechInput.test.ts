@@ -58,6 +58,29 @@ describe("parseWhisperOutput", () => {
     expect(parseWhisperOutput(rawOutput)).toEqual(mapped);
   });
 
+  it("keeps every utterance of a mixed-language capture and tolerates the additive per-segment language", () => {
+    // #909: for `--language auto` the wrapper now detects language per VAD utterance and tags each
+    // segment with its own `language`. The adapter must collect words across ALL segments in absolute
+    // ms (the English utterance at 9 s is retained, not dropped) and read the top-level opening
+    // language; the extra per-segment `language` is informational and must not affect parsing.
+    const mixedLanguage = JSON.stringify({
+      language: "zh",
+      segments: [
+        { language: "zh", words: [{ end: 0.8, start: 0, word: "你好" }] },
+        { language: "en", words: [{ end: 9.4, start: 9.0, word: " Help" }] }
+      ],
+      text: "你好 Help"
+    });
+    expect(parseWhisperOutput(mixedLanguage)).toEqual({
+      language: "zh",
+      transcript: "你好 Help",
+      words: [
+        { end: 800, start: 0, text: "你好" },
+        { end: 9400, start: 9000, text: "Help" }
+      ]
+    });
+  });
+
   it("reports a null language when the model detected none", () => {
     const withoutLanguage = JSON.stringify({
       segments: [{ words: [{ end: 0.4, start: 0, word: "Hi" }] }],
