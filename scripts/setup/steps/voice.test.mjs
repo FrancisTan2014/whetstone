@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createFakeContext } from "../testSupport.mjs";
+import { readEnv } from "../env-file.mjs";
 import {
   parseEnvVars,
   probeSpeechContract,
@@ -124,6 +125,23 @@ describe("resolveVoiceConfig (#799)", () => {
       kind: "none"
     });
     expect(resolveVoiceConfig({})).toEqual({ kind: "none" });
+  });
+});
+
+describe("resolveVoiceConfig from a CRLF .env (#915)", () => {
+  // #915 acceptance #2: on Windows the `.env` is CRLF. Setup used to read it as empty, so a working
+  // legacy whisper config resolved to `kind: "none"` and the #912 stale-wrapper build-revision check
+  // — which only runs in the `kind === "whisper"` branch — was never reachable on the platform where a
+  // stale wrapper was actually observed. readEnv must now parse the CRLF file so resolveVoiceConfig
+  // returns `kind: "whisper"`.
+  it("resolves the legacy whisper pair so the #912 stale-revision check is reachable", () => {
+    const crlf = "WHISPER_BINARY=/opt/whisper\r\nWHISPER_MODEL_PATH=small\r\n";
+    const { ctx } = createFakeContext({ fileContents: { [ENV_PATH]: crlf } });
+    expect(resolveVoiceConfig(readEnv(ctx))).toEqual({
+      kind: "whisper",
+      binaryPath: "/opt/whisper",
+      modelPath: "small"
+    });
   });
 });
 
