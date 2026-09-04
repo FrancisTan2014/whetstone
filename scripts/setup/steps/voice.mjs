@@ -8,6 +8,7 @@
 // base `pnpm setup` (heavy/network); every failure mode returns an actionable { what, remedy }, never a
 // raw crash.
 
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { envPath, parseEnvVars, readEnv, removeEnvVars, upsertEnvVars } from "../env-file.mjs";
@@ -29,6 +30,17 @@ const SAMPLE_AUDIO = fileURLToPath(new URL("./voice-sample.wav", import.meta.url
 // with `CONTRACT_VERSION` in scripts/setup/qwen-wrapper/whetstone_qwen/cli.py and
 // `LOCAL_SPEECH_CONTRACT_VERSION` in src/apps/server/src/speech/localSpeechInput.ts.
 const SUPPORTED_SPEECH_CONTRACT_VERSION = "1";
+
+// The legacy `whetstone-whisper` wrapper's expected BUILD REVISION — its OWN behavior identity, separate
+// from the shared contract version above. The shared version is provider-neutral and must not move for a
+// whisper-only change (bumping it would falsely fail the Qwen / LOCAL_ASR readiness that shares it), so it
+// cannot flag a wrapper that has drifted behind its in-repo source — the exact gap #912 closes. This pin
+// can: `voiceReadiness` reports a legacy whisper launcher NOT ready when its `--contract-version`
+// descriptor reports a different `revision`, or none at all (every wrapper installed before this field
+// predates the tracking and must be reinstalled). Keep in lockstep with BUILD_REVISION in
+// scripts/setup/whisper-wrapper/whetstone_whisper/cli.py; bump both to the change's issue/PR number
+// whenever the wrapper's transcription/output behavior changes.
+const SUPPORTED_WHISPER_BUILD_REVISION = "910";
 
 // The bundled provider's pinned identity. The default only moves with MEASURED real-speech fidelity, so
 // the model revision is an IMMUTABLE commit (never a mutable tag) and the runtime is fully pinned. Keep
@@ -229,6 +241,63 @@ function logProviderDescriptor(ctx, descriptor) {
 }
 
 /**
+ * Build the exact, copy-pasteable command to reinstall a stale legacy whisper wrapper into the SAME
+ * virtual environment that owns the configured launcher. The venv's Python interpreter is the launcher's
+ * sibling (both live in the venv's `Scripts\` on win32 or `bin/` elsewhere), so the command is derived
+ * from `binaryPath` at runtime — no machine-specific path is baked in at author time (#912 criterion 5) —
+ * and force-reinstalls ONLY this repo's wrapper package (`--no-deps`) into that venv, rebuilding the
+ * `whetstone-whisper` launcher from current source. `--no-deps` is deliberate: this remedy is only ever
+ * reached for an ALREADY-installed wrapper (the whisper branch has already passed file-exists + the
+ * contract probe), so its dependencies are by construction present and still satisfy the unchanged
+ * `faster-whisper>=1.0` bound — only the wrapper's own source can have drifted. Dropping `--no-deps`
+ * would needlessly re-download hundreds of MB of unchanged dependencies (ctranslate2, onnxruntime,
+ * tokenizers, huggingface_hub) and can stall outright on a slow network, turning an exact remedy into
+ * one that hangs. Platform-correct separators come from the `path` variant for `ctx.platform`.
+ *
+ * @param {import("../step.mjs").SetupContext} ctx
+ * @param {string} binaryPath  The configured WHISPER_BINARY launcher.
+ * @returns {string}
+ */
+function whisperReinstallCommand(ctx, binaryPath) {
+  const p = ctx.platform === "win32" ? path.win32 : path.posix;
+  const interpreter = ctx.platform === "win32" ? "python.exe" : "python";
+  const venvPython = p.join(p.dirname(binaryPath), interpreter);
+  const wrapperDir = p.join(ctx.root, "scripts", "setup", "whisper-wrapper");
+  return `"${venvPython}" -m pip install --force-reinstall --no-deps "${wrapperDir}"`;
+}
+
+/**
+ * Compare an installed legacy whisper wrapper's reported build revision against the expected pin and
+ * return a NOT-ready result when it differs OR is absent — an absent revision means the install predates
+ * revision tracking (every wrapper installed before #912), so it is treated as stale, not trusted (#912
+ * criterion 2). Returns null when the revision matches (ready). The remedy names the exact, venv-derived
+ * reinstall command plus the `pnpm setup:voice` migration to the bundled Qwen provider (#912 criterion 1).
+ *
+ * @param {import("../step.mjs").SetupContext} ctx
+ * @param {string} binaryPath  The configured WHISPER_BINARY launcher.
+ * @param {unknown} descriptor  The parsed `--contract-version` payload (a JSON object here).
+ * @returns {import("../step.mjs").StepResult | null}
+ */
+function staleWhisperWrapper(ctx, binaryPath, descriptor) {
+  const record = /** @type {Record<string, unknown>} */ (descriptor);
+  const revision = typeof record.revision === "string" ? record.revision : undefined;
+  if (revision === SUPPORTED_WHISPER_BUILD_REVISION) {
+    return null;
+  }
+  const reported =
+    revision === undefined
+      ? "reports no build revision, so it predates revision tracking"
+      : `reports build revision ${revision}`;
+  return missing(
+    `The installed legacy Whisper wrapper is stale: it ${reported}, but this Whetstone expects build ` +
+      `revision ${SUPPORTED_WHISPER_BUILD_REVISION}, so it may be running outdated transcription behavior.`,
+    `Reinstall the wrapper into its own virtual environment: ${whisperReinstallCommand(ctx, binaryPath)}. ` +
+      "Alternatively, migrate to the bundled Qwen3-ASR provider by unsetting WHISPER_BINARY + " +
+      "WHISPER_MODEL_PATH and running `pnpm setup:voice`. See docs/SPEECH.md."
+  );
+}
+
+/**
  * The provider-neutral readiness verdict for the resolved voice config, shared by `check` and any
  * consumer. A complete new pair is **authoritative**: its own executable is probed (not a specific
  * engine) and it needs no global Python prerequisite; a mixed config logs a migration hint while still
@@ -253,8 +322,9 @@ export function voiceReadiness(ctx, config) {
   }
   if (config.kind === "whisper") {
     // The legacy pair still transcribes via the #799 whisper fallback, but the bundled default is now
-    // Qwen. Probe the configured launcher's contract as usual; when it is ready, report ready and nudge
-    // the migration, otherwise point at `pnpm setup:voice` to install the bundled provider.
+    // Qwen. Probe the configured launcher's contract, then require a matching build revision (#912); when
+    // both pass, report ready and nudge the migration. A missing launcher or failed probe points at
+    // `pnpm setup:voice`; a stale/revision-less wrapper points at the exact venv reinstall (below).
     if (!ctx.fs.exists(config.binaryPath)) {
       return missing(
         `The configured legacy Whisper launcher is missing (${config.binaryPath}).`,
@@ -265,6 +335,14 @@ export function voiceReadiness(ctx, config) {
     if (!contract.ok) {
       const { what } = incompatibleLocalProvider(contract.reason);
       return missing(what, NOT_INSTALLED_REMEDY);
+    }
+    // File presence + a matching shared contract version is not enough (#912): the wrapper can still have
+    // drifted behind its in-repo source while that provider-neutral version stays fixed. Require its build
+    // revision to match, so a stale — or revision-less, i.e. predating the tracking — install is reported
+    // not ready with an exact reinstall remedy instead of silently running old code.
+    const stale = staleWhisperWrapper(ctx, config.binaryPath, contract.descriptor);
+    if (stale !== null) {
+      return stale;
     }
     ctx.log(WHISPER_MIGRATION_HINT);
     return ok();

@@ -22,6 +22,10 @@ const DATA_DIR = "/repo/.data/voice";
 const MODEL = "Qwen/Qwen3-ASR-1.7B";
 const REVISION = "7278e1e70fe206f11671096ffdd38061171dd6e5";
 const RUNTIME_VERSION = `${MODEL}@${REVISION}+torch2.5.1+qwen-asr0.0.6`;
+// The legacy whisper wrapper's expected build revision (mirrors BUILD_REVISION in whisper-wrapper cli.py
+// and SUPPORTED_WHISPER_BUILD_REVISION in voice.mjs): a wrapper that reports a different value — or none —
+// is stale (#912) and reported not ready.
+const WHISPER_REVISION = "910";
 // A distinct custom provider-neutral LOCAL_ASR executable path, used to prove the local branch probes ITS
 // binary (not a bundled one) and that provisioning refuses to clobber a custom provider.
 const CUSTOM_BINARY = "/bin/custom-asr";
@@ -201,6 +205,13 @@ describe("voiceReadiness", () => {
   });
 
   describe("legacy whisper config", () => {
+    // A legacy whisper wrapper's `--contract-version` descriptor: a matching shared contract version, plus
+    // the build revision setup compares (#912). Omit the revision to model an install predating the field.
+    const whisperProbe = (revision) =>
+      JSON.stringify(
+        revision === undefined ? { contractVersion: "1" } : { contractVersion: "1", revision }
+      );
+
     it("is missing when the whisper launcher file is absent", () => {
       const result = voiceReadiness(context().ctx, {
         kind: "whisper",
@@ -221,18 +232,90 @@ describe("voiceReadiness", () => {
       expect(result.remedy).toContain("pnpm setup:voice");
     });
 
-    it("is ready but nudges migration when the whisper launcher is compatible", () => {
+    it("is ready and nudges migration when the wrapper reports the expected build revision", () => {
+      // #912 criterion 3: a wrapper at the expected revision is ready, and the migration hint still logs.
       const { ctx, logs } = context({
         files: ["/bin/w"],
-        defaultExec: { code: 0, stdout: '{"contractVersion":"1"}', stderr: "" }
+        defaultExec: { code: 0, stdout: whisperProbe(WHISPER_REVISION), stderr: "" }
       });
       const result = voiceReadiness(ctx, { kind: "whisper", binaryPath: "/bin/w", modelPath: "small" });
       expect(result.status).toBe("ok");
       expect(logs.some((line) => line.includes("Legacy WHISPER_* is still configured"))).toBe(true);
     });
+
+    it("is not ready when the wrapper reports a different build revision (#912 criterion 1)", () => {
+      const { ctx, logs } = context({
+        files: ["/bin/w"],
+        defaultExec: { code: 0, stdout: whisperProbe("909"), stderr: "" }
+      });
+      const result = voiceReadiness(ctx, { kind: "whisper", binaryPath: "/bin/w", modelPath: "small" });
+      expect(result.status).not.toBe("ok");
+      expect(result.what).toContain("stale");
+      expect(result.what).toContain("909");
+      expect(result.remedy).toContain("pip install --force-reinstall --no-deps");
+      expect(result.remedy).toContain("pnpm setup:voice");
+      // A stale wrapper must NOT be nudged as a ready migration — it is reported not ready instead.
+      expect(logs.some((line) => line.includes("Legacy WHISPER_* is still configured"))).toBe(false);
+    });
+
+    it("is not ready when the wrapper descriptor has no build revision (#912 criterion 2)", () => {
+      const { ctx } = context({
+        files: ["/bin/w"],
+        defaultExec: { code: 0, stdout: whisperProbe(), stderr: "" }
+      });
+      const result = voiceReadiness(ctx, { kind: "whisper", binaryPath: "/bin/w", modelPath: "small" });
+      expect(result.status).not.toBe("ok");
+      expect(result.what).toContain("predates revision tracking");
+      expect(result.remedy).toContain("pip install --force-reinstall --no-deps");
+      expect(result.remedy).toContain("pnpm setup:voice");
+    });
+
+    it("derives the reinstall command from the configured binary's own venv (#912 criterion 5)", () => {
+      // The remedy targets the venv that owns WHISPER_BINARY — its sibling python — not a hardcoded
+      // author-time path, so a different binary yields a different reinstall target.
+      const binaryPath = "/opt/asr/whisper-venv/bin/whetstone-whisper";
+      const { ctx } = context({
+        files: [binaryPath],
+        defaultExec: { code: 0, stdout: whisperProbe("stale"), stderr: "" }
+      });
+      const result = voiceReadiness(ctx, { kind: "whisper", binaryPath, modelPath: "small" });
+      expect(result.remedy).toContain(
+        '"/opt/asr/whisper-venv/bin/python" -m pip install --force-reinstall --no-deps'
+      );
+      expect(result.remedy).not.toContain("/bin/w");
+    });
+
+    it("derives the venv python from a Windows launcher path with backslashes", () => {
+      const binaryPath = "C:\\repo\\.data\\whisper-venv\\Scripts\\whetstone-whisper.exe";
+      const { ctx } = context({
+        platform: "win32",
+        files: [binaryPath],
+        defaultExec: { code: 0, stdout: whisperProbe("stale"), stderr: "" }
+      });
+      const result = voiceReadiness(ctx, { kind: "whisper", binaryPath, modelPath: "small" });
+      expect(result.remedy).toContain(
+        '"C:\\repo\\.data\\whisper-venv\\Scripts\\python.exe" -m pip install --force-reinstall --no-deps'
+      );
+    });
   });
 
   describe("local provider", () => {
+    it("is ready without any build-revision check (#912 criterion 4: Qwen/LOCAL_ASR unaffected)", () => {
+      // The whisper build-revision staleness gate is scoped to the legacy whisper branch. A LOCAL_ASR
+      // provider whose descriptor carries no such revision must still be ready — no new required field.
+      const { ctx } = context({
+        files: [CUSTOM_BINARY],
+        defaultExec: { code: 0, stdout: '{"contractVersion":"1"}', stderr: "" }
+      });
+      const result = voiceReadiness(ctx, {
+        kind: "local",
+        binaryPath: CUSTOM_BINARY,
+        modelIdentifier: MODEL,
+        legacyAlsoPresent: false
+      });
+      expect(result.status).toBe("ok");
+    });
+
     it("is missing when the configured executable file is absent", () => {
       const result = voiceReadiness(context().ctx, {
         kind: "local",

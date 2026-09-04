@@ -56,14 +56,33 @@ from typing import Any, Callable, List, Optional, Sequence, Tuple
 # it would falsely fail the out-of-scope Qwen / `LOCAL_ASR_*` readiness, which shares this exact version.
 CONTRACT_VERSION = "1"
 
+# This wrapper's BUILD REVISION — its OWN behavior identity, DELIBERATELY DISTINCT from the shared
+# CONTRACT_VERSION above. CONTRACT_VERSION is the cross-provider readiness protocol (shared verbatim with
+# the Qwen wrapper, localSpeechInput.ts, and any LOCAL_ASR_BINARY) and must NOT move for a change local to
+# this wrapper — an additive output change like the #909/#910 per-utterance mixed-language fix keeps it
+# fixed. That is exactly why a stale install is otherwise undetectable: the shared version cannot flag a
+# whisper-only behavior change. This revision instead tracks THIS wrapper's transcription/output behavior,
+# so `pnpm setup:doctor` can detect an installed wrapper that has drifted behind its in-repo source (or
+# predates this field). Bump it whenever this wrapper's behavior changes — use the issue/PR number of the
+# change. "910" is the current post-#910 per-utterance mixed-language build. Keep in lockstep with
+# SUPPORTED_WHISPER_BUILD_REVISION in scripts/setup/steps/voice.mjs.
+BUILD_REVISION = "910"
+
 # The flag that triggers the readiness probe. Kept as a module constant so the wrapper and its tests
 # agree on the exact token the Node setup step invokes.
 CONTRACT_VERSION_FLAG = "--contract-version"
 
 
 def contract_version_report() -> str:
-    """The machine-readable probe payload: the supported contract version as compact JSON on one line."""
-    return json.dumps({"contractVersion": CONTRACT_VERSION})
+    """The machine-readable probe payload: the shared contract version plus this wrapper's build revision,
+    as compact JSON on one line.
+
+    `revision` (BUILD_REVISION) lets `pnpm setup:doctor` detect a wrapper that has drifted behind its
+    in-repo source even when the shared `contractVersion` is unchanged — an additive output change such as
+    the #909/#910 per-utterance mixed-language fix deliberately keeps the same contract version, so without
+    this field a stale install reports ready and keeps running old code.
+    """
+    return json.dumps({"contractVersion": CONTRACT_VERSION, "revision": BUILD_REVISION})
 
 
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:

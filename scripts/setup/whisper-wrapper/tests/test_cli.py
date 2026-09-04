@@ -15,6 +15,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 
 from whetstone_whisper.cli import (
+    BUILD_REVISION,
     CONTRACT_VERSION,
     CONTRACT_VERSION_FLAG,
     contract_version_report,
@@ -304,16 +305,30 @@ class MainTests(unittest.TestCase):
 
 
 class ContractVersionProbeTests(unittest.TestCase):
-    def test_report_is_machine_readable_json_carrying_the_contract_version(self):
-        self.assertEqual(json.loads(contract_version_report()), {"contractVersion": CONTRACT_VERSION})
+    def test_report_carries_the_contract_version_and_build_revision(self):
+        self.assertEqual(
+            json.loads(contract_version_report()),
+            {"contractVersion": CONTRACT_VERSION, "revision": BUILD_REVISION},
+        )
 
-    def test_probe_prints_the_version_and_exits_without_loading_a_model(self):
+    def test_build_revision_is_a_distinct_nonempty_identity(self):
+        # #912: the build revision is this wrapper's OWN behavior identity and must not be conflated with
+        # the shared cross-provider contract version — a whisper-only change keeps CONTRACT_VERSION fixed,
+        # so a separate, non-empty revision is what makes staleness detectable.
+        self.assertIsInstance(BUILD_REVISION, str)
+        self.assertNotEqual(BUILD_REVISION.strip(), "")
+        self.assertNotEqual(BUILD_REVISION, CONTRACT_VERSION)
+
+    def test_probe_prints_the_descriptor_and_exits_without_loading_a_model(self):
         buffer = io.StringIO()
         with redirect_stdout(buffer):
             # `_boom_loader` raises if the probe ever loads a model — proving the probe is cheap.
             code = main([CONTRACT_VERSION_FLAG], model_loader=_boom_loader)
         self.assertEqual(code, 0)
-        self.assertEqual(json.loads(buffer.getvalue()), {"contractVersion": CONTRACT_VERSION})
+        self.assertEqual(
+            json.loads(buffer.getvalue()),
+            {"contractVersion": CONTRACT_VERSION, "revision": BUILD_REVISION},
+        )
 
     def test_probe_short_circuits_even_alongside_transcription_arguments(self):
         buffer = io.StringIO()
@@ -323,7 +338,10 @@ class ContractVersionProbeTests(unittest.TestCase):
                 model_loader=_boom_loader,
             )
         self.assertEqual(code, 0)
-        self.assertEqual(json.loads(buffer.getvalue()), {"contractVersion": CONTRACT_VERSION})
+        self.assertEqual(
+            json.loads(buffer.getvalue()),
+            {"contractVersion": CONTRACT_VERSION, "revision": BUILD_REVISION},
+        )
 
 
 class ProcessLevelLauncherTests(unittest.TestCase):
@@ -350,7 +368,10 @@ class ProcessLevelLauncherTests(unittest.TestCase):
             env=env,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout), {"contractVersion": CONTRACT_VERSION})
+        self.assertEqual(
+            json.loads(result.stdout),
+            {"contractVersion": CONTRACT_VERSION, "revision": BUILD_REVISION},
+        )
 
     def test_stale_launcher_probe_exits_nonzero_on_the_unknown_flag(self):
         result = self._run(
