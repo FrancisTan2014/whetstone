@@ -277,3 +277,42 @@ output change, so the shared `--contract-version` readiness value is unchanged. 
 If your tool's flags or output differ, point `WHISPER_BINARY` at a thin wrapper that honours the
 arguments above, answers the `--contract-version` readiness probe (see above), and emits this JSON
 contract.
+
+### Keeping the bundled `whetstone-whisper` wrapper current
+
+The `whetstone-whisper` wrapper carries a **build revision** (`BUILD_REVISION` in
+`scripts/setup/whisper-wrapper/whetstone_whisper/cli.py`) that is separate from the shared
+`--contract-version`, and reports it in the readiness probe alongside `contractVersion`:
+
+```json
+{ "contractVersion": "1", "revision": "910" }
+```
+
+The shared contract version is provider-neutral and deliberately does **not** move for a change local to
+this wrapper (e.g. the additive per-utterance mixed-language fix), so it cannot flag a wrapper that has
+drifted behind its in-repo source. The build revision can: `pnpm setup:doctor` reports the legacy whisper
+provider **not ready** when the installed wrapper reports a build revision different from the one this
+checkout expects, **or none at all** — an install that predates revision tracking. A wrapper installed
+into `WHISPER_BINARY`'s virtual environment does not update itself when you pull new source, so an old
+build otherwise keeps transcribing with fixes that never take effect.
+
+There is no automatic installer for the legacy wrapper — `pnpm setup:voice` provisions the bundled
+Qwen3-ASR provider instead. To refresh a stale legacy wrapper, force-reinstall this repo's wrapper source
+into the **same virtual environment** that owns your configured `WHISPER_BINARY`. That venv's Python
+interpreter is the launcher's sibling (`.../bin/python` on macOS/Linux, `...\Scripts\python.exe` on
+Windows):
+
+```
+# macOS / Linux
+"<venv>/bin/python" -m pip install --force-reinstall scripts/setup/whisper-wrapper
+
+# Windows
+"<venv>\Scripts\python.exe" -m pip install --force-reinstall scripts\setup\whisper-wrapper
+```
+
+`--force-reinstall` is required: pip otherwise treats the unchanged package version as already satisfied
+and leaves the old code in place (the pip package version is not bumped per behavior change — the build
+revision is). `pnpm setup:doctor` prints the exact command for your configured venv when it detects a
+stale wrapper. Reinstall whenever you pull changes under `scripts/setup/whisper-wrapper/`, or whenever
+doctor reports the wrapper stale. Alternatively, migrate off the legacy path entirely by unsetting
+`WHISPER_BINARY` + `WHISPER_MODEL_PATH` and running `pnpm setup:voice`.
