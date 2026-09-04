@@ -244,18 +244,35 @@ English-only model stays constrained by the model itself).
 ```
 
 and expects **word-timestamped JSON on stdout** in this shape (faster-whisper style; seconds; the
-optional `language` is the model's detected code, echoed back — omit or null it when none was
+optional top-level `language` is the model's detected code, echoed back — omit or null it when none was
 detected):
 
 ```json
 {
-  "text": "Help yourself now",
-  "language": "en",
+  "text": "你好 Help yourself now",
+  "language": "zh",
   "segments": [
-    { "words": [{ "word": "Help", "start": 0.0, "end": 0.4 }] }
+    { "language": "zh", "words": [{ "word": "你好", "start": 0.0, "end": 0.8 }] },
+    { "language": "en", "words": [{ "word": "Help", "start": 1.2, "end": 1.6 }] }
   ]
 }
 ```
+
+**Per-utterance language detection (#909).** A single whole-file `transcribe` call detects **one**
+language from the start of the audio and decodes the entire recording with it, so a capture that mixes
+languages (e.g. Chinese then English) silently drops the speech in the other language. The bundled
+`whetstone-whisper` faster-whisper wrapper (`scripts/setup/whisper-wrapper/`) therefore, for
+`--language auto`, first splits the recording into speech utterances with the **Silero VAD faster-whisper
+already ships** (no extra download), then **detects and decodes each utterance independently** and
+concatenates them in time order — so every utterance is kept. Each `segments[]` entry carries the
+`language` detected for **its** utterance (additive, informational — existing consumers ignore it); the
+top-level `language` stays the recording's opening language (the first utterance's detection, null when
+none) for the single-language adapter boundary. Word timings are shifted back into **absolute file time**
+so they stay monotonic across utterance boundaries. A forced language (any value other than `auto`), or
+a recording the VAD finds no speech in, keeps the original single whole-file decode. This is an additive
+output change, so the shared `--contract-version` readiness value is unchanged. A different
+`WHISPER_BINARY` that emits a single whole-file `language` and per-`segments` `words[]` (no per-segment
+`language`) remains valid — the extra field is optional.
 
 If your tool's flags or output differ, point `WHISPER_BINARY` at a thin wrapper that honours the
 arguments above, answers the `--contract-version` readiness probe (see above), and emits this JSON
