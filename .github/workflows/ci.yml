@@ -329,15 +329,41 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          # Corepack lazily downloads the pinned pnpm on first use; a transient
+          # registry 5xx there fails the whole lane, so pre-warm it with retries.
+          for attempt in 1 2 3 4 5; do
+            if corepack prepare --activate; then
+              exit 0
+            fi
+            echo "corepack prepare pnpm failed (attempt ${attempt}/5); retrying in 15s" >&2
+            sleep 15
+          done
+          echo "corepack prepare pnpm failed after 5 attempts" >&2
+          exit 1
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
 
-      # The PDF worker suite mocks docling/torch (via sys.modules) and drives the
-      # probe/convert/mapping paths through injected fakes, so it runs on the standard
-      # library alone — no heavy doc-AI install. The Windows-only Job Object real-process
-      # test skips cleanly on Linux; -v makes that skip (and its count) visible, so the
-      # lane can never look green while silently covering nothing.
-      - name: PDF worker unit tests
-        run: python -m unittest discover -s src/apps/server/src/files/tests -v
+      # `pnpm test:python` runs `node scripts/run-python-tests.mjs`, which discovers and runs
+      # all four unittest suites -- the PDF worker plus the whisper/qwen/copilot wrappers --
+      # each from the working directory its package imports need. Calling the pnpm script here,
+      # instead of duplicating a discover command, keeps the suite list in exactly one place so
+      # CI and package.json can never drift again (#911). The runner uses only Node builtins and
+      # every suite runs on the Python standard library alone (the PDF worker mocks docling/torch
+      # via sys.modules; the wrappers keep heavy deps behind function-level imports), so this lane
+      # needs no `pnpm install` and no heavy Python install -- a bare actions/setup-python
+      # interpreter is enough. The Windows-only Job Object real-process test skips cleanly on
+      # Linux; -v keeps that skip (and its count) visible so the lane can never look green while
+      # silently covering nothing.
+      - name: Python worker and wrapper tests
+        run: pnpm test:python

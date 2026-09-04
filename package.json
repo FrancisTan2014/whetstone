@@ -26,7 +26,7 @@
     "test": "pnpm test:quality && pnpm test:isolated && pnpm test:workflow && pnpm test:python",
     "test:changed": "vitest run --changed origin/main --coverage --coverage.changed origin/main --passWithNoTests && pnpm test:workflow",
     "test:isolated": "vitest run --config vitest.isolated.config.ts",
-    "test:python": "node scripts/run-python-tests.mjs -m unittest discover -s src/apps/server/src/files/tests -v",
+    "test:python": "node scripts/run-python-tests.mjs",
     "test:quality": "vitest run --coverage",
     "test:quality:shard": "vitest run --reporter=blob --coverage --coverage.thresholds.lines=0 --coverage.thresholds.functions=0 --coverage.thresholds.branches=0 --coverage.thresholds.statements=0",
     "test:quality:merge": "vitest run --mergeReports --reporter=default --coverage",
