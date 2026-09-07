@@ -19,7 +19,10 @@ export default tseslint.config(
       "src/apps/desktop/src-tauri/gen/**",
       // Capacitor-generated native iOS project (Xcode/Swift/plist/Pods, created on macOS by
       // `cap add ios`); generated output, never source we lint.
-      "src/apps/mobile/ios/**"
+      "src/apps/mobile/ios/**",
+      // Gitignored machine-local runtime state written by setup steps (managed Python venvs
+      // from setup:voice/setup:ai, imported images, PDF import staging); never source we lint.
+      "**/.data/**"
     ]
   },
   js.configs.recommended,
