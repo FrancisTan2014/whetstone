@@ -13,6 +13,7 @@ type Scroller = Readonly<{
   container: HTMLElement;
   content: HTMLElement;
   grow: (scrollHeight: number) => void;
+  shrinkTo: (scrollHeight: number) => void;
 }>;
 
 function makeScroller(clientHeight: number): Scroller {
@@ -39,6 +40,19 @@ function makeScroller(clientHeight: number): Scroller {
     content,
     grow: (height: number) => {
       scrollHeight = height;
+    },
+    // Content getting *shorter* is not the mirror image of growth: the browser clamps the current
+    // position down to the new maximum on its own and fires `scroll` for a move the learner never
+    // made. That is the reading this hook must never mistake for a gesture (#918).
+    shrinkTo: (height: number) => {
+      scrollHeight = height;
+      const max = Math.max(0, scrollHeight - clientHeight);
+      if (scrollTop > max) {
+        scrollTop = max;
+        act(() => {
+          container.dispatchEvent(new Event("scroll"));
+        });
+      }
     }
   };
 }
@@ -177,17 +191,67 @@ describe("useDiaryScrollRestore (#648, #918)", () => {
     view.unmount();
   });
 
-  it("gives way the moment the learner scrolls, and records where they went", () => {
+  it("survives the timeline shrinking mid-restore instead of reading the clamp as a gesture", () => {
+    rememberDiaryScrollTop(320);
+    const scroller = makeScroller(400);
+
+    const view = mount(scroller);
+    scroller.grow(600); // still short: the restore gets as far as 200
+    notifyResizes();
+    expect(scroller.container.scrollTop).toBe(200);
+
+    // The timeline does not grow monotonically: the async capture editor (#678) swaps a placeholder
+    // for a shorter real editor, so the content briefly gets *smaller*. The browser clamps the
+    // position that was just restored and fires `scroll` for a move nobody made.
+    scroller.shrinkTo(400);
+    expect(scroller.container.scrollTop).toBe(0);
+
+    // That clamp was never the learner, so the restore is still live when the timeline finally
+    // reaches its full height — and the remembered offset survived to be restored to.
+    scroller.grow(2400);
+    notifyResizes();
+    expect(scroller.container.scrollTop).toBe(320);
+    expect(diaryScrollTop()).toBe(320);
+
+    view.unmount();
+  });
+
+  it("keeps the remembered offset when leaving Diary collapses the timeline under it", () => {
+    rememberDiaryScrollTop(0);
+    const scroller = makeScroller(400);
+    scroller.grow(2400);
+
+    const view = mount(scroller);
+    scrollTo(scroller, 320); // the learner reads down the timeline and stops here
+    expect(diaryScrollTop()).toBe(320);
+
+    // Navigating away empties the timeline *before* React runs the effect cleanup, so the container
+    // collapses while the listener is still attached: the browser clamps 320 to 0 and fires `scroll`.
+    // This is the page being taken apart, not the learner going back to the top — recording it would
+    // destroy the place they left for this return and every later one.
+    scroller.shrinkTo(400);
+
+    expect(diaryScrollTop()).toBe(320);
+
+    view.unmount();
+  });
+
+  it("gives way the moment the learner takes over, and records where they went", () => {
     rememberDiaryScrollTop(320);
     const scroller = makeScroller(400);
 
     const view = mount(scroller);
     scroller.grow(1200);
-    scrollTo(scroller, 90);
 
-    expect(diaryScrollTop()).toBe(90);
+    // A wheel tick is the learner arriving. A relayout cannot forge one, which is why the hand-off is
+    // keyed off it rather than off `scrollTop` moving.
+    act(() => {
+      scroller.container.dispatchEvent(new Event("wheel"));
+    });
     expect(watching()).toBe(0);
-    expect(vi.getTimerCount()).toBe(0);
+
+    scrollTo(scroller, 90);
+    expect(diaryScrollTop()).toBe(90);
 
     // Later growth must not yank the learner back to where they no longer are.
     scroller.grow(2400);
@@ -197,26 +261,46 @@ describe("useDiaryScrollRestore (#648, #918)", () => {
     view.unmount();
   });
 
-  it("settles at the furthest valid position and stops when the timeline never grows that far", () => {
+  it.each(["touchstart", "pointerdown", "keydown"])(
+    "hands the container over to the learner on %s",
+    (intent) => {
+      rememberDiaryScrollTop(320);
+      const scroller = makeScroller(400);
+
+      const view = mount(scroller);
+      expect(watching()).toBe(1);
+
+      act(() => {
+        scroller.container.dispatchEvent(new Event(intent));
+      });
+      expect(watching()).toBe(0);
+
+      // The timeline reaching full height after they have acted must not move them.
+      scroller.grow(2400);
+      notifyResizes();
+      expect(scroller.container.scrollTop).toBe(0);
+
+      view.unmount();
+    }
+  );
+
+  it("settles at the furthest valid position when the timeline never grows that far", () => {
     rememberDiaryScrollTop(320);
     const scroller = makeScroller(400);
     scroller.grow(500); // the timeline is genuinely shorter than last visit: 100 is as far as it goes
 
     const view = mount(scroller);
     expect(scroller.container.scrollTop).toBe(100);
-    expect(watching()).toBe(1);
 
-    act(() => {
-      vi.runAllTimers();
-    });
-
-    expect(watching()).toBe(0);
+    // Nothing loops and nothing is waiting on a clock: the restore simply rests here, ready if the
+    // timeline grows, and is released when Diary goes.
     expect(vi.getTimerCount()).toBe(0);
     expect(scroller.container.scrollTop).toBe(100);
     // The remembered place is left intact, so a later, fuller timeline still restores it.
     expect(diaryScrollTop()).toBe(320);
 
     view.unmount();
+    expect(watching()).toBe(0);
   });
 
   it("restores in one step without watching for growth when the timeline is already tall", () => {

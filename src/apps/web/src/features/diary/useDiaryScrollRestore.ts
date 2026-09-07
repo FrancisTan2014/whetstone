@@ -7,22 +7,22 @@ import {
 } from "./diaryScrollRestore.js";
 import { diaryScrollTop, rememberDiaryScrollTop } from "./diarySessionStore.js";
 
-// How long the restore keeps re-applying the remembered offset while the timeline is still growing.
-// The Diary's content arrives late by design — the capture editor mounts asynchronously
-// (`RichContentEditor` uses `immediatelyRender: false`, #678) and the restored timeline lays out after
-// it — and on a slow phone that settling is comfortably inside a few seconds. The window only bounds
-// *giving up*: success ends it immediately, so this is never a delay the learner waits through.
-const RESTORE_WINDOW_MS = 3000;
+// The input a learner uses to take the scroll container over. These are *intent*, not consequence: a
+// relayout can move `scrollTop`, but it cannot produce a wheel tick, a finger, or a key press. Keying
+// the hand-off off intent is what makes "never yank the learner back" hold without also mistaking the
+// browser's own clamping for a gesture (#918).
+const TAKEOVER_EVENTS = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
 
 // Preserve the learner's scroll position across leaving and returning to Diary in the same app session
 // (#648). `contentRef` is the Diary content root; the scroll container is its nearest ancestor `<main>`
 // (the AppShell scroller — Diary itself does not scroll). While `active`, the hook restores the
 // remembered offset and keeps it current from the learner's own scrolling.
 //
-// Restoring is not a single assignment (#918): the content root grows after this runs, and until it is
-// tall enough the browser clamps the assignment down — permanently, if nothing re-applies it. So the
-// offset is re-applied on every content-size change until it lands, the learner scrolls, or the window
-// closes; every observer, timer, and listener is torn down at the first of those.
+// Restoring is not a single assignment (#918): the content root is still growing when this first runs,
+// and until it is tall enough the browser clamps the assignment down — permanently, if nothing re-applies
+// it. So the offset is re-applied on every content-size change until it lands. Nothing here races a
+// clock: the restore ends on an observable event — the offset landing, the learner taking over, or Diary
+// unmounting — so a slow, loaded machine simply arrives later, never wrong.
 export function useDiaryScrollRestore(
   contentRef: RefObject<HTMLElement | null>,
   active: boolean
@@ -51,15 +51,12 @@ export function useDiaryScrollRestore(
 
     const target = diaryScrollTop();
     let growth: ResizeObserver | null = null;
-    let restoreWindow: ReturnType<typeof setTimeout> | null = null;
 
+    // Ends the restore. Also the learner's take-over handler: once they act, nothing re-applies, so they
+    // are never dragged back to a place they have just left.
     const stopReapplying = (): void => {
       growth?.disconnect();
       growth = null;
-      if (restoreWindow !== null) {
-        clearTimeout(restoreWindow);
-        restoreWindow = null;
-      }
     };
 
     // Assigning `scrollTop` is the whole restore; the read-back right after is what says whether the
@@ -78,29 +75,38 @@ export function useDiaryScrollRestore(
       }
     };
 
+    // Recording, unlike stopping, still keys off `scroll` — a position is only knowable from where the
+    // container actually is. What it must never do is record a reading the browser forced, so the
+    // container's current maximum goes in with it.
     const handleScroll = (): void => {
-      const scrolled = afterDiaryScrolled(restore, container.scrollTop);
+      const scrolled = afterDiaryScrolled(
+        restore,
+        container.scrollTop,
+        container.scrollHeight - container.clientHeight
+      );
       restore = scrolled.restore;
-      if (!restore.restoring) {
-        stopReapplying();
-      }
       if (scrolled.remember !== null) {
         rememberDiaryScrollTop(scrolled.remember);
       }
     };
 
     container.addEventListener("scroll", handleScroll, { passive: true });
+    for (const intent of TAKEOVER_EVENTS) {
+      container.addEventListener(intent, stopReapplying, { passive: true });
+    }
 
     if (restore.restoring) {
       growth = new ResizeObserver(reapply);
       growth.observe(content);
-      restoreWindow = setTimeout(stopReapplying, RESTORE_WINDOW_MS);
     }
 
     return () => {
       stopReapplying();
       container.style.overflowAnchor = previousOverflowAnchor;
       container.removeEventListener("scroll", handleScroll);
+      for (const intent of TAKEOVER_EVENTS) {
+        container.removeEventListener(intent, stopReapplying);
+      }
     };
   }, [active, contentRef]);
 }
