@@ -71,7 +71,7 @@ import {
   updateDiaryEntry
 } from "./diaryApi";
 import { DiaryPage } from "./DiaryPage";
-import { clearDiarySession } from "./diarySessionStore";
+import { clearDiarySession, diaryScrollTop } from "./diarySessionStore";
 import type { CaptureVoiceDependencies, VoiceRecording } from "../capture/CaptureCard";
 
 const mockedTimeline = vi.mocked(fetchTimeline);
@@ -191,6 +191,45 @@ async function waitForObserver(): Promise<FakeIntersectionObserver> {
   });
 }
 
+// The scroll restoration watches the Diary content for late growth with a ResizeObserver (#918). jsdom
+// has none (the shared setup installs an inert stub), so drive it explicitly: each live observer can be
+// notified on demand, and a disconnected one stays silent so a leaked observer cannot fake a pass.
+type FakeResizeObserver = { connected: boolean; notify: () => void };
+
+let resizeObservers: FakeResizeObserver[];
+
+class StubResizeObserver {
+  private readonly self: FakeResizeObserver;
+
+  constructor(callback: ResizeObserverCallback) {
+    this.self = {
+      connected: false,
+      notify: () => {
+        if (this.self.connected) {
+          callback([], this as unknown as ResizeObserver);
+        }
+      }
+    };
+    resizeObservers.push(this.self);
+  }
+
+  observe(): void {
+    this.self.connected = true;
+  }
+  disconnect(): void {
+    this.self.connected = false;
+  }
+  unobserve(): void {
+    this.self.connected = false;
+  }
+}
+
+function notifyResizeObservers(): void {
+  for (const observer of resizeObservers) {
+    observer.notify();
+  }
+}
+
 function makeCapture(
   overrides?: Partial<{ supported: boolean; startRejects: boolean; stop: () => Promise<Blob> }>
 ): {
@@ -221,6 +260,7 @@ async function renderReady(capture: CaptureVoiceDependencies): Promise<void> {
 
 beforeEach(() => {
   observers = [];
+  resizeObservers = [];
   vi.clearAllMocks();
   // The Diary remembers its place for the app session (#648); clear it so each case starts fresh at the
   // top and its first render fetches rather than restoring a previous case's snapshot.
@@ -231,6 +271,7 @@ beforeEach(() => {
   mockedResolveZone.mockReturnValue(BROWSER_ZONE);
   mockedZone.mockResolvedValue(BROWSER_ZONE);
   vi.stubGlobal("IntersectionObserver", StubObserver);
+  vi.stubGlobal("ResizeObserver", StubResizeObserver);
   Element.prototype.scrollIntoView = vi.fn();
 });
 
@@ -1056,6 +1097,84 @@ describe("DiaryPage scroll restoration (#648)", () => {
       </main>
     );
   }
+
+  // A stand-in `<main>` that models the one browser behaviour jsdom cannot: `scrollTop` is **clamped**
+  // into the container's current scrollable range, so assigning an offset a short container cannot hold
+  // silently stores a smaller one (#918). jsdom lays nothing out and leaves `scrollTop` an ordinary
+  // property, which is exactly why the clamp escaped the suite — so define the geometry explicitly, the
+  // way `useReaderScroll.test.tsx` does, and let the content height grow on demand.
+  function renderInClampedScroller(
+    capture: CaptureVoiceDependencies,
+    clientHeight: number
+  ): Readonly<{
+    grow: (scrollHeight: number) => void;
+    scroller: HTMLElement;
+    view: ReturnType<typeof render>;
+  }> {
+    const scroller = document.createElement("main");
+    let scrollHeight = clientHeight;
+    let scrollTop = 0;
+    Object.defineProperty(scroller, "clientHeight", {
+      configurable: true,
+      get: () => clientHeight
+    });
+    Object.defineProperty(scroller, "scrollHeight", {
+      configurable: true,
+      get: () => scrollHeight
+    });
+    Object.defineProperty(scroller, "scrollTop", {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value: number) => {
+        scrollTop = Math.max(0, Math.min(value, scrollHeight - clientHeight));
+      }
+    });
+    document.body.append(scroller);
+
+    return {
+      grow: (height: number) => {
+        scrollHeight = height;
+      },
+      scroller,
+      view: render(<DiaryPage capture={capture} />, { container: scroller })
+    };
+  }
+
+  it("reapplies the remembered offset when the timeline reaches its full height after the restore", async () => {
+    mockedTimeline.mockReset();
+    mockedTimeline.mockResolvedValue({
+      days: [tDay(d(28), [tEntry("r28", `${d(28)}T08:00:00.000Z`, "a remembered thought")])]
+    });
+
+    // The learner reads down a fully rendered timeline, so 320 is the remembered place for the session.
+    const first = renderInClampedScroller(makeCapture().capture, 400);
+    await screen.findByText("a remembered thought");
+    first.grow(2400);
+    first.scroller.scrollTop = 320;
+    fireEvent.scroll(first.scroller);
+    first.view.unmount();
+    first.scroller.remove();
+
+    // Returning: the rich capture editor mounts asynchronously (#678), so the container is still one
+    // viewport tall when the restore runs and the browser clamps the assignment away to the top.
+    // Everything from here to the assertions is synchronous, so no timer can fire in between: the
+    // reapply is proven to come from the timeline growing, never from the test out-waiting the page.
+    const second = renderInClampedScroller(makeCapture().capture, 400);
+    expect(screen.getByText("a remembered thought")).toBeDefined();
+    expect(second.scroller.scrollTop).toBe(0);
+
+    // A moment later the timeline reaches its full height. The remembered place must still be honoured
+    // rather than left at the top, and the clamped reading must not have replaced it in the session.
+    act(() => {
+      second.grow(2400);
+      notifyResizeObservers();
+    });
+    expect(second.scroller.scrollTop).toBe(320);
+    expect(diaryScrollTop()).toBe(320);
+
+    second.view.unmount();
+    second.scroller.remove();
+  });
 
   it("restores the remembered timeline and scroll offset when returning to Diary in the same session", async () => {
     mockedTimeline.mockReset();
