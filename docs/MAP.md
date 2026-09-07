@@ -1413,7 +1413,13 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   with sticky date headers, lazy-loads older days as a sentinel scrolls into view (`IntersectionObserver`
   → next `before` page), and restores the learner's scroll position (and already-loaded pages) when they
   leave and return to Diary within the same app session (module-level `diarySessionStore.ts`, reset on a
-  full reload); per-entry edit + delete and an explicit empty state. `diaryApi.ts` calls the
+  full reload); per-entry edit + delete and an explicit empty state. The scroll restore itself lives in
+  `useDiaryScrollRestore.ts` over the pure `diaryScrollRestore.ts` (#918): `scrollTop` is clamped by the
+  browser, so the remembered offset is re-applied on every content-size change (`ResizeObserver` on the
+  Diary content root) until it lands, the learner takes over (real input — `wheel`/`touchstart`/
+  `pointerdown`/`keydown` — never a `scrollTop` delta), or Diary unmounts; no clock is involved. A
+  reading the browser forced — a clamp, or the collapse of the timeline on the way out — never
+  overwrites the remembered offset. `diaryApi.ts` calls the
   `/api/diary/*` endpoints (`submitDiaryCapture` → `DiaryEntryDto`, `updateDiaryEntry(id, bodyDoc)`) and
   parses every response through `diaryContracts`. The "Mine my history" action and all Make Durable /
   proposal card UI are gone.

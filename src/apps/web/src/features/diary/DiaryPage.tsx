@@ -16,12 +16,8 @@ import { CaptureCard, type CaptureVoiceDependencies } from "../capture/CaptureCa
 import { PmDocument } from "../reader/PmDocument.js";
 import { deleteDiaryEntry, fetchTimeline, updateDiaryEntry } from "./diaryApi.js";
 import { VoiceSourceRow } from "./VoiceSourceRow.js";
-import {
-  diaryScrollTop,
-  diaryTimelineSnapshot,
-  rememberDiaryScrollTop,
-  rememberDiaryTimeline
-} from "./diarySessionStore.js";
+import { diaryTimelineSnapshot, rememberDiaryTimeline } from "./diarySessionStore.js";
+import { useDiaryScrollRestore } from "./useDiaryScrollRestore.js";
 
 // How many days the Timeline loads per page (matches the server's default page size).
 const PAGE_SIZE = 7;
@@ -204,36 +200,8 @@ export function DiaryPage({ capture }: DiaryPageProps): React.JSX.Element {
   }, [cursor, entries, hasMore, load]);
 
   // Preserve the learner's scroll position across leaving and returning to Diary in the same app session
-  // (#648). The scroll container is the AppShell `<main>` (Diary itself does not scroll), so reapply the
-  // remembered offset once the timeline is ready (and its restored content has rendered tall enough to
-  // hold that position), then keep the offset current via a passive scroll listener. The effect re-runs
-  // only when `load` reaches "ready", so the reapply happens once per mount.
-  useEffect(() => {
-    if (load !== "ready") {
-      return;
-    }
-    const container = rootRef.current?.closest("main");
-    if (container === null || container === undefined) {
-      return;
-    }
-    // The capture editor mounts asynchronously (RichContentEditor uses `immediatelyRender: false`, #678),
-    // so it grows from a short placeholder to its full height just above the restored scroll position.
-    // The browser's scroll anchoring would convert that late growth-above into a scroll shift, landing the
-    // learner on different entries than they left (the remembered offset would read too large). Opt this
-    // container out of anchoring while Diary owns it so the remembered offset lands on the same entries;
-    // the prior value is restored on unmount.
-    const previousOverflowAnchor = container.style.overflowAnchor;
-    container.style.overflowAnchor = "none";
-    container.scrollTop = diaryScrollTop();
-    const handleScroll = (): void => {
-      rememberDiaryScrollTop(container.scrollTop);
-    };
-    container.addEventListener("scroll", handleScroll, { passive: true });
-    return () => {
-      container.style.overflowAnchor = previousOverflowAnchor;
-      container.removeEventListener("scroll", handleScroll);
-    };
-  }, [load]);
+  // (#648), surviving the timeline's late growth rather than being clamped to the top by it (#918).
+  useDiaryScrollRestore(rootRef, load === "ready");
 
   function fail(message: string): void {
     setNotice(message);
