@@ -110,17 +110,17 @@ the `LOCAL_ASR_BINARY` protocol in `docs/SPEECH.md`.
 Every failure is named (`agentFailure.ts`), and a caller classifies it by `code` rather than by matching
 error strings:
 
-| Code                       | Meaning                                                              |
-| -------------------------- | -------------------------------------------------------------------- |
-| `agent_not_configured`     | No provider configured and the caller supplied no fake               |
-| `agent_probe_failed`       | The probe did not run, exited non-zero, or reported another contract |
-| `agent_exit_failed`        | The provider ran and exited non-zero (message carries its stderr)    |
-| `agent_malformed_response` | Exit `0`, but stdout was not the JSON turn contract                  |
-| `agent_timeout`            | The turn exceeded its wall-clock bound and the child was stopped     |
-| `agent_session_closed`     | `send` was called after `close`                                      |
-| `agent_startup_failed`     | The Copilot SDK runtime (#923) failed to start (auth/process/transport) |
+| Code                       | Meaning                                                                                         |
+| -------------------------- | ----------------------------------------------------------------------------------------------- |
+| `agent_not_configured`     | No provider configured and the caller supplied no fake                                          |
+| `agent_probe_failed`       | The probe did not run, exited non-zero, or reported another contract                            |
+| `agent_exit_failed`        | The provider ran and exited non-zero (message carries its stderr)                               |
+| `agent_malformed_response` | Exit `0`, but stdout was not the JSON turn contract                                             |
+| `agent_timeout`            | The turn exceeded its wall-clock bound and the child was stopped                                |
+| `agent_session_closed`     | `send` was called after `close`                                                                 |
+| `agent_startup_failed`     | The Copilot SDK runtime (#923) failed to start (auth/process/transport)                         |
 | `agent_unsupported_model`  | The configured Copilot model/reasoning effort is not one the runtime reports support for (#923) |
-| `agent_transport_failed`   | A session/turn operation failed against an already-started Copilot runtime (#923) |
+| `agent_transport_failed`   | A session/turn operation failed against an already-started Copilot runtime (#923)               |
 
 A malformed or off-contract response **fails the turn**. The seam never fabricates, salvages, or
 partially trusts an answer.
@@ -159,12 +159,12 @@ What the shim does per invocation:
   spawning nothing. The probe stays cheap and cannot hang on a signed-out CLI.
 - A turn reads the prompt from stdin, runs
   `copilot -p <prompt> -s --no-color --log-level none --no-ask-user --disable-builtin-mcps
-  --no-custom-instructions --model <AGENT_MODEL> --session-id <sessionId>`, and prints `{"text": ...}`.
+--no-custom-instructions --model <AGENT_MODEL> --session-id <sessionId>`, and prints `{"text": ...}`.
   `--no-ask-user` and `--disable-builtin-mcps` keep the turn headless and toolless, matching
   [No tools, by design](#no-tools-by-design). `--no-custom-instructions` stops Copilot from injecting an
   `AGENTS.md` found near the server's working directory into a product prompt, which would otherwise make
   the answer depend on where the server was started.
-- **Sessions:** Copilot's `--session-id` both *starts* a session with the given UUID and *resumes* one
+- **Sessions:** Copilot's `--session-id` both _starts_ a session with the given UUID and _resumes_ one
   that already exists, so the shim passes it on every turn and needs no separate resume flag and no state
   file of its own. Conversation state lives in Copilot's own store.
 - Every failure exits non-zero with a named reason on stderr — a missing `copilot` on `PATH`, a non-zero
@@ -200,17 +200,17 @@ so a machine that cannot host a local LLM can still tidy.
 A second `Agent` implementation (`copilotSdkAgent.ts`) speaks to the official
 [`@github/copilot-sdk`](https://www.npmjs.com/package/@github/copilot-sdk) instead of a per-turn CLI
 invocation. Unlike `CliAgent`, it keeps **one Copilot runtime process warm** and reuses it across
-independent `open()` calls — reuse of the *process*, never of a *conversation*: every `open()` still
+independent `open()` calls — reuse of the _process_, never of a _conversation_: every `open()` still
 gets its own fresh SDK session and history. Nothing wires it into a product flow yet; #924's
 semantic-map lookup is the imminent consumer.
 
 **Configuration** (fixed, sensible defaults; no "unconfigured" state, unlike the CLI provider above):
 
-| Env var                        | Meaning                                             | Default                          |
-| ------------------------------- | --------------------------------------------------- | --------------------------------- |
-| `AGENT_COPILOT_MODEL`           | The Copilot model requested for every session        | `gpt-5.4`                         |
-| `AGENT_COPILOT_REASONING_EFFORT`| One of `low`, `medium`, `high`, `xhigh`, `max`       | `high`                             |
-| `AGENT_COPILOT_HOME`            | Where the runtime keeps its own session/config state | `<os tmpdir>/whetstone-copilot-sdk` |
+| Env var                          | Meaning                                              | Default                             |
+| -------------------------------- | ---------------------------------------------------- | ----------------------------------- |
+| `AGENT_COPILOT_MODEL`            | The Copilot model requested for every session        | `gpt-5.4`                           |
+| `AGENT_COPILOT_REASONING_EFFORT` | One of `low`, `medium`, `high`, `xhigh`, `max`       | `high`                              |
+| `AGENT_COPILOT_HOME`             | Where the runtime keeps its own session/config state | `<os tmpdir>/whetstone-copilot-sdk` |
 
 `AGENT_COPILOT_HOME` deliberately defaults to a seam-owned scratch directory, never the SDK's own
 `~/.copilot` default, so a server-started runtime never reads or writes a developer's personal
@@ -220,14 +220,42 @@ model/reasoning-effort combination the connected runtime does not report support
 its own `listModels()` on startup) fails by name (`agent_unsupported_model`) with the runtime's actual
 advertised list, rather than silently falling back to a different model.
 
-**Verified live exception:** a bounded live smoke against the installed Copilot CLI (1.0.83, personal
-`gh-cli` auth) found that `listModels()` can report only a single generic `{ id: "auto" }` routing
-placeholder with no per-model capability data at all — no enumerable catalog to validate a configured
-model against — while the transport still honored an explicit, non-enumerated model at session
-creation. Hard-failing every account in that state (including this issue's own default, `gpt-5.4|high`)
-would be worse than the narrow validation gap it avoids, so `findUnsupportedModelReason` recognizes
-exactly that placeholder shape and does not gate on it; it still fails by name whenever `listModels()`
-reports a real, non-placeholder catalog that omits the configured model or effort.
+**Verified live exception:** a bounded live smoke against the installed Copilot CLI (1.0.83), run twice
+against this machine's real, personal Copilot account (`client.getAuthStatus()` reports
+`{ authType: "gh-cli", host: "https://github.com", login: "FrancisTan2014" }` — safe metadata only, no
+token printed), found:
+
+- `listModels()` reports exactly one entry on this account:
+  `{ id: "auto", name: "Auto", capabilities: { supports: {}, limits: { max_context_window_tokens: 0 } } }`
+  — not merely missing an optional field, but a capability object with nothing declared and a zero
+  context window, which cannot be validated against for real. Hard-failing every account in this state
+  (including this issue's own default, `gpt-5.4|high`) would be worse than the narrow validation gap it
+  avoids, so `findUnsupportedModelReason` recognizes exactly this placeholder shape and does not gate on
+  it; it still fails by name whenever `listModels()` reports a real, non-placeholder catalog that omits
+  the configured model or effort.
+- `session.rpc.model.getCurrent()` — a session-scoped RPC distinct from `listModels()` — reports the
+  configured model/effort (`{ modelId: "gpt-5.4", reasoningEffort: "high" }`) immediately after session
+  creation, confirming the runtime _accepts and records_ the requested, non-enumerated model rather than
+  silently substituting one at creation time. **However**, calling the same RPC again after a real
+  `sendAndWait` completes reports `{ modelId: "auto", reasoningEffort: "high" }` — this account's plan
+  appears to route actual generation through its own "auto" selection regardless of the model named at
+  session creation. Neither `listModels()` nor `model.getCurrent()`, nor the generated text itself, can
+  confirm which concrete underlying model actually served a turn on this account. **This seam cannot
+  prove end-to-end that the literal named model (rather than the account's own auto-routed choice)
+  generated any given response** — a real, disclosed limitation of this account/plan, not something
+  this issue's code can fix, and not a reason to withhold the configured request (the runtime still
+  honors it at creation, and every turn is real, billed generation over the live transport).
+- `session.workspacePath` reads `undefined` after creation with `infiniteSessions: { enabled: false }`
+  set (session.d.ts documents this getter as `undefined` "if infinite sessions are disabled") —
+  confirming live that this seam's fix actually takes effect, not only that it typechecks.
+- Two independently-verifiable real generations, through the actual production code path
+  (`readCopilotSdkConfig()` + `createCopilotSdkAgentRuntime()`, no mocks): asked for `47 * 89` (answered
+  `4183`, arithmetically correct) then, in the _same_ session, asked to reason about that exact number
+  (correctly identified `4183 mod 7 = 4`, referencing the prior turn's own number) — proving both real
+  generation and real per-session history. A second, freshly opened session was then asked whether any
+  number had been mentioned earlier in "this conversation" and correctly answered `NO`, proving
+  sessions do not share history with each other, exactly as intended by "warm process, cold
+  conversation."
 
 **Lifecycle:**
 
@@ -235,44 +263,91 @@ reports a real, non-placeholder catalog that omits the configured model or effor
 - **Warm and shared:** the first `open()` starts the one runtime process; every later `open()` (until
   disposal) reuses it. Concurrent callers racing the very first `open()` share the one in-flight start —
   no duplicate runtime is ever started, and no duplicate paid attempt happens on their behalf.
-- **Honest failed-start recovery:** a failed start resets to cold, so the *next* `open()` gets one fresh
+- **Honest failed-start recovery:** a failed start resets to cold, so the _next_ `open()` gets one fresh
   attempt; concurrent callers that awaited the failed attempt all see that one failure, never a silent
   automatic retry.
+- **Invalidate-on-failure:** a runtime that fails to open a session, or that reports a turn failure (not
+  a timeout — a timeout does not necessarily mean the whole runtime is dead), is invalidated: stopped
+  through the same serialized path idle disposal uses, so the _next explicit_ call gets a fresh runtime
+  instead of silently reusing a transport that just proved unhealthy. Guarded by referential identity, so
+  a late failure from a stale (already-replaced) generation can never tear down a newer, healthy one.
+  Nothing here automatically re-sends the failed prompt.
+- **Serialized stop/start ownership:** a runtime slot moves through `cold → starting → ready →
+stopping → cold` (or `→ disposed`), never skipping `stopping`. A concurrent `open()` that arrives
+  while a stop is in flight (idle release, invalidation, or dispose racing a ready runtime) waits for
+  that stop to fully settle before starting a replacement — at most one live-or-starting runtime for
+  the slot exists at any instant, so a stop failure can never leave an orphaned, unowned runtime behind.
 - **Idle disposal:** once the last open session closes, an idle timer starts (10 minutes by default);
-  if no new session opens before it fires, the runtime stops itself. Opening any session cancels a
-  pending idle timer, and the fired callback re-checks that no session is open before disposing, so an
-  idle timer can never reap a runtime with active work.
-- **Deterministic shutdown:** a caller (a later server shutdown hook) can call the returned `dispose()`
-  explicitly — not part of the `Agent` port itself, which has no shutdown verb — to stop a ready runtime,
-  or wait out and stop an in-flight start. After disposal, `open()` fails by name rather than silently
-  starting a fresh runtime.
-- **Per-turn timeout:** the SDK's own turn timeout (120 seconds, matching the CLI provider's bound) is
-  used directly; the SDK itself documents that timing out does not abort in-flight provider work, only
-  stops waiting for it — this seam does not invent a stronger guarantee than the SDK gives it.
+  if no new session opens before it fires, the runtime is stopped through the same serialized path.
+  Opening any session cancels a pending idle timer, and the fired callback re-checks that no session is
+  open and the runtime is still the one it was scheduled for, so an idle timer can never reap a runtime
+  with active work or a runtime that has already been replaced.
+- **Cancel-and-drain on close:** closing a session with a turn still in flight first requests real
+  cancellation through the SDK's own `session.abort()` boundary, then awaits that turn's own settlement,
+  _before_ the session stops counting toward the runtime's active-session accounting. A session is never
+  eligible to make the runtime idle-shutdown-eligible while one of its turns is still actually running
+  server-side.
+- **Deterministic, idempotent shutdown:** a caller (a later server shutdown hook) calls the returned
+  `dispose()` explicitly — not part of the `Agent` port itself, which has no shutdown verb. However many
+  times `dispose()` is called, every caller awaits the exact same shutdown completion (never a second,
+  independent one). It stops a ready runtime, waits out and stops an in-flight start that goes on to
+  succeed, or waits out an already in-flight stop — whichever applies — and fences a racing `open()`: a
+  pending `open()` that resolves its runtime lookup after `dispose()` has already claimed the slot fails
+  by the same `agent_startup_failed` name, and never reaches `createSession` on a runtime shutdown has
+  already claimed.
+- **Owned per-turn timeout, with real cancellation:** the SDK's own `sendAndWait(prompt, timeout)`
+  starts its internal timer only _after_ `send()` itself resolves, and on timing out only stops
+  _waiting_ — it never aborts the in-flight work, so a timed-out lookup could otherwise keep generating
+  (and billing) up to the SDK's own idle expiry. This seam owns its own wall-clock deadline instead,
+  covering both the initial send acknowledgement and the wait that follows it, and on **any** timeout
+  path — its own owned deadline, or the SDK's internal non-cancelling one racing ahead of it — it always
+  calls the SDK's own `session.abort()` (the one real cancellation boundary; the session remains valid
+  afterward) before reporting the turn as timed out.
 
 **Prompt-only, explicitly (not by omission):** the SDK's own multi-user-server posture
 (`mode: "empty"`) is used — the opposite of its own default, which its docs warn is unsafe for a server
 because it "has tools and capabilities that operate across sessions and can access the host OS
-environment." Every session additionally sets, by name, an **empty tool list** (`availableTools: []`),
-a **deny-all permission handler** (defense-in-depth for any request that reaches it anyway),
+environment." `mode: "empty"` already turns off several ambient features by itself (skills, on-demand
+instruction discovery, file hooks, host git operations, the cross-session store, memory); this seam
+additionally sets by name only what `"empty"` does **not** already default off: it pins the runtime to
+the SDK's supported **stdio** transport (`connection: RuntimeConnection.forStdio({})`) rather than
+leaving `connection` unset — unset falls through to the SDK's own ambient-env-driven default and can
+silently switch to its experimental in-process transport, which the SDK's own types explicitly document
+as ignoring a per-client `baseDirectory`/`env` — and it explicitly disables `infiniteSessions` (which
+defaults to _enabled_ even under `"empty"`, unlike the flags above), so no session gets automatic
+background context compaction or a persisted workspace path on disk this seam never asked for. Every
+session additionally sets, by name, an **empty tool list** (`availableTools: []`), a **deny-all
+permission handler** (defense-in-depth for any request that reaches it anyway),
 `skipCustomInstructions: true`, `customAgentsLocalOnly: true`, and `manageScheduleEnabled: false` — so a
 future SDK default change cannot silently reopen a surface this runtime closed. No MCP server is
 configured. No remote session export is enabled. This mirrors [No tools, by
-design](#no-tools-by-design) below for the CLI provider.
+design](#no-tools-by-design) below for the CLI provider. This seam does not claim any of `"empty"`
+mode's own defaults as something it explicitly disabled itself — only `connection` and
+`infiniteSessions` are gaps `"empty"` mode leaves open that this seam closes by name.
 
-**Known limitation:** the SDK exports no typed timeout-specific error class, so this seam's real
-adapter classifies a thrown timeout by a message-content heuristic (`/timeout|timed out/i`) rather than
-a stable typed check — disclosed here rather than presented as more precise than it is.
+**Honest cleanup reporting:** the real SDK's `client.stop()` resolves an array of cleanup errors (not a
+bare success/failure signal, and never a guaranteed-empty result) — an empty array is the only "clean"
+outcome; anything else is surfaced through this seam's own structured log (`runtime_stop`,
+`runtime_invalidate`), never discarded into an assumed success. A `stop()` that itself reports (or
+throws) a failure falls back to the SDK's own documented remedy for exactly that situation,
+`forceStop()`, bounded so a stuck fallback can never hang shutdown/idle-release/invalidation forever;
+the original `stop()` failure is always preserved, and a `forceStop()` failure is appended to it, never
+swallowed.
+
+**Known limitation:** the SDK exports no typed timeout-specific error class, so a thrown timeout is
+still recognized by a message-content heuristic (`/timeout|timed out/i`) as a fallback — but only for
+the case where the SDK's own internal, non-cancelling timeout happens to reject before this seam's own
+owned deadline fires; either path always calls `abort()` before reporting a timeout, so this heuristic
+is never the only mechanism a real timeout is caught by.
 
 **Not a billing guarantee:** Copilot bills input/output/cached tokens per request regardless of which
-process serves it; a warm runtime avoids repeated *process* startup cost, not per-prompt billing.
+process serves it; a warm runtime avoids repeated _process_ startup cost, not per-prompt billing.
 
 **Not local inference:** the SDK manages a local Copilot CLI **process**, but every turn still calls
 GitHub's own hosted model over the network — a warm runtime changes where the client process lives, not
 where inference happens. Nothing here is an offline or local-model story the way Ollama is.
 
 ## No tools, by design
-
 
 The seam grants the agent **nothing**: no tool flag is passed and no tool allowlist is exposed. A local
 agent therefore cannot reach Whetstone's data — in particular it structurally cannot become a second
