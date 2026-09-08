@@ -35,8 +35,7 @@ const lookupDialog = (page: Page) => page.getByRole("dialog", { name: /^Look up:
 // together they exercise every combination and a hardcoded-first-marker bug fails at least one.
 const BANK_RIVER =
   "The hikers stopped to rest on the muddy bank beside the winding river before continuing home.";
-const BANK_TILT =
-  "The pilot had to bank the small aircraft in a sharp maneuver toward the runway.";
+const BANK_TILT = "The pilot had to bank the small aircraft in a sharp maneuver toward the runway.";
 const BANK_ACCOUNT =
   "She walked into town and opened a new savings account at her local bank branch on her first payday.";
 const BANK_RELY =
@@ -91,10 +90,7 @@ async function seedMarkdownWork(
 // Select `word` inside the block containing `needle`, open the toolbar, then open the lookup panel —
 // the same real selection → toolbar → "Look up" chain every dictionary lookup already goes through.
 async function openLookupFor(page: Page, needle: string, word: string): Promise<void> {
-  const block = page
-    .locator(`${READING} [data-block-id]`)
-    .filter({ hasText: needle })
-    .first();
+  const block = page.locator(`${READING} [data-block-id]`).filter({ hasText: needle }).first();
   const blockId = await block.getAttribute("data-block-id");
   await selectExactTextIn(page, `${READING} [data-block-id="${blockId}"]`, word);
   await expect(page.getByRole("toolbar", { name: "Annotate selection" })).toBeVisible();
@@ -205,10 +201,14 @@ test.describe("Reader: Explain meanings (#924/#925)", () => {
     const riverBranch = dialog.locator(".explainBranch", { hasText: "a riverbank or lakeshore" });
     await expect(riverBranch.getByText("Used here")).toBeVisible();
     await expect(
-      dialog.locator(".explainBranch", { hasText: "to tilt or lean sideways" }).getByText("Used here")
+      dialog
+        .locator(".explainBranch", { hasText: "to tilt or lean sideways" })
+        .getByText("Used here")
     ).toHaveCount(0);
     await expect(
-      dialog.locator(".explainBranch", { hasText: "a financial institution" }).getByText("Used here")
+      dialog
+        .locator(".explainBranch", { hasText: "a financial institution" })
+        .getByText("Used here")
     ).toHaveCount(0);
 
     // Supporting details render only the fields the fixture actually supplied (pronunciation, nuance,
@@ -247,7 +247,9 @@ test.describe("Reader: Explain meanings (#924/#925)", () => {
     const tiltBranch = dialog.locator(".explainBranch", { hasText: "to tilt or lean sideways" });
     await expect(tiltBranch.getByText("Used here")).toBeVisible();
     await expect(
-      dialog.locator(".explainBranch", { hasText: "a riverbank or lakeshore" }).getByText("Used here")
+      dialog
+        .locator(".explainBranch", { hasText: "a riverbank or lakeshore" })
+        .getByText("Used here")
     ).toHaveCount(0);
   });
 
@@ -262,10 +264,14 @@ test.describe("Reader: Explain meanings (#924/#925)", () => {
     const dialog = lookupDialog(page);
     await explainButton(page).click();
 
-    const institutionBranch = dialog.locator(".explainBranch", { hasText: "a financial institution" });
+    const institutionBranch = dialog.locator(".explainBranch", {
+      hasText: "a financial institution"
+    });
     await expect(institutionBranch.getByText("Used here")).toBeVisible();
     await expect(
-      dialog.locator(".explainBranch", { hasText: "a riverbank or lakeshore" }).getByText("Used here")
+      dialog
+        .locator(".explainBranch", { hasText: "a riverbank or lakeshore" })
+        .getByText("Used here")
     ).toHaveCount(0);
   });
 
@@ -283,7 +289,9 @@ test.describe("Reader: Explain meanings (#924/#925)", () => {
     const relyBranch = dialog.locator(".explainBranch", { hasText: "to rely on" });
     await expect(relyBranch.getByText("Used here")).toBeVisible();
     await expect(
-      dialog.locator(".explainBranch", { hasText: "a financial institution" }).getByText("Used here")
+      dialog
+        .locator(".explainBranch", { hasText: "a financial institution" })
+        .getByText("Used here")
     ).toHaveCount(0);
   });
 
@@ -312,12 +320,18 @@ test.describe("Reader: Explain meanings (#924/#925)", () => {
     await expect(dialog.getByText("用手或工具击打某物的字面动作")).toBeVisible();
     await expect(dialog.getByText("从击打引申为发起电话通话")).toBeVisible();
 
-    await expect(dialog.getByText("dǎ")).toBeVisible();
+    // Scoped to the Explain result's own supporting-details list (`.explainDetails`), never the bare
+    // dialog: a dictionary tab (e.g. 萌典) can independently render its own "dǎ ㄉㄚˇ" pronunciation in
+    // the SAME dialog depending on which tab happens to resolve first, which would otherwise make a
+    // bare `dialog.getByText("dǎ")` ambiguous (a strict-mode violation) — an artifact of which
+    // dictionary tab wins the race, not of the Explain result itself.
+    const explainDetails = dialog.locator(".explainDetails");
+    await expect(explainDetails.getByText("dǎ", { exact: true })).toBeVisible();
     await expect(dialog.getByText("非常口语化")).toBeVisible();
     // A genuinely monosemous-core answer never fabricates etymology/usage/culture the model omitted.
-    await expect(dialog.getByText("Origin")).toHaveCount(0);
-    await expect(dialog.getByText("Usage")).toHaveCount(0);
-    await expect(dialog.getByText("Culture")).toHaveCount(0);
+    await expect(explainDetails.getByText("Origin")).toHaveCount(0);
+    await expect(explainDetails.getByText("Usage")).toHaveCount(0);
+    await expect(explainDetails.getByText("Culture")).toHaveCount(0);
   });
 
   // Route-stubbed: the shared single-process E2E stack reads AGENT_COPILOT_EXPLAIN_ENABLED once at
@@ -383,7 +397,11 @@ test.describe("Reader: Explain meanings (#924/#925)", () => {
       const body = capabilityEnabled
         ? { enabled: true }
         : { enabled: false, reason: "feature_disabled", remedy };
-      await route.fulfill({ body: JSON.stringify(body), contentType: "application/json", status: 200 });
+      await route.fulfill({
+        body: JSON.stringify(body),
+        contentType: "application/json",
+        status: 200
+      });
     });
     let explainPostCalls = 0;
     let callsBeforeRecovery = 0;
@@ -603,7 +621,10 @@ test.describe("Reader: Explain meanings (#924/#925)", () => {
     await expect(lookupDialog(page)).toBeHidden();
   });
 
-  test("mobile: the bottom Sheet offers the same explicit action and result", async ({ page, setup }) => {
+  test("mobile: the bottom Sheet offers the same explicit action and result", async ({
+    page,
+    setup
+  }) => {
     await page.setViewportSize(MOBILE);
     await seedMarkdownWork(page, setup, "Explain Mobile", "en", [BANK_RIVER]);
     await openLookupFor(page, "muddy bank", "bank");
