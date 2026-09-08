@@ -21,7 +21,18 @@ export type AgentFailureCode =
   | "agent_timeout"
   // `send` was called after `close`: the conversation is over and taking another turn would silently
   // start a different one.
-  | "agent_session_closed";
+  | "agent_session_closed"
+  // The warm Copilot SDK runtime (#923) failed to come up: authentication, process, or transport
+  // failure before it could serve a session. The runtime resets to cold so a later explicit call gets
+  // a fresh attempt, rather than being permanently wedged or silently retried.
+  | "agent_startup_failed"
+  // The configured model, or the configured reasoning effort for that model, is not one the connected
+  // Copilot runtime reports support for (#923). Named so an operator corrects the configuration rather
+  // than the seam silently substituting a different model or effort.
+  | "agent_unsupported_model"
+  // A session or turn operation failed against an already-started Copilot SDK runtime (#923): a
+  // JSON-RPC/connection error, or any other runtime-reported failure that is not a timeout.
+  | "agent_transport_failed";
 
 // Rejections carry a code because the port's `send` returns the turn itself (`{ text }`), so there is
 // no result union to put a failure in; `isAgentError` is how a caller narrows a caught value.

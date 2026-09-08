@@ -7,6 +7,10 @@ lockfileIncludeTarballUrl: false
 # esbuild ships a prebuilt platform binary as an optional dependency; approving
 # its (otherwise harmless) postinstall keeps pnpm install from failing on an
 # unapproved build script under pnpm 11. CI installs with --frozen-lockfile.
+# koffi (a transitive dependency of @github/copilot-sdk, used for its optional
+# in-process FFI transport that this codebase never selects) ships prebuilt
+# native binaries the same way; its postinstall only fetches/verifies them.
 allowBuilds:
   esbuild: true
+  koffi: true
   wordpos: true
