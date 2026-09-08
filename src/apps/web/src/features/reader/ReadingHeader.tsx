@@ -1,9 +1,6 @@
-import { useState } from "react";
-import { BookOpen, FileText, List } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { FileText, List } from "lucide-react";
 
 import { Button } from "../../shared/ui/Button";
-import { enrollRecitation } from "../recitation/recitationApi";
 import {
   isLargestReadingSize,
   isSmallestReadingSize,
@@ -24,7 +21,6 @@ export type ReadingHeaderProps = Readonly<{
   size: ReadingSize;
   title: string;
   tocOpen: boolean;
-  workEntryId: string;
 }>;
 
 // A contents/list glyph for the 目录 control (labelled by the button's aria-label, so the icon
@@ -37,18 +33,13 @@ function NotesIcon(): React.JSX.Element {
   return <FileText aria-hidden className="readingToolIcon" strokeWidth={1.75} />;
 }
 
-// An open-book glyph for the contextual Recitation control (labelled by the link's aria-label, so
-// the icon itself is decorative). Recitation works from the text you are reading, so an open book
-// reads more naturally here than a nav label.
-function RecitationIcon(): React.JSX.Element {
-  return <BookOpen aria-hidden className="readingToolIcon" strokeWidth={1.75} />;
-}
-
-// The immersive reading chrome: the reading-specific tools in one surface — text size (A−/A+),
-// the 目录 (when the work has units, shown as a contents icon), a notes toggle, a contextual
-// Recitation entry, and a progress indicator. The Day/Night theme is a global app concern, so it
-// lives once in the shell's utility bar (#638) rather than being duplicated here — that keeps a single
-// unambiguous theme control now that the reader is framed by the shell. On desktop the tools sit in a
+// The immersive reading chrome: the reading-specific tools in one surface — text size (A−/A+), the
+// 目录 (when the work has units, shown as a contents icon), a notes toggle, and a progress
+// indicator. The Day/Night theme is a global app concern, so it lives once in the shell's utility
+// bar (#638) rather than being duplicated here — that keeps a single unambiguous theme control now
+// that the reader is framed by the shell. Recitation enrollment is deliberately NOT here (#921):
+// reading and declaring a Work retrievable are different intentions, so "I can recite this" is
+// offered out of band from the Library, never from the reading tools. On desktop the tools sit in a
 // persistent vertical icon rail docked at the bottom-right beside the reading column (always one click
 // away — it never recedes), and the title is a minimal top affordance that recedes on scroll. On narrow
 // screens the tools form a top bar and the whole chrome recedes while reading (`hidden` → `data-hidden`),
@@ -65,8 +56,7 @@ export function ReadingHeader({
   progress,
   size,
   title,
-  tocOpen,
-  workEntryId
+  tocOpen
 }: ReadingHeaderProps): React.JSX.Element {
   return (
     <header
@@ -132,36 +122,7 @@ export function ReadingHeader({
           <NotesIcon />
           {notesCount > 0 ? <span className="readingToolBadge">{notesCount}</span> : null}
         </Button>
-        {/* A quiet, contextual "I can recite this" entry from the Work you are reading (#643): it
-            enrolls THIS Work into direct Recitation maintenance (idempotent) and then opens its
-            whole-Work review at `?work=`. Learning and maintenance are separate — this is the learner's
-            explicit declaration that the Work is retrievable, not an inferred rating. */}
-        <ReciteThisControl workEntryId={workEntryId} />
       </div>
     </header>
-  );
-}
-
-function ReciteThisControl({ workEntryId }: Readonly<{ workEntryId: string }>): React.JSX.Element {
-  const navigate = useNavigate();
-  const [pending, setPending] = useState(false);
-
-  return (
-    <Button
-      aria-label="I can recite this"
-      onClick={() => {
-        setPending(true);
-        enrollRecitation(workEntryId).then(
-          () => navigate(`/recitation?work=${encodeURIComponent(workEntryId)}`),
-          () => setPending(false)
-        );
-      }}
-      pending={pending}
-      size="sm"
-      variant="ghost"
-    >
-      <RecitationIcon />
-      <span className="readingToolLabel">I can recite this</span>
-    </Button>
   );
 }

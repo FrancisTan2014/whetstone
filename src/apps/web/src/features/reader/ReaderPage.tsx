@@ -1409,7 +1409,6 @@ function renderViewing(
           size={chrome.size}
           title={chrome.title}
           tocOpen={tools.tocOpen}
-          workEntryId={workEntryId}
         />
         <div className="readerReadingScroll" ref={chrome.registerScrollRef}>
           <motion.div
