@@ -156,7 +156,7 @@ export async function explainSelection(
     dependencies.cache.set(cacheKey, { provider: response.provider, result: response.result });
   }
 
-  return response;
+  return structuredClone(response);
 }
 
 function toExplainResponse(

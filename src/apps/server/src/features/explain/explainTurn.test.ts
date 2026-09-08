@@ -500,6 +500,21 @@ describe("runExplainTurn — open() failure", () => {
 });
 
 describe("runExplainTurn — send() failure", () => {
+  it("cancels the outer deadline when cleanup reports its own timeout", async () => {
+    const { scheduler, cancelCallCount } = createManualScheduler();
+    const agent: Agent = {
+      open: vi.fn().mockResolvedValue({
+        close: vi.fn().mockRejectedValue(new AgentError("agent_timeout", "cleanup deadline")),
+        send: vi.fn().mockResolvedValue({ text: "answer" })
+      })
+    };
+
+    await expect(
+      runExplainTurn({ agent, prompt: "p", scheduler, sessionConfig: {}, timeoutMs: 1000 })
+    ).resolves.toEqual({ kind: "timeout" });
+    expect(cancelCallCount()).toBe(1);
+  });
+
   it("maps a send() AgentError and still closes the session", async () => {
     const { scheduler } = createManualScheduler();
     const close = vi.fn().mockResolvedValue(undefined);

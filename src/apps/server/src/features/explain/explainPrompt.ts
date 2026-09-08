@@ -138,12 +138,7 @@ export function parseExplainModelOutput(text: string): ExplainResult | undefined
     return undefined;
   }
 
-  const fenceMatch = wholeResponseFencePattern.exec(trimmed);
-  // The pattern's capture group is required (not `?`), so whenever `fenceMatch` is non-null it always
-  // captured a string — `noUncheckedIndexedAccess` conservatively types array indexing as possibly
-  // `undefined`, but that can never actually happen here, so a defensive undefined-check would be
-  // untestable dead code rather than a real branch.
-  const candidate = fenceMatch === null ? trimmed : fenceMatch[1]!;
+  const candidate = trimmed.replace(wholeResponseFencePattern, "$1");
   if (candidate.trim().length === 0) {
     return undefined;
   }

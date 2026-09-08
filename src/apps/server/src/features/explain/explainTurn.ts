@@ -225,11 +225,11 @@ export async function runExplainTurn(
   // session could not be confirmed closed cleanly must never be treated as a valid, cacheable answer,
   // and must never throw out of this function.
   const closeOutcome = await Promise.race([closeSession(), deadline]);
+  clearDeadline();
 
   if (closeOutcome.kind === "timeout") {
     return { kind: "timeout" };
   }
-  clearDeadline();
   if (closeOutcome.kind === "failed") {
     return { kind: "failed", code: closeOutcome.code };
   }
