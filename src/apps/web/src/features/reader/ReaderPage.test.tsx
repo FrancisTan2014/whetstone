@@ -3100,8 +3100,8 @@ describe("ReaderPage vocabulary lookup", () => {
 
     expect(await screen.findByText("an introduction")).toBeDefined();
     expect(screen.getByText("From a source.")).toBeDefined();
-    expect(mockedLookupTerm).toHaveBeenCalledWith("Intro", "en", "wordnet", undefined);
-    expect(mockedLookupTerm).toHaveBeenCalledWith("Intro", "en", "wiktionary", undefined);
+    expect(mockedLookupTerm).toHaveBeenCalledWith("Intro", "en", "wordnet");
+    expect(mockedLookupTerm).toHaveBeenCalledWith("Intro", "en", "wiktionary");
     expect(screen.queryByRole("heading", { name: "New note" })).toBeNull();
     expect(mockedCreateNote).not.toHaveBeenCalled();
   });
@@ -3174,10 +3174,39 @@ describe("ReaderPage vocabulary lookup", () => {
     await user.click(await screen.findByRole("button", { name: "Look up" }));
 
     expect(await screen.findByText("hello; hi")).toBeDefined();
-    // Dictionary sources are context-free; only the local-LLM "AI 解释" tab receives the selection's
-    // containing block text as context (#341).
-    expect(mockedLookupTerm).toHaveBeenCalledWith("你好", "zh-CN", "cedict", undefined);
-    expect(mockedLookupTerm).toHaveBeenCalledWith("你好", "zh-CN", "llm", "你好世界");
+    // Dictionary sources are context-free. The legacy local-LLM "AI 解释" source must never be
+    // eagerly dispatched (#925): only its explicit "Explain meanings" action (covered by
+    // semanticLookup.spec.ts) can ever request an AI-backed explanation.
+    expect(mockedLookupTerm).toHaveBeenCalledWith("你好", "zh-CN", "cedict");
+    expect(mockedLookupTerm).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      "llm",
+      expect.anything()
+    );
+  });
+
+  it("never dispatches the legacy local-LLM 'AI 解释' source when a Chinese lookup opens (#925)", async () => {
+    mockedFetchWorks.mockResolvedValue({ works: [chineseWork] });
+    seedWorkContent(chineseContent);
+    mockedLookupTerm.mockResolvedValue({ found: false });
+
+    const user = userEvent.setup();
+    const { container } = render(<ReaderPage initialWorkEntryId="work-zh" />);
+    await screen.findByText("你好世界");
+    const block = blockElement(container, "b-zh");
+
+    selectText(block, "你好");
+    fireEvent.mouseUp(block);
+    await user.click(await screen.findByRole("button", { name: "Look up" }));
+
+    await screen.findByText(/No definition found for/);
+
+    // Only the language's dictionary sources are fetched — every call's third argument (`source`) is a
+    // dictionary id, never "llm", and ordinary lookup opening never sends any AI request.
+    const dispatchedSources = mockedLookupTerm.mock.calls.map((call) => call[2]);
+    expect(dispatchedSources).toEqual(["moedict", "zhwiktionary", "cedict"]);
+    expect(dispatchedSources).not.toContain("llm");
   });
 
   it("dismisses the lookup panel when closed", async () => {
