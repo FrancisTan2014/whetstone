@@ -220,42 +220,17 @@ model/reasoning-effort combination the connected runtime does not report support
 its own `listModels()` on startup) fails by name (`agent_unsupported_model`) with the runtime's actual
 advertised list, rather than silently falling back to a different model.
 
-**Verified live exception:** a bounded live smoke against the installed Copilot CLI (1.0.83), run twice
-against this machine's real, personal Copilot account (`client.getAuthStatus()` reports
-`{ authType: "gh-cli", host: "https://github.com", login: "FrancisTan2014" }` — safe metadata only, no
-token printed), found:
+**Model attribution:** some runtimes advertise only a generic `auto` placeholder without model
+capabilities. That is unknown capability, not proof that every requested model is unsupported.
+The adapter forwards the configured request unchanged. Copilot can apply its own routing policy;
+configuration and `model.getCurrent()` are not proof of which model generated a response.
 
-- `listModels()` reports exactly one entry on this account:
-  `{ id: "auto", name: "Auto", capabilities: { supports: {}, limits: { max_context_window_tokens: 0 } } }`
-  — not merely missing an optional field, but a capability object with nothing declared and a zero
-  context window, which cannot be validated against for real. Hard-failing every account in this state
-  (including this issue's own default, `gpt-5.4|high`) would be worse than the narrow validation gap it
-  avoids, so `findUnsupportedModelReason` recognizes exactly this placeholder shape and does not gate on
-  it; it still fails by name whenever `listModels()` reports a real, non-placeholder catalog that omits
-  the configured model or effort.
-- `session.rpc.model.getCurrent()` — a session-scoped RPC distinct from `listModels()` — reports the
-  configured model/effort (`{ modelId: "gpt-5.4", reasoningEffort: "high" }`) immediately after session
-  creation, confirming the runtime _accepts and records_ the requested, non-enumerated model rather than
-  silently substituting one at creation time. **However**, calling the same RPC again after a real
-  `sendAndWait` completes reports `{ modelId: "auto", reasoningEffort: "high" }` — this account's plan
-  appears to route actual generation through its own "auto" selection regardless of the model named at
-  session creation. Neither `listModels()` nor `model.getCurrent()`, nor the generated text itself, can
-  confirm which concrete underlying model actually served a turn on this account. **This seam cannot
-  prove end-to-end that the literal named model (rather than the account's own auto-routed choice)
-  generated any given response** — a real, disclosed limitation of this account/plan, not something
-  this issue's code can fix, and not a reason to withhold the configured request (the runtime still
-  honors it at creation, and every turn is real, billed generation over the live transport).
-- `session.workspacePath` reads `undefined` after creation with `infiniteSessions: { enabled: false }`
-  set (session.d.ts documents this getter as `undefined` "if infinite sessions are disabled") —
-  confirming live that this seam's fix actually takes effect, not only that it typechecks.
-- Two independently-verifiable real generations, through the actual production code path
-  (`readCopilotSdkConfig()` + `createCopilotSdkAgentRuntime()`, no mocks): asked for `47 * 89` (answered
-  `4183`, arithmetically correct) then, in the _same_ session, asked to reason about that exact number
-  (correctly identified `4183 mod 7 = 4`, referencing the prior turn's own number) — proving both real
-  generation and real per-session history. A second, freshly opened session was then asked whether any
-  number had been mentioned earlier in "this conversation" and correctly answered `NO`, proving
-  sessions do not share history with each other, exactly as intended by "warm process, cold
-  conversation."
+The SDK's `assistant.usage` event supplies optional `AgentTurn.model` and `reasoningEffort` attribution.
+These fields report actual provider evidence, never values fabricated from requested settings.
+Consumers must distinguish requested configuration from observed attribution and leave absent
+metadata unknown. Do not infer subscription entitlements from a placeholder catalog or reject an
+otherwise valid answer just to conceal provider-controlled routing. An explicit `auto` model with a
+specified reasoning effort is not accepted by CLI 1.0.83; backend rejections remain named failures.
 
 **Lifecycle:**
 
@@ -263,9 +238,10 @@ token printed), found:
 - **Warm and shared:** the first `open()` starts the one runtime process; every later `open()` (until
   disposal) reuses it. Concurrent callers racing the very first `open()` share the one in-flight start —
   no duplicate runtime is ever started, and no duplicate paid attempt happens on their behalf.
-- **Honest failed-start recovery:** a failed start resets to cold, so the _next_ `open()` gets one fresh
-  attempt; concurrent callers that awaited the failed attempt all see that one failure, never a silent
-  automatic retry.
+- **Honest failed-start recovery:** successful cleanup resets a failed start to cold, so the next
+  explicit `open()` gets one fresh attempt. Failed cleanup retains ownership; no replacement starts
+  until a later cleanup succeeds. Concurrent callers share the original failure, never an automatic
+  model retry.
 - **Invalidate-on-failure:** a runtime that fails to open a session, or that reports a turn failure (not
   a timeout — a timeout does not necessarily mean the whole runtime is dead), is invalidated: stopped
   through the same serialized path idle disposal uses, so the _next explicit_ call gets a fresh runtime
@@ -273,7 +249,7 @@ token printed), found:
   a late failure from a stale (already-replaced) generation can never tear down a newer, healthy one.
   Nothing here automatically re-sends the failed prompt.
 - **Serialized stop/start ownership:** a runtime slot moves through `cold → starting → ready →
-stopping → cold` (or `→ disposed`), never skipping `stopping`. A concurrent `open()` that arrives
+stopping → cold` (or `→ cleanup-failed` / `→ disposed`), never skipping `stopping`. A concurrent `open()` that arrives
   while a stop is in flight (idle release, invalidation, or dispose racing a ready runtime) waits for
   that stop to fully settle before starting a replacement — at most one live-or-starting runtime for
   the slot exists at any instant, so a stop failure can never leave an orphaned, unowned runtime behind.
@@ -282,27 +258,25 @@ stopping → cold` (or `→ disposed`), never skipping `stopping`. A concurrent 
   Opening any session cancels a pending idle timer, and the fired callback re-checks that no session is
   open and the runtime is still the one it was scheduled for, so an idle timer can never reap a runtime
   with active work or a runtime that has already been replaced.
-- **Cancel-and-drain on close:** closing a session with a turn still in flight first requests real
-  cancellation through the SDK's own `session.abort()` boundary, then awaits that turn's own settlement,
-  _before_ the session stops counting toward the runtime's active-session accounting. A session is never
-  eligible to make the runtime idle-shutdown-eligible while one of its turns is still actually running
-  server-side.
+- **Cancel-and-drain on close:** an active turn is cancelled through `session.abort()`, then drained
+  and disconnected under bounded deadlines. Cleanup failures are logged and rejected, not swallowed;
+  the failed runtime is invalidated. Concurrent `close()` callers await the same completion. Turns
+  within one conversation are sequential; independent conversations can share the runtime.
 - **Deterministic, idempotent shutdown:** a caller (a later server shutdown hook) calls the returned
   `dispose()` explicitly — not part of the `Agent` port itself, which has no shutdown verb. However many
   times `dispose()` is called, every caller awaits the exact same shutdown completion (never a second,
   independent one). It stops a ready runtime, waits out and stops an in-flight start that goes on to
   succeed, or waits out an already in-flight stop — whichever applies — and fences a racing `open()`: a
-  pending `open()` that resolves its runtime lookup after `dispose()` has already claimed the slot fails
-  by the same `agent_startup_failed` name, and never reaches `createSession` on a runtime shutdown has
-  already claimed.
+  pending `open()` that resolves its runtime lookup after shutdown fails by name. A session whose
+  creation finishes after shutdown is disconnected rather than returned. Disposal rejects if its
+  cleanup fails; it never reports a still-owned runtime as cleanly disposed.
 - **Owned per-turn timeout, with real cancellation:** the SDK's own `sendAndWait(prompt, timeout)`
   starts its internal timer only _after_ `send()` itself resolves, and on timing out only stops
   _waiting_ — it never aborts the in-flight work, so a timed-out lookup could otherwise keep generating
   (and billing) up to the SDK's own idle expiry. This seam owns its own wall-clock deadline instead,
-  covering both the initial send acknowledgement and the wait that follows it, and on **any** timeout
-  path — its own owned deadline, or the SDK's internal non-cancelling one racing ahead of it — it always
-  calls the SDK's own `session.abort()` (the one real cancellation boundary; the session remains valid
-  afterward) before reporting the turn as timed out.
+  covering both the initial send acknowledgement and the wait that follows it. Its deadline calls
+  `session.abort()` before reporting a timeout. A failed or unresponsive abort is an explicit transport
+  failure that invalidates the runtime, not a success-shaped cancellation.
 
 **Prompt-only, explicitly (not by omission):** the SDK's own multi-user-server posture
 (`mode: "empty"`) is used — the opposite of its own default, which its docs warn is unsafe for a server
@@ -325,20 +299,15 @@ design](#no-tools-by-design) below for the CLI provider. This seam does not clai
 mode's own defaults as something it explicitly disabled itself — only `connection` and
 `infiniteSessions` are gaps `"empty"` mode leaves open that this seam closes by name.
 
-**Honest cleanup reporting:** the real SDK's `client.stop()` resolves an array of cleanup errors (not a
-bare success/failure signal, and never a guaranteed-empty result) — an empty array is the only "clean"
-outcome; anything else is surfaced through this seam's own structured log (`runtime_stop`,
-`runtime_invalidate`), never discarded into an assumed success. A `stop()` that itself reports (or
-throws) a failure falls back to the SDK's own documented remedy for exactly that situation,
-`forceStop()`, bounded so a stuck fallback can never hang shutdown/idle-release/invalidation forever;
-the original `stop()` failure is always preserved, and a `forceStop()` failure is appended to it, never
-swallowed.
+Standing product instructions replace the SDK's default coding persona through its supported
+`systemMessage` configuration. The tool and permission boundaries remain independently closed.
 
-**Known limitation:** the SDK exports no typed timeout-specific error class, so a thrown timeout is
-still recognized by a message-content heuristic (`/timeout|timed out/i`) as a fallback — but only for
-the case where the SDK's own internal, non-cancelling timeout happens to reject before this seam's own
-owned deadline fires; either path always calls `abort()` before reporting a timeout, so this heuristic
-is never the only mechanism a real timeout is caught by.
+**Honest cleanup reporting:** both graceful `stop()` and its documented `forceStop()` fallback have
+bounded deadlines. The SDK's returned `Error[]` is inspected. A recovered stop retains its diagnostic
+errors but confirms the process was released; a failed fallback returns a distinct failed outcome and
+retains ownership. Structured `runtime_stop`, `runtime_invalidate`, and `session_close` events report
+failures without recording prompts or responses. The owned turn deadline does not infer timeout
+categories from arbitrary SDK error-message text.
 
 **Not a billing guarantee:** Copilot bills input/output/cached tokens per request regardless of which
 process serves it; a warm runtime avoids repeated _process_ startup cost, not per-prompt billing.

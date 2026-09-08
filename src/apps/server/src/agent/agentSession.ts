@@ -4,15 +4,16 @@
 // installed, so swapping the underlying CLI cannot fork a product flow. A session is a conversation:
 // `open` starts one, `send` takes one turn in it, `close` ends it.
 //
-// Nothing in the product calls this yet — the seam is delivered as an independent component and wired
-// by a later issue that makes the product decision. It is also deliberately CLOSED: no tool is granted
-// to the agent here, so a provider cannot reach Whetstone's data (in particular, there is no alternate
-// FSRS writer) until an issue adds the first tool by name.
+// The port is deliberately CLOSED: product clients supply the permitted content, rather than granting
+// the agent access to Whetstone's data or an alternate FSRS writer.
 
 // One assistant turn. Transcript-first, exactly like the speech seam's transcript: `text` is the whole
 // required payload, so a provider that reports nothing else is still a valid, complete answer.
+// Optional model/effort attribution comes from provider evidence, never from requested settings.
 export type AgentTurn = Readonly<{
   text: string;
+  model?: string;
+  reasoningEffort?: string;
 }>;
 
 // How a conversation is opened. `instructions` are the standing system instructions for the whole

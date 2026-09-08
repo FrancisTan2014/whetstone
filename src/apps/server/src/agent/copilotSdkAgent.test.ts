@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { SessionEvent } from "@github/copilot-sdk";
 
 import { isAgentError } from "./agentFailure.js";
 import type { AgentSessionConfig } from "./agentSession.js";
@@ -9,6 +10,7 @@ import {
   type CopilotIdleScheduler,
   type CopilotRuntimeClient,
   type CopilotRuntimeSession,
+  type CopilotStopOutcome,
   type CopilotTurnOutcome,
   createCopilotSdkAgentRuntime,
   denyAllCopilotPermissions,
@@ -23,6 +25,8 @@ const fakeConfig: CopilotSdkConfig = {
   model: "gpt-5.4",
   reasoningEffort: "high"
 };
+
+const stopped: CopilotStopOutcome = { kind: "stopped", errors: [] };
 
 // ------------------------------------------------------------------------------------------------
 // Pure builder / prompt-only enforcement coverage: no client, no runtime, no timers involved.
@@ -70,7 +74,7 @@ describe("buildCopilotSessionConfig", () => {
   it("carries instructions as the session's persistent system message when present", () => {
     const sessionConfig = buildCopilotSessionConfig(fakeConfig, { instructions: "Be terse." });
 
-    expect(sessionConfig.systemMessage).toEqual({ content: "Be terse." });
+    expect(sessionConfig.systemMessage).toEqual({ mode: "replace", content: "Be terse." });
   });
 
   it("treats blank instructions the same as absent instructions", () => {
@@ -126,7 +130,7 @@ function createFakeClient(
         { id: fakeConfig.model, supportedReasoningEfforts: [fakeConfig.reasoningEffort] }
       ])
   );
-  const stopMock = vi.fn(overrides.stop ?? (async () => [] as ReadonlyArray<string>));
+  const stopMock = vi.fn(overrides.stop ?? (async () => stopped));
   const sessions: ReturnType<typeof createFakeSession>[] = [];
   const createSessionMock = vi.fn(
     overrides.createSession ??
@@ -416,7 +420,12 @@ describe("createCopilotSdkAgentRuntime", () => {
     const fake = createFakeClient({
       createSession: async () =>
         createFakeSession({
-          sendAndWait: async () => ({ content: "a family of senses", kind: "ok" })
+          sendAndWait: async () => ({
+            content: "a family of senses",
+            kind: "ok",
+            model: fakeConfig.model,
+            reasoningEffort: "high"
+          })
         })
     });
     const runtime = createCopilotSdkAgentRuntime({
@@ -425,10 +434,14 @@ describe("createCopilotSdkAgentRuntime", () => {
     });
     const session = await runtime.agent.open({});
 
-    await expect(session.send("hi")).resolves.toEqual({ text: "a family of senses" });
+    await expect(session.send("hi")).resolves.toEqual({
+      text: "a family of senses",
+      model: fakeConfig.model,
+      reasoningEffort: "high"
+    });
   });
 
-  it("does not let an earlier overlapping send() clobber a newer one's in-flight tracking", async () => {
+  it("rejects overlapping turns within a session and permits the next turn after completion", async () => {
     let resolveFirst: (outcome: CopilotTurnOutcome) => void = () => {};
     const sendAndWait = vi
       .fn<(prompt: string, timeoutMs: number) => Promise<CopilotTurnOutcome>>()
@@ -449,13 +462,14 @@ describe("createCopilotSdkAgentRuntime", () => {
     const session = await runtime.agent.open({});
 
     const firstSend = session.send("first, slow");
-    const secondResult = await session.send("second, fast");
-    resolveFirst({ content: "first turn's reply (should be ignored below)", kind: "ok" });
-    await firstSend;
-
-    // The second (already-settled) turn owns `turnInFlight` by the time the first, overlapping turn's
-    // own `finally` runs; that stale `finally` must not clear tracking a newer turn still relies on.
-    expect(secondResult).toEqual({ text: "second turn's reply" });
+    await expect(session.send("overlapping")).rejects.toMatchObject({
+      code: "agent_transport_failed",
+      message: expect.stringContaining("already has a turn")
+    });
+    expect(sendAndWait).toHaveBeenCalledTimes(1);
+    resolveFirst({ content: "first turn's reply", kind: "ok" });
+    await expect(firstSend).resolves.toEqual({ text: "first turn's reply" });
+    await expect(session.send("next")).resolves.toEqual({ text: "second turn's reply" });
   });
 
   it("classifies a session that fails to open as agent_transport_failed", async () => {
@@ -484,7 +498,7 @@ describe("createCopilotSdkAgentRuntime", () => {
     expect(isAgentError(error) ? error.code : undefined).toBe("agent_session_closed");
   });
 
-  it("is safe to close a session even when disconnect() itself rejects", async () => {
+  it("reports a rejected disconnect and invalidates the runtime", async () => {
     const fake = createFakeClient({
       createSession: async () =>
         createFakeSession({ disconnect: () => Promise.reject(new Error("gone")) })
@@ -495,7 +509,8 @@ describe("createCopilotSdkAgentRuntime", () => {
     });
     const session = await runtime.agent.open({});
 
-    await expect(session.close()).resolves.toBeUndefined();
+    await expect(session.close()).rejects.toMatchObject({ code: "agent_transport_failed" });
+    expect(fake.stopMock).toHaveBeenCalledTimes(1);
   });
 
   it("is safe to close a session twice", async () => {
@@ -511,7 +526,37 @@ describe("createCopilotSdkAgentRuntime", () => {
     expect(fake.sessions[0]?.disconnectMock).toHaveBeenCalledTimes(1);
   });
 
-  it("still closes cleanly when abort() itself rejects and the in-flight turn's own promise rejects", async () => {
+  it("shares close completion and bounds a failed cancellation and drain", async () => {
+    let finishTurn: (value: CopilotTurnOutcome) => void = () => {};
+    const fakeSession = createFakeSession({
+      abort: () => new Promise(() => {}),
+      sendAndWait: () =>
+        new Promise((resolve) => {
+          finishTurn = resolve;
+        })
+    });
+    const fake = createFakeClient({ createSession: async () => fakeSession });
+    const runtime = createCopilotSdkAgentRuntime({
+      config: fakeConfig,
+      createRuntimeClient: () => fake.client,
+      cleanupTimeoutMs: 10
+    });
+    const session = await runtime.agent.open({});
+    const turn = session.send("synthetic pending turn");
+    const firstClose = session.close();
+    expect(session.close()).toBe(firstClose);
+    await expect(firstClose).rejects.toMatchObject({
+      code: "agent_transport_failed",
+      message: expect.stringContaining("session drain timed out")
+    });
+    expect(fakeSession.disconnectMock).toHaveBeenCalledTimes(1);
+    expect(fake.stopMock).toHaveBeenCalledTimes(1);
+    finishTurn({ kind: "ok", content: "late result" });
+    await turn;
+    await runtime.dispose();
+  });
+
+  it("reports cancellation and drain failures instead of claiming the session closed cleanly", async () => {
     let rejectSend: (error: Error) => void = () => {};
     const sendAndWait = vi.fn(
       () =>
@@ -536,7 +581,10 @@ describe("createCopilotSdkAgentRuntime", () => {
     const closePromise = session.close();
     rejectSend(new Error("connection dropped mid-turn"));
 
-    await expect(closePromise).resolves.toBeUndefined();
+    await expect(closePromise).rejects.toMatchObject({
+      code: "agent_transport_failed",
+      message: expect.stringContaining("abort rpc failed")
+    });
     await sendPromise;
   });
 
@@ -636,7 +684,9 @@ describe("createCopilotSdkAgentRuntime", () => {
   });
 
   it("logs a failed status when the idle-triggered stop() itself reports cleanup errors", async () => {
-    const fake = createFakeClient({ stop: async () => ["stop failed"] });
+    const fake = createFakeClient({
+      stop: async () => ({ kind: "failed", errors: ["stop failed"] })
+    });
     const idle = createFakeScheduler();
     const log = vi.fn();
     const runtime = createCopilotSdkAgentRuntime({
@@ -657,8 +707,8 @@ describe("createCopilotSdkAgentRuntime", () => {
   });
 
   it("serializes stop and start: a concurrent open() during an idle stop waits for it, then starts fresh", async () => {
-    let resolveStop: (errors: ReadonlyArray<string>) => void = () => {};
-    const stopPromise = new Promise<ReadonlyArray<string>>((resolve) => {
+    let resolveStop: (result: CopilotStopOutcome) => void = () => {};
+    const stopPromise = new Promise<CopilotStopOutcome>((resolve) => {
       resolveStop = resolve;
     });
     const fake = createFakeClient({ stop: () => stopPromise });
@@ -679,9 +729,65 @@ describe("createCopilotSdkAgentRuntime", () => {
     // -- never two live runtimes for the same slot at once (#923).
     expect(fake.startMock).toHaveBeenCalledTimes(1);
 
-    resolveStop([]);
+    resolveStop(stopped);
     await expect(openPromise).resolves.toBeDefined();
     expect(fake.startMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("retains a runtime after failed cleanup and starts no replacement until cleanup succeeds", async () => {
+    const first = createFakeClient({
+      stop: async () => ({ kind: "failed", errors: ["runtime still owns a process"] })
+    });
+    const replacement = createFakeClient();
+    const factory = vi.fn().mockReturnValueOnce(first.client).mockReturnValue(replacement.client);
+    const idle = createFakeScheduler();
+    const log = vi.fn();
+    const runtime = createCopilotSdkAgentRuntime({
+      config: fakeConfig,
+      createRuntimeClient: factory,
+      idleScheduler: idle.scheduler,
+      log
+    });
+    await (await runtime.agent.open({})).close();
+    idle.fireLatest();
+    await vi.waitFor(() =>
+      expect(log).toHaveBeenCalledWith(
+        expect.objectContaining({ event: "runtime_stop", status: "agent_transport_failed" })
+      )
+    );
+    await expect(runtime.agent.open({})).rejects.toMatchObject({
+      code: "agent_transport_failed",
+      message: expect.stringContaining("could not be stopped")
+    });
+    expect(factory).toHaveBeenCalledTimes(1);
+    first.stopMock.mockResolvedValueOnce(stopped);
+    const next = await runtime.agent.open({});
+    expect(factory).toHaveBeenCalledTimes(2);
+    expect(first.stopMock).toHaveBeenCalledTimes(3);
+    await next.close();
+    await runtime.dispose();
+  });
+
+  it("retries ownership cleanup on explicit disposal after an idle cleanup failure", async () => {
+    const fake = createFakeClient({
+      stop: async () => ({ kind: "failed", errors: ["cannot stop"] })
+    });
+    const idle = createFakeScheduler();
+    const log = vi.fn();
+    const runtime = createCopilotSdkAgentRuntime({
+      config: fakeConfig,
+      createRuntimeClient: () => fake.client,
+      idleScheduler: idle.scheduler,
+      log
+    });
+    await (await runtime.agent.open({})).close();
+    idle.fireLatest();
+    await vi.waitFor(() =>
+      expect(log).toHaveBeenCalledWith(expect.objectContaining({ event: "runtime_stop" }))
+    );
+    fake.stopMock.mockResolvedValueOnce(stopped);
+    await runtime.dispose();
+    expect(fake.stopMock).toHaveBeenCalledTimes(2);
   });
 
   it("invalidates a runtime after a send() transport failure, without harming a newer generation later", async () => {
@@ -737,7 +843,7 @@ describe("createCopilotSdkAgentRuntime", () => {
   });
 
   it("returns the same shutdown promise to every dispose() caller (idempotent)", async () => {
-    let resolveStop: (errors: ReadonlyArray<string>) => void = () => {};
+    let resolveStop: (result: CopilotStopOutcome) => void = () => {};
     const fake = createFakeClient({
       stop: () =>
         new Promise((resolve) => {
@@ -754,7 +860,7 @@ describe("createCopilotSdkAgentRuntime", () => {
     const d2 = runtime.dispose();
     expect(d1).toBe(d2);
 
-    resolveStop([]);
+    resolveStop(stopped);
     await Promise.all([d1, d2]);
 
     expect(fake.stopMock).toHaveBeenCalledTimes(1);
@@ -791,6 +897,64 @@ describe("createCopilotSdkAgentRuntime", () => {
 
     expect(isAgentError(result) ? result.code : undefined).toBe("agent_startup_failed");
     expect(fake.createSessionMock).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])(
+    "closes a session whose creation finishes after disposal (cleanup rejects: %s)",
+    async (rejectCleanup) => {
+      let finishOpen: (session: CopilotRuntimeSession) => void = () => {};
+      const created = createFakeSession({
+        disconnect: rejectCleanup
+          ? async () => {
+              throw new Error("late disconnect failed");
+            }
+          : async () => {}
+      });
+      const fake = createFakeClient({
+        createSession: () =>
+          new Promise((resolve) => {
+            finishOpen = resolve;
+          })
+      });
+      const runtime = createCopilotSdkAgentRuntime({
+        config: fakeConfig,
+        createRuntimeClient: () => fake.client
+      });
+      const opening = runtime.agent.open({});
+      const rejected = expect(opening).rejects.toMatchObject({
+        code: rejectCleanup ? "agent_transport_failed" : "agent_startup_failed"
+      });
+      await vi.waitFor(() => expect(fake.createSessionMock).toHaveBeenCalledTimes(1));
+      await runtime.dispose();
+      finishOpen(created);
+      await rejected;
+      expect(created.disconnectMock).toHaveBeenCalledTimes(1);
+      expect(created.sendAndWaitMock).not.toHaveBeenCalled();
+    }
+  );
+
+  it("reports failed startup cleanup to a racing disposal instead of claiming shutdown succeeded", async () => {
+    let failStart: (error: Error) => void = () => {};
+    const fake = createFakeClient({
+      start: () =>
+        new Promise((_resolve, reject) => {
+          failStart = reject;
+        }),
+      stop: async () => ({ kind: "failed", errors: ["failed to terminate"] })
+    });
+    const runtime = createCopilotSdkAgentRuntime({
+      config: fakeConfig,
+      createRuntimeClient: () => fake.client
+    });
+    const failedOpen = expect(runtime.agent.open({})).rejects.toMatchObject({
+      code: "agent_startup_failed"
+    });
+    const failedDisposal = expect(runtime.dispose()).rejects.toMatchObject({
+      code: "agent_transport_failed"
+    });
+    failStart(new Error("authentication failed"));
+    await Promise.all([failedOpen, failedDisposal]);
+    await expect(runtime.agent.open({})).rejects.toMatchObject({ code: "agent_startup_failed" });
   });
 
   it("does not stop a runtime whose in-flight start ultimately failed while disposing", async () => {
@@ -846,7 +1010,7 @@ describe("createCopilotSdkAgentRuntime", () => {
     });
     const fake = createFakeClient({
       start: () => startPromise,
-      stop: async () => ["dispose stop failed"]
+      stop: async () => ({ kind: "failed", errors: ["dispose stop failed"] })
     });
     const log = vi.fn();
     const runtime = createCopilotSdkAgentRuntime({
@@ -856,7 +1020,9 @@ describe("createCopilotSdkAgentRuntime", () => {
     });
 
     const openPromise = runtime.agent.open({}).catch((caught: unknown) => caught);
-    const disposePromise = runtime.dispose();
+    const disposePromise = expect(runtime.dispose()).rejects.toMatchObject({
+      code: "agent_transport_failed"
+    });
     resolveStart();
     await openPromise;
     await disposePromise;
@@ -867,8 +1033,8 @@ describe("createCopilotSdkAgentRuntime", () => {
   });
 
   it("waits out an already in-flight stop rather than starting a second one, when dispose() races it", async () => {
-    let resolveStop: (errors: ReadonlyArray<string>) => void = () => {};
-    const stopPromise = new Promise<ReadonlyArray<string>>((resolve) => {
+    let resolveStop: (result: CopilotStopOutcome) => void = () => {};
+    const stopPromise = new Promise<CopilotStopOutcome>((resolve) => {
       resolveStop = resolve;
     });
     const fake = createFakeClient({ stop: () => stopPromise });
@@ -884,7 +1050,7 @@ describe("createCopilotSdkAgentRuntime", () => {
     expect(fake.stopMock).toHaveBeenCalledTimes(1);
 
     const disposePromise = runtime.dispose();
-    resolveStop([]);
+    resolveStop(stopped);
     await disposePromise;
 
     // Only the one, already in-flight stop() call ever happens -- dispose() never starts a redundant
@@ -908,7 +1074,9 @@ describe("createCopilotSdkAgentRuntime", () => {
   });
 
   it("logs a failed status when dispose() stops an already-ready runtime and stop() reports errors", async () => {
-    const fake = createFakeClient({ stop: async () => ["dispose stop failed"] });
+    const fake = createFakeClient({
+      stop: async () => ({ kind: "failed", errors: ["dispose stop failed"] })
+    });
     const log = vi.fn();
     const runtime = createCopilotSdkAgentRuntime({
       config: fakeConfig,
@@ -917,7 +1085,7 @@ describe("createCopilotSdkAgentRuntime", () => {
     });
     await runtime.agent.open({});
 
-    await runtime.dispose();
+    await expect(runtime.dispose()).rejects.toMatchObject({ code: "agent_transport_failed" });
 
     expect(log).toHaveBeenCalledWith(
       expect.objectContaining({ event: "runtime_stop", status: "agent_transport_failed" })
@@ -973,12 +1141,95 @@ function createFakeSdkSession(overrides: Partial<SdkSessionLike> = {}): SdkSessi
     abort: abortMock,
     abortMock,
     disconnect: overrides.disconnect ?? (async () => {}),
+    on: overrides.on ?? (() => () => {}),
     sendAndWait: sendAndWaitMock,
     sendAndWaitMock
   };
 }
 
 describe("mapSdkSession", () => {
+  it.each([
+    ["gpt-5.4", "high"],
+    ["gpt-5.6-luna", "high"],
+    ["gpt-5.4", "medium"]
+  ])(
+    "reports actual model/effort %s/%s without asserting the configured request was honored",
+    async (observedModel, effort) => {
+      let receive: ((event: SessionEvent) => void) | undefined;
+      const unsubscribe = vi.fn();
+      const sdkSession = createFakeSdkSession({
+        on: (handler) => {
+          receive = handler;
+          return unsubscribe;
+        },
+        sendAndWait: async () => {
+          receive?.({
+            type: "assistant.usage",
+            ephemeral: true,
+            id: "usage",
+            parentId: null,
+            timestamp: "2026-09-08T00:00:00Z",
+            data: { model: observedModel, reasoningEffort: effort }
+          });
+          return { data: { content: "explanation" } };
+        }
+      });
+      const session = await mapSdkClient(
+        createFakeSdkClient({ createSession: async () => sdkSession }),
+        fakeConfig
+      ).createSession({});
+      await expect(session.sendAndWait("term", 1000)).resolves.toMatchObject({
+        kind: "ok",
+        model: observedModel,
+        reasoningEffort: effort
+      });
+      expect(unsubscribe).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it("does not borrow attribution from a subagent or the preceding turn", async () => {
+    let receive: ((event: SessionEvent) => void) | undefined;
+    let call = 0;
+    const sdkSession = createFakeSdkSession({
+      on: (handler) => {
+        receive = handler;
+        return () => {};
+      },
+      sendAndWait: async () => {
+        call += 1;
+        const event: SessionEvent = {
+          type: "assistant.usage",
+          ephemeral: true,
+          id: "usage",
+          parentId: null,
+          timestamp: "2026-09-08T00:00:00Z",
+          data: { model: "gpt-5.4" },
+          ...(call === 1 ? {} : { agentId: "other-agent" })
+        };
+        receive?.(event);
+        receive?.({
+          type: "session.idle",
+          ephemeral: true,
+          id: "idle",
+          parentId: null,
+          timestamp: "2026-09-08T00:00:00Z",
+          data: {}
+        });
+        return { data: { content: "reply" } };
+      }
+    });
+    const session = mapSdkSession(sdkSession);
+    await expect(session.sendAndWait("first", 1000)).resolves.toEqual({
+      kind: "ok",
+      content: "reply",
+      model: "gpt-5.4"
+    });
+    await expect(session.sendAndWait("second", 1000)).resolves.toEqual({
+      kind: "ok",
+      content: "reply"
+    });
+  });
+
   it("maps a resolved assistant message to an ok outcome", async () => {
     const sdkSession = createFakeSdkSession({
       sendAndWait: async () => ({ data: { content: "a family of senses" } })
@@ -1010,15 +1261,16 @@ describe("mapSdkSession", () => {
     });
   });
 
-  it("aborts the session and reports a timeout when the SDK's own internal timeout rejects first", async () => {
+  it("does not classify an upstream timeout message as its own deadline", async () => {
     const sdkSession = createFakeSdkSession({
       sendAndWait: () => Promise.reject(new Error("Timeout after 60000ms waiting for session.idle"))
     });
 
     await expect(mapSdkSession(sdkSession).sendAndWait("hi", 1000)).resolves.toEqual({
-      kind: "timeout"
+      kind: "failed",
+      message: "Timeout after 60000ms waiting for session.idle"
     });
-    expect(sdkSession.abortMock).toHaveBeenCalledTimes(1);
+    expect(sdkSession.abortMock).not.toHaveBeenCalled();
   });
 
   it("aborts the session and reports a timeout when send() itself never acknowledges (owned deadline)", async () => {
@@ -1033,15 +1285,28 @@ describe("mapSdkSession", () => {
     expect(sdkSession.abortMock).toHaveBeenCalledTimes(1);
   });
 
-  it("still reports a timeout when abort() itself rejects (best-effort cancellation)", async () => {
+  it("reports a failed cancellation when the owned deadline expires", async () => {
     const sdkSession = createFakeSdkSession({
-      sendAndWait: () => Promise.reject(new Error("timed out waiting")),
+      sendAndWait: () => new Promise(() => {}),
       abort: () => Promise.reject(new Error("abort rpc failed"))
     });
 
-    await expect(mapSdkSession(sdkSession).sendAndWait("hi", 1000)).resolves.toEqual({
-      kind: "timeout"
+    await expect(mapSdkSession(sdkSession).sendAndWait("hi", 20)).resolves.toEqual({
+      kind: "failed",
+      message: expect.stringContaining("cancellation failed: abort rpc failed")
     });
+  });
+
+  it("bounds cancellation when a timed-out turn cannot acknowledge abort", async () => {
+    const sdkSession = createFakeSdkSession({
+      sendAndWait: () => new Promise(() => {}),
+      abort: () => new Promise(() => {})
+    });
+    await expect(mapSdkSession(sdkSession, 10).sendAndWait("hi", 10)).resolves.toMatchObject({
+      kind: "failed",
+      message: expect.stringContaining("session abort timed out")
+    });
+    expect(sdkSession.abortMock).toHaveBeenCalledTimes(1);
   });
 
   it("delegates abort() and disconnect() directly", async () => {
@@ -1123,7 +1388,7 @@ describe("mapSdkClient", () => {
       expect.objectContaining({
         availableTools: [],
         model: fakeConfig.model,
-        systemMessage: { content: "Be terse." }
+        systemMessage: { mode: "replace", content: "Be terse." }
       })
     );
     await expect(session.sendAndWait("hi", 1000)).resolves.toEqual({
@@ -1143,7 +1408,7 @@ describe("mapSdkClient", () => {
   it("reports a clean stop() with no errors and never calls forceStop", async () => {
     const sdkClient = createFakeSdkClient();
 
-    await expect(mapSdkClient(sdkClient, fakeConfig).stop()).resolves.toEqual([]);
+    await expect(mapSdkClient(sdkClient, fakeConfig).stop()).resolves.toEqual(stopped);
     expect(sdkClient.forceStopMock).not.toHaveBeenCalled();
   });
 
@@ -1154,7 +1419,7 @@ describe("mapSdkClient", () => {
 
     const errors = await mapSdkClient(sdkClient, fakeConfig).stop();
 
-    expect(errors).toEqual(["session close failed"]);
+    expect(errors).toEqual({ kind: "stopped", errors: ["session close failed"] });
     expect(sdkClient.forceStopMock).toHaveBeenCalledTimes(1);
   });
 
@@ -1165,7 +1430,16 @@ describe("mapSdkClient", () => {
 
     const errors = await mapSdkClient(sdkClient, fakeConfig).stop();
 
-    expect(errors).toEqual(["stop rpc failed"]);
+    expect(errors).toEqual({ kind: "stopped", errors: ["stop rpc failed"] });
+    expect(sdkClient.forceStopMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("bounds an unresponsive graceful stop before using forceStop", async () => {
+    const sdkClient = createFakeSdkClient({ stop: () => new Promise(() => {}) });
+    await expect(mapSdkClient(sdkClient, fakeConfig, 10).stop()).resolves.toEqual({
+      kind: "stopped",
+      errors: [expect.stringContaining("runtime stop timed out")]
+    });
     expect(sdkClient.forceStopMock).toHaveBeenCalledTimes(1);
   });
 
@@ -1177,10 +1451,10 @@ describe("mapSdkClient", () => {
 
     const errors = await mapSdkClient(sdkClient, fakeConfig).stop();
 
-    expect(errors).toEqual([
-      "session close failed",
-      expect.stringContaining("force stop also failed")
-    ]);
+    expect(errors).toEqual({
+      kind: "failed",
+      errors: ["session close failed", expect.stringContaining("force stop also failed")]
+    });
   });
 
   it("bounds a hanging forceStop fallback rather than letting shutdown hang forever", async () => {
@@ -1191,7 +1465,10 @@ describe("mapSdkClient", () => {
 
     const errors = await mapSdkClient(sdkClient, fakeConfig, 20).stop();
 
-    expect(errors).toEqual(["session close failed", expect.stringContaining("timed out")]);
+    expect(errors).toEqual({
+      kind: "failed",
+      errors: ["session close failed", expect.stringContaining("timed out")]
+    });
   });
 
   it("wraps a non-Error forceStop rejection as an Error rather than propagating it as-is", async () => {
@@ -1202,9 +1479,12 @@ describe("mapSdkClient", () => {
 
     const errors = await mapSdkClient(sdkClient, fakeConfig).stop();
 
-    expect(errors).toEqual([
-      "session close failed",
-      expect.stringContaining("force stop rejected with a plain string")
-    ]);
+    expect(errors).toEqual({
+      kind: "failed",
+      errors: [
+        "session close failed",
+        expect.stringContaining("force stop rejected with a plain string")
+      ]
+    });
   });
 });

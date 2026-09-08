@@ -1,5 +1,10 @@
 import { CopilotClient, RuntimeConnection } from "@github/copilot-sdk";
-import type { CopilotClientOptions, PermissionHandler, SessionConfig } from "@github/copilot-sdk";
+import type {
+  CopilotClientOptions,
+  PermissionHandler,
+  SessionConfig,
+  SessionEvent
+} from "@github/copilot-sdk";
 
 import { AgentError, isAgentError, type AgentFailureCode } from "./agentFailure.js";
 import type { Agent, AgentSession, AgentSessionConfig, AgentTurn } from "./agentSession.js";
@@ -23,13 +28,18 @@ const defaultTurnTimeoutMs = 120_000;
 
 // How long a runtime with zero open sessions stays warm before this seam releases it. Long enough that
 // a realistic burst of lookups never pays a cold start twice, short enough that an idle server is not
-// left holding a Copilot process (and its billed session) indefinitely.
+// left holding an unused Copilot process indefinitely.
 const defaultIdleTimeoutMs = 10 * 60_000;
 
 // Bound for the SDK's own documented `stop()`-fails-or-hangs remedy, `forceStop()` (client.d.ts): used
 // only as a fallback when `stop()` itself reports (or throws) a cleanup failure, so a stuck forceStop
 // can never hang this seam's own shutdown/idle-release/invalidation paths forever.
 const defaultForceStopTimeoutMs = 5_000;
+
+export type CopilotStopOutcome = Readonly<{
+  kind: "stopped" | "failed";
+  errors: ReadonlyArray<string>;
+}>;
 
 // ---------------------------------------------------------------------------------------------------
 // The injected runtime boundary. Deliberately narrower than the SDK's own `CopilotClient`/
@@ -48,7 +58,7 @@ export type CopilotModelSupport = Readonly<{
 // One turn's outcome as data, not an exception, so the adapter maps it to the seam's own named
 // failures in one place - the same shape discipline `AgentCommandOutcome` uses for the CLI adapter.
 export type CopilotTurnOutcome =
-  | Readonly<{ kind: "ok"; content: string }>
+  | Readonly<{ kind: "ok"; content: string; model?: string; reasoningEffort?: string }>
   | Readonly<{ kind: "timeout" }>
   | Readonly<{ kind: "failed"; message: string }>;
 
@@ -67,7 +77,7 @@ export type CopilotRuntimeClient = Readonly<{
   // Resolves the messages describing every cleanup failure (empty = fully clean), mirroring the real
   // SDK's own `client.stop(): Promise<Error[]>` contract (client.d.ts) - never a bare success/failure
   // boolean a caller cannot act on, and never silently swallowed into "it worked" (#923).
-  stop(): Promise<ReadonlyArray<string>>;
+  stop(): Promise<CopilotStopOutcome>;
   listModels(): Promise<ReadonlyArray<CopilotModelSupport>>;
   createSession(sessionConfig: AgentSessionConfig): Promise<CopilotRuntimeSession>;
 }>;
@@ -136,7 +146,7 @@ export function buildCopilotSessionConfig(
     reasoningEffort: config.reasoningEffort,
     skipCustomInstructions: true,
     ...(instructions !== undefined && instructions.length > 0
-      ? { systemMessage: { content: instructions } }
+      ? { systemMessage: { mode: "replace", content: instructions } }
       : {})
   };
 }
@@ -157,12 +167,23 @@ type WarmState =
   // A stop is in flight for the CURRENT slot (idle release, explicit invalidation after a failure, or
   // the "ready" half of an explicit dispose()). No new start may begin until this settles: `ensureRuntime`
   // waits it out first, so at most one live-or-starting runtime for this slot ever exists at a time.
-  | Readonly<{ kind: "stopping"; pending: Promise<void> }>
+  | Readonly<{
+      kind: "stopping";
+      runtime: ReadyRuntime;
+      pending: Promise<CopilotStopOutcome>;
+    }>
+  | Readonly<{ kind: "cleanup-failed"; runtime: ReadyRuntime; failure: AgentError }>
   | Readonly<{ kind: "disposed" }>;
 
 export type CopilotSdkLogRecord = Readonly<{
   durationMs: number;
-  event: "runtime_start" | "runtime_stop" | "runtime_invalidate" | "session_open" | "agent_turn";
+  event:
+    | "runtime_start"
+    | "runtime_stop"
+    | "runtime_invalidate"
+    | "session_open"
+    | "session_close"
+    | "agent_turn";
   status: "ok" | AgentFailureCode;
 }>;
 
@@ -188,6 +209,7 @@ export type CopilotSdkAgentDependencies = Readonly<{
   idleScheduler?: CopilotIdleScheduler;
   idleTimeoutMs?: number;
   turnTimeoutMs?: number;
+  cleanupTimeoutMs?: number;
   now?: () => number;
   log?: CopilotSdkLogger;
 }>;
@@ -214,12 +236,8 @@ function toAgentError(error: unknown, fallbackCode: AgentFailureCode, prefix: st
     : new AgentError(fallbackCode, `${prefix}: ${describeError(error)}`);
 }
 
-// Some Copilot plans/accounts expose no real per-model catalog at all: `listModels()` reports a
-// single generic "auto" routing placeholder with no declared capabilities (verified against the live
-// SDK transport, #923), yet the connected runtime still honors an explicit `model` in that state. This
-// seam cannot honestly conclude a configured model is unsupported from a placeholder alone, so it does
-// not gate on one — gating here would reject this issue's own default (`gpt-5.4`) on every account in
-// that state, which is a worse outcome than the narrow validation gap it would close.
+// A generic routing placeholder is unknown capability, not evidence of support or rejection.
+// Per-turn usage metadata reports the serving model without claiming the request was honored.
 function isGenericAutoPlaceholder(models: ReadonlyArray<CopilotModelSupport>): boolean {
   return (
     models.length === 1 &&
@@ -235,11 +253,11 @@ function findUnsupportedModelReason(
   models: ReadonlyArray<CopilotModelSupport>,
   config: CopilotSdkConfig
 ): string | undefined {
+  if (isGenericAutoPlaceholder(models)) {
+    return undefined;
+  }
   const entry = models.find((model) => model.id === config.model);
   if (entry === undefined) {
-    if (isGenericAutoPlaceholder(models)) {
-      return undefined;
-    }
     const known = models.map((model) => model.id).join(", ") || "none reported";
     return (
       `Model "${config.model}" is not available from this Copilot runtime (available: ${known}). ` +
@@ -268,6 +286,7 @@ export function createCopilotSdkAgentRuntime(
     idleScheduler = defaultIdleScheduler,
     idleTimeoutMs = defaultIdleTimeoutMs,
     turnTimeoutMs = defaultTurnTimeoutMs,
+    cleanupTimeoutMs = defaultForceStopTimeoutMs,
     now = Date.now,
     log = () => {}
   } = dependencies;
@@ -276,6 +295,7 @@ export function createCopilotSdkAgentRuntime(
   let activeSessionCount = 0;
   let idleTimerHandle: unknown;
   let disposePromise: Promise<void> | undefined;
+  let disposeRequested = false;
 
   function cancelIdleTimer(): void {
     if (idleTimerHandle !== undefined) {
@@ -284,11 +304,23 @@ export function createCopilotSdkAgentRuntime(
     }
   }
 
-  async function safeStop(client: CopilotRuntimeClient): Promise<ReadonlyArray<string>> {
+  function stopFailure(result: CopilotStopOutcome): AgentError {
+    return new AgentError(
+      "agent_transport_failed",
+      `The Copilot runtime could not be stopped: ${result.errors.join("; ")}. ` +
+        "Retry cleanup or restart the backend before requesting another explanation."
+    );
+  }
+
+  function currentCleanupFailure(): AgentError | undefined {
+    return warmState.kind === "cleanup-failed" ? warmState.failure : undefined;
+  }
+
+  async function safeStop(client: CopilotRuntimeClient): Promise<CopilotStopOutcome> {
     try {
       return await client.stop();
     } catch (rawError) {
-      return [describeError(rawError)];
+      return { kind: "failed", errors: [describeError(rawError)] };
     }
   }
 
@@ -300,19 +332,23 @@ export function createCopilotSdkAgentRuntime(
   function beginStop(
     runtimeToStop: ReadyRuntime,
     event: CopilotSdkLogRecord["event"]
-  ): Promise<void> {
+  ): Promise<CopilotStopOutcome> {
     const startedAt = now();
-    const pending: Promise<void> = safeStop(runtimeToStop.client).then((errors) => {
+    const pending: Promise<CopilotStopOutcome> = safeStop(runtimeToStop.client).then((result) => {
       log({
         durationMs: now() - startedAt,
         event,
-        status: errors.length === 0 ? "ok" : "agent_transport_failed"
+        status: result.errors.length === 0 ? "ok" : "agent_transport_failed"
       });
       if (warmState.kind === "stopping" && warmState.pending === pending) {
-        warmState = { kind: "cold" };
+        warmState =
+          result.kind === "stopped"
+            ? { kind: "cold" }
+            : { kind: "cleanup-failed", runtime: runtimeToStop, failure: stopFailure(result) };
       }
+      return result;
     });
-    warmState = { kind: "stopping", pending };
+    warmState = { kind: "stopping", runtime: runtimeToStop, pending };
     return pending;
   }
 
@@ -376,19 +412,26 @@ export function createCopilotSdkAgentRuntime(
       // resident just because it failed validation or its own `start()` rejected. The cleanup outcome
       // is itself observable - a real cleanup failure never masquerades as "it worked" - without
       // masking the original startup failure the caller actually needs to see.
-      const cleanupErrors = await safeStop(client);
+      const cleanup = await safeStop(client);
       const failure = toAgentError(
         rawError,
         "agent_startup_failed",
         "The Copilot runtime failed to start"
       );
       log({ durationMs: now() - startedAt, event: "runtime_start", status: failure.code });
-      if (cleanupErrors.length > 0) {
+      if (cleanup.errors.length > 0) {
         log({
           durationMs: now() - startedAt,
           event: "runtime_stop",
           status: "agent_transport_failed"
         });
+      }
+      if (cleanup.kind === "failed") {
+        warmState = {
+          kind: "cleanup-failed",
+          runtime: { client },
+          failure: stopFailure(cleanup)
+        };
       }
       throw failure;
     }
@@ -400,6 +443,14 @@ export function createCopilotSdkAgentRuntime(
   // explicit call gets a fresh attempt - this call's own concurrent waiters all see the one failure
   // rather than each silently retrying (and each potentially re-billing) on its own.
   function ensureRuntime(): Promise<ReadyRuntime> {
+    if (disposeRequested) {
+      return Promise.reject(
+        new AgentError(
+          "agent_startup_failed",
+          "The Copilot runtime has been shut down; no new session can be opened."
+        )
+      );
+    }
     if (warmState.kind === "ready") {
       return Promise.resolve(warmState.runtime);
     }
@@ -410,17 +461,11 @@ export function createCopilotSdkAgentRuntime(
       // Serialize: never start a replacement while the previous runtime for this slot is still
       // mid-stop (#923) - wait for it to fully settle, then re-evaluate (it will have become "cold",
       // or "disposed" if a concurrent dispose() raced it).
-      return warmState.pending.then(() => ensureRuntime());
+      return warmState.pending.then(resumeAfterStop);
     }
-    if (warmState.kind === "disposed") {
-      return Promise.reject(
-        new AgentError(
-          "agent_startup_failed",
-          "The Copilot runtime has been shut down; no new session can be opened."
-        )
-      );
+    if (warmState.kind === "cleanup-failed") {
+      return beginStop(warmState.runtime, "runtime_stop").then(resumeAfterStop);
     }
-
     const pending: Promise<ReadyRuntime> = startRuntime().then(
       (runtime) => {
         if (warmState.kind === "starting" && warmState.pending === pending) {
@@ -439,9 +484,13 @@ export function createCopilotSdkAgentRuntime(
     return pending;
   }
 
+  function resumeAfterStop(result: CopilotStopOutcome): Promise<ReadyRuntime> {
+    return result.kind === "stopped" ? ensureRuntime() : Promise.reject(stopFailure(result));
+  }
+
   async function open(sessionConfig: AgentSessionConfig): Promise<AgentSession> {
     const runtime = await ensureRuntime();
-    if (warmState.kind === "disposed") {
+    if (disposeRequested) {
       // A concurrent dispose() settled while this call's ensureRuntime() was still in flight: never
       // let a pending open create a session on a runtime shutdown has already claimed (#923) - fail by
       // the same name ensureRuntime() itself uses for this state, rather than silently proceeding.
@@ -467,17 +516,83 @@ export function createCopilotSdkAgentRuntime(
       log({ durationMs: now() - startedAt, event: "session_open", status: failure.code });
       throw failure;
     }
+    if (disposeRequested) {
+      try {
+        await withTimeout(runtimeSession.disconnect(), cleanupTimeoutMs, "session disconnect");
+      } catch (rawError) {
+        log({
+          durationMs: now() - startedAt,
+          event: "session_close",
+          status: "agent_transport_failed"
+        });
+        throw toAgentError(
+          rawError,
+          "agent_transport_failed",
+          "The Copilot session could not close after shutdown"
+        );
+      } finally {
+        noteSessionClosed();
+      }
+      throw new AgentError(
+        "agent_startup_failed",
+        "The Copilot runtime was shut down while opening this session."
+      );
+    }
     log({ durationMs: now() - startedAt, event: "session_open", status: "ok" });
 
     let closed = false;
     let turnInFlight: Promise<CopilotTurnOutcome> | undefined;
+    let closePromise: Promise<void> | undefined;
+
+    async function closeSession(): Promise<void> {
+      const started = now();
+      const errors: string[] = [];
+      const inFlightTurn = turnInFlight;
+      if (inFlightTurn !== undefined) {
+        try {
+          await withTimeout(runtimeSession.abort(), cleanupTimeoutMs, "session abort");
+        } catch (error) {
+          errors.push(describeError(error));
+        }
+        try {
+          await withTimeout(inFlightTurn, cleanupTimeoutMs, "session drain");
+        } catch (error) {
+          errors.push(describeError(error));
+        }
+      }
+      try {
+        await withTimeout(runtimeSession.disconnect(), cleanupTimeoutMs, "session disconnect");
+      } catch (error) {
+        errors.push(describeError(error));
+      } finally {
+        noteSessionClosed();
+      }
+      log({
+        durationMs: now() - started,
+        event: "session_close",
+        status: errors.length === 0 ? "ok" : "agent_transport_failed"
+      });
+      if (errors.length > 0) {
+        invalidateRuntimeAfterFailure(runtime);
+        throw new AgentError(
+          "agent_transport_failed",
+          `The Copilot session could not close cleanly: ${errors.join("; ")}`
+        );
+      }
+    }
 
     return Object.freeze({
       async send(prompt: string): Promise<AgentTurn> {
-        if (closed) {
+        if (closed || disposeRequested) {
           throw new AgentError(
             "agent_session_closed",
             "The Copilot session is closed; open a new session to keep talking."
+          );
+        }
+        if (turnInFlight !== undefined) {
+          throw new AgentError(
+            "agent_transport_failed",
+            "This Copilot session already has a turn in progress; await it before sending another."
           );
         }
 
@@ -487,10 +602,10 @@ export function createCopilotSdkAgentRuntime(
         let outcome: CopilotTurnOutcome;
         try {
           outcome = await outcomePromise;
+        } catch (rawError) {
+          outcome = { kind: "failed", message: describeError(rawError) };
         } finally {
-          if (turnInFlight === outcomePromise) {
-            turnInFlight = undefined;
-          }
+          turnInFlight = undefined;
         }
 
         log({
@@ -520,29 +635,20 @@ export function createCopilotSdkAgentRuntime(
             `The Copilot runtime failed the turn: ${outcome.message}`
           );
         }
-        return { text: outcome.content };
+        return {
+          text: outcome.content,
+          ...(outcome.model === undefined ? {} : { model: outcome.model }),
+          ...(outcome.reasoningEffort === undefined
+            ? {}
+            : { reasoningEffort: outcome.reasoningEffort })
+        };
       },
-      async close(): Promise<void> {
-        if (closed) {
-          return;
+      close(): Promise<void> {
+        if (closePromise === undefined) {
+          closed = true;
+          closePromise = closeSession();
         }
-        closed = true;
-        // Captured once, up front: `turnInFlight` itself is cleared by `send()`'s own `finally` block
-        // as soon as the awaited turn settles, which can happen concurrently with this very drain (the
-        // abort triggers that settlement). Re-reading the outer mutable `turnInFlight` after an
-        // `await` below could observe `undefined` if that race wins, throwing instead of draining.
-        const inFlightTurn = turnInFlight;
-        if (inFlightTurn !== undefined) {
-          // Cancel and drain the in-flight turn through the SDK's own abort boundary BEFORE this
-          // session stops counting toward the runtime's active work - otherwise idle disposal (or a
-          // concurrent dispose()) could reap the runtime while a turn it started is still actually
-          // running server-side, and this session's close() would return before that turn's own
-          // cleanup (logging, `turnInFlight` clearing) has actually finished (#923).
-          await runtimeSession.abort().catch(() => {});
-          await inFlightTurn.catch(() => {});
-        }
-        noteSessionClosed();
-        await runtimeSession.disconnect().catch(() => {});
+        return closePromise;
       }
     });
   }
@@ -552,27 +658,41 @@ export function createCopilotSdkAgentRuntime(
     const previous = warmState;
     warmState = { kind: "disposed" };
 
-    if (previous.kind === "ready") {
+    async function finishStop(
+      runtime: ReadyRuntime,
+      pending?: Promise<CopilotStopOutcome>
+    ): Promise<void> {
       const startedAt = now();
-      const errors = await safeStop(previous.runtime.client);
+      const result = await (pending ?? safeStop(runtime.client));
       log({
         durationMs: now() - startedAt,
         event: "runtime_stop",
-        status: errors.length === 0 ? "ok" : "agent_transport_failed"
+        status: result.errors.length === 0 ? "ok" : "agent_transport_failed"
       });
+      if (result.kind === "failed") {
+        const failure = stopFailure(result);
+        warmState = { kind: "cleanup-failed", runtime, failure };
+        throw failure;
+      }
+    }
+
+    if (previous.kind === "ready" || previous.kind === "cleanup-failed") {
+      await finishStop(previous.runtime);
       return;
     }
     if (previous.kind === "starting") {
-      const runtime = await previous.pending.catch(() => undefined);
-      if (runtime !== undefined) {
-        const startedAt = now();
-        const errors = await safeStop(runtime.client);
-        log({
-          durationMs: now() - startedAt,
-          event: "runtime_stop",
-          status: errors.length === 0 ? "ok" : "agent_transport_failed"
-        });
+      let runtime: ReadyRuntime;
+      try {
+        runtime = await previous.pending;
+      } catch {
+        // The open caller receives the startup failure. Disposal fails only if its cleanup failed.
+        const failure = currentCleanupFailure();
+        if (failure !== undefined) {
+          throw failure;
+        }
+        return;
       }
+      await finishStop(runtime);
       return;
     }
     if (previous.kind === "stopping") {
@@ -580,7 +700,7 @@ export function createCopilotSdkAgentRuntime(
       // wants to stop: await that SAME completion instead of starting a second, redundant stop - and
       // because `warmState` is already "disposed" by the time it settles, that stop's own completion
       // handler correctly leaves it disposed rather than resurrecting it to "cold" (see `beginStop`).
-      await previous.pending;
+      await finishStop(previous.runtime, previous.pending);
       return;
     }
     // "cold" or already "disposed": nothing live to stop.
@@ -590,6 +710,7 @@ export function createCopilotSdkAgentRuntime(
     // Idempotent: every caller - however many times dispose() is invoked - awaits the exact same
     // shutdown completion, never a second independent one racing (or redundantly repeating) the first
     // (#923).
+    disposeRequested = true;
     disposePromise ??= performDispose();
     return disposePromise;
   }
@@ -610,6 +731,7 @@ export function createCopilotSdkAgentRuntime(
 
 // Mirrors the subset of the real `CopilotSession` (session.d.ts) this seam depends on.
 export type SdkSessionLike = Readonly<{
+  on(handler: (event: SessionEvent) => void): () => void;
   sendAndWait(
     prompt: string,
     timeoutMs: number
@@ -631,15 +753,6 @@ export type SdkClientLike = Readonly<{
   createSession(sessionConfig: SessionConfig): Promise<SdkSessionLike>;
 }>;
 
-// The SDK exports no typed timeout-specific error class (verified against the installed SDK, #923), so
-// a thrown timeout is still recognized by this message-content heuristic - but ONLY as a fallback for
-// the case where the SDK's own internal, non-cancelling timeout (session.js) happens to reject before
-// this seam's OWN owned deadline (below) fires. It is never the only mechanism a real timeout is
-// caught by, and either path always calls `abort()` before reporting a timeout.
-function isSdkTimeoutError(error: unknown): boolean {
-  return error instanceof Error && /timeout|timed out/i.test(error.message);
-}
-
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
@@ -656,21 +769,28 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   });
 }
 
-// Maps the real SDK session onto this seam's own `CopilotRuntimeSession` contract, owning the
-// wall-clock deadline itself instead of trusting the SDK's own non-cancelling `timeout` parameter. On
-// ANY timeout outcome - whether this seam's own race fires, or the SDK's internal
-// "Timeout after ... waiting for session.idle" rejection wins first - this always calls the SDK's own
-// `session.abort()` before reporting the turn as timed out, so a slow/stuck turn actually stops
-// generating (and billing) instead of merely being ignored while it keeps running server-side (#923).
-export function mapSdkSession(sdkSession: SdkSessionLike): CopilotRuntimeSession {
+// The owned deadline includes send acknowledgement; the SDK's later deadline only bounds its waiter.
+// Report a timeout only after cancellation succeeds. Failed cancellation invalidates the runtime.
+export function mapSdkSession(
+  sdkSession: SdkSessionLike,
+  cleanupTimeoutMs = defaultForceStopTimeoutMs
+): CopilotRuntimeSession {
   return {
     async abort() {
-      await sdkSession.abort();
+      await withTimeout(sdkSession.abort(), cleanupTimeoutMs, "session abort");
     },
     async disconnect() {
-      await sdkSession.disconnect();
+      await withTimeout(sdkSession.disconnect(), cleanupTimeoutMs, "session disconnect");
     },
     async sendAndWait(prompt, timeoutMs) {
+      let model: string | undefined;
+      let reasoningEffort: string | undefined;
+      const unsubscribe = sdkSession.on((event) => {
+        if (event.type === "assistant.usage" && event.agentId === undefined) {
+          model = event.data.model;
+          reasoningEffort = event.data.reasoningEffort;
+        }
+      });
       let timerHandle: ReturnType<typeof setTimeout> | undefined;
       const ownedTimeout = new Promise<"owned-timeout">((resolve) => {
         timerHandle = setTimeout(() => resolve("owned-timeout"), timeoutMs);
@@ -678,17 +798,21 @@ export function mapSdkSession(sdkSession: SdkSessionLike): CopilotRuntimeSession
       // Bounds BOTH the initial send acknowledgement and the wait-for-idle that follows it, as one
       // owned deadline covering the whole call - not only the waiting phase the SDK's own `timeout`
       // parameter bounds internally.
-      const work = sdkSession.sendAndWait(prompt, timeoutMs).then(
+      const work = sdkSession.sendAndWait(prompt, timeoutMs + cleanupTimeoutMs).then(
         (event) => ({ event, kind: "resolved" as const }),
         (error: unknown) => ({ error, kind: "rejected" as const })
       );
       try {
         const raced = await Promise.race([work, ownedTimeout]);
-        const timedOut =
-          raced === "owned-timeout" ||
-          (raced.kind === "rejected" && isSdkTimeoutError(raced.error));
-        if (timedOut) {
-          await sdkSession.abort().catch(() => {});
+        if (raced === "owned-timeout") {
+          try {
+            await withTimeout(sdkSession.abort(), cleanupTimeoutMs, "session abort");
+          } catch (error) {
+            return {
+              kind: "failed",
+              message: `The turn timed out and cancellation failed: ${describeError(error)}`
+            };
+          }
           return { kind: "timeout" };
         }
         if (raced.kind === "rejected") {
@@ -700,9 +824,15 @@ export function mapSdkSession(sdkSession: SdkSessionLike): CopilotRuntimeSession
             message: "the Copilot runtime reported no assistant message for this turn"
           };
         }
-        return { content: raced.event.data.content, kind: "ok" };
+        return {
+          content: raced.event.data.content,
+          kind: "ok",
+          ...(model === undefined ? {} : { model }),
+          ...(reasoningEffort === undefined ? {} : { reasoningEffort })
+        };
       } finally {
         clearTimeout(timerHandle);
+        unsubscribe();
       }
     }
   };
@@ -716,21 +846,26 @@ export function mapSdkSession(sdkSession: SdkSessionLike): CopilotRuntimeSession
 async function stopSdkClientWithFallback(
   sdkClient: SdkClientLike,
   forceStopTimeoutMs: number
-): Promise<ReadonlyArray<string>> {
+): Promise<CopilotStopOutcome> {
   let errors: ReadonlyArray<string>;
   try {
-    errors = (await sdkClient.stop()).map((error) => describeError(error));
+    errors = (await withTimeout(sdkClient.stop(), forceStopTimeoutMs, "runtime stop")).map(
+      (error) => describeError(error)
+    );
   } catch (rawError) {
     errors = [describeError(rawError)];
   }
   if (errors.length === 0) {
-    return errors;
+    return { kind: "stopped", errors };
   }
   try {
     await withTimeout(sdkClient.forceStop(), forceStopTimeoutMs, "forceStop");
-    return errors;
+    return { kind: "stopped", errors };
   } catch (forceStopError) {
-    return [...errors, `forceStop fallback also failed: ${describeError(forceStopError)}`];
+    return {
+      kind: "failed",
+      errors: [...errors, `forceStop fallback also failed: ${describeError(forceStopError)}`]
+    };
   }
 }
 
@@ -748,7 +883,7 @@ export function mapSdkClient(
       const sdkSession = await sdkClient.createSession(
         buildCopilotSessionConfig(config, sessionConfig)
       );
-      return mapSdkSession(sdkSession);
+      return mapSdkSession(sdkSession, forceStopTimeoutMs);
     },
     async listModels() {
       const models = await sdkClient.listModels();
