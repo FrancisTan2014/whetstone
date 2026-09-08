@@ -28,6 +28,8 @@ import { registerPreferencesRoutes } from "../features/preferences/preferencesRo
 import type { PreferencesDependencies } from "../features/preferences/preferencesCommands.js";
 import { registerLookupRoutes } from "../features/lookup/lookupRoutes.js";
 import type { LookupDependencies } from "../features/lookup/lookupRoutes.js";
+import { registerExplainRoutes } from "../features/explain/explainRoutes.js";
+import type { ExplainRouteDependencies } from "../features/explain/explainRoutes.js";
 import { registerSearchRoutes } from "../features/search/searchRoutes.js";
 import type { SearchDependencies } from "../features/search/searchRoutes.js";
 import { registerImageRoutes } from "../features/images/imageRoutes.js";
@@ -67,6 +69,7 @@ export type CreateServerOptions = Readonly<{
   // the v0 DEFAULT_USER_ID provider; tests (and future auth) inject their own.
   currentUser?: CurrentUserProvider;
   diary?: DiaryRouteDependencies;
+  explain?: ExplainRouteDependencies;
   images?: ImageDependencies;
   library?: LibraryRouteDependencies;
   logger: NonNullable<FastifyServerOptions["logger"]>;
@@ -171,6 +174,10 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
 
   if (options.lookup !== undefined) {
     registerLookupRoutes(server, options.lookup);
+  }
+
+  if (options.explain !== undefined) {
+    registerExplainRoutes(server, options.explain);
   }
 
   if (options.search !== undefined) {

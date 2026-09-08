@@ -545,9 +545,16 @@ Lookup is view-only and never creates a note:
 - Chinese uses CC-CEDICT.
 - `Intl.Segmenter` interprets CJK selections before lookup.
 - External dictionary links are always available as a not-found exit.
-- Optional **AI explanation in context** is limited to dictionary gaps such as classical Chinese,
-  idioms, allusions, and proper nouns. It is labeled, off by default, and failure leaves the
-  deterministic dictionary result intact.
+- Optional **AI semantic-map explanation** covers English and Chinese words/phrases generally, not
+  just dictionary gaps. It organizes a word's principal meanings as connected branches rather than a
+  flat gloss: a core image/schema (or separate sense families when one core would be false), then
+  each principal branch with its explicit connection to the core plus a short natural expression, then
+  the branch the current passage actually uses. Supporting pronunciation, nuance/register, everyday
+  usage, and reliable (never invented) etymology/cultural context are conditional, not mandatory.
+  Fixed phrases are treated as one meaningful unit; a monosemous word is not given invented extra
+  senses. It is a separately labeled, off-by-default capability from the legacy dictionary-gap
+  lookup; enabling diary AI does not implicitly enable it. Failure leaves the deterministic
+  dictionary result intact.
 
 ## Diary, Timeline, and Writing
 

@@ -328,6 +328,33 @@ export type {
 export { createHealthResponse, healthEndpointPath, healthResponseJsonSchema } from "./health.js";
 export type { HealthResponse } from "./health.js";
 export {
+  EXPLAIN_PROMPT_VERSION,
+  explainCapabilityDisabledReasons,
+  explainCapabilitySchema,
+  explainLanguages,
+  explainRequestSchema,
+  explainResponseSchema,
+  explainResultSchema,
+  explainUnavailableReasons,
+  parseExplainCapability,
+  parseExplainRequest,
+  parseExplainResponse,
+  parseExplainResult
+} from "./explainContracts.js";
+export type {
+  ExplainBranch,
+  ExplainCapability,
+  ExplainCapabilityDisabledReason,
+  ExplainFamily,
+  ExplainLanguage,
+  ExplainProviderAttribution,
+  ExplainPronunciation,
+  ExplainRequest,
+  ExplainResponse,
+  ExplainResult,
+  ExplainUnavailableReason
+} from "./explainContracts.js";
+export {
   parseProposedWorkMetadataDto,
   parseWorkCreationAttemptDto,
   proposedWorkMetadataSchema,

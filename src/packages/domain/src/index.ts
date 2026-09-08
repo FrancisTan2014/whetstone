@@ -128,6 +128,11 @@ export type {
 } from "./markdownBlocks.js";
 export { createNoteAnchor } from "./noteAnchor.js";
 export type { CreateNoteAnchorInput, NoteAnchor } from "./noteAnchor.js";
+export {
+  buildSelectionContext,
+  defaultExplainContextWindowChars,
+  normalizeHeadword
+} from "./explainSelection.js";
 export { splitSpanIntoBlockRanges } from "./spanMarks.js";
 export type { BlockSpanRange, NoteSpan } from "./spanMarks.js";
 export { formatProductHeading, productIdentity } from "./productIdentity.js";

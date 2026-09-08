@@ -42,6 +42,20 @@ import { readDiaryTidyConfig } from "./llm/aiUtilityConfig.js";
 import { checkAiUtilityHealth } from "./llm/aiUtilityHealth.js";
 import { readAgentConfig } from "./agent/agentConfig.js";
 import { createCliAgent } from "./agent/cliAgent.js";
+import { readCopilotSdkConfig } from "./agent/copilotSdkConfig.js";
+import {
+  createCopilotSdkAgentRuntime,
+  type CopilotSdkAgentRuntime
+} from "./agent/copilotSdkAgent.js";
+import type { CopilotSdkConfig } from "./agent/copilotSdkConfig.js";
+import {
+  readExplainFeatureConfig,
+  resolveExplainCapability
+} from "./features/explain/explainConfig.js";
+import {
+  createExplainInFlightCoalescer,
+  createInMemoryExplainCache
+} from "./features/explain/explainCache.js";
 import {
   resolveDiaryTidy,
   selectDiaryTidyBackend,
@@ -264,6 +278,33 @@ try {
     sources: lookupSources
   });
 
+  // The semantic-map explanation capability (#924): an independently opt-in, default-off consumer of
+  // the warm Copilot SDK runtime (#923). Configuring diary's local agent CLI or the legacy Ollama "AI
+  // 解释" aid above must never implicitly enable this — it has its own gate. The Copilot runtime itself
+  // is constructed (but not started; it starts lazily on first use, #923) only when opted in, so a
+  // default deploy never spawns a Copilot process at all.
+  const semanticExplainFeatureConfig = readExplainFeatureConfig();
+  let copilotExplainRuntime: CopilotSdkAgentRuntime | undefined;
+  let copilotExplainConfig: CopilotSdkConfig | undefined;
+  if (semanticExplainFeatureConfig.enabled) {
+    const copilotSdkConfigResult = readCopilotSdkConfig();
+    if (!copilotSdkConfigResult.ok) {
+      throw new Error(
+        `${copilotSdkConfigResult.error.message} ${copilotSdkConfigResult.error.remedy}`
+      );
+    }
+    copilotExplainConfig = copilotSdkConfigResult.config;
+    copilotExplainRuntime = createCopilotSdkAgentRuntime({
+      config: copilotExplainConfig,
+      // Boot-time construction, before the Fastify logger exists (mirrors this file's own early
+      // database-teardown console use above): only the event/status/duration, never prompt/response
+      // content or the configured model/binary (docs/AGENT.md).
+      log: ({ durationMs, event, status }) =>
+        console.info(`[explain] ${event}`, JSON.stringify({ durationMs, status }))
+    });
+  }
+  const semanticExplainCapability = resolveExplainCapability(semanticExplainFeatureConfig);
+
   // Offline gloss autofill (#526): compose a `resolveOfflineGloss` from the offline dictionaries already
   // built above — WordNet for English, CC-CEDICT for Chinese (chosen by script). Offline-only by
   // construction (no networked/LLM source is wired here), so filling a blank Note from a gloss with no
@@ -469,6 +510,21 @@ try {
       now: () => new Date(),
       saveAudio: saveVoiceCaptureAudio
     },
+    explain: {
+      capability: semanticExplainCapability,
+      explain: {
+        ...(copilotExplainRuntime === undefined ? {} : { agent: copilotExplainRuntime.agent }),
+        cache: createInMemoryExplainCache(),
+        coalescer: createExplainInFlightCoalescer(),
+        db,
+        // The event/status/duration trace only — never the selection, prompt, or model answer
+        // (docs/AGENT.md's "no prompt/answer/selected-text logging" rule).
+        log: ({ durationMs, status }) =>
+          console.info("[explain] turn", JSON.stringify({ durationMs, status })),
+        model: copilotExplainConfig?.model ?? "unset",
+        reasoningEffort: copilotExplainConfig?.reasoningEffort ?? "unset"
+      }
+    },
     images: { imageResourceStore },
     library: {
       createAuthorId: () => randomUUID(),
@@ -672,6 +728,10 @@ try {
     // Kill any resident persistent local-speech process (#884) so a restart never leaves an orphaned
     // child process warm in the background after this one exits.
     localPersistentSpeech?.close();
+    // Stop the warm Copilot SDK runtime (#923), if the semantic-map explanation capability ever started
+    // it: idempotent and safe to await even if it was never used, so no lazily-started subprocess is
+    // ever left resident past this process's own shutdown.
+    await copilotExplainRuntime?.dispose();
     let code = exitCode;
     try {
       if (httpServerListening) {

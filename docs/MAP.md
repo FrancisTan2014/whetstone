@@ -468,8 +468,9 @@ can navigate them from another package.
   never conversation reuse. Explicitly prompt-only (`mode: "empty"`, empty `availableTools`, deny-all
   permission handler, no MCP, no remote export). Fixed default model/effort
   (`AGENT_COPILOT_MODEL`/`AGENT_COPILOT_REASONING_EFFORT`, default `gpt-5.4`/`high`), operator
-  overridable, validated against the runtime's own `listModels()`. Not yet wired into a product flow;
-  #924's semantic-map lookup is its imminent consumer. Full config/lifecycle/failure detail in
+  overridable, validated against the runtime's own `listModels()`. **#924's semantic-map explanation is
+  its first product consumer** (`src/apps/server/src/features/explain/`, above). Full
+  config/lifecycle/failure detail in
   `docs/AGENT.md`.
 - Voice input (STT) seam: `src/speech/` — `speechInput.ts` (the `SpeechInput`
   interface: `transcribe({ path }) -> { transcript, words[], language }`; transcript-first — `words` is
@@ -828,6 +829,41 @@ can navigate them from another package.
   sample text, plus one offline integration test against the real WordNet database).
   The route lives in `src/features/lookup/lookupRoutes.ts` (`GET /api/lookup?term=&language=`,
   language is `en`/`zh-CN`/`zh-TW`, thin: validates the query contract, delegates to the service).
+- Semantic-map explanation (#924, read-only, independently opt-in, backend-only — the Reader consumer
+  is #925): `src/apps/server/src/features/explain/` generates an ORGANIZING semantic map for a selected
+  word/phrase — core image/schema (or separate sense families when one core would be false), each
+  principal branch's connection to that core plus a short natural expression, then the branch the
+  current passage uses — never a flat dictionary gloss, and unrelated to (never enabling or migrating)
+  the legacy Ollama-backed `llm`/"AI 解释" tab above. `@whetstone/contracts` `explainContracts.ts` is
+  the one shared, versioned wire contract (`EXPLAIN_PROMPT_VERSION`, request/result/response/capability
+  Zod schemas; validates bounded family/branch counts, duplicate ids, and that `currentFamilyId`/
+  `currentBranchId` actually reference an existing family/branch). `@whetstone/domain`
+  `explainSelection.ts` derives a bounded, selection-centered context window (never the whole block; a
+  selection near either edge of a long block still gets real preceding/following context) and trims the
+  cache/prompt headword without touching the exact stale-selection-detection range.
+  `explainSourceResolution.ts` is the canonical, security-critical server-side resolution: re-derives
+  the Work/block/range from the existing content query boundaries (never trusting a client context
+  dump), rejects a wrong-Work id, a deleted/unreadable block, or a changed selection/range explicitly
+  (`stale_selection`) rather than substituting an unrelated passage. `explainPrompt.ts` builds the one
+  canonical prompt (source text framed as inert DATA, immune to prompt injection) and parses the
+  model's free-form reply (the prose Agent port has no native structured-output mode) via a
+  brace-balanced extractor + the shared contract — any parse/shape failure is an explicit
+  `invalid_response`, never a salvaged partial result. `explainCache.ts` is a bounded, success-only
+  in-memory cache keyed by selection/term + language + canonical context revision + prompt version +
+  requested model/effort, plus an in-flight coalescer so concurrent identical requests share one paid
+  Copilot turn rather than each starting their own. `explainTurn.ts` owns the WHOLE request's deadline
+  (session `open()` **and** `send()` together, not just the SDK's own internal turn timeout) — a
+  session that finishes opening only after the deadline fired is closed and never sent a prompt.
+  `explainConfig.ts` (`AGENT_COPILOT_EXPLAIN_ENABLED`, default off) is the independent opt-in switch and
+  the truthful capability resolver #925 polls (configured/opted-in state, never "already
+  authenticated"); enabling diary AI's local agent never implicitly enables this cloud capability.
+  `explainCommands.ts` orchestrates disabled-check → server-side resolution → cache/dedup →
+  `explainTurn.ts` → response mapping (`disabled`/`not_found`/`stale_selection`/`unavailable`/`timeout`/
+  `invalid_response`/`ok`, never a raw SDK error or a validation payload containing source text) →
+  cache-on-success-only. The thin route (`explainRoutes.ts`: `POST /api/explain`,
+  `GET /api/explain/capability`) is wired into `createServer.ts`/`index.ts` alongside the warm
+  `copilotSdkAgent.ts` runtime (#923) and its `dispose()`; no prompt/answer/selected-text is ever
+  logged.
 - Offline English lexical relationships (#715, read-only; exposed over HTTP by #772, the UI journey
   follows in #716): `src/apps/server/src/features/lexical/` resolves, for ONE eligible English
   word plus a caller-selected WordNet sense, the owner's single-word Notes connected by typed one-hop
