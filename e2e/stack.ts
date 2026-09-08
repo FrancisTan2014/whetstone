@@ -89,6 +89,15 @@ function killChild(child: ChildProcess): Promise<void> {
 async function startServer(port: number, sourceFilesDir: string): Promise<ChildProcess> {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
+    // The semantic-map explanation capability (#924/#925) opted in with its dev/E2E-only deterministic
+    // fixture agent (`explainFixtureAgent.ts`) instead of a real, authenticated Copilot CLI: CI ships no
+    // Copilot credential, so this is what lets `e2e/tests/semanticLookup.spec.ts` exercise the real
+    // Reader<->API<->contract wiring end to end. `AGENT_COPILOT_EXPLAIN_TURN_TIMEOUT_MS` shortens the
+    // owned request deadline so that spec's deterministic "timeout" case does not wait out the real 150s
+    // production bound.
+    AGENT_COPILOT_EXPLAIN_ENABLED: "1",
+    AGENT_COPILOT_EXPLAIN_FIXTURE: "1",
+    AGENT_COPILOT_EXPLAIN_TURN_TIMEOUT_MS: "3000",
     HOST: "127.0.0.1",
     LOG_LEVEL: "warn",
     PORT: String(port),

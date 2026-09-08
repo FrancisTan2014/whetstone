@@ -46,3 +46,39 @@ export async function selectWordIn(page: Page, blockSelector: string): Promise<v
     block.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
   });
 }
+
+// Select the EXACT literal substring `target` inside the given reader block (an explicit drag, not a
+// collapsed tap), then raise `mouseup` the way a real drag-selection does. Unlike `selectWordIn` (ASCII
+// `[A-Za-z]{4,}` only), this matches any Unicode substring verbatim — including CJK, where an explicit
+// drag range is captured as-is (`selectionCapture.ts` only snaps a COLLAPSED tap to a segmented word),
+// so this is what lets the semantic-lookup E2E suite drive exact English and Chinese selections deterministically.
+export async function selectExactTextIn(
+  page: Page,
+  blockSelector: string,
+  target: string
+): Promise<void> {
+  await page.locator(blockSelector).first().waitFor();
+  await page.locator(blockSelector).first().evaluate((block, wanted) => {
+    const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+    let node = walker.nextNode();
+    while (node !== null) {
+      const text = node.textContent ?? "";
+      const start = text.indexOf(wanted);
+      if (start !== -1) {
+        const range = document.createRange();
+        range.setStart(node, start);
+        range.setEnd(node, start + wanted.length);
+        const selection = window.getSelection();
+        if (selection === null) {
+          throw new Error("no selection available");
+        }
+        selection.removeAllRanges();
+        selection.addRange(range);
+        block.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+        return;
+      }
+      node = walker.nextNode();
+    }
+    throw new Error(`text "${wanted}" not found as a single text node in block`);
+  }, target);
+}
