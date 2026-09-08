@@ -53,6 +53,10 @@ import {
   resolveExplainCapability
 } from "./features/explain/explainConfig.js";
 import {
+  createExplainFixtureRuntime,
+  readExplainFixtureConfig
+} from "./features/explain/explainFixtureAgent.js";
+import {
   createExplainInFlightCoalescer,
   createInMemoryExplainCache
 } from "./features/explain/explainCache.js";
@@ -284,6 +288,12 @@ try {
   // is constructed (but not started; it starts lazily on first use, #923) only when opted in, so a
   // default deploy never spawns a Copilot process at all.
   const semanticExplainFeatureConfig = readExplainFeatureConfig();
+  // Dev/E2E-only deterministic stand-in (never true in production): swaps the real Copilot SDK
+  // runtime for a same-shaped fixture `Agent` so the Reader's semantic-explanation E2E suite
+  // (`e2e/tests/semanticLookup.spec.ts`) exercises the real request/response wiring without an
+  // authenticated Copilot CLI. `explainFixtureConfig.turnTimeoutMs` (also dev/E2E-only) lets that
+  // suite exercise the "timeout" outcome without waiting out the real 150s deadline.
+  const explainFixtureConfig = readExplainFixtureConfig();
   let copilotExplainRuntime: CopilotSdkAgentRuntime | undefined;
   let copilotExplainConfig: CopilotSdkConfig | undefined;
   if (semanticExplainFeatureConfig.enabled) {
@@ -294,14 +304,16 @@ try {
       );
     }
     copilotExplainConfig = copilotSdkConfigResult.config;
-    copilotExplainRuntime = createCopilotSdkAgentRuntime({
-      config: copilotExplainConfig,
-      // Boot-time construction, before the Fastify logger exists (mirrors this file's own early
-      // database-teardown console use above): only the event/status/duration, never prompt/response
-      // content or the configured model/binary (docs/AGENT.md).
-      log: ({ durationMs, event, status }) =>
-        console.info(`[explain] ${event}`, JSON.stringify({ durationMs, status }))
-    });
+    copilotExplainRuntime = explainFixtureConfig.enabled
+      ? createExplainFixtureRuntime()
+      : createCopilotSdkAgentRuntime({
+          config: copilotExplainConfig,
+          // Boot-time construction, before the Fastify logger exists (mirrors this file's own early
+          // database-teardown console use above): only the event/status/duration, never prompt/response
+          // content or the configured model/binary (docs/AGENT.md).
+          log: ({ durationMs, event, status }) =>
+            console.info(`[explain] ${event}`, JSON.stringify({ durationMs, status }))
+        });
   }
   const semanticExplainCapability = resolveExplainCapability(semanticExplainFeatureConfig);
 
@@ -527,7 +539,10 @@ try {
         // trace above; fires even for a late close() that settles after an HTTP timeout has already
         // returned. Same content-free event/status/duration shape, never prompt/response content.
         turnLog: ({ durationMs, event, status }) =>
-          console.info(`[explain] ${event}`, JSON.stringify({ durationMs, status }))
+          console.info(`[explain] ${event}`, JSON.stringify({ durationMs, status })),
+        ...(explainFixtureConfig.turnTimeoutMs === undefined
+          ? {}
+          : { turnTimeoutMs: explainFixtureConfig.turnTimeoutMs })
       }
     },
     images: { imageResourceStore },

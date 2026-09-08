@@ -612,8 +612,9 @@ code {
   gap: 0.5rem;
 }
 
-/* The AI-generated caveat on the local-LLM "AI 解释" tab (#341): a persistent, visually distinct pill so
-   the contextual gloss is never mistaken for an authoritative dictionary entry. Tokenized for Day/Night. */
+/* The AI-generated caveat on the Explain feature's own section (#924/#925): a persistent, visually
+   distinct pill so the semantic-map explanation is never mistaken for authoritative dictionary
+   evidence above it. Tokenized for Day/Night. */
 .lookupAiBadge {
   align-self: flex-start;
   margin-bottom: 0.5rem;
@@ -827,6 +828,212 @@ code {
 .lookupPos--other {
   --pos-hue: var(--color-text-muted);
   --pos-hue-wash: var(--color-bg);
+}
+
+/*
+ * The Explain feature (#924/#925): a compact reading aid rendered alongside (never in place of) the
+ * dictionary tabs above. Reuses the same panel width/tokens as `.lookupPanel`; every color is
+ * semantic so it honors Day/Night automatically.
+ */
+.explainSection {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+  margin-bottom: 0.875rem;
+  padding-bottom: 0.875rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.explainChecking {
+  color: var(--color-text-muted);
+  font-size: 0.8125rem;
+}
+
+.explainDisabled {
+  color: var(--color-text-muted);
+  font-size: 0.8125rem;
+}
+
+.explainActionRow {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  align-items: flex-start;
+}
+
+.explainConsent {
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+}
+
+/* >=44px in both dimensions (#502): the explicit, one-and-only trigger that ever sends the
+   selection to Copilot. */
+.explainActionButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-block-size: 44px;
+  min-inline-size: 44px;
+  padding: 0 1rem;
+  border: 1px solid var(--color-accent);
+  border-radius: 0.5rem;
+  background-color: transparent;
+  color: var(--color-accent);
+  font-family: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.explainActionButton:hover {
+  background-color: color-mix(in oklch, var(--color-accent) 10%, transparent);
+}
+
+.explainLoading {
+  color: var(--color-text-muted);
+  font-size: 0.8125rem;
+}
+
+.explainError {
+  color: var(--color-danger);
+  font-size: 0.8125rem;
+}
+
+/* Shown instead of silently hiding the action for a genuinely non-representable capture (a
+   cross-block span, #925 correction) — its own bottom-divider styling matches `.explainSection`
+   since it renders in the very same slot, before `LookupTabs`. */
+.explainIneligible {
+  margin-bottom: 0.875rem;
+  padding-bottom: 0.875rem;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-size: 0.8125rem;
+}
+
+/* The error boundary's fallback (#925 correction): a missing/offline/stale Explain chunk is
+   contained to this one slot, never the whole Reader — dictionaries above stay fully usable. */
+.explainLoadError {
+  margin-bottom: 0.875rem;
+  padding-bottom: 0.875rem;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-danger);
+  font-size: 0.8125rem;
+}
+
+.explainMap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+/* One sense family: the organizing core image/schema leads, its branches follow. The family holding
+   the current passage's branch is itself marked with the accent rail, so the map reads core-first
+   even when there is more than one truly unrelated sense family. */
+.explainFamily {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding-inline-start: 0.625rem;
+  border-inline-start: 3px solid var(--color-border);
+}
+
+.explainFamily.explainFamilyCurrent {
+  border-inline-start-color: var(--color-accent);
+}
+
+.explainCoreImage {
+  color: var(--color-text);
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
+.explainBranches {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.explainBranch {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  padding: 0.375rem 0.5rem;
+  border-radius: 0.375rem;
+}
+
+.explainBranch.explainBranchCurrent {
+  background-color: color-mix(in oklch, var(--color-accent) 12%, transparent);
+}
+
+.explainBranchHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.explainBranchLabel {
+  color: var(--color-text);
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+/* The current-passage marker (#925): a small, unambiguous pill on the one branch the passage actually
+   uses — never the whole answer collapsed to just that branch. */
+.explainCurrentMarker {
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  background-color: var(--color-accent);
+  color: var(--color-bg);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.explainBranchConnection {
+  color: var(--color-text-muted);
+  font-size: 0.8125rem;
+}
+
+.explainBranchExample {
+  color: var(--color-text-muted);
+  font-size: 0.8125rem;
+  font-style: italic;
+}
+
+.explainDetails {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.25rem 0.75rem;
+  margin: 0;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.explainDetailRow {
+  display: contents;
+}
+
+.explainDetailRow dt {
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  font-style: italic;
+}
+
+.explainDetailRow dd {
+  margin: 0;
+  color: var(--color-text);
+  font-size: 0.8125rem;
+}
+
+.explainProvider {
+  margin-top: 0.125rem;
+  padding-top: 0.375rem;
+  border-top: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-size: 0.6875rem;
 }
 
 .noteEditorActions {

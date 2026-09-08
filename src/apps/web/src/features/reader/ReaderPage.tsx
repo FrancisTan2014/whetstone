@@ -20,6 +20,7 @@ import { ChapterPager } from "./ChapterPager";
 import { fetchPreferences, savePreferences } from "../../shared/preferences/preferencesApi";
 import { LookupPanel, type LookupState, type LookupTab } from "../lookup/LookupPanel";
 import { lookupTerm } from "../lookup/lookupApi";
+import { deriveExplainEligibility, type ExplainEligibility } from "./explainTarget";
 import { highlightBirthMotion } from "./highlightBirth";
 import { ImageLightbox } from "./ImageLightbox";
 import { BlockContent } from "./mdastBlock";
@@ -362,9 +363,13 @@ type ReaderPageProps = Readonly<{
 }>;
 
 // A view-only vocabulary lookup driven from the selection toolbar: the selected term and
-// its fetch state. Lookup never creates, pre-fills, or edits a note.
+// its fetch state. Lookup never creates, pre-fills, or edits a note. `explainEligibility` names
+// whether — and why not — the explicit "Explain meanings" action (#925) is offered for this
+// selection: `eligible` carries the exact-range request; `cross_block` and `none` each render their
+// own honest state in `LookupPanel` rather than a silently missing feature.
 type LookupView = Readonly<{
   anchorRect?: DOMRect | undefined;
+  explainEligibility: ExplainEligibility;
   requestId: number;
   tabs: ReadonlyArray<LookupTab>;
   term: string;
@@ -1036,14 +1041,19 @@ export function ReaderPage({
     const anchorRect = active.anchorRect;
     setCapture(undefined);
 
-    const sources = lookupSourcesForLanguage(active.language);
+    // The legacy local-LLM "AI 解释" dictionary source never fires eagerly (#925): ordinary dictionary
+    // lookups stay AI-free and context-free. A learner who wants an AI interpretation now reaches it
+    // only through the explicit "Explain meanings" action below, which sends its own bounded, exact
+    // selection range — never this whole-block context snapshot.
+    const sources = lookupSourcesForLanguage(active.language).filter((id) => id !== "llm");
     const requestId = (lookupSeq.current += 1);
     const initialTabs: LookupTab[] = sources.map((id) => ({
       id,
       label: lookupSourceLabel(id),
       state: { status: "loading" }
     }));
-    setLookup({ anchorRect, requestId, tabs: initialTabs, term });
+    const explainEligibility = deriveExplainEligibility(active.workEntryId, active.draft);
+    setLookup({ anchorRect, explainEligibility, requestId, tabs: initialTabs, term });
 
     // Each source is fetched independently and writes only its own tab, so a slow/down/empty source
     // never freezes or empties the others. The requestId guard drops a result whose lookup was closed
@@ -1057,10 +1067,7 @@ export function ReaderPage({
     };
 
     for (const id of sources) {
-      // The local-LLM "AI 解释" tab (#341) glosses the term in context, so it — and only it — is sent
-      // the selection's containing block text; dictionary lookups stay context-free.
-      const context = id === "llm" ? active.draft.contextSnapshot : undefined;
-      lookupTerm(term, active.language, id, context)
+      lookupTerm(term, active.language, id)
         .then((response) =>
           setTabState(
             id,
@@ -1222,6 +1229,8 @@ export function ReaderPage({
       {lookup === undefined ? null : (
         <LookupPanel
           anchorRect={lookup.anchorRect}
+          explainEligibility={lookup.explainEligibility}
+          key={lookup.requestId}
           onOpenChange={() => setLookup(undefined)}
           open={true}
           tabs={lookup.tabs}

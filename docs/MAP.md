@@ -829,8 +829,9 @@ can navigate them from another package.
   sample text, plus one offline integration test against the real WordNet database).
   The route lives in `src/features/lookup/lookupRoutes.ts` (`GET /api/lookup?term=&language=`,
   language is `en`/`zh-CN`/`zh-TW`, thin: validates the query contract, delegates to the service).
-- Semantic-map explanation (#924, read-only, independently opt-in, backend-only — the Reader consumer
-  is #925): `src/apps/server/src/features/explain/` generates an ORGANIZING semantic map for a selected
+- Semantic-map explanation (#924, read-only, independently opt-in; the Reader consumer is `lookup/`'s
+  `explain/ExplainSection.tsx`, #925, documented below): `src/apps/server/src/features/explain/`
+  generates an ORGANIZING semantic map for a selected
   word/phrase — core image/schema (or separate sense families when one core would be false), each
   principal branch's connection to that core plus a short natural expression, then the branch the
   current passage uses — never a flat dictionary gloss, and unrelated to (never enabling or migrating)
@@ -1355,6 +1356,27 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   learner dictionaries (Longman/Merriam-Webster/Oxford, #254/#303), a Chinese (CJK) headword gets the
   Chinese ones (汉典/萌典/ctext/国学大师) — `isEnglishHeadword` is the discriminator. Lookup never
   creates, pre-fills, or edits a note.
+  `explain/ExplainSection.tsx` (#924/#925) is the lookup panel's explicit, independently opt-in
+  **Explain meanings** action for #924's semantic-map explanation — never eager: opening the panel,
+  switching dictionary tabs, or scrolling never sends a model turn, only the button (or its "Try
+  again" retry, or the capability-only retry from a failed probe) does, and `LookupExplainSlot`
+  mounts it lazily (own `React.lazy` chunk, budgeted separately in `.size-limit.json`, behind its own
+  error boundary so a missing/rejected chunk stays contained and dictionaries stay usable) ABOVE
+  `LookupTabs` in both the popover and the `Sheet`, so the action is reachable before scrolling even on
+  a long entry. `explainTarget.ts`'s `deriveExplainEligibility` is the pure selection →
+  `ExplainEligibility` derivation the Reader computes once per lookup open (never resending an entire
+  Work or the legacy AI-gloss context dump, and never duplicating the backend's own request-length
+  cap): `eligible` carries the exact `ExplainRequest`, `cross_block` names the one genuinely
+  non-representable capture, `none` is an empty selection. `explainApi.ts` calls the capability probe
+  and `POST /api/explain`. The panel is remounted (`key={lookup.requestId}`) on every new
+  selection/close-reopen, so a superseded in-flight request can never paint a stale answer under a new
+  term. The view renders every named outcome truthfully (checking/disabled-with-remedy/loading/result/
+  each typed failure with its own retry, or guidance-only for an invalid request/stale selection with
+  no pointless resend), shows the organizing core and each branch's connection/example before the
+  current-passage "Used here" marker, renders supporting details only when the model actually supplied
+  them, and shows real provider attribution only when the runtime reported it — never a fabricated
+  default. The legacy Chinese `llm` dictionary tab (`explainProvider.ts`, above) is unaffected and
+  still excluded from `preferredTab` selection only, unrelated to this capability.
   `content/` is the focused Manage-content surface (`WorkContentPanel.tsx`), opened on demand inside
   the Library's "Manage content" `Sheet`: a work switcher, a header (title/author/type/language +
   unit/block counts via `workContentSummary.ts`), an "Open in Reader" deep-link, and a units/blocks overview

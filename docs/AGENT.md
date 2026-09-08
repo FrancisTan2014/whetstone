@@ -221,6 +221,22 @@ model/reasoning-effort combination the connected runtime does not report support
 its own `listModels()` on startup) fails by name (`agent_unsupported_model`) with the runtime's actual
 advertised list, rather than silently falling back to a different model.
 
+**Three distinct kinds of reuse — do not conflate them:** (1) this seam's own **warm runtime** reuses
+one Copilot CLI _process_ across independent `open()` calls, never a _conversation_ — every `open()`
+still starts a brand-new SDK session with no memory of any earlier one. (2) GitHub's own Copilot
+service may separately apply **provider-side prompt caching** across requests that share a long common
+prefix (for example the semantic-map explanation's stable `semantic-map-v2` system instructions,
+#924); this is entirely provider-controlled, opaque to this codebase, and a cache hit is still a
+billed request — never assume a cached prompt segment is free input. (3) the explanation feature's own
+`explainCache.ts` (`docs/MAP.md`) is a bounded, in-process, success-only **app answer cache** keyed by
+the resolved selection/context/prompt-version/settings tuple — it never calls the model again for an
+identical lookup within its window, which is a different mechanism from both of the above and the only
+one of the three this codebase fully owns and can inspect. None of these three is "memory" in the
+sense of the model recalling a past conversation: when the SDK's connection to its runtime process
+ends, whatever local state that process kept lives only in its own isolated `AGENT_COPILOT_HOME`
+directory (disk-backed, not merely in-memory) — describing any of this as simply "memory-only" would
+be inaccurate in either direction.
+
 **Model attribution:** some runtimes advertise only a generic `auto` placeholder without model
 capabilities. That is unknown capability, not proof that every requested model is unsupported.
 The adapter forwards the configured request unchanged. Copilot can apply its own routing policy;

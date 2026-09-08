@@ -1,6 +1,6 @@
 import * as Popover from "@radix-ui/react-popover";
 import { X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { Component, lazy, Suspense, useMemo, useState } from "react";
 
 import type {
   DictionaryEntry,
@@ -11,8 +11,18 @@ import type {
 
 import { Sheet } from "../../shared/ui/Sheet";
 import { useMediaQuery } from "../../shared/ui/useMediaQuery";
+import type { ExplainEligibility } from "../reader/explainTarget";
 import { externalDictionaryLinks } from "./externalDictionaries";
 import { partOfSpeechHueClass } from "./partOfSpeechHue.tokens";
+
+// The explicit "Explain meanings" action (#924/#925) is a separate, independently-budgeted feature:
+// it is never on the initial Reader/lookup bundle. `React.lazy` gives it its own Vite chunk, loaded as
+// soon as an eligible `explainEligibility` exists for the open panel (opening lookup itself, before any
+// click) — distinct from actually INVOKING the model, which only the explicit button (or a genuine
+// retry) ever does.
+const ExplainSection = lazy(() =>
+  import("./explain/ExplainSection").then((module) => ({ default: module.ExplainSection }))
+);
 
 // Bind the desktop popover's height to the space Radix measures between the trigger and the
 // viewport edge (`--radix-popover-content-available-height`), capped at a comfortable 30rem.
@@ -40,6 +50,10 @@ export type LookupPanelProps = Readonly<{
   // The selection's viewport rect; the desktop popover anchors to it so the card sits near
   // the selection (and flips/offsets near viewport edges) without covering it.
   anchorRect?: DOMRect | undefined;
+  // Whether — and why not — the current selection can offer the explicit "Explain meanings" action
+  // (#925): `eligible` carries the exact-range request, `cross_block` shows a visible reason instead
+  // of a silently missing feature, and `none` renders nothing. Dictionaries render fully regardless.
+  explainEligibility: ExplainEligibility;
   onOpenChange: (open: boolean) => void;
   open: boolean;
   tabs: ReadonlyArray<LookupTab>;
@@ -207,25 +221,9 @@ function LookupNotFound({ term }: { term: string }): React.JSX.Element {
   );
 }
 
-// A persistent, visually distinct caveat on the local-LLM "AI 解释" tab (#341): the gloss is a labeled
-// contextual aid, never an authoritative dictionary entry, so this badge (with an accessible label)
-// rides every AI explanation. The attribution footer additionally names the local model.
-function LookupAiBadge(): React.JSX.Element {
-  return (
-    <p
-      aria-label="AI-generated explanation, may be imperfect"
-      className="lookupAiBadge"
-      role="note"
-    >
-      AI-generated — may be imperfect
-    </p>
-  );
-}
-
-function renderEntry(entry: DictionaryEntry, isAi: boolean): React.JSX.Element {
+function renderEntry(entry: DictionaryEntry): React.JSX.Element {
   return (
     <div className="lookupEntry">
-      {isAi ? <LookupAiBadge /> : null}
       <header className="lookupHeader">
         <p className="lookupHeadword">{entry.headword}</p>
         {entry.pronunciations.length === 0 ? null : (
@@ -252,9 +250,10 @@ function renderEntry(entry: DictionaryEntry, isAi: boolean): React.JSX.Element {
   );
 }
 
-// Render one source's state. `isAi` marks the local-LLM "AI 解释" source (#341), so a resolved entry
-// carries the AI-generated badge; every other state is source-agnostic.
-function renderState(state: LookupState, term: string, isAi: boolean): React.JSX.Element {
+// Render one dictionary source's state. Every dictionary source is source-agnostic — no source gets
+// special AI-badge treatment; the AI-labeled explanation lives entirely in the separate, explicit
+// Explain feature (`features/lookup/explain/`, #925), never mixed into a dictionary tab.
+function renderState(state: LookupState, term: string): React.JSX.Element {
   switch (state.status) {
     case "loading":
       return <p role="status">Looking up…</p>;
@@ -267,11 +266,7 @@ function renderState(state: LookupState, term: string, isAi: boolean): React.JSX
       // definition: the response contract permits found:true with an empty partsOfSpeech, so a tab
       // the reader opens explicitly still shows the no-match launchpad rather than a bare headword
       // (#306) — with the external links so it is never a dead-end (#339).
-      return stateHasContent(state) ? (
-        renderEntry(state.entry, isAi)
-      ) : (
-        <LookupNotFound term={term} />
-      );
+      return stateHasContent(state) ? renderEntry(state.entry) : <LookupNotFound term={term} />;
   }
 }
 
@@ -291,15 +286,9 @@ function stateHasContent(state: LookupState): boolean {
 // function word like "versus" that WordNet has no entry for falls through to Wiktionary. Each
 // networked source is time-boxed, so a leading "loading" tab is transient: it resolves to content or
 // falls through to the next source. The reader can still switch tabs explicitly.
-//
-// The optional local-LLM "AI 解释" tab (#341) is DELIBERATELY ineligible for auto-preference: it must
-// never become the default or a fall-through target (not when it has content, and not while it is still
-// loading), so dictionaries always lead and the AI explanation is opened only on purpose. Without this,
-// once every dictionary resolves empty/error while the trailing LLM tab is still loading, the panel
-// would auto-select it.
 function preferredTab(tabs: ReadonlyArray<LookupTab>): number {
   const usable = tabs.findIndex(
-    (tab) => tab.id !== "llm" && (stateHasContent(tab.state) || tab.state.status === "loading")
+    (tab) => stateHasContent(tab.state) || tab.state.status === "loading"
   );
   return usable === -1 ? 0 : usable;
 }
@@ -348,9 +337,69 @@ function LookupTabs({
           ))}
         </div>
       ) : null}
-      {renderState(active.state, term, active.id === "llm")}
+      {renderState(active.state, term)}
     </div>
   );
+}
+
+// A React error boundary (the only supported mechanism — no added dependency/framework) around the
+// lazy-loaded Explain feature (#925 correction): a missing/offline/stale chunk import rejects, and
+// React re-throws that rejection into the nearest boundary on render — with no boundary here, it took
+// down the WHOLE Reader, dictionaries included. Scoped to wrap ONLY this one optional slot (a sibling
+// of `LookupTabs`, never an ancestor of it), so dictionary content is structurally unreachable by
+// anything this boundary catches and stays fully usable regardless.
+type ExplainBoundaryState = Readonly<{ hasError: boolean }>;
+
+class ExplainErrorBoundary extends Component<
+  Readonly<{ children: React.ReactNode }>,
+  ExplainBoundaryState
+> {
+  override state: ExplainBoundaryState = { hasError: false };
+
+  static getDerivedStateFromError(): ExplainBoundaryState {
+    return { hasError: true };
+  }
+
+  override render(): React.ReactNode {
+    if (this.state.hasError) {
+      return (
+        <p className="explainLoadError" role="alert">
+          Explain meanings couldn't load. Dictionary results above are unaffected — reload the page
+          to try again.
+        </p>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+// The lazy-loaded "Explain meanings" slot (#924/#925): rendered as its own independent, always-visible
+// action, not a per-source tab, so it stays reachable and visibly separate from dictionary evidence
+// regardless of which dictionary tab is active or whether any dictionary has an entry. A genuinely
+// ineligible capture (a cross-block span) still shows a visible, named reason rather than a silently
+// missing feature; only a truly absent capture (`none`) renders nothing.
+function LookupExplainSlot({
+  explainEligibility
+}: Readonly<{ explainEligibility: ExplainEligibility }>): React.JSX.Element | null {
+  switch (explainEligibility.status) {
+    case "none":
+      return null;
+    case "cross_block":
+      return (
+        <p className="explainIneligible" role="note">
+          Explain meanings isn't available for a selection spanning multiple paragraphs. Select a
+          shorter phrase within one paragraph to use it.
+        </p>
+      );
+    case "eligible":
+      return (
+        <ExplainErrorBoundary>
+          <Suspense fallback={<p role="status">Loading Explain meanings…</p>}>
+            <ExplainSection target={explainEligibility.target} />
+          </Suspense>
+        </ExplainErrorBoundary>
+      );
+  }
 }
 
 // Position an invisible Radix anchor over the selection's rect so the popover opens beside
@@ -375,6 +424,7 @@ function anchorStyle(rect: DOMRect | undefined): React.CSSProperties {
 // collision-aware flip/offset so the card never covers the selected text.
 function LookupPopover({
   anchorRect,
+  explainEligibility,
   onOpenChange,
   open,
   tabs,
@@ -399,6 +449,7 @@ function LookupPopover({
             </Popover.Close>
           </div>
           <div className="lookupPanel">
+            <LookupExplainSlot explainEligibility={explainEligibility} />
             <LookupTabs tabs={tabs} term={term} />
           </div>
         </Popover.Content>
@@ -410,6 +461,7 @@ function LookupPopover({
 // Narrow/mobile: a content-height bottom sheet (not the full-height side panel). Reuses the
 // shared Sheet primitive forced to its bottom layout.
 function LookupSheet({
+  explainEligibility,
   onOpenChange,
   open,
   tabs,
@@ -418,6 +470,7 @@ function LookupSheet({
   return (
     <Sheet onOpenChange={onOpenChange} open={open} side="bottom" title={`Look up: ${term}`}>
       <div className="lookupPanel">
+        <LookupExplainSlot explainEligibility={explainEligibility} />
         <LookupTabs tabs={tabs} term={term} />
       </div>
     </Sheet>
@@ -429,6 +482,7 @@ function LookupSheet({
 // tab, fetched independently, so one being slow/down/empty never freezes the panel (#196).
 export function LookupPanel({
   anchorRect,
+  explainEligibility,
   onOpenChange,
   open,
   tabs,
@@ -440,6 +494,7 @@ export function LookupPanel({
     return (
       <LookupPopover
         anchorRect={anchorRect}
+        explainEligibility={explainEligibility}
         onOpenChange={onOpenChange}
         open={open}
         tabs={tabs}
@@ -448,5 +503,13 @@ export function LookupPanel({
     );
   }
 
-  return <LookupSheet onOpenChange={onOpenChange} open={open} tabs={tabs} term={term} />;
+  return (
+    <LookupSheet
+      explainEligibility={explainEligibility}
+      onOpenChange={onOpenChange}
+      open={open}
+      tabs={tabs}
+      term={term}
+    />
+  );
 }

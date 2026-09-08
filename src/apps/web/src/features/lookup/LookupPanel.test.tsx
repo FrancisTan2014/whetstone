@@ -5,6 +5,9 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { LookupPanel, type LookupState, type LookupTab } from "./LookupPanel";
+import type { ExplainEligibility } from "../reader/explainTarget";
+import { toEntryId } from "@whetstone/domain";
+import type { ExplainRequest } from "@whetstone/contracts";
 
 function mockMatchMedia(matchers: Record<string, boolean>): void {
   window.matchMedia = vi.fn().mockImplementation((query: string) => ({
@@ -48,15 +51,29 @@ const emptyButLoaded: LookupState = {
   status: "loaded"
 };
 
+const eligibleTarget: ExplainRequest = {
+  blockEntryId: toEntryId("b1"),
+  endOffset: 4,
+  selectedText: "set",
+  startOffset: 0,
+  workEntryId: toEntryId("w1")
+};
+
 function renderPanel(
   state: LookupState,
-  options: { anchorRect?: DOMRect; matchers: Record<string, boolean>; onOpenChange?: () => void }
+  options: {
+    anchorRect?: DOMRect;
+    explainEligibility?: ExplainEligibility;
+    matchers: Record<string, boolean>;
+    onOpenChange?: () => void;
+  }
 ): RenderResult {
   mockMatchMedia(options.matchers);
   const tabs: LookupTab[] = [{ id: "wordnet", label: "WordNet", state }];
   return render(
     <LookupPanel
       anchorRect={options.anchorRect}
+      explainEligibility={options.explainEligibility ?? { status: "none" }}
       onOpenChange={options.onOpenChange ?? (() => undefined)}
       open={true}
       tabs={tabs}
@@ -68,10 +85,19 @@ function renderPanel(
 function renderTabs(
   tabs: ReadonlyArray<LookupTab>,
   matchers: Record<string, boolean> = desktop,
-  term = "set"
+  term = "set",
+  explainEligibility: ExplainEligibility = { status: "none" }
 ): RenderResult {
   mockMatchMedia(matchers);
-  return render(<LookupPanel onOpenChange={() => undefined} open={true} tabs={tabs} term={term} />);
+  return render(
+    <LookupPanel
+      explainEligibility={explainEligibility}
+      onOpenChange={() => undefined}
+      open={true}
+      tabs={tabs}
+      term={term}
+    />
+  );
 }
 
 afterEach(() => {
@@ -540,95 +566,6 @@ describe("LookupPanel content", () => {
     renderTabs([]);
     expect(screen.getByText("No definition found for “set”.")).toBeDefined();
   });
-
-  it("badges the local-LLM 'AI 解释' gloss as AI-generated, with the model attribution (#341)", () => {
-    const aiEntry: LookupState = {
-      entry: {
-        headword: "六艺",
-        partsOfSpeech: [
-          { senses: [{ definition: "在此句中指六种技艺。", examples: [], synonyms: [] }] }
-        ],
-        pronunciations: [],
-        sources: ["AI 解释 · qwen2.5 (local)"]
-      },
-      status: "loaded"
-    };
-    renderTabs([{ id: "llm", label: "AI 解释", state: aiEntry }], desktop, "六艺");
-
-    expect(screen.getByText("在此句中指六种技艺。")).toBeDefined();
-    const badge = screen.getByRole("note", { name: "AI-generated explanation, may be imperfect" });
-    expect(badge.textContent).toContain("AI-generated");
-    expect(screen.getByText("AI 解释 · qwen2.5 (local)")).toBeDefined();
-  });
-
-  it("does not default to the AI 解释 tab when a dictionary has content, and badges it only when opened (#341)", async () => {
-    const user = userEvent.setup();
-    const dictEntry: LookupState = {
-      entry: {
-        headword: "六艺",
-        partsOfSpeech: [
-          { senses: [{ definition: "六种技艺的辞书义。", examples: [], synonyms: [] }] }
-        ],
-        pronunciations: [],
-        sources: ["From 萌典."]
-      },
-      status: "loaded"
-    };
-    const aiEntry: LookupState = {
-      entry: {
-        headword: "六艺",
-        partsOfSpeech: [
-          { senses: [{ definition: "在此句中的解释。", examples: [], synonyms: [] }] }
-        ],
-        pronunciations: [],
-        sources: ["AI 解释 · qwen2.5 (local)"]
-      },
-      status: "loaded"
-    };
-    renderTabs(
-      [
-        { id: "moedict", label: "萌典", state: dictEntry },
-        { id: "llm", label: "AI 解释", state: aiEntry }
-      ],
-      desktop,
-      "六艺"
-    );
-
-    // The dictionary leads (preferredTab unchanged); the AI badge is absent until the reader opens it.
-    expect(screen.getByText("六种技艺的辞书义。")).toBeDefined();
-    expect(
-      screen.queryByRole("note", { name: "AI-generated explanation, may be imperfect" })
-    ).toBeNull();
-
-    await user.click(screen.getByRole("tab", { name: "AI 解释" }));
-    expect(
-      screen.getByRole("note", { name: "AI-generated explanation, may be imperfect" })
-    ).toBeDefined();
-  });
-
-  it("never auto-selects AI 解释: dictionaries lead even while the LLM tab is still loading (#341)", async () => {
-    const user = userEvent.setup();
-    renderTabs(
-      [
-        { id: "moedict", label: "萌典", state: { status: "empty" } },
-        { id: "zhwiktionary", label: "中文維基詞典", state: { status: "error" } },
-        { id: "cedict", label: "CC-CEDICT", state: { status: "empty" } },
-        { id: "llm", label: "AI 解释", state: { status: "loading" } }
-      ],
-      desktop,
-      "六艺"
-    );
-
-    // Every dictionary resolved empty/error while the trailing LLM tab is still loading. The panel must
-    // NOT fall through to AI 解释: no "Looking up…" from an auto-selected LLM tab, and the leading
-    // dictionary's not-found launchpad shows instead.
-    expect(screen.queryByRole("status")).toBeNull();
-    expect(screen.getByText("No definition found for “六艺”.")).toBeDefined();
-
-    // The AI tab is still reachable — the reader opens it deliberately, and only then does it load.
-    await user.click(screen.getByRole("tab", { name: "AI 解释" }));
-    expect(screen.getByRole("status").textContent).toContain("Looking up");
-  });
 });
 
 describe("LookupPanel desktop popover", () => {
@@ -722,5 +659,85 @@ describe("LookupPanel mobile sheet", () => {
     await user.click(screen.getByRole("button", { name: "Close" }));
 
     expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+});
+
+// The three `ExplainEligibility` states each render honestly (#925 correction): `none` shows nothing,
+// `cross_block` names its own reason instead of a silently missing feature, and `eligible` mounts the
+// lazily-loaded Explain feature as its own chunk. A rejected chunk load must be contained locally by
+// the new error boundary, never crash the panel, and dictionary content must stay fully usable either
+// way — proven directly here rather than only indirectly through `ReaderPage.test.tsx`.
+describe("LookupPanel explain eligibility", () => {
+  afterEach(() => {
+    vi.doUnmock("./explain/ExplainSection");
+  });
+
+  it("renders nothing extra for a selection with no explain eligibility", () => {
+    renderTabs([{ id: "wordnet", label: "WordNet", state: loadedEntry }], desktop, "set", {
+      status: "none"
+    });
+
+    expect(screen.queryByText(/Explain meanings/)).toBeNull();
+    expect(screen.queryByRole("note")).toBeNull();
+  });
+
+  it("names the reason instead of silently hiding the feature for a cross-block selection", () => {
+    renderTabs([{ id: "wordnet", label: "WordNet", state: loadedEntry }], desktop, "set", {
+      status: "cross_block"
+    });
+
+    expect(
+      screen.getByText(/isn't available for a selection spanning multiple paragraphs/)
+    ).toBeDefined();
+    // Dictionary content is entirely unaffected by the ineligible explain state.
+    expect(screen.getByText("set")).toBeDefined();
+  });
+
+  it("mounts the lazily-loaded Explain feature when eligible, alongside dictionary content", async () => {
+    vi.doMock("./explain/ExplainSection", () => ({
+      ExplainSection: () => <p>Explain feature mounted</p>
+    }));
+    vi.resetModules();
+    const { LookupPanel: FreshLookupPanel } = await import("./LookupPanel");
+    mockMatchMedia(desktop);
+
+    render(
+      <FreshLookupPanel
+        explainEligibility={{ status: "eligible", target: eligibleTarget }}
+        onOpenChange={() => undefined}
+        open={true}
+        tabs={[{ id: "wordnet", label: "WordNet", state: loadedEntry }]}
+        term="set"
+      />
+    );
+
+    expect(await screen.findByText("Explain feature mounted")).toBeDefined();
+    expect(screen.getByText("set")).toBeDefined();
+  });
+
+  it("contains a rejected Explain chunk load locally, keeping dictionary content usable", async () => {
+    vi.doMock("./explain/ExplainSection", () => {
+      throw new Error("simulated missing/offline chunk");
+    });
+    vi.resetModules();
+    const { LookupPanel: FreshLookupPanel } = await import("./LookupPanel");
+    mockMatchMedia(desktop);
+
+    render(
+      <FreshLookupPanel
+        explainEligibility={{ status: "eligible", target: eligibleTarget }}
+        onOpenChange={() => undefined}
+        open={true}
+        tabs={[{ id: "wordnet", label: "WordNet", state: loadedEntry }]}
+        term="set"
+      />
+    );
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(/couldn't load/);
+    expect(alert.textContent).toMatch(/Dictionary results above are unaffected/);
+    // Dictionary content stays reachable and rendered — the crash is structurally contained to the
+    // sibling Explain slot, never the ancestor holding `LookupTabs`.
+    expect(screen.getByText("set")).toBeDefined();
   });
 });
