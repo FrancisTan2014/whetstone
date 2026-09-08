@@ -18,7 +18,7 @@ type OverviewState =
 // The Recite home (#638): the primary destination for whole-Work recitation maintenance. It lists every
 // enrolled Work with its live due state and next review date read from the server, leads with a due-review
 // entry when anything is due, and points to each Work's direct maintenance review (a secondary surface
-// under Recite). Enrollment happens in Library/Reader ("I can recite this"), so the empty state points
+// under Recite). Enrollment happens in Library ("I can recite this"), so the empty state points
 // there rather than inventing an enrol action here.
 export function RecitePage(): React.JSX.Element {
   const [state, setState] = useState<OverviewState>({ status: "loading" });

@@ -152,7 +152,9 @@ maintenance.
 
 ### Enrollment and ownership
 
-- Library and Reader expose **I can recite this** for an eligible Work.
+- The Library exposes **I can recite this** for an eligible Work. The Reader does not: reading a Work
+  and declaring it retrievable are different intentions, so the declaration is made out of band about
+  a Work, never from the reading tools.
 - Enrollment creates or reuses one owner-scoped `recitation_plan`, one Work-level Recitation target,
   and one active shared review card at requested retention **0.95**. The Work remains the only source
   text.

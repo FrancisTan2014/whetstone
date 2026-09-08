@@ -1500,11 +1500,12 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   self-ratings; only the rating posts, and it reschedules only that Work's card. `RecitationReviewPage.tsx`
   is the `/recitation` route (reads `?work=<id>` to open THAT exact Work's review, else the earliest-due
   Work) with a "Back to Recite" control and loading/error/ready(review-or-calm Library recovery)/done
-  (next-scheduled + Back to Today) states. The **"I can recite this"** entry points live on `library/AdminLibraryPage.tsx` (per un-enrolled
-  Work; an enrolled Work shows a quiet "Reciting" status + a "Review" link) and `reader/ReadingHeader.tsx`
-  (`ReciteThisControl` enrols then navigates to the review); both enrol BEFORE opening the review and are
-  idempotent. Today's **Due now** Recitation row deep-links to `#/recitation`; the `/recite` route is now
-  the Recite home (`app/AppRoutes.tsx`, #638 — no longer a Library redirect).
+  (next-scheduled + Back to Today) states. The **"I can recite this"** entry point lives on
+  `library/AdminLibraryPage.tsx` only (per un-enrolled Work; an enrolled Work shows a quiet "Reciting"
+  status + a "Review" link) — never in the Reader (#921), which stays a reading surface; it enrols
+  BEFORE opening the review and is idempotent. Today's **Due now** Recitation row deep-links to
+  `#/recitation`; the `/recite` route is now the Recite home (`app/AppRoutes.tsx`, #638 — no longer a
+  Library redirect).
 - Cross-feature UI lands in `src/shared/ui/`, client API helpers in `src/shared/api/` (created when
   first needed). Tests colocated `*.test.ts(x)`.
 

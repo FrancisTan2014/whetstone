@@ -1828,13 +1828,6 @@
   block-size: 1.25rem;
 }
 
-/* A consequential Reader action (I can recite this, #641) keeps its visible text label beside the
-   icon rather than going icon-only; nowrap so the labelled control stays on one line in the rail. */
-.readingToolLabel {
-  font-size: var(--text-scale-sm);
-  white-space: nowrap;
-}
-
 /* The note count rides the notes tool as a quiet pill rather than a second control. */
 .readingToolBadge {
   display: inline-flex;
