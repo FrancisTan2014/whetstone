@@ -460,6 +460,17 @@ can navigate them from another package.
   a shell-less `spawn` needs; `python -m unittest discover -s tests`, now enforced by the
   `Python worker tests` gate via `pnpm test:python`, #911).
   Protocol, shim, and tidy wiring are all in `docs/AGENT.md`.
+- Warm Copilot SDK runtime: `src/agent/copilotSdkConfig.ts` + `src/agent/copilotSdkAgent.ts` — a
+  **second** `Agent` implementation (#923), behind the same port as `cliAgent.ts` above, over the
+  official `@github/copilot-sdk` instead of a per-turn CLI invocation. Keeps ONE Copilot runtime process
+  warm (lazy start, idle disposal, concurrency-safe startup, honest failed-start recovery,
+  deterministic `dispose()`), while every `open()` still gets its own fresh SDK session — process reuse,
+  never conversation reuse. Explicitly prompt-only (`mode: "empty"`, empty `availableTools`, deny-all
+  permission handler, no MCP, no remote export). Fixed default model/effort
+  (`AGENT_COPILOT_MODEL`/`AGENT_COPILOT_REASONING_EFFORT`, default `gpt-5.4`/`high`), operator
+  overridable, validated against the runtime's own `listModels()`. Not yet wired into a product flow;
+  #924's semantic-map lookup is its imminent consumer. Full config/lifecycle/failure detail in
+  `docs/AGENT.md`.
 - Voice input (STT) seam: `src/speech/` — `speechInput.ts` (the `SpeechInput`
   interface: `transcribe({ path }) -> { transcript, words[], language }`; transcript-first — `words` is
   optional timing evidence, empty when a provider has no aligner, #799), `fakeSpeechInput.ts`

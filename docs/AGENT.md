@@ -15,6 +15,11 @@ injected OS-process boundary, and a boot health report that reports and never cr
 the voice-diary transcript tidy runs through a local agent CLI instead of a resident Ollama model. See
 [First client: diary tidy](#first-client-diary-tidy) below. No other product flow calls the seam.
 
+A second implementation of the same `Agent` port exists — a **warm GitHub Copilot SDK runtime** (#923,
+[below](#warm-copilot-sdk-runtime-923)) — but nothing wires it into a product flow yet, exactly as
+`CliAgent` was delivered before #906 gave it a caller. #924's semantic-map lookup is its imminent
+consumer.
+
 ## Components
 
 - `Agent` / `AgentSession` / `AgentTurn` (`agentSession.ts`) — the port. `open({ instructions? })`
@@ -35,6 +40,8 @@ the voice-diary transcript tidy runs through a local agent CLI instead of a resi
 - `agentFailure.ts` — the typed failure codes every turn fails by (below).
 - `agentHealth.ts` — the boot report: is a provider configured, did it answer its probe, and can it
   resume sessions.
+- `copilotSdkConfig.ts` / `copilotSdkAgent.ts` — the warm Copilot SDK runtime (#923), a second `Agent`
+  implementation described in [its own section](#warm-copilot-sdk-runtime-923) below.
 
 ## Configuration (config-gated, absent-config-safe)
 
@@ -111,6 +118,9 @@ error strings:
 | `agent_malformed_response` | Exit `0`, but stdout was not the JSON turn contract                  |
 | `agent_timeout`            | The turn exceeded its wall-clock bound and the child was stopped     |
 | `agent_session_closed`     | `send` was called after `close`                                      |
+| `agent_startup_failed`     | The Copilot SDK runtime (#923) failed to start (auth/process/transport) |
+| `agent_unsupported_model`  | The configured Copilot model/reasoning effort is not one the runtime reports support for (#923) |
+| `agent_transport_failed`   | A session/turn operation failed against an already-started Copilot runtime (#923) |
 
 A malformed or off-contract response **fails the turn**. The seam never fabricates, salvages, or
 partially trusts an answer.
@@ -185,6 +195,82 @@ so a machine that cannot host a local LLM can still tidy.
 - Because a failure is swallowed on purpose, the injected agent log sink is the only operational trace of
   it — provider, status, duration only, per [Logging and privacy](#logging-and-privacy).
 
+## Warm Copilot SDK runtime (#923)
+
+A second `Agent` implementation (`copilotSdkAgent.ts`) speaks to the official
+[`@github/copilot-sdk`](https://www.npmjs.com/package/@github/copilot-sdk) instead of a per-turn CLI
+invocation. Unlike `CliAgent`, it keeps **one Copilot runtime process warm** and reuses it across
+independent `open()` calls — reuse of the *process*, never of a *conversation*: every `open()` still
+gets its own fresh SDK session and history. Nothing wires it into a product flow yet; #924's
+semantic-map lookup is the imminent consumer.
+
+**Configuration** (fixed, sensible defaults; no "unconfigured" state, unlike the CLI provider above):
+
+| Env var                        | Meaning                                             | Default                          |
+| ------------------------------- | --------------------------------------------------- | --------------------------------- |
+| `AGENT_COPILOT_MODEL`           | The Copilot model requested for every session        | `gpt-5.4`                         |
+| `AGENT_COPILOT_REASONING_EFFORT`| One of `low`, `medium`, `high`, `xhigh`, `max`       | `high`                             |
+| `AGENT_COPILOT_HOME`            | Where the runtime keeps its own session/config state | `<os tmpdir>/whetstone-copilot-sdk` |
+
+`AGENT_COPILOT_HOME` deliberately defaults to a seam-owned scratch directory, never the SDK's own
+`~/.copilot` default, so a server-started runtime never reads or writes a developer's personal
+interactive Copilot CLI session state. An unrecognized `AGENT_COPILOT_REASONING_EFFORT` value is a
+named startup configuration error with a remedy, never a silent substitution. A model or
+model/reasoning-effort combination the connected runtime does not report support for (checked against
+its own `listModels()` on startup) fails by name (`agent_unsupported_model`) with the runtime's actual
+advertised list, rather than silently falling back to a different model.
+
+**Verified live exception:** a bounded live smoke against the installed Copilot CLI (1.0.83, personal
+`gh-cli` auth) found that `listModels()` can report only a single generic `{ id: "auto" }` routing
+placeholder with no per-model capability data at all — no enumerable catalog to validate a configured
+model against — while the transport still honored an explicit, non-enumerated model at session
+creation. Hard-failing every account in that state (including this issue's own default, `gpt-5.4|high`)
+would be worse than the narrow validation gap it avoids, so `findUnsupportedModelReason` recognizes
+exactly that placeholder shape and does not gate on it; it still fails by name whenever `listModels()`
+reports a real, non-placeholder catalog that omits the configured model or effort.
+
+**Lifecycle:**
+
+- **Lazy:** nothing starts until the first `open()` call.
+- **Warm and shared:** the first `open()` starts the one runtime process; every later `open()` (until
+  disposal) reuses it. Concurrent callers racing the very first `open()` share the one in-flight start —
+  no duplicate runtime is ever started, and no duplicate paid attempt happens on their behalf.
+- **Honest failed-start recovery:** a failed start resets to cold, so the *next* `open()` gets one fresh
+  attempt; concurrent callers that awaited the failed attempt all see that one failure, never a silent
+  automatic retry.
+- **Idle disposal:** once the last open session closes, an idle timer starts (10 minutes by default);
+  if no new session opens before it fires, the runtime stops itself. Opening any session cancels a
+  pending idle timer, and the fired callback re-checks that no session is open before disposing, so an
+  idle timer can never reap a runtime with active work.
+- **Deterministic shutdown:** a caller (a later server shutdown hook) can call the returned `dispose()`
+  explicitly — not part of the `Agent` port itself, which has no shutdown verb — to stop a ready runtime,
+  or wait out and stop an in-flight start. After disposal, `open()` fails by name rather than silently
+  starting a fresh runtime.
+- **Per-turn timeout:** the SDK's own turn timeout (120 seconds, matching the CLI provider's bound) is
+  used directly; the SDK itself documents that timing out does not abort in-flight provider work, only
+  stops waiting for it — this seam does not invent a stronger guarantee than the SDK gives it.
+
+**Prompt-only, explicitly (not by omission):** the SDK's own multi-user-server posture
+(`mode: "empty"`) is used — the opposite of its own default, which its docs warn is unsafe for a server
+because it "has tools and capabilities that operate across sessions and can access the host OS
+environment." Every session additionally sets, by name, an **empty tool list** (`availableTools: []`),
+a **deny-all permission handler** (defense-in-depth for any request that reaches it anyway),
+`skipCustomInstructions: true`, `customAgentsLocalOnly: true`, and `manageScheduleEnabled: false` — so a
+future SDK default change cannot silently reopen a surface this runtime closed. No MCP server is
+configured. No remote session export is enabled. This mirrors [No tools, by
+design](#no-tools-by-design) below for the CLI provider.
+
+**Known limitation:** the SDK exports no typed timeout-specific error class, so this seam's real
+adapter classifies a thrown timeout by a message-content heuristic (`/timeout|timed out/i`) rather than
+a stable typed check — disclosed here rather than presented as more precise than it is.
+
+**Not a billing guarantee:** Copilot bills input/output/cached tokens per request regardless of which
+process serves it; a warm runtime avoids repeated *process* startup cost, not per-prompt billing.
+
+**Not local inference:** the SDK manages a local Copilot CLI **process**, but every turn still calls
+GitHub's own hosted model over the network — a warm runtime changes where the client process lives, not
+where inference happens. Nothing here is an offline or local-model story the way Ollama is.
+
 ## No tools, by design
 
 
@@ -202,12 +288,11 @@ injected sink, so the server decides where they land.
 
 ## Not in this seam
 
-- **No warm/persistent session manager.** One-shot invocation per turn is enough; the probe already
-  reports a `sessions` capability flag, so a warm mode can be auto-detected later exactly as #884 did
-  for speech.
-- **No vendor adapter inside the app.** The generic adapter needs only `node:child_process` and adds no
-  runtime dependency; vendor-specific knowledge lives in an out-of-app shim
-  (`scripts/setup/copilot-wrapper/`), never under `src/`.
+- **No product flow calls the Copilot SDK runtime yet.** Delivered as an independent component exactly
+  as `CliAgent` was before #906; #924 is its imminent, not-yet-wired consumer.
+- **No vendor adapter inside the app for the CLI provider.** The generic `CliAgent` adapter needs only
+  `node:child_process` and adds no runtime dependency; vendor-specific knowledge lives in an out-of-app
+  shim (`scripts/setup/copilot-wrapper/`), never under `src/`.
 - **No JSON-mode agent completions.** `agentModel.ts` refuses `{ json: true }` rather than hoping a prose
   reply parses. A strict-JSON caller stays on an Ollama model until the protocol carries a structured
   payload.
