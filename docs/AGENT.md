@@ -16,9 +16,9 @@ the voice-diary transcript tidy runs through a local agent CLI instead of a resi
 [First client: diary tidy](#first-client-diary-tidy) below. No other product flow calls the seam.
 
 A second implementation of the same `Agent` port exists — a **warm GitHub Copilot SDK runtime** (#923,
-[below](#warm-copilot-sdk-runtime-923)) — but nothing wires it into a product flow yet, exactly as
-`CliAgent` was delivered before #906 gave it a caller. #924's semantic-map lookup is its imminent
-consumer.
+[below](#warm-copilot-sdk-runtime-923)) — **now consumed by the semantic-map explanation capability**
+(#924, `src/apps/server/src/features/explain/`, `docs/MAP.md`), the same way `CliAgent` was delivered
+before #906 gave it a caller.
 
 ## Components
 
@@ -201,8 +201,9 @@ A second `Agent` implementation (`copilotSdkAgent.ts`) speaks to the official
 [`@github/copilot-sdk`](https://www.npmjs.com/package/@github/copilot-sdk) instead of a per-turn CLI
 invocation. Unlike `CliAgent`, it keeps **one Copilot runtime process warm** and reuses it across
 independent `open()` calls — reuse of the _process_, never of a _conversation_: every `open()` still
-gets its own fresh SDK session and history. Nothing wires it into a product flow yet; #924's
-semantic-map lookup is the imminent consumer.
+gets its own fresh SDK session and history. **The semantic-map explanation capability (#924,
+`src/apps/server/src/features/explain/`) is its product consumer** — an independently opt-in, off-by-
+default feature (see `docs/MAP.md`); no other product flow uses this runtime.
 
 **Configuration** (fixed, sensible defaults; no "unconfigured" state, unlike the CLI provider above):
 
@@ -332,8 +333,10 @@ injected sink, so the server decides where they land.
 
 ## Not in this seam
 
-- **No product flow calls the Copilot SDK runtime yet.** Delivered as an independent component exactly
-  as `CliAgent` was before #906; #924 is its imminent, not-yet-wired consumer.
+- **The Copilot SDK runtime has exactly one product consumer today: the semantic-map explanation
+  capability (#924).** No other product flow (diary tidy stays on the local `Agent` seam above) calls
+  it, and it stays independently opt-in/off-by-default at the explain feature's own boundary
+  (`AGENT_COPILOT_EXPLAIN_ENABLED`) rather than piggy-backing on diary AI configuration.
 - **No vendor adapter inside the app for the CLI provider.** The generic `CliAgent` adapter needs only
   `node:child_process` and adds no runtime dependency; vendor-specific knowledge lives in an out-of-app
   shim (`scripts/setup/copilot-wrapper/`), never under `src/`.
