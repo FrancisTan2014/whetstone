@@ -105,6 +105,14 @@ describe("explainResultSchema", () => {
     ).not.toThrow();
   });
 
+  it("accepts a headword at the request's own maximum selectedText length (300) — never unrepresentable", () => {
+    expect(() => parseExplainResult(validResult({ headword: "a".repeat(300) }))).not.toThrow();
+  });
+
+  it("rejects a headword longer than the shared 300-character bound", () => {
+    expect(() => parseExplainResult(validResult({ headword: "a".repeat(301) }))).toThrow();
+  });
+
   it("rejects a duplicate family id", () => {
     const result = validResult() as Record<string, unknown>;
     const families = result.families as Array<Record<string, unknown>>;
@@ -126,6 +134,23 @@ describe("explainResultSchema", () => {
 
   it("rejects a currentBranchId that names no branch", () => {
     expect(() => parseExplainResult(validResult({ currentBranchId: "missing" }))).toThrow();
+  });
+
+  it("rejects a currentBranchId that exists, but only inside a DIFFERENT family than currentFamilyId", () => {
+    // currentFamilyId names "family-1", but currentBranchId only exists inside "family-2" — a global
+    // "does this branch id exist ANYWHERE" check would wrongly accept this; the branch must be scoped
+    // to the family currentFamilyId actually names.
+    const result = validResult() as Record<string, unknown>;
+    const families = result.families as Array<Record<string, unknown>>;
+    const family = families[0]!;
+    const branch = (family.branches as Array<Record<string, unknown>>)[0]!;
+    result.families = [
+      family,
+      { ...family, branches: [{ ...branch, id: "branch-in-family-2" }], id: "family-2" }
+    ];
+    result.currentFamilyId = "family-1";
+    result.currentBranchId = "branch-in-family-2";
+    expect(() => parseExplainResult(result)).toThrow();
   });
 
   it("rejects a pronunciation familyId that names no family", () => {

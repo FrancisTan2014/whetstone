@@ -75,6 +75,51 @@ describe("buildSelectionContext", () => {
     expect(context.length).toBe(10);
     expect(context).toContain("TARGET");
   });
+
+  it("shrinks the LEFT edge inward by one code unit when the computed crop boundary splits a surrogate pair", () => {
+    // maxContextLength=20, selectionLength=6 ("target") -> padding=floor((20-6)/2)=7.
+    // startOffset=20 -> naive start = 20-7 = 13, landing exactly on the LOW surrogate half of an
+    // astral character placed at code units 12-13. The whole split character must be excluded (never
+    // half of it), so the effective start snaps forward to 14 — one character short of the 20-char
+    // budget, never exceeding it.
+    const highSurrogate = "\uD835";
+    const lowSurrogate = "\uDD18";
+    const before = "a".repeat(12); // code units 0-11
+    const astralPair = highSurrogate + lowSurrogate; // code units 12-13
+    const between = "b".repeat(6); // code units 14-19
+    const selection = "target"; // code units 20-25
+    const after = "c".repeat(34); // code units 26-59
+    const plaintext = before + astralPair + between + selection + after;
+
+    const context = buildSelectionContext(plaintext, 20, 26, 20);
+
+    expect(context).toBe(plaintext.slice(14, 33));
+    expect(context.length).toBe(19);
+    expect(context).toContain("target");
+    // No lone surrogate at the very start of the returned context.
+    expect(context.charCodeAt(0)).not.toBe(highSurrogate.charCodeAt(0));
+    expect(context.charCodeAt(0)).not.toBe(lowSurrogate.charCodeAt(0));
+  });
+
+  it("shrinks the RIGHT edge inward by one code unit when the computed crop boundary splits a surrogate pair", () => {
+    // Symmetric to the left-edge case: endOffset=26 -> naive end = 26+7 = 33, landing exactly on the
+    // HIGH surrogate half of an astral character placed at code units 32-33. The effective end snaps
+    // back to 32, again one character short of the 20-char budget.
+    const highSurrogate = "\uD835";
+    const lowSurrogate = "\uDD18";
+    const before = "a".repeat(20); // code units 0-19
+    const selection = "target"; // code units 20-25
+    const between = "b".repeat(6); // code units 26-31
+    const astralPair = highSurrogate + lowSurrogate; // code units 32-33
+    const after = "c".repeat(30); // code units 34-63
+    const plaintext = before + selection + between + astralPair + after;
+
+    const context = buildSelectionContext(plaintext, 20, 26, 20);
+
+    expect(context).toBe(plaintext.slice(13, 32));
+    expect(context.length).toBe(19);
+    expect(context).toContain("target");
+  });
 });
 
 describe("normalizeHeadword", () => {

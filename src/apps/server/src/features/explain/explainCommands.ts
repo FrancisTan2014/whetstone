@@ -8,16 +8,25 @@ import type { Agent } from "../../agent/agentSession.js";
 import type { DbClient } from "../../db/dbClient.js";
 import {
   buildExplainCacheKey,
+  fingerprintExplainContext,
   type ExplainCache,
   type ExplainInFlightCoalescer
 } from "./explainCache.js";
-import { buildExplainPrompt, parseExplainModelOutput } from "./explainPrompt.js";
+import {
+  buildExplainInstructions,
+  buildExplainTurnPayload,
+  parseExplainModelOutput
+} from "./explainPrompt.js";
 import {
   resolveExplainSource,
   type ExplainSelectionRequest,
   type ExplainSourceOutcome
 } from "./explainSourceResolution.js";
-import { runExplainTurn, type ExplainTurnScheduler } from "./explainTurn.js";
+import {
+  runExplainTurn,
+  type ExplainTurnLogger,
+  type ExplainTurnScheduler
+} from "./explainTurn.js";
 
 // The orchestration command for the semantic-map explanation capability (#924): resolve the canonical
 // selection server-side, check the bounded successful-answer cache, coalesce concurrent identical
@@ -30,13 +39,18 @@ export type ExplainCachedAnswer = Readonly<{
   result: Extract<ExplainResponse, { status: "ok" }>["result"];
 }>;
 
-// This owned deadline bounds the WHOLE request (`agent.open()` + `session.send()` together,
-// `explainTurn.ts`), so it must comfortably EXCEED the warm Copilot runtime's own internal per-turn
-// bound (120s, `copilotSdkAgent.ts`'s `defaultTurnTimeoutMs`) plus session-open overhead — otherwise
-// this seam's own timeout would always fire first and mask a legitimate answer as a false "timeout".
-// A real high-reasoning-effort turn was observed taking 40-70s end to end; 150s leaves real margin
-// above the runtime's own 120s bound rather than merely matching it.
+// This owned deadline bounds the WHOLE request (`agent.open()` + `session.send()` + the final
+// `session.close()`, `explainTurn.ts`), so it must comfortably EXCEED the warm Copilot runtime's own
+// internal per-turn bound (120s, `copilotSdkAgent.ts`'s `defaultTurnTimeoutMs`) plus session-open
+// overhead — otherwise this seam's own timeout would always fire first and mask a legitimate answer as
+// a false "timeout". A real high-reasoning-effort turn was observed taking 40-70s end to end; 150s
+// leaves real margin above the runtime's own 120s bound rather than merely matching it.
 const defaultExplainTurnTimeoutMs = 150_000;
+
+// The stable standing instructions (persona/rules/JSON shape) never depend on any per-request value —
+// built once per process, not re-built on every request, and wired into `Agent.open({ instructions })`
+// (`explainTurn.ts`) so the SDK's default coding persona is replaced for the whole session (#923).
+const explainInstructions = buildExplainInstructions();
 
 export type ExplainLogRecord = Readonly<{ durationMs: number; status: ExplainResponse["status"] }>;
 export type ExplainLogger = (record: ExplainLogRecord) => void;
@@ -57,6 +71,9 @@ export type ExplainCommandDependencies = Readonly<{
   // (`explainSourceResolution.test.ts`). Defaults to the real, canonical resolver.
   resolveSource?: (db: DbClient, request: ExplainSelectionRequest) => Promise<ExplainSourceOutcome>;
   scheduler?: ExplainTurnScheduler;
+  // Structured, content-free session-close cleanup diagnostics (`explainTurn.ts`) — distinct from the
+  // outer per-request `log` above, which only ever sees the final response status.
+  turnLog?: ExplainTurnLogger;
   turnTimeoutMs?: number;
 }>;
 
@@ -79,6 +96,12 @@ export async function explainSelection(
   const cacheKey = buildExplainCacheKey({
     blockEntryId: request.blockEntryId,
     contentRevision: source.contentRevision,
+    // Folds in the ACTUAL resolved, bounded context (via its fingerprint) — not merely
+    // `contentRevision` — so a race between the concurrent block/workMeta reads in
+    // `explainSourceResolution.ts` (which can pair an old block snapshot with a newer revision, or vice
+    // versa) can never make two genuinely different resolved contexts share a cache key, and a real
+    // context change can never be missed just because `contentRevision` alone did not change.
+    contextFingerprint: fingerprintExplainContext(source.context),
     endOffset: request.endOffset,
     headword: source.headword,
     language: source.language,
@@ -96,11 +119,15 @@ export async function explainSelection(
 
   const now = dependencies.now ?? Date.now;
   const log = dependencies.log ?? (() => {});
+  const turnLog = dependencies.turnLog ?? (() => {});
   const turnTimeoutMs = dependencies.turnTimeoutMs ?? defaultExplainTurnTimeoutMs;
 
   const response = await dependencies.coalescer.run(cacheKey, async () => {
     const startedAt = now();
-    const prompt = buildExplainPrompt({
+    // Only the per-request DATA is sent as the turn — a single JSON object, never prose concatenation
+    // with the headword spliced into quotes. The stable persona/rules/schema live in `sessionConfig.
+    // instructions` below instead of being re-sent with every turn.
+    const prompt = buildExplainTurnPayload({
       context: source.context,
       headword: source.headword,
       language: source.language
@@ -108,13 +135,15 @@ export async function explainSelection(
 
     const turnOutcome = await runExplainTurn({
       agent,
+      log: turnLog,
+      now,
       prompt,
       // A brand-new session (and therefore a brand-new SDK conversation/history) for every independent
       // explanation, per #923/#924's design: the warm runtime process is reused, a conversation never
-      // is. No standing `instructions` — the whole persona/rules/shape framing is the one canonical
-      // prompt itself, matching the existing prose-only `agentModel.ts` convention.
+      // is. The stable standing instructions replace the SDK's default coding persona for this session
+      // (#923's `systemMessage: { mode: "replace", ... }` wiring).
       ...(dependencies.scheduler === undefined ? {} : { scheduler: dependencies.scheduler }),
-      sessionConfig: {},
+      sessionConfig: { instructions: explainInstructions },
       timeoutMs: turnTimeoutMs
     });
 

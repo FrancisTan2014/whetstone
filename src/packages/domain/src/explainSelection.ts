@@ -9,6 +9,49 @@
 // the one before/after it) without ever forwarding an entire long block as an untrusted data blob.
 export const defaultExplainContextWindowChars = 480;
 
+function isHighSurrogate(codeUnit: number): boolean {
+  return codeUnit >= 0xd800 && codeUnit <= 0xdbff;
+}
+
+function isLowSurrogate(codeUnit: number): boolean {
+  return codeUnit >= 0xdc00 && codeUnit <= 0xdfff;
+}
+
+// Snap a cropped-context edge inward when the crop boundary lands exactly between the two UTF-16 code
+// units of one surrogate pair (an astral character — e.g. an emoji, or a supplementary-plane CJK
+// character). Only ever SHRINKS the window (never grows it past the caller's own budget) and only ever
+// touches an edge padding actually pushed past the selection's own boundary — the exact selected span
+// itself is never modified by this function, matching `buildSelectionContext`'s own invariant.
+function snapContextEdgesToCodePoints(
+  plaintext: string,
+  start: number,
+  end: number,
+  startOffset: number,
+  endOffset: number
+): { start: number; end: number } {
+  let snappedStart = start;
+  if (
+    snappedStart > 0 &&
+    snappedStart < startOffset &&
+    isHighSurrogate(plaintext.charCodeAt(snappedStart - 1)) &&
+    isLowSurrogate(plaintext.charCodeAt(snappedStart))
+  ) {
+    snappedStart += 1;
+  }
+
+  let snappedEnd = end;
+  if (
+    snappedEnd < plaintext.length &&
+    snappedEnd > endOffset &&
+    isHighSurrogate(plaintext.charCodeAt(snappedEnd - 1)) &&
+    isLowSurrogate(plaintext.charCodeAt(snappedEnd))
+  ) {
+    snappedEnd -= 1;
+  }
+
+  return { end: snappedEnd, start: snappedStart };
+}
+
 // Bound a block's plaintext to a window of at most `maxContextLength` characters that still contains
 // the exact selection. Centers the window on the selection when the block is unbounded on both sides;
 // when the selection sits near either edge of the block, the window shifts to use its full budget from
@@ -45,7 +88,8 @@ export function buildSelectionContext(
     }
   }
 
-  return plaintext.slice(start, end);
+  const snapped = snapContextEdgesToCodePoints(plaintext, start, end, startOffset, endOffset);
+  return plaintext.slice(snapped.start, snapped.end);
 }
 
 // The exact selected text as the block's canonical plaintext actually holds it, over the same UTF-16

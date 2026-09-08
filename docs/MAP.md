@@ -836,34 +836,56 @@ can navigate them from another package.
   current passage uses — never a flat dictionary gloss, and unrelated to (never enabling or migrating)
   the legacy Ollama-backed `llm`/"AI 解释" tab above. `@whetstone/contracts` `explainContracts.ts` is
   the one shared, versioned wire contract (`EXPLAIN_PROMPT_VERSION`, request/result/response/capability
-  Zod schemas; validates bounded family/branch counts, duplicate ids, and that `currentFamilyId`/
-  `currentBranchId` actually reference an existing family/branch). `@whetstone/domain`
-  `explainSelection.ts` derives a bounded, selection-centered context window (never the whole block; a
-  selection near either edge of a long block still gets real preceding/following context) and trims the
-  cache/prompt headword without touching the exact stale-selection-detection range.
-  `explainSourceResolution.ts` is the canonical, security-critical server-side resolution: re-derives
-  the Work/block/range from the existing content query boundaries (never trusting a client context
-  dump), rejects a wrong-Work id, a deleted/unreadable block, or a changed selection/range explicitly
-  (`stale_selection`) rather than substituting an unrelated passage. `explainPrompt.ts` builds the one
-  canonical prompt (source text framed as inert DATA, immune to prompt injection) and parses the
-  model's free-form reply (the prose Agent port has no native structured-output mode) via a
-  brace-balanced extractor + the shared contract — any parse/shape failure is an explicit
+  Zod schemas; validates bounded family/branch counts, duplicate ids, and that `currentBranchId`
+  actually belongs to the referenced `currentFamilyId` — a family-scoped lookup, not two independent
+  global-id checks, so a branch id that is only valid under a DIFFERENT family is rejected;
+  `selectedText` and the returned `headword` share one bounded max length, deliberately without an
+  exact-lemma equality gate since a legitimate inflected-to-lemma headword can differ from the literal
+  selection). `@whetstone/domain` `explainSelection.ts` derives a bounded, selection-centered context
+  window (never the whole block; a selection near either edge of a long block still gets real
+  preceding/following context) and trims the cache/prompt headword without touching the exact
+  stale-selection-detection range; a cropped window's outer edges are snapped inward to the nearest
+  complete UTF-16 code point so a supplementary-plane (surrogate-pair) character at the crop boundary
+  is never split, while the selection's own boundaries are never touched. `explainSourceResolution.ts`
+  is the canonical, security-critical server-side resolution: re-derives the Work/block/range from the
+  existing content query boundaries (never trusting a client context dump), rejects a wrong-Work id, a
+  deleted/unreadable block, or a changed selection/range explicitly (`stale_selection`) rather than
+  substituting an unrelated passage. `explainPrompt.ts` separates the STABLE, versioned lexicographic
+  persona/organizing rules/response shape (`buildExplainInstructions()`) from the per-request DATA
+  payload (`buildExplainTurnPayload()`, one JSON object of `headword`/`language`/`context`): the
+  instructions are wired as the SDK's own standing `Agent.open({ instructions })` (replacing its
+  default coding persona, #923), and the turn itself sends only that JSON data — so source text is
+  structurally confined to a data field the instructions explicitly say is never a source of
+  instructions, rather than relying on a wrapping/tag convention alone (no wrapping is claimed to be
+  "immune" to prompt injection; untrusted text is still just text a well-instructed model is told to
+  treat as inert). The reply is parsed as ONE complete JSON document — the whole trimmed response, or
+  the inside of exactly one Markdown fence wrapping the ENTIRE response — never a scan for the first
+  balanced object inside surrounding commentary; any parse/shape failure is an explicit
   `invalid_response`, never a salvaged partial result. `explainCache.ts` is a bounded, success-only
-  in-memory cache keyed by selection/term + language + canonical context revision + prompt version +
+  in-memory cache (`structuredClone`-isolated on both `get`/`set`, so a caller mutating a stored input
+  or a returned result can never poison a later lookup) keyed by a JSON-tuple of selection/term +
+  language + a fingerprint of the actual resolved bounded context (not merely the content revision,
+  since the block and its revision are read via two separate concurrent queries) + prompt version +
   requested model/effort, plus an in-flight coalescer so concurrent identical requests share one paid
   Copilot turn rather than each starting their own. `explainTurn.ts` owns the WHOLE request's deadline
-  (session `open()` **and** `send()` together, not just the SDK's own internal turn timeout) — a
-  session that finishes opening only after the deadline fired is closed and never sent a prompt.
-  `explainConfig.ts` (`AGENT_COPILOT_EXPLAIN_ENABLED`, default off) is the independent opt-in switch and
-  the truthful capability resolver #925 polls (configured/opted-in state, never "already
-  authenticated"); enabling diary AI's local agent never implicitly enables this cloud capability.
-  `explainCommands.ts` orchestrates disabled-check → server-side resolution → cache/dedup →
-  `explainTurn.ts` → response mapping (`disabled`/`not_found`/`stale_selection`/`unavailable`/`timeout`/
-  `invalid_response`/`ok`, never a raw SDK error or a validation payload containing source text) →
-  cache-on-success-only. The thin route (`explainRoutes.ts`: `POST /api/explain`,
-  `GET /api/explain/capability`) is wired into `createServer.ts`/`index.ts` alongside the warm
-  `copilotSdkAgent.ts` runtime (#923) and its `dispose()`; no prompt/answer/selected-text is ever
-  logged.
+  (session `open()`, `send()`, **and** the final `close()`, not just the SDK's own internal turn
+  timeout) — a session that finishes opening only after the deadline fired is closed and never sent a
+  prompt; a `close()` failure is memoized (never closed twice, even if a timeout and the normal flow
+  both reach it) and logged as a structured diagnostic without ever being swallowed silently; a
+  successful send whose cleanup close fails afterward still returns a named `unavailable` outcome and
+  is never written to the cache; the SDK's own typed turn-timeout error maps explicitly to this
+  feature's `timeout` outcome rather than a generic `transport_failed`. `explainConfig.ts`
+  (`AGENT_COPILOT_EXPLAIN_ENABLED`, default off) is the independent opt-in switch and the truthful
+  capability resolver #925 polls (configured/opted-in state, never "already authenticated"); enabling
+  diary AI's local agent never implicitly enables this cloud capability. `explainCommands.ts`
+  orchestrates disabled-check → server-side resolution → cache/dedup → `explainTurn.ts` → response
+  mapping (`disabled`/`not_found`/`stale_selection`/`unavailable`/`timeout`/`invalid_response`/`ok`,
+  never a raw SDK error or a validation payload containing source text) → cache-on-success-only. The
+  thin route (`explainRoutes.ts`: `POST /api/explain`, `GET /api/explain/capability`) is wired into
+  `createServer.ts`/`index.ts` alongside the warm `copilotSdkAgent.ts` runtime (#923) and its
+  `dispose()` (called inside the SAME teardown `try` block as the rest of shutdown, so a rejected
+  dispose is recorded as a nonzero exit but can never skip Fastify close, database close, or
+  `process.exit`); no prompt/answer/selected-text is ever logged.
 - Offline English lexical relationships (#715, read-only; exposed over HTTP by #772, the UI journey
   follows in #716): `src/apps/server/src/features/lexical/` resolves, for ONE eligible English
   word plus a caller-selected WordNet sense, the owner's single-word Notes connected by typed one-hop

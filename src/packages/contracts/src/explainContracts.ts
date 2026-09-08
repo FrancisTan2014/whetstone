@@ -13,7 +13,9 @@ import { entryIdDtoSchema } from "./entryContracts.js";
 // One canonical prompt version string, shared between the server's prompt builder and its cache key so
 // a prompt revision can never silently reuse a stale-shape cached answer. Kept here (not only in the
 // server) so a future consumer can reason about which prompt generation produced a cached result.
-export const EXPLAIN_PROMPT_VERSION = "semantic-map-v1";
+// Bumped to v2 for the standing-instructions/data-payload split and full-document (no partial-scan)
+// model-output parsing — both changes the shape of what the model receives/returns.
+export const EXPLAIN_PROMPT_VERSION = "semantic-map-v2";
 
 // --------------------------------------------------------------------------------------------------
 // Request: the existing selection's Work/block identity and exact range, plus the client's own
@@ -22,7 +24,11 @@ export const EXPLAIN_PROMPT_VERSION = "semantic-map-v1";
 // language: both are resolved canonically server-side from the Work/block themselves.
 // --------------------------------------------------------------------------------------------------
 
-const MAX_SELECTED_TEXT_LENGTH = 300;
+// Shared by BOTH the request's `selectedText` and the result's `headword` below: a genuine exact
+// selection (never trimmed) must always be representable as the returned headword (only trimmed of
+// surrounding whitespace, `normalizeHeadword`), so these two bounds must never diverge — a real
+// maximum-length selection must never become an unrepresentable headword.
+const MAX_EXPLAIN_SELECTION_LENGTH = 300;
 
 export const explainRequestSchema = z
   .object({
@@ -31,7 +37,7 @@ export const explainRequestSchema = z
     selectedText: z
       .string()
       .min(1, { message: "selectedText must be non-empty." })
-      .max(MAX_SELECTED_TEXT_LENGTH),
+      .max(MAX_EXPLAIN_SELECTION_LENGTH),
     startOffset: z.number().int().nonnegative(),
     workEntryId: entryIdDtoSchema
   })
@@ -114,19 +120,34 @@ const explainResultBaseSchema = z
       .max(64),
     etymology: z.string().trim().min(1).max(EXPLAIN_NOTE_MAX_LENGTH).optional(),
     families: z.array(explainFamilySchema).min(1).max(4),
-    headword: z.string().trim().min(1, { message: "headword must be non-empty." }).max(200),
+    // Bounded the SAME as the request's `selectedText` (`MAX_EXPLAIN_SELECTION_LENGTH`): an inflected
+    // form may legitimately return a shorter lemma headword (e.g. "running" -> "run"), but a real exact
+    // selection at the request's own maximum length must never become unrepresentable here. This is
+    // deliberately NOT an exact-lemma equality gate against the request's selectedText — only a shared
+    // upper bound.
+    headword: z
+      .string()
+      .trim()
+      .min(1, { message: "headword must be non-empty." })
+      .max(MAX_EXPLAIN_SELECTION_LENGTH),
     language: z.enum(explainLanguages),
     nuance: z.string().trim().min(1).max(EXPLAIN_NOTE_MAX_LENGTH).optional(),
     // Polyphonic Chinese readings (and, more rarely, English homographs) tie a distinct pronunciation to
     // a distinct sense family; `familyId` is optional because most words have exactly one reading.
+    // Having more than one attested pronunciation does NOT by itself justify separate families — split
+    // families only when the MEANINGS are genuinely unrelated (see `explainPrompt.ts`).
     pronunciation: z.array(explainPronunciationSchema).max(6).optional(),
     usageNote: z.string().trim().min(1).max(EXPLAIN_NOTE_MAX_LENGTH).optional()
   })
   .strict();
 
 // Cross-reference validation: `currentFamilyId`/`currentBranchId` (and any pronunciation `familyId`)
-// must name a family/branch that actually exists in this same response, and no family or branch id may
-// repeat. Invalid or incomplete model output is rejected here rather than partially salvaged into a
+// must name a family/branch that actually exists in this same response, no family or branch id may
+// repeat, and — critically — `currentBranchId` must name a branch INSIDE the family named by
+// `currentFamilyId`, never merely a branch id that happens to exist somewhere else in the response (a
+// currentFamilyId=A / currentBranchId-only-in-B pair is exactly the shape the prompt forbids: "the
+// branch the passage below actually uses" is scoped to the current family, not the whole response).
+// Invalid or incomplete model output is rejected here rather than partially salvaged into a
 // dictionary-shaped fallback.
 export const explainResultSchema = explainResultBaseSchema.superRefine((value, ctx) => {
   const familyIds = new Set<string>();
@@ -155,18 +176,19 @@ export const explainResultSchema = explainResultBaseSchema.superRefine((value, c
     }
   }
 
-  if (!familyIds.has(value.currentFamilyId)) {
+  const currentFamily = value.families.find((family) => family.id === value.currentFamilyId);
+  if (currentFamily === undefined) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: `currentFamilyId "${value.currentFamilyId}" does not match any family.`,
       path: ["currentFamilyId"]
     });
-  }
-
-  if (!branchIds.has(value.currentBranchId)) {
+  } else if (!currentFamily.branches.some((branch) => branch.id === value.currentBranchId)) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      message: `currentBranchId "${value.currentBranchId}" does not match any branch.`,
+      message:
+        `currentBranchId "${value.currentBranchId}" does not belong to the family named by ` +
+        `currentFamilyId "${value.currentFamilyId}".`,
       path: ["currentBranchId"]
     });
   }

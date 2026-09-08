@@ -3,13 +3,15 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildExplainCacheKey,
   createExplainInFlightCoalescer,
-  createInMemoryExplainCache
+  createInMemoryExplainCache,
+  fingerprintExplainContext
 } from "./explainCache.js";
 
 function keyInput(overrides: Partial<Parameters<typeof buildExplainCacheKey>[0]> = {}) {
   return {
     blockEntryId: "block-1",
     contentRevision: 1,
+    contextFingerprint: fingerprintExplainContext("the resolved bounded context"),
     endOffset: 10,
     headword: "hello",
     language: "en",
@@ -22,9 +24,32 @@ function keyInput(overrides: Partial<Parameters<typeof buildExplainCacheKey>[0]>
   };
 }
 
+describe("fingerprintExplainContext", () => {
+  it("produces the same fingerprint for identical context text", () => {
+    expect(fingerprintExplainContext("same context")).toBe(
+      fingerprintExplainContext("same context")
+    );
+  });
+
+  it("produces a different fingerprint for different context text", () => {
+    expect(fingerprintExplainContext("context A")).not.toBe(fingerprintExplainContext("context B"));
+  });
+
+  it("is bounded in size regardless of how long the input context is", () => {
+    const fingerprint = fingerprintExplainContext("x".repeat(50_000));
+    expect(fingerprint.length).toBeLessThan(100);
+  });
+});
+
 describe("buildExplainCacheKey", () => {
   it("produces the same key for identical input", () => {
     expect(buildExplainCacheKey(keyInput())).toBe(buildExplainCacheKey(keyInput()));
+  });
+
+  it("returns a JSON array (tuple), not a delimiter-joined string", () => {
+    const key = buildExplainCacheKey(keyInput());
+    expect(() => JSON.parse(key)).not.toThrow();
+    expect(Array.isArray(JSON.parse(key))).toBe(true);
   });
 
   it.each([
@@ -35,6 +60,7 @@ describe("buildExplainCacheKey", () => {
     ["headword", "goodbye"],
     ["language", "zh"],
     ["contentRevision", 2],
+    ["contextFingerprint", fingerprintExplainContext("a genuinely different resolved context")],
     ["promptVersion", "semantic-map-v2"],
     ["model", "gpt-5.5"],
     ["reasoningEffort", "low"]
@@ -42,6 +68,30 @@ describe("buildExplainCacheKey", () => {
     expect(buildExplainCacheKey(keyInput({ [field]: value }))).not.toBe(
       buildExplainCacheKey(keyInput())
     );
+  });
+
+  it("misses the cache when only the resolved context changes — term/range/revision held constant", () => {
+    // The regression the fingerprint field exists to close: `contentRevision` and the block's own
+    // plaintext are read via two separate concurrent queries (`explainSourceResolution.ts`), so a real
+    // context change is not guaranteed to be reflected in `contentRevision` alone.
+    const before = buildExplainCacheKey(
+      keyInput({ contextFingerprint: fingerprintExplainContext("old surrounding sentence") })
+    );
+    const after = buildExplainCacheKey(
+      keyInput({ contextFingerprint: fingerprintExplainContext("new surrounding sentence") })
+    );
+    expect(before).not.toBe(after);
+  });
+
+  it("never collides across field boundaries even with an embedded NUL that WOULD have collided under a delimiter-joined string", () => {
+    // Under the old `\u0000`-joined scheme, `headword="a\u0000b", language="c"` and
+    // `headword="a", language="b\u0000c"` would produce the IDENTICAL joined string
+    // ("a\u0000b\u0000c" both ways) — exactly the unproven-assumption collision this fix removes. The
+    // JSON-tuple key keeps each field's own quoting/escaping, so these two genuinely different inputs
+    // must produce two different keys.
+    const first = buildExplainCacheKey(keyInput({ headword: "a\u0000b", language: "c" }));
+    const second = buildExplainCacheKey(keyInput({ headword: "a", language: "b\u0000c" }));
+    expect(first).not.toBe(second);
   });
 });
 
@@ -99,6 +149,36 @@ describe("createInMemoryExplainCache", () => {
     // eviction path already covered above.
     const cache = createInMemoryExplainCache<number>({ maxEntries: 0 });
     expect(() => cache.set("a", 1)).not.toThrow();
+  });
+
+  it("isolates the cache from a caller mutating the object AFTER calling set() — a later get() is unaffected", () => {
+    const cache = createInMemoryExplainCache<{ families: string[] }>();
+    const input = { families: ["family-1"] };
+    cache.set("a", input);
+
+    input.families.push("family-2");
+
+    expect(cache.get("a")).toEqual({ families: ["family-1"] });
+  });
+
+  it("isolates the cache from a caller mutating a returned get() value — a later get() still returns the original", () => {
+    const cache = createInMemoryExplainCache<{ families: string[] }>();
+    cache.set("a", { families: ["family-1"] });
+
+    const first = cache.get("a");
+    first?.families.push("poisoned");
+
+    expect(cache.get("a")).toEqual({ families: ["family-1"] });
+  });
+
+  it("returns a fresh clone (not the same reference) from set()'s stored input and from get()", () => {
+    const cache = createInMemoryExplainCache<{ families: string[] }>();
+    const input = { families: ["family-1"] };
+    cache.set("a", input);
+
+    const stored = cache.get("a");
+    expect(stored).toEqual(input);
+    expect(stored).not.toBe(input);
   });
 });
 

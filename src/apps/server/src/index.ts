@@ -522,7 +522,12 @@ try {
         log: ({ durationMs, status }) =>
           console.info("[explain] turn", JSON.stringify({ durationMs, status })),
         model: copilotExplainConfig?.model ?? "unset",
-        reasoningEffort: copilotExplainConfig?.reasoningEffort ?? "unset"
+        reasoningEffort: copilotExplainConfig?.reasoningEffort ?? "unset",
+        // Session-close cleanup diagnostics (`explainTurn.ts`) — distinct from the outer per-request
+        // trace above; fires even for a late close() that settles after an HTTP timeout has already
+        // returned. Same content-free event/status/duration shape, never prompt/response content.
+        turnLog: ({ durationMs, event, status }) =>
+          console.info(`[explain] ${event}`, JSON.stringify({ durationMs, status }))
       }
     },
     images: { imageResourceStore },
@@ -728,12 +733,20 @@ try {
     // Kill any resident persistent local-speech process (#884) so a restart never leaves an orphaned
     // child process warm in the background after this one exits.
     localPersistentSpeech?.close();
-    // Stop the warm Copilot SDK runtime (#923), if the semantic-map explanation capability ever started
-    // it: idempotent and safe to await even if it was never used, so no lazily-started subprocess is
-    // ever left resident past this process's own shutdown.
-    await copilotExplainRuntime?.dispose();
     let code = exitCode;
     try {
+      // Stop the warm Copilot SDK runtime (#923), if the semantic-map explanation capability ever
+      // started it: idempotent and safe to await even if it was never used, so no lazily-started
+      // subprocess is ever left resident past this process's own shutdown. Wrapped in its OWN inner
+      // try/catch, INSIDE this same outer try block, so a rejection here is recorded and marks a
+      // nonzero exit code but can never skip the Fastify close / database close / lease release below
+      // it — those must always still run regardless of whether this cleanup succeeded.
+      try {
+        await copilotExplainRuntime?.dispose();
+      } catch (error) {
+        server.log.error({ err: error }, "explain_runtime_shutdown_failed");
+        code = 1;
+      }
       if (httpServerListening) {
         await server.close();
       }
