@@ -545,7 +545,9 @@ Lookup is view-only and never creates a note:
 - Chinese uses CC-CEDICT.
 - `Intl.Segmenter` interprets CJK selections before lookup.
 - External dictionary links are always available as a not-found exit.
-- Optional **AI semantic-map explanation** covers English and Chinese words/phrases generally, not
+- Optional **AI semantic-map explanation** — reached through the Reader lookup panel's explicit
+  **"Explain meanings"** action, never dispatched merely from opening lookup, switching a dictionary
+  tab, or scrolling — covers English and Chinese words/phrases generally, not
   just dictionary gaps. It organizes a word's principal meanings as connected branches rather than a
   flat gloss: a core image/schema (or separate sense families when one core would be false), then
   each principal branch with its explicit connection to the core plus a short natural expression, then
