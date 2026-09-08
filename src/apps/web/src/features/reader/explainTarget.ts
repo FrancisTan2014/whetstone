@@ -3,28 +3,34 @@ import type { ExplainRequest } from "@whetstone/contracts";
 
 import type { NoteDraft } from "../notes/noteCapture";
 
-// The same 300-code-unit cap the shared contract enforces on `selectedText` (`explainContracts.ts`).
-// Duplicated here (not imported) because it is a UI-eligibility check, not a validation the server
-// re-runs: a selection over the cap is simply never offered Explain, rather than sent and rejected.
-const MAX_EXPLAIN_SELECTION_LENGTH = 300;
+// Whether — and why not — the captured draft can become the Explain API's request (#925 correction):
+// acceptance for what the SERVER will accept (the 300-code-unit `selectedText` cap, `explainContracts.ts`)
+// is authoritative there, not duplicated here. A client-only rule here would drift from the real limit
+// and, worse, silently remove the action for a selection the reader might reasonably want explained — so
+// a merely-long selection is still `eligible`; the real backend's own 400/invalid-request response (on
+// explicit invocation) is what surfaces actionable guidance for it. Only a genuinely non-representable
+// capture — a cross-block span, which the single-block contract can never accept no matter its length —
+// gets its own named `cross_block` outcome so the Reader can show a visible reason instead of a silently
+// missing feature. An empty/whitespace-only selection is `none`: there is no real capture to explain.
+export type ExplainEligibility =
+  | Readonly<{ status: "none" }>
+  | Readonly<{ status: "cross_block" }>
+  | Readonly<{ status: "eligible"; target: ExplainRequest }>;
 
 // Derives the Explain API's exact request from the SAME captured draft the note/mark toolbar already
 // uses (`noteCapture.ts`) — never a fresh re-read of the live DOM selection, never the whole Work or
-// browsing history. Returns undefined when the draft cannot become a valid, single-block
-// `ExplainRequest`: a cross-block span (the contract is single-block only, #924), an empty selection,
-// or one over the shared selection-length cap. The Reader still offers ordinary dictionary lookup in
-// every one of these ineligible cases — Explain simply does not appear.
-export function deriveExplainTarget(
+// browsing history. Ordinary dictionary lookup is entirely unaffected by any of these outcomes.
+export function deriveExplainEligibility(
   workEntryId: string,
   draft: NoteDraft
-): ExplainRequest | undefined {
+): ExplainEligibility {
   if (draft.endBlockEntryId !== undefined && draft.endBlockEntryId !== draft.blockEntryId) {
-    return undefined;
+    return { status: "cross_block" };
   }
 
   const selectedText = draft.selectedText;
-  if (selectedText.trim().length === 0 || selectedText.length > MAX_EXPLAIN_SELECTION_LENGTH) {
-    return undefined;
+  if (selectedText.trim().length === 0) {
+    return { status: "none" };
   }
 
   // A whole-single-block capture omits both offsets (`noteCapture.ts`): the draft covers the block's
@@ -34,10 +40,13 @@ export function deriveExplainTarget(
   const endOffset = draft.endOffset ?? selectedText.length;
 
   return {
-    blockEntryId: toEntryId(draft.blockEntryId),
-    endOffset,
-    selectedText,
-    startOffset,
-    workEntryId: toEntryId(workEntryId)
+    status: "eligible",
+    target: {
+      blockEntryId: toEntryId(draft.blockEntryId),
+      endOffset,
+      selectedText,
+      startOffset,
+      workEntryId: toEntryId(workEntryId)
+    }
   };
 }

@@ -22,20 +22,47 @@ export type ExplainFixtureConfig = Readonly<{
 
 const truthyValues = new Set(["1", "true"]);
 
+// The fixture's own turn-timeout override is meaningless (and must never take effect) unless the
+// fixture itself is genuinely engaged (#925 correction): previously this parsing ran unconditionally
+// at every server startup, so (a) a stray/malformed value could crash ordinary AI-off startup, and
+// (b) a valid-but-stray value (fixture NOT actually enabled) could silently override the real
+// production 150s deadline on the REAL Copilot runtime. Both are now impossible: the block below only
+// runs at all once `enabled` is true.
+const MAX_FIXTURE_TIMEOUT_MS = 150_000;
+
+// A full-string strict positive integer — never `Number.parseInt`, which silently truncates a
+// trailing fraction ("3.5" -> 3) or accepts a garbage suffix ("3000junk" -> 3000). Any input that is
+// not ENTIRELY digits (no sign, no decimal point, no trailing text) is rejected outright.
+const STRICT_POSITIVE_INTEGER = /^[1-9]\d*$/;
+
 export function readExplainFixtureConfig(
   env: NodeJS.ProcessEnv = process.env
 ): ExplainFixtureConfig {
   const rawEnabled = env.AGENT_COPILOT_EXPLAIN_FIXTURE?.trim().toLowerCase();
   const enabled = rawEnabled !== undefined && truthyValues.has(rawEnabled);
 
+  if (!enabled) {
+    // Fixture mode is off: any `AGENT_COPILOT_EXPLAIN_TURN_TIMEOUT_MS` value — valid, malformed, or
+    // absent — is irrelevant and must not affect ordinary (real-runtime or AI-off) startup at all.
+    return { enabled };
+  }
+
   const rawTimeout = env.AGENT_COPILOT_EXPLAIN_TURN_TIMEOUT_MS?.trim();
   if (rawTimeout === undefined || rawTimeout.length === 0) {
     return { enabled };
   }
 
+  if (!STRICT_POSITIVE_INTEGER.test(rawTimeout)) {
+    throw new Error(
+      "AGENT_COPILOT_EXPLAIN_TURN_TIMEOUT_MS must be a positive integer (no fraction, sign, or extra characters)."
+    );
+  }
+
   const turnTimeoutMs = Number.parseInt(rawTimeout, 10);
-  if (!Number.isInteger(turnTimeoutMs) || turnTimeoutMs <= 0) {
-    throw new Error("AGENT_COPILOT_EXPLAIN_TURN_TIMEOUT_MS must be a positive integer.");
+  if (turnTimeoutMs > MAX_FIXTURE_TIMEOUT_MS) {
+    throw new Error(
+      `AGENT_COPILOT_EXPLAIN_TURN_TIMEOUT_MS must be at most ${MAX_FIXTURE_TIMEOUT_MS}.`
+    );
   }
 
   return { enabled, turnTimeoutMs };
@@ -70,52 +97,72 @@ function parseTurnPayload(prompt: string): FixtureTurnPayload | undefined {
 const fixtureModel = "fixture-copilot-model";
 const fixtureReasoningEffort = "fixture-high";
 
-// A homograph (two truly unrelated sense families) with multiple branches in the mechanical family,
-// full optional pronunciation/nuance/etymology, and a current-family/branch marker chosen from the
-// REAL resolved context (never hardcoded) — proves multi-family rendering, multi-branch rendering,
-// and the current-passage marker together.
-function springResult(headword: string, language: string, context: string) {
-  const isDevice = context.includes("coiled");
+// A real homograph — two genuinely unrelated etymologies, never one fabricated universal root
+// (#925 correction): "riverbank" traces to Old Norse, "financial bank" traces separately to Italian
+// "banca". The current family/branch marker is chosen from the REAL resolved context (never
+// hardcoded), and covers all four combinations so neither the first family nor the first branch is
+// ever silently assumed correct.
+function bankResult(headword: string, language: string, context: string) {
+  const isFinancial = context.includes("account") || context.includes("bank on");
+  const currentFamilyId = isFinancial ? "financial" : "river";
+  const currentBranchId = isFinancial
+    ? context.includes("bank on")
+      ? "deposit"
+      : "institution"
+    : context.includes("maneuver")
+      ? "tilt"
+      : "riverside";
+
   return {
-    currentBranchId: isDevice ? "device-leap" : "season-arrival",
-    currentFamilyId: isDevice ? "device" : "season",
-    etymology: 'From Old English "springan", to leap or burst forth.',
+    currentBranchId,
+    currentFamilyId,
+    etymology:
+      'The riverbank sense traces to Old Norse "bakki" (ridge, slope); the financial sense traces ' +
+      'separately to Italian "banca" (a moneychanger\'s bench) — two unrelated origins for one ' +
+      "modern spelling.",
     families: [
       {
         branches: [
           {
-            connection: "the calendar season itself, when plants and warmth return",
-            example: "Spring arrived early this year.",
-            id: "season-arrival",
-            label: "the season"
+            connection: "the sloping ground itself, at the water's edge",
+            example: "They sat on the bank and watched the current.",
+            id: "riverside",
+            label: "a riverbank or lakeshore"
+          },
+          {
+            connection: "a slope suggests something leaning or tilting sideways",
+            example: "The plane banked sharply to the left.",
+            id: "tilt",
+            label: "to tilt or lean sideways"
           }
         ],
-        coreImage: "the season of renewal that follows winter",
-        id: "season"
+        coreImage: "a sloping earthen edge, as beside a river",
+        id: "river"
       },
       {
         branches: [
           {
-            connection: "a coiled metal part that pushes back when compressed",
-            example: "The spring in the old clock finally broke.",
-            id: "device-coil",
-            label: "mechanical coil"
+            connection: "the institution itself, holding money in trust",
+            example: "She opened an account at the bank.",
+            id: "institution",
+            label: "a financial institution"
           },
           {
-            connection: "to move suddenly, the way a released coil snaps forward",
-            example: "The cat sprang from the shelf.",
-            id: "device-leap",
-            label: "leap suddenly"
+            connection:
+              "trusting an institution to hold something safely extends to relying on anything",
+            example: "You can bank on him to arrive early.",
+            id: "deposit",
+            label: "to rely on"
           }
         ],
-        coreImage: "a coiled mechanism that stores and releases energy",
-        id: "device"
+        coreImage: "an institution that holds and manages money",
+        id: "financial"
       }
     ],
     headword,
     language,
     nuance: "An everyday, neutral word in every sense — no register warning applies.",
-    pronunciation: [{ label: "IPA", value: "/sprɪŋ/" }]
+    pronunciation: [{ label: "IPA", value: "/b\u00e6\u014bk/" }]
   };
 }
 
@@ -131,19 +178,19 @@ function daResult(headword: string, language: string, context: string) {
       {
         branches: [
           {
-            connection: "the literal act of striking something with the hand or a tool",
+            connection: "用手或工具击打某物的字面动作",
             example: "他轻轻打了一下桌子。",
             id: "hit",
             label: "打：击打"
           },
           {
-            connection: "extended from striking a surface to initiating a call",
+            connection: "从击打引申为发起电话通话",
             example: "我明天给你打电话。",
             id: "call",
             label: "打：打电话"
           },
           {
-            connection: "extended to performing a hands-on sport or activity",
+            connection: "引申为进行需要动手的运动或活动",
             example: "他们周末喜欢打篮球。",
             id: "play",
             label: "打：打球"
@@ -231,8 +278,8 @@ export function createExplainFixtureAgent(): Agent {
           }
 
           const result =
-            headword === "spring"
-              ? springResult(payload.headword, payload.language, payload.context)
+            headword === "bank"
+              ? bankResult(payload.headword, payload.language, payload.context)
               : daResult(payload.headword, payload.language, payload.context);
 
           return {

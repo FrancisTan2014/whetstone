@@ -25,23 +25,69 @@ describe("readExplainFixtureConfig", () => {
     expect(readExplainFixtureConfig({ AGENT_COPILOT_EXPLAIN_FIXTURE: value }).enabled).toBe(false);
   });
 
-  it("parses a positive integer turn-timeout override", () => {
+  it("parses a positive integer turn-timeout override when the fixture is enabled", () => {
     expect(
-      readExplainFixtureConfig({ AGENT_COPILOT_EXPLAIN_TURN_TIMEOUT_MS: "3000" }).turnTimeoutMs
+      readExplainFixtureConfig({
+        AGENT_COPILOT_EXPLAIN_FIXTURE: "1",
+        AGENT_COPILOT_EXPLAIN_TURN_TIMEOUT_MS: "3000"
+      }).turnTimeoutMs
     ).toBe(3000);
   });
 
-  it("ignores an empty turn-timeout override", () => {
+  it("ignores an empty turn-timeout override when the fixture is enabled", () => {
     expect(
-      readExplainFixtureConfig({ AGENT_COPILOT_EXPLAIN_TURN_TIMEOUT_MS: "  " }).turnTimeoutMs
+      readExplainFixtureConfig({
+        AGENT_COPILOT_EXPLAIN_FIXTURE: "1",
+        AGENT_COPILOT_EXPLAIN_TURN_TIMEOUT_MS: "  "
+      }).turnTimeoutMs
     ).toBeUndefined();
   });
 
-  it.each(["0", "-5", "abc"])("rejects a non-positive-integer override %j", (value) => {
+  // #925 correction: `Number.parseInt` previously accepted a trailing fraction ("3.5" -> 3) or a
+  // garbage suffix ("3000junk" -> 3000) silently. A full-string strict positive-integer check now
+  // rejects each of these outright, with an actionable error.
+  it.each(["0", "-5", "abc", "3.5", "3000junk", "1e3", "+3000"])(
+    "rejects a non-strict-positive-integer override %j when the fixture is enabled",
+    (value) => {
+      expect(() =>
+        readExplainFixtureConfig({
+          AGENT_COPILOT_EXPLAIN_FIXTURE: "1",
+          AGENT_COPILOT_EXPLAIN_TURN_TIMEOUT_MS: value
+        })
+      ).toThrow(/positive integer/);
+    }
+  );
+
+  it("rejects a turn-timeout override above the usable range when the fixture is enabled", () => {
     expect(() =>
-      readExplainFixtureConfig({ AGENT_COPILOT_EXPLAIN_TURN_TIMEOUT_MS: value })
-    ).toThrow(/positive integer/);
+      readExplainFixtureConfig({
+        AGENT_COPILOT_EXPLAIN_FIXTURE: "1",
+        AGENT_COPILOT_EXPLAIN_TURN_TIMEOUT_MS: "150001"
+      })
+    ).toThrow(/at most/);
   });
+
+  it("accepts a turn-timeout override at the top of the usable range when the fixture is enabled", () => {
+    expect(
+      readExplainFixtureConfig({
+        AGENT_COPILOT_EXPLAIN_FIXTURE: "1",
+        AGENT_COPILOT_EXPLAIN_TURN_TIMEOUT_MS: "150000"
+      }).turnTimeoutMs
+    ).toBe(150_000);
+  });
+
+  // #925 correction: the override must be entirely irrelevant — never even inspected, and certainly
+  // never crash ordinary startup — when the fixture itself is not genuinely engaged. This is the exact
+  // scenario that previously broke ordinary AI-off startup on a stray/malformed env value, or could
+  // silently override the real production 150s deadline on the REAL Copilot runtime.
+  it.each(["abc", "3.5", "3000junk", "-5", "0", "999999999"])(
+    "ignores a malformed/out-of-range turn-timeout override %j when the fixture is disabled, never throwing",
+    (value) => {
+      expect(readExplainFixtureConfig({ AGENT_COPILOT_EXPLAIN_TURN_TIMEOUT_MS: value })).toEqual({
+        enabled: false
+      });
+    }
+  );
 });
 
 async function openSession() {
@@ -54,11 +100,12 @@ function payload(headword: string, language: string, context: string): string {
 }
 
 describe("createExplainFixtureAgent", () => {
-  it("returns an 'en' homograph map, marking the device family/branch when context says so", async () => {
+  // A real homograph (two genuinely unrelated etymologies) with the current marker chosen from the
+  // REAL resolved context (never hardcoded) — the four cases below exercise every family/branch
+  // combination so neither the first family nor the first branch is ever silently assumed correct.
+  it("marks the riverside branch (first family, first branch) with no context markers", async () => {
     const session = await openSession();
-    const turn = await session.send(
-      payload("spring", "en", "the coiled spring inside the clock snapped")
-    );
+    const turn = await session.send(payload("bank", "en", "they sat on the muddy bank"));
     const result = JSON.parse(turn.text) as {
       currentBranchId: string;
       currentFamilyId: string;
@@ -67,29 +114,56 @@ describe("createExplainFixtureAgent", () => {
 
     expect(turn.model).toBe("fixture-copilot-model");
     expect(turn.reasoningEffort).toBe("fixture-high");
-    expect(result.currentFamilyId).toBe("device");
-    expect(result.currentBranchId).toBe("device-leap");
-    expect(result.families.map((family) => family.id)).toEqual(["season", "device"]);
+    expect(result.currentFamilyId).toBe("river");
+    expect(result.currentBranchId).toBe("riverside");
+    expect(result.families.map((family) => family.id)).toEqual(["river", "financial"]);
     await session.close();
   });
 
-  it("marks the season family/branch when context has no 'coiled' marker", async () => {
+  it("marks the tilt branch (first family, SECOND branch) when context says a sharp maneuver", async () => {
     const session = await openSession();
-    const turn = await session.send(payload("Spring", "en", "spring finally arrived"));
+    const turn = await session.send(payload("bank", "en", "a sharp maneuver toward the runway"));
     const result = JSON.parse(turn.text) as { currentFamilyId: string; currentBranchId: string };
 
-    expect(result.currentFamilyId).toBe("season");
-    expect(result.currentBranchId).toBe("season-arrival");
+    expect(result.currentFamilyId).toBe("river");
+    expect(result.currentBranchId).toBe("tilt");
+  });
+
+  it("marks the institution branch (SECOND family, first branch) when context mentions an account", async () => {
+    const session = await openSession();
+    const turn = await session.send(payload("bank", "en", "she opened an account"));
+    const result = JSON.parse(turn.text) as { currentFamilyId: string; currentBranchId: string };
+
+    expect(result.currentFamilyId).toBe("financial");
+    expect(result.currentBranchId).toBe("institution");
+  });
+
+  it("marks the deposit branch (SECOND family, SECOND branch) when context says to bank on someone", async () => {
+    const session = await openSession();
+    const turn = await session.send(payload("Bank", "en", "you can bank on him"));
+    const result = JSON.parse(turn.text) as { currentFamilyId: string; currentBranchId: string };
+
+    expect(result.currentFamilyId).toBe("financial");
+    expect(result.currentBranchId).toBe("deposit");
   });
 
   it("returns a 'zh' single-family map, marking the phone-call branch when context says so", async () => {
     const session = await openSession();
     const turn = await session.send(payload("打", "zh", "我明天给你打电话。"));
-    const result = JSON.parse(turn.text) as { currentBranchId: string; headword: string };
+    const result = JSON.parse(turn.text) as {
+      currentBranchId: string;
+      headword: string;
+      families: ReadonlyArray<{ branches: ReadonlyArray<{ connection: string }> }>;
+    };
 
     expect(turn.model).toBe("fixture-copilot-model");
     expect(result.currentBranchId).toBe("call");
     expect(result.headword).toBe("打");
+    // #925 correction: every branch `connection` must be Chinese when the response language is zh,
+    // never left over in English from an earlier, differently-languaged fixture.
+    for (const branch of result.families[0]?.branches ?? []) {
+      expect(branch.connection).toMatch(/[\u4e00-\u9fff]/);
+    }
   });
 
   it("marks the hit branch when context has no phone-call marker", async () => {

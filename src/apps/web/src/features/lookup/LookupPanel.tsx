@@ -1,24 +1,25 @@
 import * as Popover from "@radix-ui/react-popover";
 import { X } from "lucide-react";
-import { lazy, Suspense, useMemo, useState } from "react";
+import { Component, lazy, Suspense, useMemo, useState } from "react";
 
 import type {
   DictionaryEntry,
   DictionaryPartOfSpeech,
   DictionarySense,
-  ExplainRequest,
   LookupSourceId
 } from "@whetstone/contracts";
 
 import { Sheet } from "../../shared/ui/Sheet";
 import { useMediaQuery } from "../../shared/ui/useMediaQuery";
+import type { ExplainEligibility } from "../reader/explainTarget";
 import { externalDictionaryLinks } from "./externalDictionaries";
 import { partOfSpeechHueClass } from "./partOfSpeechHue.tokens";
 
 // The explicit "Explain meanings" action (#924/#925) is a separate, independently-budgeted feature:
-// it is never on the initial Reader/lookup bundle. `React.lazy` gives it its own Vite chunk, loaded
-// only once a valid `explainTarget` exists for the open panel — never merely from opening lookup,
-// switching dictionary tabs, or scrolling.
+// it is never on the initial Reader/lookup bundle. `React.lazy` gives it its own Vite chunk, loaded as
+// soon as an eligible `explainEligibility` exists for the open panel (opening lookup itself, before any
+// click) — distinct from actually INVOKING the model, which only the explicit button (or a genuine
+// retry) ever does.
 const ExplainSection = lazy(() =>
   import("./explain/ExplainSection").then((module) => ({ default: module.ExplainSection }))
 );
@@ -49,10 +50,10 @@ export type LookupPanelProps = Readonly<{
   // The selection's viewport rect; the desktop popover anchors to it so the card sits near
   // the selection (and flips/offsets near viewport edges) without covering it.
   anchorRect?: DOMRect | undefined;
-  // The exact-range explain request for the current selection (#925), when the capture is eligible
-  // (a single, non-empty, <=300-code-unit block span). Undefined suppresses the "Explain meanings"
-  // action entirely — dictionaries still render fully either way.
-  explainTarget?: ExplainRequest | undefined;
+  // Whether — and why not — the current selection can offer the explicit "Explain meanings" action
+  // (#925): `eligible` carries the exact-range request, `cross_block` shows a visible reason instead
+  // of a silently missing feature, and `none` renders nothing. Dictionaries render fully regardless.
+  explainEligibility: ExplainEligibility;
   onOpenChange: (open: boolean) => void;
   open: boolean;
   tabs: ReadonlyArray<LookupTab>;
@@ -341,23 +342,64 @@ function LookupTabs({
   );
 }
 
-// The lazy-loaded "Explain meanings" slot (#924/#925): rendered below the dictionary tabs, never
-// inside one — it is an independent, always-visible action, not a per-source tab, so it stays
-// reachable and visibly separate from dictionary evidence regardless of which dictionary tab is
-// active or whether any dictionary has an entry. Renders nothing when the capture is not a valid
-// explain target (e.g. a genuine cross-block span).
-function LookupExplainSlot({
-  explainTarget
-}: Readonly<{ explainTarget: ExplainRequest | undefined }>): React.JSX.Element | null {
-  if (explainTarget === undefined) {
-    return null;
+// A React error boundary (the only supported mechanism — no added dependency/framework) around the
+// lazy-loaded Explain feature (#925 correction): a missing/offline/stale chunk import rejects, and
+// React re-throws that rejection into the nearest boundary on render — with no boundary here, it took
+// down the WHOLE Reader, dictionaries included. Scoped to wrap ONLY this one optional slot (a sibling
+// of `LookupTabs`, never an ancestor of it), so dictionary content is structurally unreachable by
+// anything this boundary catches and stays fully usable regardless.
+type ExplainBoundaryState = Readonly<{ hasError: boolean }>;
+
+class ExplainErrorBoundary extends Component<
+  Readonly<{ children: React.ReactNode }>,
+  ExplainBoundaryState
+> {
+  override state: ExplainBoundaryState = { hasError: false };
+
+  static getDerivedStateFromError(): ExplainBoundaryState {
+    return { hasError: true };
   }
 
-  return (
-    <Suspense fallback={<p role="status">Loading Explain meanings…</p>}>
-      <ExplainSection target={explainTarget} />
-    </Suspense>
-  );
+  override render(): React.ReactNode {
+    if (this.state.hasError) {
+      return (
+        <p className="explainLoadError" role="alert">
+          Explain meanings couldn't load. Dictionary results above are unaffected — reload the page
+          to try again.
+        </p>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+// The lazy-loaded "Explain meanings" slot (#924/#925): rendered as its own independent, always-visible
+// action, not a per-source tab, so it stays reachable and visibly separate from dictionary evidence
+// regardless of which dictionary tab is active or whether any dictionary has an entry. A genuinely
+// ineligible capture (a cross-block span) still shows a visible, named reason rather than a silently
+// missing feature; only a truly absent capture (`none`) renders nothing.
+function LookupExplainSlot({
+  explainEligibility
+}: Readonly<{ explainEligibility: ExplainEligibility }>): React.JSX.Element | null {
+  switch (explainEligibility.status) {
+    case "none":
+      return null;
+    case "cross_block":
+      return (
+        <p className="explainIneligible" role="note">
+          Explain meanings isn't available for a selection spanning multiple paragraphs. Select a
+          shorter phrase within one paragraph to use it.
+        </p>
+      );
+    case "eligible":
+      return (
+        <ExplainErrorBoundary>
+          <Suspense fallback={<p role="status">Loading Explain meanings…</p>}>
+            <ExplainSection target={explainEligibility.target} />
+          </Suspense>
+        </ExplainErrorBoundary>
+      );
+  }
 }
 
 // Position an invisible Radix anchor over the selection's rect so the popover opens beside
@@ -382,7 +424,7 @@ function anchorStyle(rect: DOMRect | undefined): React.CSSProperties {
 // collision-aware flip/offset so the card never covers the selected text.
 function LookupPopover({
   anchorRect,
-  explainTarget,
+  explainEligibility,
   onOpenChange,
   open,
   tabs,
@@ -407,8 +449,8 @@ function LookupPopover({
             </Popover.Close>
           </div>
           <div className="lookupPanel">
+            <LookupExplainSlot explainEligibility={explainEligibility} />
             <LookupTabs tabs={tabs} term={term} />
-            <LookupExplainSlot explainTarget={explainTarget} />
           </div>
         </Popover.Content>
       </Popover.Portal>
@@ -419,7 +461,7 @@ function LookupPopover({
 // Narrow/mobile: a content-height bottom sheet (not the full-height side panel). Reuses the
 // shared Sheet primitive forced to its bottom layout.
 function LookupSheet({
-  explainTarget,
+  explainEligibility,
   onOpenChange,
   open,
   tabs,
@@ -428,8 +470,8 @@ function LookupSheet({
   return (
     <Sheet onOpenChange={onOpenChange} open={open} side="bottom" title={`Look up: ${term}`}>
       <div className="lookupPanel">
+        <LookupExplainSlot explainEligibility={explainEligibility} />
         <LookupTabs tabs={tabs} term={term} />
-        <LookupExplainSlot explainTarget={explainTarget} />
       </div>
     </Sheet>
   );
@@ -440,7 +482,7 @@ function LookupSheet({
 // tab, fetched independently, so one being slow/down/empty never freezes the panel (#196).
 export function LookupPanel({
   anchorRect,
-  explainTarget,
+  explainEligibility,
   onOpenChange,
   open,
   tabs,
@@ -452,7 +494,7 @@ export function LookupPanel({
     return (
       <LookupPopover
         anchorRect={anchorRect}
-        explainTarget={explainTarget}
+        explainEligibility={explainEligibility}
         onOpenChange={onOpenChange}
         open={open}
         tabs={tabs}
@@ -463,7 +505,7 @@ export function LookupPanel({
 
   return (
     <LookupSheet
-      explainTarget={explainTarget}
+      explainEligibility={explainEligibility}
       onOpenChange={onOpenChange}
       open={open}
       tabs={tabs}

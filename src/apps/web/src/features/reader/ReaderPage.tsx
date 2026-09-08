@@ -3,11 +3,7 @@ import { motion } from "framer-motion";
 import { ArrowLeft, CornerDownLeft } from "lucide-react";
 
 import { isAnchoredNote, type AnchoredNoteDto, type WorkListItemDto } from "@whetstone/contracts";
-import {
-  lookupSourceLabel,
-  lookupSourcesForLanguage,
-  type ExplainRequest
-} from "@whetstone/contracts";
+import { lookupSourceLabel, lookupSourcesForLanguage } from "@whetstone/contracts";
 import type { DocumentNodeJSON } from "@whetstone/document";
 import { LoadingIndicator } from "../../shared/ui/LoadingIndicator";
 import { Sheet } from "../../shared/ui/Sheet";
@@ -24,7 +20,7 @@ import { ChapterPager } from "./ChapterPager";
 import { fetchPreferences, savePreferences } from "../../shared/preferences/preferencesApi";
 import { LookupPanel, type LookupState, type LookupTab } from "../lookup/LookupPanel";
 import { lookupTerm } from "../lookup/lookupApi";
-import { deriveExplainTarget } from "./explainTarget";
+import { deriveExplainEligibility, type ExplainEligibility } from "./explainTarget";
 import { highlightBirthMotion } from "./highlightBirth";
 import { ImageLightbox } from "./ImageLightbox";
 import { BlockContent } from "./mdastBlock";
@@ -367,12 +363,13 @@ type ReaderPageProps = Readonly<{
 }>;
 
 // A view-only vocabulary lookup driven from the selection toolbar: the selected term and
-// its fetch state. Lookup never creates, pre-fills, or edits a note. `explainTarget` is the
-// exact-range request the explicit "Explain meanings" action (#925) may send — undefined when the
-// captured selection cannot become a valid explain request (e.g. a genuine cross-block span).
+// its fetch state. Lookup never creates, pre-fills, or edits a note. `explainEligibility` names
+// whether — and why not — the explicit "Explain meanings" action (#925) is offered for this
+// selection: `eligible` carries the exact-range request; `cross_block` and `none` each render their
+// own honest state in `LookupPanel` rather than a silently missing feature.
 type LookupView = Readonly<{
   anchorRect?: DOMRect | undefined;
-  explainTarget?: ExplainRequest | undefined;
+  explainEligibility: ExplainEligibility;
   requestId: number;
   tabs: ReadonlyArray<LookupTab>;
   term: string;
@@ -1055,8 +1052,8 @@ export function ReaderPage({
       label: lookupSourceLabel(id),
       state: { status: "loading" }
     }));
-    const explainTarget = deriveExplainTarget(active.workEntryId, active.draft);
-    setLookup({ anchorRect, explainTarget, requestId, tabs: initialTabs, term });
+    const explainEligibility = deriveExplainEligibility(active.workEntryId, active.draft);
+    setLookup({ anchorRect, explainEligibility, requestId, tabs: initialTabs, term });
 
     // Each source is fetched independently and writes only its own tab, so a slow/down/empty source
     // never freezes or empties the others. The requestId guard drops a result whose lookup was closed
@@ -1232,7 +1229,7 @@ export function ReaderPage({
       {lookup === undefined ? null : (
         <LookupPanel
           anchorRect={lookup.anchorRect}
-          explainTarget={lookup.explainTarget}
+          explainEligibility={lookup.explainEligibility}
           key={lookup.requestId}
           onOpenChange={() => setLookup(undefined)}
           open={true}

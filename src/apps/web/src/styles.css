@@ -839,9 +839,9 @@ code {
   display: flex;
   flex-direction: column;
   gap: 0.625rem;
-  margin-top: 0.875rem;
-  padding-top: 0.875rem;
-  border-top: 1px solid var(--color-border);
+  margin-bottom: 0.875rem;
+  padding-bottom: 0.875rem;
+  border-bottom: 1px solid var(--color-border);
 }
 
 .explainChecking {
@@ -895,6 +895,27 @@ code {
 }
 
 .explainError {
+  color: var(--color-danger);
+  font-size: 0.8125rem;
+}
+
+/* Shown instead of silently hiding the action for a genuinely non-representable capture (a
+   cross-block span, #925 correction) — its own bottom-divider styling matches `.explainSection`
+   since it renders in the very same slot, before `LookupTabs`. */
+.explainIneligible {
+  margin-bottom: 0.875rem;
+  padding-bottom: 0.875rem;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-size: 0.8125rem;
+}
+
+/* The error boundary's fallback (#925 correction): a missing/offline/stale Explain chunk is
+   contained to this one slot, never the whole Reader — dictionaries above stay fully usable. */
+.explainLoadError {
+  margin-bottom: 0.875rem;
+  padding-bottom: 0.875rem;
+  border-bottom: 1px solid var(--color-border);
   color: var(--color-danger);
   font-size: 0.8125rem;
 }

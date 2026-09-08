@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type {
   ExplainBranch,
+  ExplainCapability,
   ExplainFamily,
   ExplainProviderAttribution,
   ExplainRequest,
@@ -12,11 +13,12 @@ import type {
 import { ExplainRequestError, fetchExplainCapability, requestExplanation } from "./explainApi";
 
 // The Explain feature's own view state (#924/#925) — distinct from the dictionary `LookupState`
-// (`LookupPanel.tsx`): every named API outcome renders truthfully, plus one client-only
-// `request_failed` for an HTTP-layer/network failure the shared contract does not itself name, and
-// one client-only `capability_error` for a failed capability probe. `checking`/`disabled` never touch
-// a model; only an explicit "Explain meanings" click (from `ready`) or "Try again" (from any failure)
-// ever does.
+// (`LookupPanel.tsx`): every named API outcome renders truthfully, plus three client-only statuses this
+// contract does not itself name: `request_failed` (an HTTP-layer/network failure), `capability_error`
+// (a failed capability probe), and `invalid_request` (the server's own 400 — a malformed/rejected
+// REQUEST, never confused with `invalid_response`'s malformed model OUTPUT, #925 correction).
+// `checking`/`disabled` never touch a model; only an explicit "Explain meanings" click (from `ready`)
+// or a real retry (never `capability_error`'s, which only re-probes capability) ever does.
 type ExplainViewState =
   | Readonly<{ status: "checking" }>
   | Readonly<{ status: "capability_error" }>
@@ -28,6 +30,7 @@ type ExplainViewState =
   | Readonly<{ status: "stale_selection" }>
   | Readonly<{ status: "timeout" }>
   | Readonly<{ status: "invalid_response" }>
+  | Readonly<{ status: "invalid_request" }>
   | Readonly<{ reason: ExplainUnavailableReason; status: "unavailable" }>
   | Readonly<{ status: "request_failed" }>;
 
@@ -182,6 +185,8 @@ function explainFailureMessage(view: ExplainViewState): string | undefined {
       return "The explanation is taking too long. Try again in a moment.";
     case "invalid_response":
       return "Copilot returned an answer that could not be understood.";
+    case "invalid_request":
+      return "This selection can't be explained as chosen. Select a shorter or different phrase and try again.";
     case "unavailable":
       return explainUnavailableMessage(view.reason);
     case "request_failed":
@@ -191,10 +196,14 @@ function explainFailureMessage(view: ExplainViewState): string | undefined {
   }
 }
 
+// Outcomes where re-sending the SAME exact request could plausibly succeed (a transient/timing
+// failure) — `capability_error` is included but its button re-probes capability only (`retryCapability`
+// below), never invokes generation directly. `not_found`, `stale_selection`, and `invalid_request` are
+// deliberately excluded (#925 correction): each already names its own actionable guidance (select the
+// text again, or that the exact same request the backend just rejected), so resending the identical
+// unusable snapshot would only repeat the same outcome — a pointless retry, not a real one.
 const retryableStatuses = new Set<ExplainViewState["status"]>([
   "capability_error",
-  "not_found",
-  "stale_selection",
   "timeout",
   "invalid_response",
   "unavailable",
@@ -203,29 +212,47 @@ const retryableStatuses = new Set<ExplainViewState["status"]>([
 
 export type ExplainSectionProps = Readonly<{ target: ExplainRequest }>;
 
+// The single source of truth for turning a capability read into the next view: used at mount, by the
+// `capability_error` retry, and by the rare disabled-race recovery below, so all three read the exact
+// same enabled/disabled interpretation of a capability response.
+function capabilityView(capability: ExplainCapability): ExplainViewState {
+  return capability.enabled
+    ? { status: "ready" }
+    : { remedy: capability.remedy, status: "disabled" };
+}
+
 // The Reader's explicit semantic-explanation entry point (#924/#925): a lazily-loaded, independently
 // budgeted (own Vite chunk) sibling of the dictionary tabs, never a replacement for them. Mounts a
 // fresh capability check per distinct selection (the caller keys this component by selection identity,
 // so a new selection or a close/reopen always starts a fresh instance — no stale answer can paint under
-// a new term). Only the explicit action button (or "Try again") ever sends a POST; opening, checking
-// capability, and closing never do.
+// a new term). Only the explicit action button, or a genuine retry of a retryable failure, ever sends a
+// POST; opening, checking/re-checking capability, and closing never do.
 export function ExplainSection({ target }: ExplainSectionProps): React.JSX.Element {
   const [view, setView] = useState<ExplainViewState>({ status: "checking" });
   const abortControllerRef = useRef<AbortController | undefined>(undefined);
+  // Must be set true IN the effect body, not merely assumed from the initial `useRef` value: React
+  // StrictMode's dev-only simulated mount -> cleanup -> remount runs this effect's cleanup once
+  // immediately after the first mount, which would otherwise leave this permanently `false` for the
+  // rest of the component's real lifetime — silently dropping every later `retryCapability`/disabled-
+  // race recovery update even though the component stays genuinely mounted (caught by a real E2E run;
+  // jsdom's unit tests don't reproduce StrictMode's double-invoke, so this needed the real browser).
+  const mountedRef = useRef(false);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
 
     void fetchExplainCapability()
       .then((capability) => {
-        if (cancelled) {
-          return;
+        if (!cancelled) {
+          setView(capabilityView(capability));
         }
-        setView(
-          capability.enabled
-            ? { status: "ready" }
-            : { remedy: capability.remedy, status: "disabled" }
-        );
       })
       .catch(() => {
         if (!cancelled) {
@@ -238,6 +265,24 @@ export function ExplainSection({ target }: ExplainSectionProps): React.JSX.Eleme
       abortControllerRef.current?.abort();
     };
   }, [target]);
+
+  // `capability_error`'s ONLY retry action (#925 correction): re-probes the read-only capability
+  // endpoint, never generation. A failed probe must never be bypassable straight into a paid POST with
+  // no disclosure and no knowledge of whether the capability is even enabled.
+  const retryCapability = useCallback(() => {
+    setView({ status: "checking" });
+    void fetchExplainCapability()
+      .then((capability) => {
+        if (mountedRef.current) {
+          setView(capabilityView(capability));
+        }
+      })
+      .catch(() => {
+        if (mountedRef.current) {
+          setView({ status: "capability_error" });
+        }
+      });
+  }, []);
 
   const invoke = useCallback(() => {
     abortControllerRef.current?.abort();
@@ -271,9 +316,20 @@ export function ExplainSection({ target }: ExplainSectionProps): React.JSX.Eleme
             return;
           case "disabled":
             // The capability was toggled off between the mount-time check and this click (a rare
-            // race, not a normal outcome): fall back to the generic HTTP-layer failure copy rather
-            // than fabricating a `remedy` this response never carries.
-            setView({ status: "request_failed" });
+            // race, not a normal outcome). The POST response itself carries no remedy
+            // (`explainContracts.ts`), so recover the real, CURRENT remedy with a fresh capability
+            // read — never fabricated, and never another paid POST.
+            void fetchExplainCapability()
+              .then((capability) => {
+                if (!controller.signal.aborted && mountedRef.current) {
+                  setView(capabilityView(capability));
+                }
+              })
+              .catch(() => {
+                if (!controller.signal.aborted && mountedRef.current) {
+                  setView({ status: "capability_error" });
+                }
+              });
             return;
         }
       })
@@ -282,7 +338,10 @@ export function ExplainSection({ target }: ExplainSectionProps): React.JSX.Eleme
           return;
         }
         if (error instanceof ExplainRequestError) {
-          setView({ status: "invalid_response" });
+          // A malformed/rejected REQUEST (HTTP 400) — distinct from `invalid_response`'s malformed
+          // model OUTPUT (#925 correction): the same exact request would only fail identically again,
+          // so this is guidance-only, never offered a pointless "Try again".
+          setView({ status: "invalid_request" });
           return;
         }
         setView({ status: "request_failed" });
@@ -321,10 +380,15 @@ export function ExplainSection({ target }: ExplainSectionProps): React.JSX.Eleme
         <div className="explainActionRow">
           {view.status === "ready" ? (
             <p className="explainConsent">
-              Explain meanings sends this selected text to Copilot, an external AI provider.
+              Explain meanings sends the selected word or phrase, and a short surrounding passage,
+              to Copilot, an external AI provider.
             </p>
           ) : null}
-          <button className="explainActionButton" onClick={invoke} type="button">
+          <button
+            className="explainActionButton"
+            onClick={view.status === "capability_error" ? retryCapability : invoke}
+            type="button"
+          >
             {view.status === "ready" ? "Explain meanings" : "Try again"}
           </button>
         </div>
