@@ -553,6 +553,10 @@ Lookup is view-only and never creates a note:
   each principal branch with its explicit connection to the core plus a short natural expression, then
   the branch the current passage actually uses. Supporting pronunciation, nuance/register, everyday
   usage, and reliable (never invented) etymology/cultural context are conditional, not mandatory.
+  Every explanation field uses familiar everyday vocabulary and short, direct sentences, preferring
+  beginner-level English or plain modern Chinese. Prefer concrete actions over difficult synonyms or
+  unexplained metaphors; explain any necessary unfamiliar term in simple words without losing meaning,
+  nuance, or branch connections.
   Fixed phrases are treated as one meaningful unit; a monosemous word is not given invented extra
   senses. It is a separately labeled, off-by-default capability from the legacy dictionary-gap
   lookup; enabling diary AI does not implicitly enable it. Failure leaves the deterministic

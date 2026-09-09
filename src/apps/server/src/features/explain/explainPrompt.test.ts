@@ -45,6 +45,48 @@ describe("buildExplainInstructions", () => {
     expect(instructions).toContain("English");
   });
 
+  it("requires familiar vocabulary throughout the explanation, not only in its core image", () => {
+    const instructions = buildExplainInstructions();
+
+    expect(instructions).toContain("plain, familiar words and short, direct sentences");
+    expect(instructions).toContain("EVERY learner-facing field");
+    expect(instructions).toContain(
+      "core images,\nbranch labels, connections, examples, and optional notes"
+    );
+    expect(instructions).toContain("beginner vocabulary\n(roughly A1-A2)");
+    expect(instructions).toContain("common everyday words, not literary or specialist wording");
+  });
+
+  it("prefers concrete explanations over difficult synonyms while preserving accurate meanings and connections", () => {
+    const instructions = buildExplainInstructions();
+
+    expect(instructions).toContain("Prefer simple actions or situations over abstract wording");
+    expect(instructions).toContain("difficult synonyms");
+    expect(instructions).toContain("unexplained metaphors or idioms");
+    expect(instructions).toContain("Even common words can be unclear when used figuratively");
+    expect(instructions).toContain("State the shared idea in literal words");
+    expect(instructions).toContain("say what the person or thing actually does or what it is");
+    expect(instructions).toContain(
+      "Choose a longer phrase in easy words over a short, difficult synonym"
+    );
+    expect(instructions).toContain(
+      "English style examples (adapt the style, not these meanings, to the selected word)"
+    );
+    expect(instructions).toContain('Core: "The back of a boat."');
+    expect(instructions).toContain("A plain description of what someone does can be the core");
+    expect(instructions).toContain("A physical image is optional");
+    expect(instructions).toContain("clear, easy wording matters more than fewer words");
+    expect(instructions).toContain(
+      "If a less familiar term is essential for accuracy, explain it immediately in simple words."
+    );
+    expect(instructions).toContain(
+      "Keep each meaning, its tone, and its link to the core accurate"
+    );
+    expect(instructions).toContain(
+      "The passage chooses the current branch; it does not replace the explanation of the whole family"
+    );
+  });
+
   it("is completely parameter-free and stable across calls (safe to build once per process)", () => {
     expect(buildExplainInstructions()).toBe(buildExplainInstructions());
   });
@@ -193,6 +235,6 @@ describe("parseExplainModelOutput", () => {
 
 describe("EXPLAIN_PROMPT_VERSION re-export", () => {
   it("matches the canonical contracts constant", () => {
-    expect(EXPLAIN_PROMPT_VERSION).toBe("semantic-map-v2");
+    expect(EXPLAIN_PROMPT_VERSION).toBe("semantic-map-v6");
   });
 });

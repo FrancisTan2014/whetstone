@@ -15,7 +15,8 @@ import { entryIdDtoSchema } from "./entryContracts.js";
 // server) so a future consumer can reason about which prompt generation produced a cached result.
 // Bumped to v2 for the standing-instructions/data-payload split and full-document (no partial-scan)
 // model-output parsing — both changes the shape of what the model receives/returns.
-export const EXPLAIN_PROMPT_VERSION = "semantic-map-v2";
+// v6 keeps that shape and adds beginner-level wording with positive, literal examples.
+export const EXPLAIN_PROMPT_VERSION = "semantic-map-v6";
 
 // --------------------------------------------------------------------------------------------------
 // Request: the existing selection's Work/block identity and exact range, plus the client's own
