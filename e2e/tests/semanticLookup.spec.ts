@@ -589,10 +589,15 @@ test.describe("Reader: Explain with AI (#931)", () => {
         page,
         setup
       }) => {
+        // Server preferences outlive each browser context; establish the backdrop before hydration.
+        const preferences = await page.request.put(`${setup.baseURL}api/preferences`, {
+          data: { readingSize: "md", theme: theme === "Night" ? "night" : "day", timeZone: "UTC" }
+        });
+        expect(preferences.ok()).toBe(true);
         await seedMarkdownWork(page, setup, `Explain Touch ${theme}`, "en", [BANK_RIVER]);
-        if (theme === "Night") {
-          await page.getByRole("button", { name: "Switch to Night" }).tap();
-        }
+        await expect
+          .poll(() => page.evaluate(() => document.documentElement.classList.contains("dark")))
+          .toBe(theme === "Night");
         let release: () => void = () => undefined;
         const pending = new Promise<void>((resolve) => {
           release = resolve;
