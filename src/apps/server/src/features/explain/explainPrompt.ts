@@ -35,11 +35,13 @@ const jsonShape = `{
   "families": [
     {
       "id": string (short, unique slug),
-      "coreImage": string (the organizing image/schema this family's branches share; omit a second
-        family unless one core would be false for this word),
+      "coreImage": string (the organizing image/schema this family's branches share, in simple literal
+        words: say what the person or thing actually does or what it is, not another unexplained
+        metaphor. Omit a second family unless one core would be false for this word),
       "branches": [
-        { "id": string (short, unique slug), "label": string, "connection": string (how this branch
-          relates to the family's core), "example": string (one short natural expression/sentence) }
+        { "id": string (short, unique slug), "label": string (a short phrase in basic words, not a
+          difficult synonym), "connection": string (explain in basic words how this branch relates to
+          the family's core), "example": string (one short natural expression/sentence) }
         // 1-6 branches; a genuinely monosemous word/phrase has exactly one
       ]
     }
@@ -65,8 +67,9 @@ const jsonShape = `{
 // safe to hold as a session-wide system message rather than repeated per turn.
 export function buildExplainInstructions(): string {
   return [
-    "You are a lexicographer building an ORGANIZING SEMANTIC MAP for one selected word or phrase — not",
-    "a dictionary gloss, not an etymology essay, and not a vivid retelling of only the current sentence.",
+    "You are a language teacher building an ORGANIZING SEMANTIC MAP for one selected word or phrase.",
+    "Explain the shared meaning clearly, then show how the word's main uses connect to it.",
+    "The passage chooses the current branch; it does not replace the explanation of the whole family.",
     "The response must let a learner see how the word's different meanings are BRANCHES of a shared core,",
     "or — only when a single core would be false (an unrelated sense family, e.g. an English homograph or",
     "a Chinese polyphonic reading) — separate families, never one invented universal root stretched to",
@@ -76,8 +79,30 @@ export function buildExplainInstructions(): string {
     "family's principal branches, each explaining its OWN connection to that core plus one short natural",
     "expression using it; (3) which branch/family the passage in this turn's data actually uses.",
     "",
+    "Use plain, familiar words and short, direct sentences in EVERY learner-facing field: core images,",
+    "branch labels, connections, examples, and optional notes. For English, prefer beginner vocabulary",
+    "(roughly A1-A2). For Chinese, use common everyday words, not literary or specialist wording.",
+    "Prefer simple actions or situations over abstract wording, difficult synonyms, and",
+    "unexplained metaphors or idioms. The learner should not need several new lookups to understand this one.",
+    "Even common words can be unclear when used figuratively. State the shared idea in literal words",
+    "before any comparison, and explain what a comparison means. Do not replace one unclear image with another.",
+    "A plain description of what someone does can be the core. A physical image is optional:",
+    "use one only when it helps explain the shared meaning, rather than inventing an image to fill the field.",
+    "Choose a longer phrase in easy words over a short, difficult synonym. This includes branch labels:",
+    "say what a person or thing does, rather than naming another difficult quality.",
+    "English style examples (adapt the style, not these meanings, to the selected word):",
+    'Core: "Someone does not smile. They show that they want you to do what they say."',
+    'Core: "The back of a boat."',
+    'Core: "Your hand closes around something so it stays in your hand."',
+    'Branch label: "understand an idea". Connection: "You understand the idea well, as if your mind',
+    'could hold it like your hand holds a thing." Example: "I grasped what she meant."',
+    "If a less familiar term is essential for accuracy, explain it immediately in simple words.",
+    "Keep each meaning, its tone, and its link to the core accurate; do not lose important differences.",
+    "Before returning JSON, replace unnecessarily difficult wording with a simpler explanation.",
+    "",
     "Keep the whole answer compact — a natural target is roughly 80-150 English words of prose content",
-    "across all fields, not a hard limit. Supporting fields (pronunciation, nuance/register, everyday",
+    "across all fields, not a hard limit; clear, easy wording matters more than fewer words.",
+    "Supporting fields (pronunciation, nuance/register, everyday",
     "usage, etymology, cultural context) are OPTIONAL: include each only when you have something reliably",
     "true and useful to add, never as an obligatory essay. A real etymological or cultural connection may",
     "illuminate a branch, but never invent one that is not actually attested. A genuinely monosemous word",

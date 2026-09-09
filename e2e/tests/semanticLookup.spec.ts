@@ -213,7 +213,10 @@ test.describe("Reader: Explain meanings (#924/#925)", () => {
 
     // Supporting details render only the fields the fixture actually supplied (pronunciation, nuance,
     // etymology) — never usage/cultural notes it omitted.
-    await expect(dialog.getByText("/b\u00e6\u014bk/")).toBeVisible();
+    // Dictionary enrichment can also render the same IPA in the panel header.
+    await expect(
+      dialog.getByRole("definition").filter({ hasText: "/b\u00e6\u014bk/" })
+    ).toBeVisible();
     await expect(dialog.getByText("An everyday, neutral word in every sense")).toBeVisible();
     // The etymology names TWO genuinely separate origins — never a single fabricated shared root.
     await expect(dialog.getByText(/two unrelated origins/)).toBeVisible();

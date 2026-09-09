@@ -225,7 +225,7 @@ advertised list, rather than silently falling back to a different model.
 one Copilot CLI _process_ across independent `open()` calls, never a _conversation_ — every `open()`
 still starts a brand-new SDK session with no memory of any earlier one. (2) GitHub's own Copilot
 service may separately apply **provider-side prompt caching** across requests that share a long common
-prefix (for example the semantic-map explanation's stable `semantic-map-v2` system instructions,
+prefix (for example the semantic-map explanation's stable `semantic-map-v6` system instructions,
 #924); this is entirely provider-controlled, opaque to this codebase, and a cache hit is still a
 billed request — never assume a cached prompt segment is free input. (3) the explanation feature's own
 `explainCache.ts` (`docs/MAP.md`) is a bounded, in-process, success-only **app answer cache** keyed by
