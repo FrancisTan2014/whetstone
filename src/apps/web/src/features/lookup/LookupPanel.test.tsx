@@ -5,9 +5,9 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { LookupPanel, type LookupState, type LookupTab } from "./LookupPanel";
-import type { ExplainEligibility } from "../reader/explainTarget";
 import { toEntryId } from "@whetstone/domain";
 import type { ExplainRequest } from "@whetstone/contracts";
+import { ExplainPanel } from "./ExplainPanel";
 
 function mockMatchMedia(matchers: Record<string, boolean>): void {
   window.matchMedia = vi.fn().mockImplementation((query: string) => ({
@@ -63,7 +63,6 @@ function renderPanel(
   state: LookupState,
   options: {
     anchorRect?: DOMRect;
-    explainEligibility?: ExplainEligibility;
     matchers: Record<string, boolean>;
     onOpenChange?: () => void;
   }
@@ -73,7 +72,6 @@ function renderPanel(
   return render(
     <LookupPanel
       anchorRect={options.anchorRect}
-      explainEligibility={options.explainEligibility ?? { status: "none" }}
       onOpenChange={options.onOpenChange ?? (() => undefined)}
       open={true}
       tabs={tabs}
@@ -85,19 +83,10 @@ function renderPanel(
 function renderTabs(
   tabs: ReadonlyArray<LookupTab>,
   matchers: Record<string, boolean> = desktop,
-  term = "set",
-  explainEligibility: ExplainEligibility = { status: "none" }
+  term = "set"
 ): RenderResult {
   mockMatchMedia(matchers);
-  return render(
-    <LookupPanel
-      explainEligibility={explainEligibility}
-      onOpenChange={() => undefined}
-      open={true}
-      tabs={tabs}
-      term={term}
-    />
-  );
+  return render(<LookupPanel onOpenChange={() => undefined} open={true} tabs={tabs} term={term} />);
 }
 
 afterEach(() => {
@@ -662,57 +651,68 @@ describe("LookupPanel mobile sheet", () => {
   });
 });
 
-// The three `ExplainEligibility` states each render honestly (#925 correction): `none` shows nothing,
-// `cross_block` names its own reason instead of a silently missing feature, and `eligible` mounts the
-// lazily-loaded Explain feature as its own chunk. A rejected chunk load must be contained locally by
-// the new error boundary, never crash the panel, and dictionary content must stay fully usable either
-// way — proven directly here rather than only indirectly through `ReaderPage.test.tsx`.
-describe("LookupPanel explain eligibility", () => {
+describe("independent dictionary and explanation panels", () => {
   afterEach(() => {
     vi.doUnmock("./explain/ExplainSection");
   });
 
-  it("renders nothing extra for a selection with no explain eligibility", () => {
-    renderTabs([{ id: "wordnet", label: "WordNet", state: loadedEntry }], desktop, "set", {
-      status: "none"
-    });
+  it("renders dictionary content with no explanation section", () => {
+    renderTabs([{ id: "wordnet", label: "WordNet", state: loadedEntry }]);
 
-    expect(screen.queryByText(/Explain meanings/)).toBeNull();
+    expect(screen.queryByText(/Explain with AI/)).toBeNull();
     expect(screen.queryByRole("note")).toBeNull();
   });
 
+  it("keeps the empty-capture explanation surface dismissible without invoking the feature", () => {
+    mockMatchMedia(desktop);
+    render(
+      <ExplainPanel
+        eligibility={{ status: "none" }}
+        onOpenChange={() => undefined}
+        open={true}
+        term=""
+      />
+    );
+    expect(screen.getByRole("button", { name: "Close" })).toBeDefined();
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
   it("names the reason instead of silently hiding the feature for a cross-block selection", () => {
-    renderTabs([{ id: "wordnet", label: "WordNet", state: loadedEntry }], desktop, "set", {
-      status: "cross_block"
-    });
+    mockMatchMedia(mobile);
+    render(
+      <ExplainPanel
+        eligibility={{ status: "cross_block" }}
+        onOpenChange={() => undefined}
+        open={true}
+        term="set"
+      />
+    );
 
     expect(
       screen.getByText(/isn't available for a selection spanning multiple paragraphs/)
     ).toBeDefined();
-    // Dictionary content is entirely unaffected by the ineligible explain state.
-    expect(screen.getByText("set")).toBeDefined();
+    expect(screen.queryByRole("tab")).toBeNull();
   });
 
-  it("mounts the lazily-loaded Explain feature when eligible, alongside dictionary content", async () => {
+  it("mounts the lazily-loaded Explain feature only in its own surface", async () => {
     vi.doMock("./explain/ExplainSection", () => ({
       ExplainSection: () => <p>Explain feature mounted</p>
     }));
     vi.resetModules();
-    const { LookupPanel: FreshLookupPanel } = await import("./LookupPanel");
+    const { ExplainPanel: FreshExplainPanel } = await import("./ExplainPanel");
     mockMatchMedia(desktop);
 
     render(
-      <FreshLookupPanel
-        explainEligibility={{ status: "eligible", target: eligibleTarget }}
+      <FreshExplainPanel
+        eligibility={{ status: "eligible", target: eligibleTarget }}
         onOpenChange={() => undefined}
         open={true}
-        tabs={[{ id: "wordnet", label: "WordNet", state: loadedEntry }]}
         term="set"
       />
     );
 
     expect(await screen.findByText("Explain feature mounted")).toBeDefined();
-    expect(screen.getByText("set")).toBeDefined();
+    expect(screen.queryByRole("tab")).toBeNull();
   });
 
   it("contains a rejected Explain chunk load locally, keeping dictionary content usable", async () => {
@@ -720,24 +720,24 @@ describe("LookupPanel explain eligibility", () => {
       throw new Error("simulated missing/offline chunk");
     });
     vi.resetModules();
-    const { LookupPanel: FreshLookupPanel } = await import("./LookupPanel");
+    const { ExplainPanel: FreshExplainPanel } = await import("./ExplainPanel");
     mockMatchMedia(desktop);
 
     render(
-      <FreshLookupPanel
-        explainEligibility={{ status: "eligible", target: eligibleTarget }}
+      <FreshExplainPanel
+        eligibility={{ status: "eligible", target: eligibleTarget }}
         onOpenChange={() => undefined}
         open={true}
-        tabs={[{ id: "wordnet", label: "WordNet", state: loadedEntry }]}
         term="set"
       />
     );
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toMatch(/couldn't load/);
-    expect(alert.textContent).toMatch(/Dictionary results above are unaffected/);
-    // Dictionary content stays reachable and rendered — the crash is structurally contained to the
-    // sibling Explain slot, never the ancestor holding `LookupTabs`.
+    expect(alert.textContent).toMatch(/Look up is still available/);
+    expect(screen.getByRole("button", { name: "Close" })).toBeDefined();
+    cleanup();
+    renderTabs([{ id: "wordnet", label: "WordNet", state: loadedEntry }]);
     expect(screen.getByText("set")).toBeDefined();
   });
 });

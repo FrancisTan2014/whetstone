@@ -1289,7 +1289,7 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   DOM via the same `blockText.ts` offset model the highlight resolver reads — so capture and re-anchor
   agree — supporting whole-block and cross-block selections; `selectionRect.ts` reads the
   Range rect for anchoring. A document-level mouse-up/key-up/touch-end release inside `.reader` opens a
-  floating `SelectionToolbar` (Add note, Mark, and Look up); annotations are disjoint, so a selection
+  floating `SelectionToolbar` (Add note, Mark, Look up, and Explain with AI); annotations are disjoint, so a selection
   overlapping an existing note disables Add note with a hint while Look up stays (`noteOverlap.ts`,
   `readerMarks.ts` `draftOverlapsNotes`). Confirming opens the `notes/` editor (where the
   size-preselected template is chosen), and a saved
@@ -1356,15 +1356,15 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   learner dictionaries (Longman/Merriam-Webster/Oxford, #254/#303), a Chinese (CJK) headword gets the
   Chinese ones (汉典/萌典/ctext/国学大师) — `isEnglishHeadword` is the discriminator. Lookup never
   creates, pre-fills, or edits a note.
-  `explain/ExplainSection.tsx` (#924/#925) is the lookup panel's explicit, independently opt-in
-  **Explain meanings** action for #924's semantic-map explanation — never eager: opening the panel,
-  switching dictionary tabs, or scrolling never sends a model turn, only the button (or its "Try
-  again" retry, or the capability-only retry from a failed probe) does, and `LookupExplainSlot`
-  mounts it lazily (own `React.lazy` chunk, budgeted separately in `.size-limit.json`, behind its own
-  error boundary so a missing/rejected chunk stays contained and dictionaries stay usable) ABOVE
-  `LookupTabs` in both the popover and the `Sheet`, so the action is reachable before scrolling even on
-  a long entry. `explainTarget.ts`'s `deriveExplainEligibility` is the pure selection →
-  `ExplainEligibility` derivation the Reader computes once per lookup open (never resending an entire
+  `ExplainPanel.tsx` is the independent **Explain with AI** selection-menu destination (#931).
+  `SelectionToolbar` owns the visible pre-invocation disclosure; `SelectionPanel.tsx` shares only
+  the selection-anchored desktop popover/mobile `Sheet` shell with dictionary-only `LookupPanel`.
+  `ExplainPanel` mounts `explain/ExplainSection.tsx` lazily (own chunk, budgeted in `.size-limit.json`,
+  with a local error boundary); mount checks capability then starts the disclosed request once.
+  Request state stays above the responsive shell, so crossing its breakpoint never starts another turn.
+  Capability retries must pass that check before generation; dictionary lookup never loads the
+  explanation feature or probes capability. `explainTarget.ts`'s `deriveExplainEligibility` is the pure selection →
+  `ExplainEligibility` derivation the Reader computes once per AI action (never resending an entire
   Work or the legacy AI-gloss context dump, and never duplicating the backend's own request-length
   cap): `eligible` carries the exact `ExplainRequest`, `cross_block` names the one genuinely
   non-representable capture, `none` is an empty selection. `explainApi.ts` calls the capability probe
@@ -1375,8 +1375,8 @@ reducedMotion="user">` + `<HashRouter>`); root `src/App.tsx` renders the routed 
   no pointless resend), shows the organizing core and each branch's connection/example before the
   current-passage "Used here" marker, renders supporting details only when the model actually supplied
   them, and shows real provider attribution only when the runtime reported it — never a fabricated
-  default. The legacy Chinese `llm` dictionary tab (`explainProvider.ts`, above) is unaffected and
-  still excluded from `preferredTab` selection only, unrelated to this capability.
+  default. The legacy Chinese `llm` backend (`explainProvider.ts`, above) remains unrelated to this
+  capability; the Reader excludes it from dictionary dispatch entirely.
   `content/` is the focused Manage-content surface (`WorkContentPanel.tsx`), opened on demand inside
   the Library's "Manage content" `Sheet`: a work switcher, a header (title/author/type/language +
   unit/block counts via `workContentSummary.ts`), an "Open in Reader" deep-link, and a units/blocks overview

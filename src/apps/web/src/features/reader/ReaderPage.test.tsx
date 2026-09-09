@@ -74,6 +74,14 @@ vi.mock("../lookup/lookupApi", () => ({
   lookupTerm: vi.fn()
 }));
 
+vi.mock("../lookup/explain/explainApi", () => ({
+  ExplainRequestError: class ExplainRequestError extends Error {},
+  fetchExplainCapability: vi.fn(),
+  requestExplanation: vi.fn()
+}));
+
+import { fetchExplainCapability, requestExplanation } from "../lookup/explain/explainApi";
+
 vi.mock("./readingPositionApi", () => ({
   fetchReadingPosition: vi.fn(),
   saveReadingPosition: vi.fn()
@@ -3069,6 +3077,71 @@ describe("ReaderPage reading controls", () => {
 });
 
 describe("ReaderPage vocabulary lookup", () => {
+  it.each(["Close", "scroll"])(
+    "uses the captured AI target and aborts on %s, without dictionary or note writes",
+    async (dismiss) => {
+      vi.mocked(fetchExplainCapability).mockResolvedValue({ enabled: true });
+      vi.mocked(requestExplanation).mockReturnValue(new Promise(() => {}));
+      const { container } = await openHuedReader();
+      const block = blockElement(container, "b-1");
+      selectText(block, "Intro");
+      fireEvent.mouseUp(block);
+      const action = await screen.findByRole("button", { name: "Explain with AI" });
+      action.focus();
+      // Focus may have destroyed the browser selection; the captured draft is authoritative.
+      const selectionSpy = vi.spyOn(window, "getSelection").mockReturnValue(null);
+      fireEvent.click(action);
+      await waitFor(() => expect(requestExplanation).toHaveBeenCalledTimes(1));
+      expect(requestExplanation).toHaveBeenCalledWith(
+        {
+          blockEntryId: "b-1",
+          endOffset: 5,
+          selectedText: "Intro",
+          startOffset: 0,
+          workEntryId: "work-1"
+        },
+        expect.any(AbortSignal)
+      );
+      expect(mockedLookupTerm).not.toHaveBeenCalled();
+      expect(mockedCreateNote).not.toHaveBeenCalled();
+      expect(screen.getByRole("dialog", { name: "Explain with AI: Intro" })).toBeDefined();
+      selectionSpy.mockRestore();
+      if (dismiss === "Close") {
+        fireEvent.click(screen.getByRole("button", { name: "Close" }));
+      } else {
+        fireEvent.scroll(window);
+      }
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(vi.mocked(requestExplanation).mock.calls[0]?.[1]?.aborted).toBe(true);
+    }
+  );
+
+  it("ignores a late dictionary source while the separate AI surface is open", async () => {
+    let resolveDictionary: (value: { found: false }) => void = () => undefined;
+    mockedLookupTerm.mockReturnValue(
+      new Promise((resolve) => {
+        resolveDictionary = resolve;
+      })
+    );
+    vi.mocked(fetchExplainCapability).mockResolvedValue({ enabled: true });
+    vi.mocked(requestExplanation).mockReturnValue(new Promise(() => {}));
+    const { container, user } = await openHuedReader();
+    const block = blockElement(container, "b-1");
+    selectText(block, "Intro");
+    fireEvent.mouseUp(block);
+    await user.click(await screen.findByRole("button", { name: "Look up" }));
+    expect(fetchExplainCapability).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    selectText(block, "paragraph");
+    fireEvent.mouseUp(block);
+    await user.click(await screen.findByRole("button", { name: "Explain with AI" }));
+    await waitFor(() => expect(requestExplanation).toHaveBeenCalledTimes(1));
+    await act(async () => resolveDictionary({ found: false }));
+    expect(screen.getByRole("dialog", { name: "Explain with AI: paragraph" })).toBeDefined();
+    expect(screen.queryByRole("tab")).toBeNull();
+    expect(screen.queryByText(/No definition found/)).toBeNull();
+  });
+
   async function selectAndLookup(): Promise<ReturnType<typeof userEvent.setup>> {
     const { container, user } = await openHuedReader();
     const block = blockElement(container, "b-1");

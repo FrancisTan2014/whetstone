@@ -4,7 +4,7 @@ import { selectExactTextIn } from "../select";
 import { type SetupData } from "../stack";
 import { expect, test } from "../fixtures";
 
-// The Reader's explicit "Explain meanings" journey (#924/#925): the organizing core behind a
+// The Reader's explicit "Explain with AI" journey (#931): the organizing core behind a
 // selection's meanings, its principal branches, and a clear "Used here" marker on the branch the
 // passage actually uses — reached only through an explicit action, never eagerly on selection/open.
 //
@@ -23,9 +23,10 @@ const READING = 'article[aria-label="Reading"]';
 const DESKTOP = { height: 900, width: 1280 } as const;
 const MOBILE = { height: 844, width: 390 } as const;
 
-const explainButton = (page: Page) => page.getByRole("button", { name: "Explain meanings" });
+const explainButton = (page: Page) =>
+  page.getByRole("button", { name: "Explain with AI", exact: true });
 const retryButton = (page: Page) => page.getByRole("button", { name: "Try again" });
-const lookupDialog = (page: Page) => page.getByRole("dialog", { name: /^Look up:/ });
+const explainDialog = (page: Page) => page.getByRole("dialog", { name: /^Explain with AI:/ });
 
 // A real homograph (two genuinely unrelated etymologies — Old Norse "bakki" vs. Italian "banca", never
 // one fabricated universal root, #925 correction) with distinct passages that key the fixture's own
@@ -87,15 +88,17 @@ async function seedMarkdownWork(
   return { readerUrl, workEntryId: result.work.entryId };
 }
 
-// Select `word` inside the block containing `needle`, open the toolbar, then open the lookup panel —
-// the same real selection → toolbar → "Look up" chain every dictionary lookup already goes through.
-async function openLookupFor(page: Page, needle: string, word: string): Promise<void> {
+// Capture once, then disclose the transfer BEFORE any invocation, on desktop and touch alike.
+async function selectForExplanation(page: Page, needle: string, word: string): Promise<void> {
   const block = page.locator(`${READING} [data-block-id]`).filter({ hasText: needle }).first();
   const blockId = await block.getAttribute("data-block-id");
   await selectExactTextIn(page, `${READING} [data-block-id="${blockId}"]`, word);
   await expect(page.getByRole("toolbar", { name: "Annotate selection" })).toBeVisible();
-  await page.getByRole("button", { name: "Look up" }).click();
-  await expect(lookupDialog(page)).toBeVisible();
+  await expect(
+    page.getByText(
+      "Explain with AI sends the selection and a short surrounding passage to Copilot."
+    )
+  ).toBeVisible();
 }
 
 // Whether `inner`'s box sits entirely within `outer`'s box — proves an element is reachable in the
@@ -122,7 +125,7 @@ async function assertReachableWithoutScrolling(dialog: Locator, target: Locator)
   ).toBe(true);
 }
 
-test.describe("Reader: Explain meanings (#924/#925)", () => {
+test.describe("Reader: Explain with AI (#931)", () => {
   test.use({ viewport: DESKTOP });
 
   test("dictionaries stay AI-free until the explicit action, then explains the riverside sense with real request/response evidence", async ({
@@ -137,30 +140,25 @@ test.describe("Reader: Explain meanings (#924/#925)", () => {
     const requestUrls: string[] = [];
     page.on("request", (request) => requestUrls.push(request.url()));
 
-    await openLookupFor(page, "muddy bank", "bank");
+    await selectForExplanation(page, "muddy bank", "bank");
+    await page.getByRole("button", { name: "Look up", exact: true }).click();
 
     // The dictionary tabs load and render fully with no AI request of any kind — the legacy
     // `source=llm` gloss is never called, and no POST to /api/explain fires merely from opening
     // lookup, and switching dictionary tabs fires no AI request either.
-    const dialog = lookupDialog(page);
-    await expect(dialog.getByRole("tab", { name: "WordNet" })).toBeVisible();
-    await dialog.getByRole("tab", { name: "Wiktionary" }).click();
-    await expect(dialog.getByRole("tab", { name: "Wiktionary", selected: true })).toBeVisible();
-
-    // Wait for the lazily-loaded Explain section to finish its mount-time capability check (proving it
-    // resolved) before inspecting which requests actually fired, so this never races the chunk load.
-    // The consent copy names BOTH the selected word/phrase AND the surrounding passage (#925
-    // correction): the API sends more than the literal selection, so the disclosure must say so.
-    await expect(
-      dialog.getByText(
-        "Explain meanings sends the selected word or phrase, and a short surrounding passage, to Copilot"
-      )
-    ).toBeVisible();
+    const dictionary = page.getByRole("dialog", { name: /^Look up:/ });
+    await expect(dictionary.getByRole("tab", { name: "WordNet" })).toBeVisible();
+    await dictionary.getByRole("tab", { name: "Wiktionary" }).click();
+    await expect(dictionary.getByRole("tab", { name: "Wiktionary", selected: true })).toBeVisible();
+    await expect(dictionary.getByText(/AI-generated|Explain/)).toHaveCount(0);
 
     expect(requestUrls.some((url) => url.includes("source=llm"))).toBe(false);
     expect(requestUrls.some((url) => url.endsWith("/api/explain"))).toBe(false);
-    // The read-only capability probe DOES fire on mount — it never invokes a model.
-    expect(requestUrls.some((url) => url.endsWith("/api/explain/capability"))).toBe(true);
+    expect(requestUrls.some((url) => url.endsWith("/api/explain/capability"))).toBe(false);
+    expect(requestUrls.some((url) => url.includes("/explain/ExplainSection"))).toBe(false);
+    await dictionary.getByRole("button", { name: "Close" }).click();
+    await selectForExplanation(page, "muddy bank", "bank");
+    const dialog = explainDialog(page);
 
     const button = explainButton(page);
     await expect(button).toBeVisible();
@@ -173,7 +171,7 @@ test.describe("Reader: Explain meanings (#924/#925)", () => {
       page.waitForRequest(
         (request) => request.url().endsWith("/api/explain") && request.method() === "POST"
       ),
-      button.click()
+      button.focus().then(() => page.keyboard.press("Enter"))
     ]);
     const body = explainRequest.postDataJSON() as {
       blockEntryId: string;
@@ -185,8 +183,11 @@ test.describe("Reader: Explain meanings (#924/#925)", () => {
     expect(body.selectedText).toBe("bank");
     expect(body.endOffset - body.startOffset).toBe("bank".length);
     expect(body.workEntryId).toBe(work.workEntryId);
+    expect(requestUrls.filter((url) => url.endsWith("/api/explain"))).toHaveLength(1);
+    await expect(dialog.getByRole("tab")).toHaveCount(0);
+    await expect(explainButton(page)).toHaveCount(0);
 
-    // The loading state itself ("Asking Copilot for the semantic map…") is proven durably by the
+    // The loading state itself ("Explaining...") is proven durably by the
     // timeout test below, which holds it open for the whole deadline; the fixture's synchronous "bank"
     // response can resolve before this assertion's very first poll, so asserting it here would be
     // inherently racy rather than meaningful.
@@ -229,7 +230,7 @@ test.describe("Reader: Explain meanings (#924/#925)", () => {
     // default the fixture never claimed.
     await expect(dialog.getByText("fixture-copilot-model · fixture-high")).toBeVisible();
 
-    // The AI interpretation stays visibly separate from the dictionary evidence above it.
+    // The separate interpretation retains its AI disclaimer.
     await expect(
       dialog.getByRole("note", { name: "AI-generated explanation, may be imperfect" })
     ).toBeVisible();
@@ -243,8 +244,8 @@ test.describe("Reader: Explain meanings (#924/#925)", () => {
   }) => {
     await seedMarkdownWork(page, setup, "Explain Bank Tilt", "en", [BANK_TILT]);
 
-    await openLookupFor(page, "pilot had to bank", "bank");
-    const dialog = lookupDialog(page);
+    await selectForExplanation(page, "pilot had to bank", "bank");
+    const dialog = explainDialog(page);
     await explainButton(page).click();
 
     const tiltBranch = dialog.locator(".explainBranch", { hasText: "to tilt or lean sideways" });
@@ -263,8 +264,8 @@ test.describe("Reader: Explain meanings (#924/#925)", () => {
   }) => {
     await seedMarkdownWork(page, setup, "Explain Bank Account", "en", [BANK_ACCOUNT]);
 
-    await openLookupFor(page, "opened a new savings account", "bank");
-    const dialog = lookupDialog(page);
+    await selectForExplanation(page, "opened a new savings account", "bank");
+    const dialog = explainDialog(page);
     await explainButton(page).click();
 
     const institutionBranch = dialog.locator(".explainBranch", {
@@ -285,8 +286,8 @@ test.describe("Reader: Explain meanings (#924/#925)", () => {
   }) => {
     await seedMarkdownWork(page, setup, "Explain Bank Rely", "en", [BANK_RELY]);
 
-    await openLookupFor(page, "you can always bank on", "bank");
-    const dialog = lookupDialog(page);
+    await selectForExplanation(page, "you can always bank on", "bank");
+    const dialog = explainDialog(page);
     await explainButton(page).click();
 
     const relyBranch = dialog.locator(".explainBranch", { hasText: "to rely on" });
@@ -304,10 +305,8 @@ test.describe("Reader: Explain meanings (#924/#925)", () => {
   }) => {
     await seedMarkdownWork(page, setup, "语义查词样例", "zh-CN", [ZH_PARAGRAPH]);
 
-    await openLookupFor(page, "打电话", "打");
-    const dialog = lookupDialog(page);
-    // The Chinese dictionary tabs (萌典 leads, #272) load fully, independent of the AI action below.
-    await expect(dialog.getByRole("tab", { name: "萌典" })).toBeVisible();
+    await selectForExplanation(page, "打电话", "打");
+    const dialog = explainDialog(page);
 
     await explainButton(page).click();
     await expect(dialog.getByText("用手或借助动作对某物施加力量")).toBeVisible();
@@ -323,11 +322,7 @@ test.describe("Reader: Explain meanings (#924/#925)", () => {
     await expect(dialog.getByText("用手或工具击打某物的字面动作")).toBeVisible();
     await expect(dialog.getByText("从击打引申为发起电话通话")).toBeVisible();
 
-    // Scoped to the Explain result's own supporting-details list (`.explainDetails`), never the bare
-    // dialog: a dictionary tab (e.g. 萌典) can independently render its own "dǎ ㄉㄚˇ" pronunciation in
-    // the SAME dialog depending on which tab happens to resolve first, which would otherwise make a
-    // bare `dialog.getByText("dǎ")` ambiguous (a strict-mode violation) — an artifact of which
-    // dictionary tab wins the race, not of the Explain result itself.
+    // Supporting details remain separate from the organizing core and its branches.
     const explainDetails = dialog.locator(".explainDetails");
     await expect(explainDetails.getByText("dǎ", { exact: true })).toBeVisible();
     await expect(dialog.getByText("非常口语化")).toBeVisible();
@@ -362,19 +357,17 @@ test.describe("Reader: Explain meanings (#924/#925)", () => {
     const requestUrls: string[] = [];
     page.on("request", (request) => requestUrls.push(request.url()));
 
-    await openLookupFor(page, "muddy bank", "bank");
-    const dialog = lookupDialog(page);
-
-    // Dictionaries still fully work with the capability off.
-    await expect(dialog.getByRole("tab", { name: "WordNet" })).toBeVisible();
-    await expect(dialog.getByText(`Explain meanings is turned off. ${remedy}`)).toBeVisible();
+    await selectForExplanation(page, "muddy bank", "bank");
+    await explainButton(page).click();
+    const dialog = explainDialog(page);
+    await expect(dialog.getByText(`Explain with AI is turned off. ${remedy}`)).toBeVisible();
     await expect(explainButton(page)).toHaveCount(0);
     expect(requestUrls.some((url) => url.endsWith("/api/explain"))).toBe(false);
   });
 
   // A genuine capability-probe HTTP failure followed by a successful retry is proven at the component
-  // level instead (`ExplainSection.test.tsx`: "retries a failed capability probe by re-fetching
-  // capability only..."), never here: the shared harness's `e2e/fixtures.ts` deliberately fails any
+  // level instead (`ExplainSection.test.tsx`: "retries a failed probe through capability..."),
+  // never here: the shared harness's `e2e/fixtures.ts` deliberately fails any
   // test whose page produces an app-origin 4xx/5xx (a blanket, suite-wide runtime-defect policy this
   // one feature must not carve an exception into), and this exact scenario needs a genuine 500 to
   // exercise the failure half. The component test already asserts the same exact-call-count/no-POST
@@ -425,31 +418,30 @@ test.describe("Reader: Explain meanings (#924/#925)", () => {
     });
 
     await seedMarkdownWork(page, setup, "Explain Disabled Race", "en", [BANK_RIVER]);
-    await openLookupFor(page, "muddy bank", "bank");
-    const dialog = lookupDialog(page);
+    await selectForExplanation(page, "muddy bank", "bank");
+    const dialog = explainDialog(page);
 
     await explainButton(page).click();
 
-    await expect(dialog.getByText(`Explain meanings is turned off. ${remedy}`)).toBeVisible();
+    await expect(dialog.getByText(`Explain with AI is turned off. ${remedy}`)).toBeVisible();
     expect(explainPostCalls).toBe(1);
     // The recovery re-fetches capability EXACTLY once more — never a burst, never a second POST.
     expect(capabilityCalls).toBe(callsBeforeRecovery + 1);
   });
 
-  test("recovers from an honest transport failure via explicit retry, without losing dictionary results", async ({
+  test("recovers from an honest transport failure via explicit retry in its own surface", async ({
     page,
     setup
   }) => {
     await seedMarkdownWork(page, setup, "Explain Break Transport", "en", [BREAK_TRANSPORT]);
-    await openLookupFor(page, "breaktransport fault", "breaktransport");
-    const dialog = lookupDialog(page);
+    await selectForExplanation(page, "breaktransport fault", "breaktransport");
+    const dialog = explainDialog(page);
 
     await explainButton(page).click();
     await expect(
       dialog.getByText("Could not reach Copilot. Check your connection and try again.")
     ).toBeVisible();
-    // The failed optional explanation never destroys the dictionary results rendered above it.
-    await expect(dialog.getByRole("tab", { name: "WordNet" })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Close" })).toBeEnabled();
 
     await retryButton(page).click();
     await expect(
@@ -465,8 +457,8 @@ test.describe("Reader: Explain meanings (#924/#925)", () => {
     setup
   }) => {
     await seedMarkdownWork(page, setup, "Explain Bad Json", "en", [BAD_JSON]);
-    await openLookupFor(page, "badjson text", "badjson");
-    const dialog = lookupDialog(page);
+    await selectForExplanation(page, "badjson text", "badjson");
+    const dialog = explainDialog(page);
 
     await explainButton(page).click();
     await expect(
@@ -490,7 +482,7 @@ test.describe("Reader: Explain meanings (#924/#925)", () => {
     const paragraph = `Before the long run there is context. ${longRun} And after the long run there is more context.`;
     await seedMarkdownWork(page, setup, "Explain Over Limit", "en", [paragraph]);
 
-    await openLookupFor(page, "Before the long run", longRun);
+    await selectForExplanation(page, "Before the long run", longRun);
 
     const button = explainButton(page);
     await expect(button).toBeVisible();
@@ -502,11 +494,14 @@ test.describe("Reader: Explain meanings (#924/#925)", () => {
     setup
   }) => {
     await seedMarkdownWork(page, setup, "Explain Timeout", "en", [TIMEOUT_TEST]);
-    await openLookupFor(page, "timeouttest and never", "timeouttest");
-    const dialog = lookupDialog(page);
+    await selectForExplanation(page, "timeouttest and never", "timeouttest");
+    const dialog = explainDialog(page);
 
     await explainButton(page).click();
-    await expect(dialog.getByText("Asking Copilot for the semantic map…")).toBeVisible();
+    await expect(dialog.getByRole("status")).toHaveText("Explaining...");
+    await expect(dialog.getByRole("status").locator("svg")).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Close" })).toBeEnabled();
+    await expect(explainButton(page)).toHaveCount(0);
     // The E2E harness shortens the owned deadline to 3s (`AGENT_COPILOT_EXPLAIN_TURN_TIMEOUT_MS`) so
     // this proves the truthful "timeout" outcome without waiting out the real 150s production bound —
     // and, since Playwright's own `expect` timeout (15s) comfortably exceeds it, never a false early
@@ -526,71 +521,135 @@ test.describe("Reader: Explain meanings (#924/#925)", () => {
       BANK_RIVER
     ]);
 
-    await openLookupFor(page, "timeouttest and never", "timeouttest");
+    await selectForExplanation(page, "timeouttest and never", "timeouttest");
     await explainButton(page).click();
-    await expect(page.getByText("Asking Copilot for the semantic map…")).toBeVisible();
+    await expect(page.getByText("Explaining...")).toBeVisible();
 
     // Close the panel and select a different passage WHILE the first request is still in flight (the
     // fixture's "timeouttest" headword never resolves on its own): the parent's `key={lookup.requestId}`
     // fully remounts the panel (and the lazy `ExplainSection` inside it) on every new selection, so the
     // superseded request's own effect cleanup aborts it rather than letting it paint later.
     await page.keyboard.press("Escape");
-    await expect(lookupDialog(page)).toBeHidden();
+    await expect(explainDialog(page)).toBeHidden();
 
-    await openLookupFor(page, "muddy bank", "bank");
-    const dialog = lookupDialog(page);
+    await selectForExplanation(page, "muddy bank", "bank");
+    const dialog = explainDialog(page);
     await explainButton(page).click();
     await expect(dialog.getByText("a sloping earthen edge, as beside a river")).toBeVisible();
     // The superseded "timeouttest" request never paints its (eventual) timeout message under the new term.
     await expect(dialog.getByText("The explanation is taking too long")).toHaveCount(0);
   });
 
-  // #925 correction: invoking Explain, then switching to a DIFFERENT dictionary tab while the answer
-  // may still be in flight, must never have the eventual background result steal the view back —
-  // dictionary tab selection and the Explain slot are independent siblings, never a shared/exclusive
-  // view, so the learner's own tab choice survives the result's later arrival.
-  test("switching dictionary tabs after invoking Explain does not lose that tab selection when the result later arrives", async ({
+  // A dismissed pending explanation cannot reopen over a later dictionary lookup.
+  test("opening dictionary lookup after dismissing Explain cannot be stolen by the stale response", async ({
     page,
     setup
   }) => {
-    await seedMarkdownWork(page, setup, "Explain No View Steal", "en", [BANK_RIVER]);
-    await openLookupFor(page, "muddy bank", "bank");
-    const dialog = lookupDialog(page);
-
+    await seedMarkdownWork(page, setup, "Explain No View Steal", "en", [TIMEOUT_TEST, BANK_RIVER]);
+    await selectForExplanation(page, "timeouttest and never", "timeouttest");
+    const response = page.waitForRequest((request) => request.url().endsWith("/api/explain"));
     await explainButton(page).click();
+    await response;
+    await explainDialog(page).getByRole("button", { name: "Close" }).click();
+    await selectForExplanation(page, "muddy bank", "bank");
+    await page.getByRole("button", { name: "Look up", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: /^Look up:/ });
     await dialog.getByRole("tab", { name: "Wiktionary" }).click();
     await expect(dialog.getByRole("tab", { name: "Wiktionary", selected: true })).toBeVisible();
 
-    await expect(dialog.getByText("a sloping earthen edge, as beside a river")).toBeVisible();
-    // The background result's arrival must never revert the learner's own tab choice.
+    // Wait beyond the fixture's 3s deadline to observe the stale completion window.
+    await page.waitForTimeout(3500);
+    await expect(explainDialog(page)).toBeHidden();
     await expect(dialog.getByRole("tab", { name: "Wiktionary", selected: true })).toBeVisible();
   });
 
-  // #925 correction: a long WordNet entry (12 real senses) previously buried the action and its result
-  // below the entire dictionary entry. `boundingBox()` measures CURRENT position with no implicit
-  // scroll (unlike `.click()`/`.toBeVisible()`), so this proves the action is reachable in the initial
-  // popover viewport BEFORE any scroll or click, and that the result stays a focused, core-first view
-  // (not appended after dozens of senses) immediately after invoking it.
-  test("the explicit action and its result are reachable in the initial viewport of a long entry, before any scroll (desktop)", async ({
+  // The action and core-first result never require scrolling through a dictionary entry.
+  test("the action, disclosure, and result are reachable without dictionary scrolling (desktop)", async ({
     page,
     setup
   }) => {
     await seedMarkdownWork(page, setup, "Explain Long Entry Desktop", "en", [LONG_ENTRY_PASSAGE]);
-    await openLookupFor(page, "muddy bank", "bank");
-    const dialog = lookupDialog(page);
-
-    // Confirm this really is a long entry (many WordNet senses) before proving discoverability against it.
-    await expect(dialog.getByRole("tab", { name: "WordNet" })).toBeVisible();
-    const senseCount = await dialog.locator(".lookupSense").count();
-    expect(senseCount).toBeGreaterThan(5);
-
-    await assertReachableWithoutScrolling(dialog, explainButton(page));
+    await selectForExplanation(page, "muddy bank", "bank");
+    const dialog = explainDialog(page);
+    await assertReachableWithoutScrolling(page.getByRole("toolbar"), explainButton(page));
 
     await explainButton(page).click();
+    await expect(dialog.getByText("a sloping earthen edge, as beside a river")).toBeVisible();
     await assertReachableWithoutScrolling(
       dialog,
       dialog.getByText("a sloping earthen edge, as beside a river")
     );
+  });
+
+  test.describe("Explain with AI on touch", () => {
+    test.use({ viewport: MOBILE, hasTouch: true, reducedMotion: "reduce" });
+
+    for (const theme of ["Day", "Night"] as const) {
+      test(`${theme}: visible disclosure, one tap, delayed spinner, result and Close`, async ({
+        page,
+        setup
+      }) => {
+        // Server preferences outlive each browser context; establish the backdrop before hydration.
+        const preferences = await page.request.put(`${setup.baseURL}api/preferences`, {
+          data: { readingSize: "md", theme: theme === "Night" ? "night" : "day", timeZone: "UTC" }
+        });
+        expect(preferences.ok()).toBe(true);
+        await seedMarkdownWork(page, setup, `Explain Touch ${theme}`, "en", [BANK_RIVER]);
+        await expect
+          .poll(() => page.evaluate(() => document.documentElement.classList.contains("dark")))
+          .toBe(theme === "Night");
+        let release: () => void = () => undefined;
+        const pending = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        let posts = 0;
+        await page.route("**/api/explain", async (route) => {
+          posts += 1;
+          // Controlled delivery delay only; the actual response comes from the real fixture server.
+          await pending;
+          await route.continue();
+        });
+        await selectForExplanation(page, "muddy bank", "bank");
+        expect(posts).toBe(0);
+        const toolbar = page.getByRole("toolbar");
+        const disclosure = toolbar.getByText(/sends the selection and a short surrounding passage/);
+        await assertReachableWithoutScrolling(toolbar, disclosure);
+        const toolbarBox = await toolbar.boundingBox();
+        expect(toolbarBox!.x).toBeGreaterThanOrEqual(0);
+        expect(toolbarBox!.x + toolbarBox!.width).toBeLessThanOrEqual(MOBILE.width);
+        for (const button of await toolbar.getByRole("button").all()) {
+          const box = await button.boundingBox();
+          expect(box!.width).toBeGreaterThanOrEqual(44);
+          expect(box!.height).toBeGreaterThanOrEqual(44);
+        }
+        await page.screenshot({ path: `artifacts/issue-931-${theme}-touch-menu.png` });
+        await explainButton(page).tap();
+        const dialog = explainDialog(page);
+        await expect(dialog.getByRole("status")).toHaveText("Explaining...");
+        await expect(dialog.getByRole("status").locator("svg")).toBeVisible();
+        await expect(dialog.getByRole("button", { name: "Close" })).toBeEnabled();
+        await expect(explainButton(page)).toHaveCount(0);
+        await expect.poll(() => posts).toBe(1);
+        await page.screenshot({ path: `artifacts/issue-931-${theme}-touch-pending.png` });
+        // Crossing the responsive breakpoint changes only presentation, never request ownership.
+        await page.setViewportSize(DESKTOP);
+        await expect(dialog.getByRole("status")).toHaveText("Explaining...");
+        await page.screenshot({ path: `artifacts/issue-931-${theme}-desktop-pending.png` });
+        await page.setViewportSize(MOBILE);
+        await expect(dialog.getByRole("status")).toHaveText("Explaining...");
+        release();
+        await expect(dialog.getByText("a sloping earthen edge, as beside a river")).toBeVisible();
+        await expect(dialog.getByRole("status")).toHaveCount(0);
+        expect(posts).toBe(1);
+        await page.screenshot({ path: `artifacts/issue-931-${theme}-touch-result.png` });
+        const close = dialog.getByRole("button", { name: "Close" });
+        const closeBox = await close.boundingBox();
+        expect(closeBox!.width).toBeGreaterThanOrEqual(44);
+        expect(closeBox!.height).toBeGreaterThanOrEqual(44);
+        await close.tap();
+        await expect(dialog).toBeHidden();
+      });
+    }
   });
 
   test("the explicit action and its result are reachable in the initial viewport of a long entry, before any scroll (mobile)", async ({
@@ -599,29 +658,26 @@ test.describe("Reader: Explain meanings (#924/#925)", () => {
   }) => {
     await page.setViewportSize(MOBILE);
     await seedMarkdownWork(page, setup, "Explain Long Entry Mobile", "en", [LONG_ENTRY_PASSAGE]);
-    await openLookupFor(page, "muddy bank", "bank");
-    const dialog = lookupDialog(page);
-
-    await expect(dialog.getByRole("tab", { name: "WordNet" })).toBeVisible();
-    const senseCount = await dialog.locator(".lookupSense").count();
-    expect(senseCount).toBeGreaterThan(5);
-
-    await assertReachableWithoutScrolling(dialog, explainButton(page));
+    await selectForExplanation(page, "muddy bank", "bank");
+    const dialog = explainDialog(page);
+    await assertReachableWithoutScrolling(page.getByRole("toolbar"), explainButton(page));
 
     await explainButton(page).click();
+    await expect(dialog.getByText("a sloping earthen edge, as beside a river")).toBeVisible();
     await assertReachableWithoutScrolling(
       dialog,
       dialog.getByText("a sloping earthen edge, as beside a river")
     );
   });
 
-  test("Escape closes the lookup popover", async ({ page, setup }) => {
+  test("Escape closes the explanation popover", async ({ page, setup }) => {
     await seedMarkdownWork(page, setup, "Explain Escape", "en", [BANK_RIVER]);
-    await openLookupFor(page, "muddy bank", "bank");
-    await expect(explainButton(page)).toBeVisible();
+    await selectForExplanation(page, "muddy bank", "bank");
+    await explainButton(page).click();
+    await expect(explainDialog(page)).toBeVisible();
 
     await page.keyboard.press("Escape");
-    await expect(lookupDialog(page)).toBeHidden();
+    await expect(explainDialog(page)).toBeHidden();
   });
 
   test("mobile: the bottom Sheet offers the same explicit action and result", async ({
@@ -630,10 +686,9 @@ test.describe("Reader: Explain meanings (#924/#925)", () => {
   }) => {
     await page.setViewportSize(MOBILE);
     await seedMarkdownWork(page, setup, "Explain Mobile", "en", [BANK_RIVER]);
-    await openLookupFor(page, "muddy bank", "bank");
+    await selectForExplanation(page, "muddy bank", "bank");
 
-    const dialog = lookupDialog(page);
-    await expect(dialog.getByRole("tab", { name: "WordNet" })).toBeVisible();
+    const dialog = explainDialog(page);
     const button = explainButton(page);
     await expect(button).toBeVisible();
     const box = await button.boundingBox();
