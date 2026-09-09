@@ -132,7 +132,7 @@ describe("ExplainSection", () => {
     mockedFetchCapability.mockReturnValue(new Promise(() => {}));
     render(<ExplainSection target={target} />);
 
-    expect(screen.getByRole("status").textContent).toContain("Checking");
+    expect(screen.getByRole("status").textContent).toContain("Explaining...");
     expect(mockedRequestExplanation).not.toHaveBeenCalled();
   });
 
@@ -149,41 +149,63 @@ describe("ExplainSection", () => {
     expect(mockedRequestExplanation).not.toHaveBeenCalled();
   });
 
-  it("shows the surrounding-passage consent text and action button once capability resolves enabled, and never requests before the click", async () => {
-    renderReady();
-
-    expect(await screen.findByRole("button", { name: "Explain meanings" })).toBeDefined();
-    expect(
-      screen.getByText(
-        /sends the selected word or phrase, and a short surrounding passage, to Copilot, an external AI provider/
-      )
-    ).toBeDefined();
-    expect(mockedRequestExplanation).not.toHaveBeenCalled();
+  it("starts exactly one request on mount even in StrictMode, with no second Explain button", async () => {
+    mockedFetchCapability.mockResolvedValue({ enabled: true });
+    mockedRequestExplanation.mockReturnValue(new Promise(() => {}));
+    const { rerender } = render(
+      <StrictMode>
+        <ExplainSection target={target} />
+      </StrictMode>
+    );
+    await waitFor(() => expect(mockedRequestExplanation).toHaveBeenCalledTimes(1));
+    rerender(
+      <StrictMode>
+        <ExplainSection target={target} />
+      </StrictMode>
+    );
+    expect(mockedRequestExplanation).toHaveBeenCalledWith(target, expect.any(AbortSignal));
+    expect(mockedRequestExplanation).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("status").textContent).toContain("Explaining...");
+    expect(screen.queryByRole("button")).toBeNull();
   });
 
-  // #925 correction: a failed capability probe must not be bypassable straight into an undisclosed
-  // POST. Its ONLY retry re-fetches capability — never generation — so a rejected probe followed by a
-  // successful retry must show exactly one capability call pair and zero explanation requests until the
-  // learner explicitly clicks the (now-disclosed) "Explain meanings" action itself.
-  it("retries a failed capability probe by re-fetching capability only, never invoking generation", async () => {
+  it("retries a transient generation failure explicitly with the same captured target", async () => {
+    mockedRequestExplanation.mockResolvedValueOnce({ status: "timeout" });
+    mockedRequestExplanation.mockResolvedValueOnce({
+      status: "ok",
+      provider: {},
+      result: minimalResult
+    });
+    renderReady();
+    fireEvent.click(await screen.findByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("core image")).toBeDefined();
+    expect(mockedRequestExplanation).toHaveBeenCalledTimes(2);
+    expect(mockedRequestExplanation).toHaveBeenLastCalledWith(target, expect.any(AbortSignal));
+  });
+
+  it("retries a failed probe through capability before starting the requested explanation", async () => {
     mockedFetchCapability.mockRejectedValueOnce(new Error("network down"));
-    mockedFetchCapability.mockResolvedValueOnce({ enabled: true });
+    let enable: (value: { enabled: true }) => void = () => undefined;
+    mockedFetchCapability.mockReturnValueOnce(
+      new Promise((resolve) => {
+        enable = resolve;
+      })
+    );
+    mockedRequestExplanation.mockReturnValue(new Promise(() => {}));
     render(<ExplainSection target={target} />);
 
     expect(
-      await screen.findByText("Could not check whether Explain meanings is available.")
+      await screen.findByText("Could not check whether Explain with AI is available.")
     ).toBeDefined();
     expect(mockedFetchCapability).toHaveBeenCalledTimes(1);
 
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
 
-    expect(await screen.findByRole("button", { name: "Explain meanings" })).toBeDefined();
     expect(mockedFetchCapability).toHaveBeenCalledTimes(2);
     expect(mockedRequestExplanation).not.toHaveBeenCalled();
-    // The disclosed consent copy is shown again once capability resolves enabled — never skipped.
-    expect(
-      screen.getByText(/sends the selected word or phrase, and a short surrounding passage/)
-    ).toBeDefined();
+    await act(async () => enable({ enabled: true }));
+    expect(mockedRequestExplanation).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button")).toBeNull();
   });
 
   it("retries a failed capability probe back into a disabled state with the real remedy, if that is what capability now reports", async () => {
@@ -210,7 +232,7 @@ describe("ExplainSection", () => {
 
     await waitFor(() => expect(mockedFetchCapability).toHaveBeenCalledTimes(2));
     expect(
-      await screen.findByText("Could not check whether Explain meanings is available.")
+      await screen.findByText("Could not check whether Explain with AI is available.")
     ).toBeDefined();
     expect(screen.getByRole("button", { name: "Try again" })).toBeDefined();
   });
@@ -229,6 +251,7 @@ describe("ExplainSection", () => {
     // "reject once, then resolve once" would be fully consumed by mount alone, before the retry click
     // ever fires. Every probe fails until the test explicitly flips this after the retry click.
     let capabilityFailing = true;
+    mockedRequestExplanation.mockReturnValue(new Promise(() => {}));
     mockedFetchCapability.mockImplementation(() =>
       capabilityFailing
         ? Promise.reject(new Error("network down"))
@@ -241,14 +264,14 @@ describe("ExplainSection", () => {
     );
 
     expect(
-      await screen.findByText("Could not check whether Explain meanings is available.")
+      await screen.findByText("Could not check whether Explain with AI is available.")
     ).toBeDefined();
     capabilityFailing = false;
 
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
 
-    expect(await screen.findByRole("button", { name: "Explain meanings" })).toBeDefined();
-    expect(mockedRequestExplanation).not.toHaveBeenCalled();
+    await waitFor(() => expect(mockedRequestExplanation).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("button")).toBeNull();
   });
 
   it("shows loading, then the organizing map with the current family/branch marked and optional fields rendered", async () => {
@@ -260,8 +283,8 @@ describe("ExplainSection", () => {
     );
     renderReady();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Explain meanings" }));
-    expect(screen.getByRole("status").textContent).toContain("Asking Copilot");
+    await waitFor(() => expect(mockedRequestExplanation).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("status").textContent).toContain("Explaining...");
     // The button disappears while a request is pending, so a repeated click cannot start a duplicate.
     expect(screen.queryByRole("button")).toBeNull();
 
@@ -302,7 +325,6 @@ describe("ExplainSection", () => {
     });
     renderReady();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Explain meanings" }));
     await screen.findByText("core image");
 
     expect(screen.queryByText("Nuance")).toBeNull();
@@ -320,8 +342,6 @@ describe("ExplainSection", () => {
     });
     renderReady();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Explain meanings" }));
-
     expect(
       await screen.findByText("A supporting detail with an explicitly empty pronunciation list.")
     ).toBeDefined();
@@ -337,8 +357,6 @@ describe("ExplainSection", () => {
       status: "ok"
     });
     renderReady();
-
-    fireEvent.click(await screen.findByRole("button", { name: "Explain meanings" }));
 
     expect(await screen.findByText("From an unrelated, separately attested root.")).toBeDefined();
     expect(screen.queryByText("Culture")).toBeNull();
@@ -361,7 +379,6 @@ describe("ExplainSection", () => {
       mockedRequestExplanation.mockResolvedValue({ status } as ExplainResponse);
       renderReady();
 
-      fireEvent.click(await screen.findByRole("button", { name: "Explain meanings" }));
       expect(await screen.findByRole("alert")).toHaveProperty("textContent", message);
       expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
     }
@@ -376,7 +393,6 @@ describe("ExplainSection", () => {
       mockedRequestExplanation.mockResolvedValue({ status } as ExplainResponse);
       renderReady();
 
-      fireEvent.click(await screen.findByRole("button", { name: "Explain meanings" }));
       expect(await screen.findByRole("alert")).toHaveProperty("textContent", message);
       expect(screen.getByRole("button", { name: "Try again" })).toBeDefined();
     }
@@ -390,7 +406,6 @@ describe("ExplainSection", () => {
     mockedRequestExplanation.mockResolvedValue({ reason, status: "unavailable" });
     renderReady();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Explain meanings" }));
     expect(await screen.findByRole("alert")).toHaveProperty("textContent", message);
   });
 
@@ -408,8 +423,6 @@ describe("ExplainSection", () => {
     });
     render(<ExplainSection target={target} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Explain meanings" }));
-
     expect(await screen.findByText(/Set AGENT_COPILOT_EXPLAIN_ENABLED=1\./)).toBeDefined();
     expect(mockedRequestExplanation).toHaveBeenCalledTimes(1);
     expect(mockedFetchCapability).toHaveBeenCalledTimes(2);
@@ -421,11 +434,60 @@ describe("ExplainSection", () => {
     mockedFetchCapability.mockRejectedValueOnce(new Error("still down"));
     render(<ExplainSection target={target} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Explain meanings" }));
-
     expect(
-      await screen.findByText("Could not check whether Explain meanings is available.")
+      await screen.findByText("Could not check whether Explain with AI is available.")
     ).toBeDefined();
+  });
+
+  it("does not loop paid requests if a disabled POST is followed by an enabled capability", async () => {
+    mockedRequestExplanation.mockResolvedValueOnce({ status: "disabled" });
+    mockedRequestExplanation.mockResolvedValueOnce({
+      status: "ok",
+      provider: {},
+      result: minimalResult
+    });
+    mockedFetchCapability.mockResolvedValue({ enabled: true });
+    render(<ExplainSection target={target} />);
+    expect(await screen.findByText("Explain with AI is available again.")).toBeDefined();
+    expect(mockedRequestExplanation).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("core image")).toBeDefined();
+    expect(mockedRequestExplanation).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not start a turn when a dismissed capability probe later resolves", async () => {
+    let resolve: (value: { enabled: true }) => void = () => undefined;
+    mockedFetchCapability.mockReturnValue(
+      new Promise((done) => {
+        resolve = done;
+      })
+    );
+    const { unmount } = render(<ExplainSection target={target} />);
+    unmount();
+    await act(async () => resolve({ enabled: true }));
+    expect(mockedRequestExplanation).not.toHaveBeenCalled();
+  });
+
+  it("does not paint a late answer under a different keyed selection", async () => {
+    let resolveOld: (response: ExplainResponse) => void = () => undefined;
+    mockedFetchCapability.mockResolvedValue({ enabled: true });
+    mockedRequestExplanation.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveOld = resolve;
+      })
+    );
+    mockedRequestExplanation.mockResolvedValueOnce({
+      provider: {},
+      result: minimalResult,
+      status: "ok"
+    });
+    const { rerender } = render(<ExplainSection key="old" target={target} />);
+    await waitFor(() => expect(mockedRequestExplanation).toHaveBeenCalledTimes(1));
+    rerender(<ExplainSection key="new" target={{ ...target, selectedText: "new" }} />);
+    expect(await screen.findByText("core image")).toBeDefined();
+    await act(async () => resolveOld({ provider: {}, result: bankResult, status: "ok" }));
+    expect(screen.queryByText("a sloping earthen edge, as beside a river")).toBeNull();
+    expect(screen.getByText("core image")).toBeDefined();
   });
 
   // #925 correction: HTTP 400 (a malformed/rejected REQUEST) must never be shown as if the model
@@ -435,7 +497,6 @@ describe("ExplainSection", () => {
     mockedRequestExplanation.mockRejectedValue(new ExplainRequestError("bad"));
     renderReady();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Explain meanings" }));
     expect(await screen.findByRole("alert")).toHaveProperty(
       "textContent",
       "This selection can't be explained as chosen. Select a shorter or different phrase and try again."
@@ -447,7 +508,6 @@ describe("ExplainSection", () => {
     mockedRequestExplanation.mockRejectedValue(new Error("network error"));
     renderReady();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Explain meanings" }));
     expect(await screen.findByRole("alert")).toHaveProperty(
       "textContent",
       "Something went wrong requesting the explanation."
@@ -463,7 +523,7 @@ describe("ExplainSection", () => {
     });
     const { unmount } = render(<ExplainSection target={target} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Explain meanings" }));
+    await waitFor(() => expect(mockedRequestExplanation).toHaveBeenCalledTimes(1));
     expect(capturedSignal?.aborted).toBe(false);
 
     unmount();
@@ -558,7 +618,6 @@ describe("ExplainSection", () => {
     );
     const { unmount } = render(<ExplainSection target={target} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Explain meanings" }));
     await waitFor(() => expect(mockedFetchCapability).toHaveBeenCalledTimes(2));
     unmount();
 
@@ -580,7 +639,6 @@ describe("ExplainSection", () => {
     );
     const { unmount } = render(<ExplainSection target={target} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Explain meanings" }));
     await waitFor(() => expect(mockedFetchCapability).toHaveBeenCalledTimes(2));
     unmount();
 
@@ -601,7 +659,7 @@ describe("ExplainSection", () => {
     );
     const { unmount } = render(<ExplainSection target={target} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Explain meanings" }));
+    await waitFor(() => expect(mockedRequestExplanation).toHaveBeenCalledTimes(1));
     unmount();
 
     // The abort flag is checked before acting on the response; a late resolution must be a no-op.
@@ -622,13 +680,13 @@ describe("ExplainSection", () => {
     );
     renderReady();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Explain meanings" }));
+    await waitFor(() => expect(mockedRequestExplanation).toHaveBeenCalledTimes(1));
     await act(async () => {
       rejectRequest(new DOMException("The operation was aborted.", "AbortError"));
     });
 
     // A genuinely aborted request must never surface as a visible failure state.
     expect(screen.queryByRole("alert")).toBeNull();
-    expect(screen.getByRole("status").textContent).toContain("Asking Copilot");
+    expect(screen.getByRole("status").textContent).toContain("Explaining...");
   });
 });

@@ -545,9 +545,13 @@ Lookup is view-only and never creates a note:
 - Chinese uses CC-CEDICT.
 - `Intl.Segmenter` interprets CJK selections before lookup.
 - External dictionary links are always available as a not-found exit.
-- Optional **AI semantic-map explanation** — reached through the Reader lookup panel's explicit
-  **"Explain meanings"** action, never dispatched merely from opening lookup, switching a dictionary
-  tab, or scrolling — covers English and Chinese words/phrases generally, not
+- **Look up** is dictionary-only. The selection menu separately offers **Explain with AI**, with
+  visible disclosure that the selection and a short surrounding passage are sent to Copilot.
+  This explicit action opens its own desktop popover/mobile bottom sheet and starts one explanation
+  when available; **Explaining...** and the shared spinner stay visible while pending, with Close
+  always available. There is no second Explain button. Setup/error guidance replaces pending;
+  transient failures offer retry, while stale or invalid selections require reselection.
+- Optional **AI semantic-map explanation** covers English and Chinese words/phrases generally, not
   just dictionary gaps. It organizes a word's principal meanings as connected branches rather than a
   flat gloss: a core image/schema (or separate sense families when one core would be false), then
   each principal branch with its explicit connection to the core plus a short natural expression, then
@@ -559,8 +563,8 @@ Lookup is view-only and never creates a note:
   nuance, or branch connections.
   Fixed phrases are treated as one meaningful unit; a monosemous word is not given invented extra
   senses. It is a separately labeled, off-by-default capability from the legacy dictionary-gap
-  lookup; enabling diary AI does not implicitly enable it. Failure leaves the deterministic
-  dictionary result intact.
+  lookup; enabling diary AI does not implicitly enable it. Lookup and dictionary tabs never invoke
+  AI. Dismissing or changing selections prevents stale answers from appearing in a later surface.
 
 ## Diary, Timeline, and Writing
 

@@ -11,18 +11,21 @@ function renderToolbar(
     disabledHint?: string;
     onClose?: () => void;
     onConfirm?: () => void;
+    onExplain?: () => void;
     onLookup?: () => void;
     onMark?: () => void;
   } = {}
 ): {
   onClose: () => void;
   onConfirm: () => void;
+  onExplain: () => void;
   onLookup: () => void;
   onMark: () => void;
   user: ReturnType<typeof userEvent.setup>;
 } {
   const onClose = overrides.onClose ?? vi.fn();
   const onConfirm = overrides.onConfirm ?? vi.fn();
+  const onExplain = overrides.onExplain ?? vi.fn();
   const onLookup = overrides.onLookup ?? vi.fn();
   const onMark = overrides.onMark ?? vi.fn();
   const user = userEvent.setup();
@@ -33,13 +36,14 @@ function renderToolbar(
       disabledHint={overrides.disabledHint}
       onClose={onClose}
       onConfirm={onConfirm}
+      onExplain={onExplain}
       onLookup={onLookup}
       onMark={onMark}
       prefersReducedMotion={false}
     />
   );
 
-  return { onClose, onConfirm, onLookup, onMark, user };
+  return { onClose, onConfirm, onExplain, onLookup, onMark, user };
 }
 
 afterEach(() => {
@@ -47,7 +51,7 @@ afterEach(() => {
 });
 
 describe("SelectionToolbar", () => {
-  it("shows the primary actions (Add note, Mark, Look up) plus a dismiss control", () => {
+  it("shows separate dictionary and AI actions plus annotation and dismiss controls", () => {
     renderToolbar();
 
     const buttons = screen.getAllByRole("button");
@@ -55,9 +59,27 @@ describe("SelectionToolbar", () => {
       "Add note",
       "Mark",
       "Look up",
+      "Explain with AI",
       ""
     ]);
     expect(screen.getByRole("button", { name: "Dismiss" })).toBeDefined();
+  });
+
+  it("discloses the passage transfer before keyboard invocation, including overlapping notes", async () => {
+    const { onExplain, onLookup, onConfirm, user } = renderToolbar({
+      disabledHint: "Notes can't overlap"
+    });
+    const button = screen.getByRole("button", { name: "Explain with AI" });
+    const disclosure = document.getElementById(button.getAttribute("aria-describedby")!);
+    expect(disclosure?.textContent).toBe(
+      "Explain with AI sends the selection and a short surrounding passage to Copilot."
+    );
+    expect(onExplain).not.toHaveBeenCalled();
+    button.focus();
+    await user.keyboard("{Enter}");
+    expect(onExplain).toHaveBeenCalledTimes(1);
+    expect(onLookup).not.toHaveBeenCalled();
+    expect(onConfirm).not.toHaveBeenCalled();
   });
 
   it("marks the selection without opening the editor or looking up", async () => {

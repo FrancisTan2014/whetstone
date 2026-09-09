@@ -19,6 +19,7 @@ import { SelectionToolbar } from "../notes/SelectionToolbar";
 import { ChapterPager } from "./ChapterPager";
 import { fetchPreferences, savePreferences } from "../../shared/preferences/preferencesApi";
 import { LookupPanel, type LookupState, type LookupTab } from "../lookup/LookupPanel";
+import { ExplainPanel } from "../lookup/ExplainPanel";
 import { lookupTerm } from "../lookup/lookupApi";
 import { deriveExplainEligibility, type ExplainEligibility } from "./explainTarget";
 import { highlightBirthMotion } from "./highlightBirth";
@@ -362,18 +363,17 @@ type ReaderPageProps = Readonly<{
   initialWorkEntryId?: string | undefined;
 }>;
 
-// A view-only vocabulary lookup driven from the selection toolbar: the selected term and
-// its fetch state. Lookup never creates, pre-fills, or edits a note. `explainEligibility` names
-// whether — and why not — the explicit "Explain meanings" action (#925) is offered for this
-// selection: `eligible` carries the exact-range request; `cross_block` and `none` each render their
-// own honest state in `LookupPanel` rather than a silently missing feature.
+// Exactly one view-only selection surface can be open. Each invocation owns its captured target
+// and identity; dictionary responses cannot update an AI surface or a newer selection.
 type LookupView = Readonly<{
   anchorRect?: DOMRect | undefined;
-  explainEligibility: ExplainEligibility;
   requestId: number;
-  tabs: ReadonlyArray<LookupTab>;
   term: string;
-}>;
+}> &
+  (
+    | Readonly<{ kind: "dictionary"; tabs: ReadonlyArray<LookupTab> }>
+    | Readonly<{ kind: "explain"; eligibility: ExplainEligibility }>
+  );
 
 // The active reading slice needed to capture a selection from a document-level listener (a
 // pointer release that lands in the reading column but outside a block element): the rendered
@@ -1043,7 +1043,7 @@ export function ReaderPage({
 
     // The legacy local-LLM "AI 解释" dictionary source never fires eagerly (#925): ordinary dictionary
     // lookups stay AI-free and context-free. A learner who wants an AI interpretation now reaches it
-    // only through the explicit "Explain meanings" action below, which sends its own bounded, exact
+    // only through the explicit "Explain with AI" action, which sends its own bounded, exact
     // selection range — never this whole-block context snapshot.
     const sources = lookupSourcesForLanguage(active.language).filter((id) => id !== "llm");
     const requestId = (lookupSeq.current += 1);
@@ -1052,15 +1052,14 @@ export function ReaderPage({
       label: lookupSourceLabel(id),
       state: { status: "loading" }
     }));
-    const explainEligibility = deriveExplainEligibility(active.workEntryId, active.draft);
-    setLookup({ anchorRect, explainEligibility, requestId, tabs: initialTabs, term });
+    setLookup({ anchorRect, kind: "dictionary", requestId, tabs: initialTabs, term });
 
     // Each source is fetched independently and writes only its own tab, so a slow/down/empty source
     // never freezes or empties the others. The requestId guard drops a result whose lookup was closed
     // or superseded by a newer selection, so a stale source can't land under the current term.
     const setTabState = (id: (typeof sources)[number], state: LookupState): void => {
       setLookup((prev) =>
-        prev === undefined || prev.requestId !== requestId
+        prev === undefined || prev.kind !== "dictionary" || prev.requestId !== requestId
           ? prev
           : { ...prev, tabs: prev.tabs.map((tab) => (tab.id === id ? { ...tab, state } : tab)) }
       );
@@ -1076,6 +1075,17 @@ export function ReaderPage({
         )
         .catch(() => setTabState(id, { status: "error" }));
     }
+  }
+
+  function explainSelection(active: SelectionCapture): void {
+    setCapture(undefined);
+    setLookup({
+      anchorRect: active.anchorRect,
+      eligibility: deriveExplainEligibility(active.workEntryId, active.draft),
+      kind: "explain",
+      requestId: (lookupSeq.current += 1),
+      term: active.draft.selectedText
+    });
   }
 
   const onEditNote = useCallback((workEntryId: string, note: AnchoredNoteDto): void => {
@@ -1220,16 +1230,25 @@ export function ReaderPage({
           }
           onClose={() => setCapture(undefined)}
           onConfirm={() => confirmCapture(capture)}
+          onExplain={() => explainSelection(capture)}
           onLookup={() => lookupSelection(capture)}
           onMark={() => void markSelection(capture)}
           prefersReducedMotion={prefersReducedMotion}
         />
       )}
 
-      {lookup === undefined ? null : (
+      {lookup === undefined ? null : lookup.kind === "explain" ? (
+        <ExplainPanel
+          anchorRect={lookup.anchorRect}
+          eligibility={lookup.eligibility}
+          key={lookup.requestId}
+          onOpenChange={() => setLookup(undefined)}
+          open={true}
+          term={lookup.term}
+        />
+      ) : (
         <LookupPanel
           anchorRect={lookup.anchorRect}
-          explainEligibility={lookup.explainEligibility}
           key={lookup.requestId}
           onOpenChange={() => setLookup(undefined)}
           open={true}
