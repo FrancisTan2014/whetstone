@@ -9,6 +9,11 @@ import * as lockfile from "proper-lockfile";
 import WordPOS from "wordpos";
 
 import { readServerConfig, createLoggerOptions } from "./config/serverConfig.js";
+import { DEFAULT_USER_ID } from "./identity/currentUser.js";
+import { createDingTalkClient } from "./notifications/dingTalkClient.js";
+import { sendDueRecitationNotificationIfNeeded } from "./notifications/dueRecitationNotification.js";
+import { getLearnerTimeZone } from "./features/preferences/preferencesQueries.js";
+import { loadRecitationOverview } from "./features/recitation/recitationReviewQueries.js";
 import { createDatabaseLeaseAcquirer } from "./db/databaseLease.js";
 import { openManagedDatabase, type ManagedDatabase } from "./db/databaseLifecycle.js";
 import { runMigrations } from "./db/migrate.js";
@@ -805,6 +810,41 @@ try {
   }, PDF_IMPORT_POLL_MS);
   pdfImportInterval.unref();
   backgroundIntervals.push(pdfImportInterval);
+
+  // The daily due-recitation external forward (#933): a deterministic, best-effort nudge to a
+  // household-shared DingTalk group webhook when at least one Work has recitation due, reusing the
+  // same due-count/Work-title state Today already computes (`loadRecitationOverview`). Off entirely
+  // when DINGTALK_WEBHOOK_URL is unset — no interval is scheduled and no send is ever attempted.
+  // A 5-minute poll is generous for a once-daily nudge; `sendDueRecitationNotificationIfNeeded`'s
+  // day-key gate ensures at most one send per learner local day regardless of poll frequency, and a
+  // failed send is retried on a later tick rather than fabricating a "notified" state.
+  if (config.dingTalkWebhookUrl !== undefined) {
+    const dingTalk = createDingTalkClient(config.dingTalkWebhookUrl);
+    let lastNotifiedDayKey: string | undefined;
+    const checkDueRecitationNotification = async (): Promise<void> => {
+      const timeZone = await getLearnerTimeZone(db, DEFAULT_USER_ID);
+      const result = await sendDueRecitationNotificationIfNeeded(
+        {
+          dingTalk,
+          loadRecitationOverview: (userId, now) => loadRecitationOverview({ db }, userId, now),
+          log: (event, fields) => server.log.info(fields, event),
+          now: () => new Date()
+        },
+        DEFAULT_USER_ID,
+        timeZone,
+        lastNotifiedDayKey
+      );
+      lastNotifiedDayKey = result.notifiedDayKey;
+    };
+    const DUE_RECITATION_CHECK_POLL_MS = 5 * 60 * 1000;
+    const dueRecitationInterval = setInterval(() => {
+      checkDueRecitationNotification().catch((error: unknown) => {
+        server.log.error({ err: error }, "due_recitation_notification_check_failed");
+      });
+    }, DUE_RECITATION_CHECK_POLL_MS);
+    dueRecitationInterval.unref();
+    backgroundIntervals.push(dueRecitationInterval);
+  }
 
   // Report the optional AI utilities' model wiring (#602): diary "tidy" and the Reader "AI 解释" gloss.
   // A clean "run pnpm setup:ai" hint when a utility is off or its Ollama model is not serving, instead
