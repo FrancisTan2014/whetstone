@@ -34,6 +34,22 @@ describe("readServerConfig PDF upload limit", () => {
   });
 });
 
+describe("readServerConfig DingTalk webhook", () => {
+  it("defaults to off (undefined) when DINGTALK_WEBHOOK_URL is unset", () => {
+    expect(readServerConfig({}).dingTalkWebhookUrl).toBeUndefined();
+  });
+
+  it("honors DINGTALK_WEBHOOK_URL when set", () => {
+    const url = "https://oapi.dingtalk.com/robot/send?access_token=t";
+    expect(readServerConfig({ DINGTALK_WEBHOOK_URL: url }).dingTalkWebhookUrl).toBe(url);
+  });
+
+  it("treats an empty or blank DINGTALK_WEBHOOK_URL as unset", () => {
+    expect(readServerConfig({ DINGTALK_WEBHOOK_URL: "" }).dingTalkWebhookUrl).toBeUndefined();
+    expect(readServerConfig({ DINGTALK_WEBHOOK_URL: "   " }).dingTalkWebhookUrl).toBeUndefined();
+  });
+});
+
 describe("readServerConfig structured PDF memory ceiling", () => {
   // The pinned converter's measured peak COMMITTED memory on Windows for a 50-page range of a real book:
   // 34,121,527,296 bytes (31.78 GiB), against a 2.48 GiB working set (#833). The Windows boundary is a

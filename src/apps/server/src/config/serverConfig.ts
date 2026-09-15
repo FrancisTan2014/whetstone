@@ -85,6 +85,10 @@ export function resolveStructuredPdfMemoryMib(
 
 export type ServerConfig = Readonly<{
   databaseDir: string | undefined;
+  // The DingTalk custom group-robot webhook URL for the daily due-recitation forward (#933). A secret
+  // (GUIDELINES.md) — never logged. Absent means the feature is off: no interval is scheduled and no
+  // send is ever attempted.
+  dingTalkWebhookUrl: string | undefined;
   epubUploadLimitBytes: number;
   host: string;
   imageResourcesDir: string;
@@ -127,6 +131,8 @@ export type ServerConfig = Readonly<{
 
 const defaultServerConfig: ServerConfig = {
   databaseDir: undefined,
+  // Off by default: no webhook configured means no DingTalk send is ever attempted.
+  dingTalkWebhookUrl: undefined,
   epubUploadLimitBytes: 50 * 1024 * 1024,
   host: "127.0.0.1",
   imageResourcesDir: "./.data/images",
@@ -185,6 +191,7 @@ export function readServerConfig(
 
   return {
     databaseDir: env.DATABASE_DIR ?? defaultServerConfig.databaseDir,
+    dingTalkWebhookUrl: parseDingTalkWebhookUrl(env.DINGTALK_WEBHOOK_URL),
     epubUploadLimitBytes,
     host: env.HOST ?? defaultServerConfig.host,
     imageResourcesDir: env.IMAGE_RESOURCES_DIR ?? defaultServerConfig.imageResourcesDir,
@@ -255,6 +262,14 @@ function parseEpubUploadLimit(rawLimit: string | undefined): number {
   }
 
   return limit;
+}
+
+// An empty/blank DINGTALK_WEBHOOK_URL is treated as unset (feature off), not as a configured-but-broken
+// webhook: only `??` on `undefined`/`null` would let an accidental `DINGTALK_WEBHOOK_URL=""` pass the
+// `!== undefined` gate that enables the background interval, silently scheduling permanently-failing sends.
+function parseDingTalkWebhookUrl(rawUrl: string | undefined): string | undefined {
+  const trimmed = rawUrl?.trim();
+  return trimmed === undefined || trimmed === "" ? undefined : trimmed;
 }
 
 function parsePdfUploadLimit(rawLimit: string | undefined): number {
