@@ -6,7 +6,7 @@ import type { DingTalkClient } from "./dingTalkClient.js";
 export type DueRecitationNotificationDependencies = Readonly<{
   dingTalk: DingTalkClient;
   loadRecitationOverview: (userId: string, now: Date) => Promise<RecitationOverviewDto>;
-  log: (event: string, fields: Record<string, unknown>) => void;
+  log: (level: "info" | "warn", event: string, fields: Record<string, unknown>) => void;
   now: () => Date;
 }>;
 
@@ -33,15 +33,16 @@ export async function sendDueRecitationNotificationIfNeeded(
   lastNotifiedDayKey: string | undefined
 ): Promise<DueRecitationNotificationResult> {
   const { dingTalk, loadRecitationOverview, log, now } = dependencies;
-  const todayKey = localDayKey(now(), timeZone);
+  const nowInstant = now();
+  const todayKey = localDayKey(nowInstant, timeZone);
 
   if (todayKey === lastNotifiedDayKey) {
     return { notifiedDayKey: lastNotifiedDayKey };
   }
 
-  const overview = await loadRecitationOverview(userId, now());
+  const overview = await loadRecitationOverview(userId, nowInstant);
   if (overview.dueCount === 0) {
-    log("due_recitation_notification_skipped", { dueCount: 0 });
+    log("info", "due_recitation_notification_skipped", { dueCount: 0 });
     return { notifiedDayKey: lastNotifiedDayKey };
   }
 
@@ -49,10 +50,13 @@ export async function sendDueRecitationNotificationIfNeeded(
   const result = await dingTalk.send(composeMessage(dueWorkTitles));
 
   if (!result.ok) {
-    log("due_recitation_notification_failed", { dueCount: overview.dueCount, error: result.error });
+    log("warn", "due_recitation_notification_failed", {
+      dueCount: overview.dueCount,
+      error: result.error
+    });
     return { notifiedDayKey: lastNotifiedDayKey };
   }
 
-  log("due_recitation_notification_sent", { dueCount: overview.dueCount });
+  log("info", "due_recitation_notification_sent", { dueCount: overview.dueCount });
   return { notifiedDayKey: todayKey };
 }

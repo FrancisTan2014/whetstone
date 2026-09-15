@@ -12,6 +12,10 @@ import { readServerConfig, createLoggerOptions } from "./config/serverConfig.js"
 import { DEFAULT_USER_ID } from "./identity/currentUser.js";
 import { createDingTalkClient } from "./notifications/dingTalkClient.js";
 import { sendDueRecitationNotificationIfNeeded } from "./notifications/dueRecitationNotification.js";
+import {
+  getLastNotifiedDayKey,
+  setLastNotifiedDayKey
+} from "./notifications/dueRecitationNotificationState.js";
 import { getLearnerTimeZone } from "./features/preferences/preferencesQueries.js";
 import { loadRecitationOverview } from "./features/recitation/recitationReviewQueries.js";
 import { createDatabaseLeaseAcquirer } from "./db/databaseLease.js";
@@ -818,29 +822,56 @@ try {
   // A 5-minute poll is generous for a once-daily nudge; `sendDueRecitationNotificationIfNeeded`'s
   // day-key gate ensures at most one send per learner local day regardless of poll frequency, and a
   // failed send is retried on a later tick rather than fabricating a "notified" state.
+  // The daily due-recitation external forward (#933): a deterministic, best-effort nudge to a
+  // household-shared DingTalk group webhook when at least one Work has recitation due, reusing the
+  // same due-count/Work-title state Today already computes (`loadRecitationOverview`). Off entirely
+  // when DINGTALK_WEBHOOK_URL is unset — no interval is scheduled and no send is ever attempted.
+  // A 5-minute poll is generous for a once-daily nudge; `sendDueRecitationNotificationIfNeeded`'s
+  // day-key gate ensures at most one send per learner local day regardless of poll frequency, and a
+  // failed send is retried on a later tick rather than fabricating a "notified" state. The last-sent
+  // day key is persisted (`dueRecitationNotificationState`) so a restart mid-day does not forget an
+  // already-sent nudge and re-send it. The learner's timezone is cached in-process and only re-read
+  // from the DB after a day boundary is actually crossed, so a tick that is a no-op (already notified
+  // today) never issues a DB query at all.
   if (config.dingTalkWebhookUrl !== undefined) {
     const dingTalk = createDingTalkClient(config.dingTalkWebhookUrl);
-    let lastNotifiedDayKey: string | undefined;
+    let lastNotifiedDayKey = await getLastNotifiedDayKey(db, DEFAULT_USER_ID);
+    let cachedTimeZone: string | undefined;
+    let dueRecitationChecking = false;
     const checkDueRecitationNotification = async (): Promise<void> => {
-      const timeZone = await getLearnerTimeZone(db, DEFAULT_USER_ID);
-      const result = await sendDueRecitationNotificationIfNeeded(
-        {
-          dingTalk,
-          loadRecitationOverview: (userId, now) => loadRecitationOverview({ db }, userId, now),
-          log: (event, fields) => server.log.info(fields, event),
-          now: () => new Date()
-        },
-        DEFAULT_USER_ID,
-        timeZone,
-        lastNotifiedDayKey
-      );
-      lastNotifiedDayKey = result.notifiedDayKey;
+      if (dueRecitationChecking) {
+        return;
+      }
+      dueRecitationChecking = true;
+      try {
+        cachedTimeZone ??= await getLearnerTimeZone(db, DEFAULT_USER_ID);
+        const result = await sendDueRecitationNotificationIfNeeded(
+          {
+            dingTalk,
+            loadRecitationOverview: (userId, now) => loadRecitationOverview({ db }, userId, now),
+            log: (level, event, fields) => server.log[level](fields, event),
+            now: () => new Date()
+          },
+          DEFAULT_USER_ID,
+          cachedTimeZone,
+          lastNotifiedDayKey
+        );
+        if (result.notifiedDayKey !== lastNotifiedDayKey && result.notifiedDayKey !== undefined) {
+          await setLastNotifiedDayKey(db, DEFAULT_USER_ID, result.notifiedDayKey);
+          // A day boundary was just crossed: drop the cached zone so the next distinct day re-reads
+          // it, honoring a learner's zone change without querying on every no-op tick.
+          cachedTimeZone = undefined;
+        }
+        lastNotifiedDayKey = result.notifiedDayKey;
+      } catch (error) {
+        server.log.error({ err: error }, "due_recitation_notification_check_failed");
+      } finally {
+        dueRecitationChecking = false;
+      }
     };
     const DUE_RECITATION_CHECK_POLL_MS = 5 * 60 * 1000;
     const dueRecitationInterval = setInterval(() => {
-      checkDueRecitationNotification().catch((error: unknown) => {
-        server.log.error({ err: error }, "due_recitation_notification_check_failed");
-      });
+      void checkDueRecitationNotification();
     }, DUE_RECITATION_CHECK_POLL_MS);
     dueRecitationInterval.unref();
     backgroundIntervals.push(dueRecitationInterval);

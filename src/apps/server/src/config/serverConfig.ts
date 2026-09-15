@@ -191,7 +191,7 @@ export function readServerConfig(
 
   return {
     databaseDir: env.DATABASE_DIR ?? defaultServerConfig.databaseDir,
-    dingTalkWebhookUrl: env.DINGTALK_WEBHOOK_URL ?? defaultServerConfig.dingTalkWebhookUrl,
+    dingTalkWebhookUrl: parseDingTalkWebhookUrl(env.DINGTALK_WEBHOOK_URL),
     epubUploadLimitBytes,
     host: env.HOST ?? defaultServerConfig.host,
     imageResourcesDir: env.IMAGE_RESOURCES_DIR ?? defaultServerConfig.imageResourcesDir,
@@ -262,6 +262,14 @@ function parseEpubUploadLimit(rawLimit: string | undefined): number {
   }
 
   return limit;
+}
+
+// An empty/blank DINGTALK_WEBHOOK_URL is treated as unset (feature off), not as a configured-but-broken
+// webhook: only `??` on `undefined`/`null` would let an accidental `DINGTALK_WEBHOOK_URL=""` pass the
+// `!== undefined` gate that enables the background interval, silently scheduling permanently-failing sends.
+function parseDingTalkWebhookUrl(rawUrl: string | undefined): string | undefined {
+  const trimmed = rawUrl?.trim();
+  return trimmed === undefined || trimmed === "" ? undefined : trimmed;
 }
 
 function parsePdfUploadLimit(rawLimit: string | undefined): number {

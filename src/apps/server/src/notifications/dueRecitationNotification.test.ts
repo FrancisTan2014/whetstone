@@ -37,7 +37,9 @@ describe("sendDueRecitationNotificationIfNeeded", () => {
 
     expect(send).not.toHaveBeenCalled();
     expect(result).toEqual({ notifiedDayKey: undefined });
-    expect(log).toHaveBeenCalledWith("due_recitation_notification_skipped", { dueCount: 0 });
+    expect(log).toHaveBeenCalledWith("info", "due_recitation_notification_skipped", {
+      dueCount: 0
+    });
   });
 
   it("sends a due-state message and records today's day key on success", async () => {
@@ -79,7 +81,7 @@ describe("sendDueRecitationNotificationIfNeeded", () => {
     expect(sentMessage).toContain("The Analects");
     expect(sentMessage).not.toContain("Not due");
     expect(result).toEqual({ notifiedDayKey: "2026-09-15" });
-    expect(log).toHaveBeenCalledWith("due_recitation_notification_sent", { dueCount: 2 });
+    expect(log).toHaveBeenCalledWith("info", "due_recitation_notification_sent", { dueCount: 2 });
   });
 
   it("leaves notifiedDayKey unset when the send fails, so the next check retries", async () => {
@@ -108,7 +110,7 @@ describe("sendDueRecitationNotificationIfNeeded", () => {
     );
 
     expect(result).toEqual({ notifiedDayKey: undefined });
-    expect(log).toHaveBeenCalledWith("due_recitation_notification_failed", {
+    expect(log).toHaveBeenCalledWith("warn", "due_recitation_notification_failed", {
       dueCount: 1,
       error: { kind: "network" }
     });

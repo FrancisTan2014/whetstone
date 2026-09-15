@@ -544,6 +544,15 @@ export const readerPreferences = pgTable("reader_preferences", {
   userId: text("user_id").primaryKey()
 });
 
+// Persisted last-sent day key for the daily due-recitation external notification (#933), one row per
+// user, so a server restart does not re-derive "already sent today" from a fresh in-memory `undefined`
+// and re-send a nudge that already went out before the restart.
+export const dueRecitationNotificationState = pgTable("due_recitation_notification_state", {
+  lastNotifiedDayKey: text("last_notified_day_key").notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true }).notNull().defaultNow(),
+  userId: text("user_id").primaryKey()
+});
+
 // The anchor binds a note to a stable block id, with an optional sub-block character
 // offset range and the selected-text / surrounding-context snapshots.
 export const noteAnchors = pgTable(

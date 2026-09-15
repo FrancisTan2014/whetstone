@@ -43,6 +43,11 @@ describe("readServerConfig DingTalk webhook", () => {
     const url = "https://oapi.dingtalk.com/robot/send?access_token=t";
     expect(readServerConfig({ DINGTALK_WEBHOOK_URL: url }).dingTalkWebhookUrl).toBe(url);
   });
+
+  it("treats an empty or blank DINGTALK_WEBHOOK_URL as unset", () => {
+    expect(readServerConfig({ DINGTALK_WEBHOOK_URL: "" }).dingTalkWebhookUrl).toBeUndefined();
+    expect(readServerConfig({ DINGTALK_WEBHOOK_URL: "   " }).dingTalkWebhookUrl).toBeUndefined();
+  });
 });
 
 describe("readServerConfig structured PDF memory ceiling", () => {

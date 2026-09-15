@@ -428,6 +428,17 @@ can navigate them from another package.
   `recitation_plans` into the Timeline as the `recitation` kind; `library/libraryCommands.ts` `deleteWork`
   cascades the plan's recitation targets + their shared cards/events/evidence. DTOs in `@whetstone/contracts`
   (`recitationContracts.ts`).
+- Daily due-recitation external notification (#933): `src/apps/server/src/notifications/`. `dingTalkClient.ts`
+  is the outbound HTTP boundary to a DingTalk custom group-robot webhook (injected `fetchFn`, typed
+  network/timeout/http errors, never logs the webhook URL or message content). `dueRecitationNotification.ts`
+  is the pure decision/composition: gates on a learner-local day key (`localDayKey`) so a day already
+  notified issues no query and no send, reuses `loadRecitationOverview`'s due-count/Work-title state (never
+  a new due-computation), and never marks a day notified on a failed send (so the next check retries).
+  `dueRecitationNotificationState.ts` persists the last-notified day key per user
+  (`due_recitation_notification_state` table) so a restart does not forget an already-sent day. Wired in
+  `index.ts` as a config-gated (`DINGTALK_WEBHOOK_URL`), `.unref()`'d `setInterval` with a `draining`-style
+  re-entrancy guard, following the same `backgroundIntervals` bootstrap idiom as the voice-capture and
+  PDF-import drain loops; entirely off (no interval, no send ever attempted) when the webhook is unset.
 - Memory/Recall MCP server: retired with the standalone Memory experience (#662). The five legacy tools
   (`deposit_memory`/`list_due_prompts`/`record_review`/`search_memory`/`get_memory_prompt`) and their stdio
   entry point are gone — PRODUCT defers AI-authored prompts, and the Notes + shared Review loop is complete
