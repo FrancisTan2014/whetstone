@@ -84,6 +84,44 @@ describe("sendDueRecitationNotificationIfNeeded", () => {
     expect(log).toHaveBeenCalledWith("info", "due_recitation_notification_sent", { dueCount: 2 });
   });
 
+  it("pluralizes the heading when more than one Work is due", async () => {
+    const loadRecitationOverview = vi.fn().mockResolvedValue({
+      dueCount: 2,
+      works: [
+        {
+          isDue: true,
+          nextReviewAt: null,
+          paused: false,
+          planEntryId: "plan-1",
+          state: "review",
+          workEntryId: "work-1",
+          workTitle: "The Analects"
+        },
+        {
+          isDue: true,
+          nextReviewAt: null,
+          paused: false,
+          planEntryId: "plan-2",
+          state: "review",
+          workEntryId: "work-2",
+          workTitle: "Tao Te Ching"
+        }
+      ]
+    });
+    const send = vi.fn().mockResolvedValue({ ok: true });
+    const log = vi.fn();
+
+    await sendDueRecitationNotificationIfNeeded(
+      { dingTalk: { send }, loadRecitationOverview, log, now: NOW },
+      USER_ID,
+      TIME_ZONE,
+      undefined
+    );
+
+    const sentMessage = send.mock.calls[0]?.[0] as string;
+    expect(sentMessage).toContain("2 Works have recitation due today:");
+  });
+
   it("leaves notifiedDayKey unset when the send fails, so the next check retries", async () => {
     const loadRecitationOverview = vi.fn().mockResolvedValue({
       dueCount: 1,
