@@ -821,13 +821,6 @@ try {
   // when DINGTALK_WEBHOOK_URL is unset — no interval is scheduled and no send is ever attempted.
   // A 5-minute poll is generous for a once-daily nudge; `sendDueRecitationNotificationIfNeeded`'s
   // day-key gate ensures at most one send per learner local day regardless of poll frequency, and a
-  // failed send is retried on a later tick rather than fabricating a "notified" state.
-  // The daily due-recitation external forward (#933): a deterministic, best-effort nudge to a
-  // household-shared DingTalk group webhook when at least one Work has recitation due, reusing the
-  // same due-count/Work-title state Today already computes (`loadRecitationOverview`). Off entirely
-  // when DINGTALK_WEBHOOK_URL is unset — no interval is scheduled and no send is ever attempted.
-  // A 5-minute poll is generous for a once-daily nudge; `sendDueRecitationNotificationIfNeeded`'s
-  // day-key gate ensures at most one send per learner local day regardless of poll frequency, and a
   // failed send is retried on a later tick rather than fabricating a "notified" state. The last-sent
   // day key is persisted (`dueRecitationNotificationState`) so a restart mid-day does not forget an
   // already-sent nudge and re-send it. The learner's timezone is cached in-process and only re-read
