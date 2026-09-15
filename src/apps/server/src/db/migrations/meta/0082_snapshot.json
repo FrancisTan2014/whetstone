@@ -1,6 +1,6 @@
 {
-  "id": "3a9143b1-4b0c-4bc0-88cf-3fe99309bce1",
-  "prevId": "ae6d7ec6-ba64-4efe-8490-5a5260825774",
+  "id": "ae6d7ec6-ba64-4efe-8490-5a5260825774",
+  "prevId": "d252f58f-3dfd-4694-ae48-b60bd36623a4",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -872,38 +872,6 @@
           "name": "order_index",
           "type": "integer",
           "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.due_recitation_notification_state": {
-      "name": "due_recitation_notification_state",
-      "schema": "",
-      "columns": {
-        "last_notified_day_key": {
-          "name": "last_notified_day_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "user_id": {
-          "name": "user_id",
-          "type": "text",
-          "primaryKey": true,
           "notNull": true
         }
       },
