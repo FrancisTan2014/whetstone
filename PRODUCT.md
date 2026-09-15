@@ -193,9 +193,29 @@ Again, Hard, Good, or Easy.
   session reports **Due complete**.
 - Loading, reveal, and rating failures stay on the current Work with a specific retry and never
   fabricate completion.
-- There is no notification, speech grade, exactness score, timer, streak, or automatic repair task.
+- There is no in-session notification, speech grade, exactness score, timer, streak, or automatic
+  repair task. (An external due-recitation nudge, delivered outside the app, is a separate capability
+  — see "Due-recitation external notification" below — and never substitutes for the reveal/rate
+  session or its self-assessment.)
 
 This closes the cycle: **I can recite this → recite → reveal source → self-rate → FSRS next time**.
+
+## Due-recitation external notification
+
+Once a day, when at least one enrolled Work has due Recitation cards, the server forwards that
+existing due-count state to a household-shared external channel (a DingTalk custom group-robot
+webhook) so the household learns recitation is due without opening Whetstone. This is a deterministic
+forward of state Whetstone already computes (`todayBoard`/Recitation due logic) — not a new
+scheduling, recurrence, or grading capability:
+
+- One fixed daily check; no per-user scheduling preferences, timers, or quotas.
+- The message reports due state only (e.g. which Works/how many cards); it never grades, reveals
+  content, or scores recall.
+- Delivery is group-wide broadcast (webhook has no per-recipient targeting); it is not a per-user
+  notification center and carries no read/unread or in-app state.
+- The channel is external and best-effort: a missed or failed send never blocks Today, never fabricates
+  a due-complete state, and the in-app Today/Recite loop remains authoritative regardless of whether
+  the external nudge was delivered.
 
 ## Notes and Review
 
@@ -840,8 +860,9 @@ The pivot is usable only when all are true:
 ## Deferred scope and non-goals
 
 - No autonomous arranger, coach, generated case library, Progress Map, proposal inbox, or AI grading.
-- No generic habit framework, arbitrary recurrence builder, timers, quotas, or notification system in
-  the recitation-first release.
+- No generic habit framework, arbitrary recurrence builder, timers, quotas, or in-app notification
+  center. A single deterministic external nudge (see "Due-recitation external notification" below)
+  is not an exception to this: it forwards existing due state, it does not add scheduling policy.
 - No in-app dogfood tracker, release dashboard, telemetry, streak, or quota for the manual release
   gate.
 - No in-app Recitation acquisition curriculum, phase progression, passage fading, chaining, or
