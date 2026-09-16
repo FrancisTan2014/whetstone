@@ -50,6 +50,22 @@ describe("readServerConfig DingTalk webhook", () => {
   });
 });
 
+describe("readServerConfig ntfy topic URL", () => {
+  it("defaults to off (undefined) when NTFY_TOPIC_URL is unset", () => {
+    expect(readServerConfig({}).ntfyTopicUrl).toBeUndefined();
+  });
+
+  it("honors NTFY_TOPIC_URL when set", () => {
+    const url = "https://ntfy.sh/my-private-topic";
+    expect(readServerConfig({ NTFY_TOPIC_URL: url }).ntfyTopicUrl).toBe(url);
+  });
+
+  it("treats an empty or blank NTFY_TOPIC_URL as unset", () => {
+    expect(readServerConfig({ NTFY_TOPIC_URL: "" }).ntfyTopicUrl).toBeUndefined();
+    expect(readServerConfig({ NTFY_TOPIC_URL: "   " }).ntfyTopicUrl).toBeUndefined();
+  });
+});
+
 describe("readServerConfig structured PDF memory ceiling", () => {
   // The pinned converter's measured peak COMMITTED memory on Windows for a 50-page range of a real book:
   // 34,121,527,296 bytes (31.78 GiB), against a 2.48 GiB working set (#833). The Windows boundary is a

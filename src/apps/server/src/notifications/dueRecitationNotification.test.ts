@@ -12,7 +12,7 @@ describe("sendDueRecitationNotificationIfNeeded", () => {
     const send = vi.fn();
 
     const result = await sendDueRecitationNotificationIfNeeded(
-      { dingTalk: { send }, loadRecitationOverview, log: vi.fn(), now: NOW },
+      { dingTalk: { send }, ntfy: undefined, loadRecitationOverview, log: vi.fn(), now: NOW },
       USER_ID,
       TIME_ZONE,
       "2026-09-15"
@@ -29,7 +29,7 @@ describe("sendDueRecitationNotificationIfNeeded", () => {
     const log = vi.fn();
 
     const result = await sendDueRecitationNotificationIfNeeded(
-      { dingTalk: { send }, loadRecitationOverview, log, now: NOW },
+      { dingTalk: { send }, ntfy: undefined, loadRecitationOverview, log, now: NOW },
       USER_ID,
       TIME_ZONE,
       undefined
@@ -70,7 +70,7 @@ describe("sendDueRecitationNotificationIfNeeded", () => {
     const log = vi.fn();
 
     const result = await sendDueRecitationNotificationIfNeeded(
-      { dingTalk: { send }, loadRecitationOverview, log, now: NOW },
+      { dingTalk: { send }, ntfy: undefined, loadRecitationOverview, log, now: NOW },
       USER_ID,
       TIME_ZONE,
       undefined
@@ -112,7 +112,7 @@ describe("sendDueRecitationNotificationIfNeeded", () => {
     const log = vi.fn();
 
     await sendDueRecitationNotificationIfNeeded(
-      { dingTalk: { send }, loadRecitationOverview, log, now: NOW },
+      { dingTalk: { send }, ntfy: undefined, loadRecitationOverview, log, now: NOW },
       USER_ID,
       TIME_ZONE,
       undefined
@@ -141,7 +141,7 @@ describe("sendDueRecitationNotificationIfNeeded", () => {
     const log = vi.fn();
 
     const result = await sendDueRecitationNotificationIfNeeded(
-      { dingTalk: { send }, loadRecitationOverview, log, now: NOW },
+      { dingTalk: { send }, ntfy: undefined, loadRecitationOverview, log, now: NOW },
       USER_ID,
       TIME_ZONE,
       undefined
@@ -149,8 +149,125 @@ describe("sendDueRecitationNotificationIfNeeded", () => {
 
     expect(result).toEqual({ notifiedDayKey: undefined });
     expect(log).toHaveBeenCalledWith("warn", "due_recitation_notification_failed", {
+      channel: "dingTalk",
       dueCount: 1,
       error: { kind: "network" }
     });
+  });
+
+  it("sends to ntfy independently of DingTalk and succeeds when only ntfy is configured", async () => {
+    const loadRecitationOverview = vi.fn().mockResolvedValue({
+      dueCount: 1,
+      works: [
+        {
+          isDue: true,
+          nextReviewAt: null,
+          paused: false,
+          planEntryId: "plan-1",
+          state: "review",
+          workEntryId: "work-1",
+          workTitle: "The Analects"
+        }
+      ]
+    });
+    const ntfySend = vi.fn().mockResolvedValue({ ok: true });
+    const log = vi.fn();
+
+    const result = await sendDueRecitationNotificationIfNeeded(
+      {
+        dingTalk: undefined,
+        ntfy: { send: ntfySend },
+        loadRecitationOverview,
+        log,
+        now: NOW
+      },
+      USER_ID,
+      TIME_ZONE,
+      undefined
+    );
+
+    expect(ntfySend).toHaveBeenCalledTimes(1);
+    expect(ntfySend.mock.calls[0]?.[0]).toContain("The Analects");
+    expect(result).toEqual({ notifiedDayKey: "2026-09-15" });
+    expect(log).toHaveBeenCalledWith("info", "due_recitation_notification_sent", { dueCount: 1 });
+  });
+
+  it("records the day notified when one channel succeeds even if the other fails", async () => {
+    const loadRecitationOverview = vi.fn().mockResolvedValue({
+      dueCount: 1,
+      works: [
+        {
+          isDue: true,
+          nextReviewAt: null,
+          paused: false,
+          planEntryId: "plan-1",
+          state: "review",
+          workEntryId: "work-1",
+          workTitle: "The Analects"
+        }
+      ]
+    });
+    const dingTalkSend = vi.fn().mockResolvedValue({ error: { kind: "network" }, ok: false });
+    const ntfySend = vi.fn().mockResolvedValue({ ok: true });
+    const log = vi.fn();
+
+    const result = await sendDueRecitationNotificationIfNeeded(
+      {
+        dingTalk: { send: dingTalkSend },
+        ntfy: { send: ntfySend },
+        loadRecitationOverview,
+        log,
+        now: NOW
+      },
+      USER_ID,
+      TIME_ZONE,
+      undefined
+    );
+
+    expect(dingTalkSend).toHaveBeenCalledTimes(1);
+    expect(ntfySend).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ notifiedDayKey: "2026-09-15" });
+    expect(log).toHaveBeenCalledWith("warn", "due_recitation_notification_failed", {
+      channel: "dingTalk",
+      dueCount: 1,
+      error: { kind: "network" }
+    });
+    expect(log).toHaveBeenCalledWith("info", "due_recitation_notification_sent", { dueCount: 1 });
+  });
+
+  it("leaves notifiedDayKey unset only when every configured channel fails", async () => {
+    const loadRecitationOverview = vi.fn().mockResolvedValue({
+      dueCount: 1,
+      works: [
+        {
+          isDue: true,
+          nextReviewAt: null,
+          paused: false,
+          planEntryId: "plan-1",
+          state: "review",
+          workEntryId: "work-1",
+          workTitle: "The Analects"
+        }
+      ]
+    });
+    const dingTalkSend = vi.fn().mockResolvedValue({ error: { kind: "network" }, ok: false });
+    const ntfySend = vi.fn().mockResolvedValue({ error: { kind: "http", status: 500 }, ok: false });
+    const log = vi.fn();
+
+    const result = await sendDueRecitationNotificationIfNeeded(
+      {
+        dingTalk: { send: dingTalkSend },
+        ntfy: { send: ntfySend },
+        loadRecitationOverview,
+        log,
+        now: NOW
+      },
+      USER_ID,
+      TIME_ZONE,
+      undefined
+    );
+
+    expect(result).toEqual({ notifiedDayKey: undefined });
+    expect(log).not.toHaveBeenCalledWith("info", "due_recitation_notification_sent", expect.anything());
   });
 });

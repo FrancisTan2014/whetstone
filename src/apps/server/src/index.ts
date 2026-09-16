@@ -16,6 +16,7 @@ import {
   getLastNotifiedDayKey,
   setLastNotifiedDayKey
 } from "./notifications/dueRecitationNotificationState.js";
+import { createNtfyClient } from "./notifications/ntfyClient.js";
 import { getLearnerTimeZone } from "./features/preferences/preferencesQueries.js";
 import { loadRecitationOverview } from "./features/recitation/recitationReviewQueries.js";
 import { createDatabaseLeaseAcquirer } from "./db/databaseLease.js";
@@ -815,19 +816,25 @@ try {
   pdfImportInterval.unref();
   backgroundIntervals.push(pdfImportInterval);
 
-  // The daily due-recitation external forward (#933): a deterministic, best-effort nudge to a
-  // household-shared DingTalk group webhook when at least one Work has recitation due, reusing the
-  // same due-count/Work-title state Today already computes (`loadRecitationOverview`). Off entirely
-  // when DINGTALK_WEBHOOK_URL is unset — no interval is scheduled and no send is ever attempted.
+  // The daily due-recitation external forward (#933), plus the free ntfy iPhone push channel added by
+  // #936: a deterministic, best-effort nudge to a household-shared DingTalk group webhook and/or a
+  // personal ntfy topic when at least one Work has recitation due, reusing the same due-count/Work-title
+  // state Today already computes (`loadRecitationOverview`). The interval is scheduled whenever EITHER
+  // channel is configured; a channel left unset is simply never sent to (no interval at all when both
+  // are unset — no send ever attempted).
   // A 5-minute poll is generous for a once-daily nudge; `sendDueRecitationNotificationIfNeeded`'s
-  // day-key gate ensures at most one send per learner local day regardless of poll frequency, and a
-  // failed send is retried on a later tick rather than fabricating a "notified" state. The last-sent
-  // day key is persisted (`dueRecitationNotificationState`) so a restart mid-day does not forget an
-  // already-sent nudge and re-send it. The learner's timezone is cached in-process and only re-read
-  // from the DB after a day boundary is actually crossed, so a tick that is a no-op (already notified
-  // today) never issues a DB query at all.
-  if (config.dingTalkWebhookUrl !== undefined) {
-    const dingTalk = createDingTalkClient(config.dingTalkWebhookUrl);
+  // day-key gate ensures at most one successful-channel send per learner local day regardless of poll
+  // frequency, and a day where every configured channel failed is retried on a later tick rather than
+  // fabricating a "notified" state. The last-sent day key is persisted (`dueRecitationNotificationState`)
+  // so a restart mid-day does not forget an already-sent nudge and re-send it. The learner's timezone is
+  // cached in-process and only re-read from the DB after a day boundary is actually crossed, so a tick
+  // that is a no-op (already notified today) never issues a DB query at all.
+  if (config.dingTalkWebhookUrl !== undefined || config.ntfyTopicUrl !== undefined) {
+    const dingTalk =
+      config.dingTalkWebhookUrl !== undefined
+        ? createDingTalkClient(config.dingTalkWebhookUrl)
+        : undefined;
+    const ntfy = config.ntfyTopicUrl !== undefined ? createNtfyClient(config.ntfyTopicUrl) : undefined;
     let lastNotifiedDayKey = await getLastNotifiedDayKey(db, DEFAULT_USER_ID);
     let cachedTimeZone: string | undefined;
     let dueRecitationChecking = false;
@@ -841,6 +848,7 @@ try {
         const result = await sendDueRecitationNotificationIfNeeded(
           {
             dingTalk,
+            ntfy,
             loadRecitationOverview: (userId, now) => loadRecitationOverview({ db }, userId, now),
             log: (level, event, fields) => server.log[level](fields, event),
             now: () => new Date()
