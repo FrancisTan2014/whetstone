@@ -118,14 +118,18 @@ describe("boundNtfyMessage", () => {
     expect(new TextEncoder().encode(bounded).length).toBeLessThanOrEqual(maxBytes);
   });
 
-  it("never exceeds the byte budget even when even the heading alone does not fit with room for an omitted line", () => {
-    const message = [
-      "1 Work has recitation due today:",
-      "- A very very very long title that will not fit at all"
-    ].join("\n");
+  it("counts omitted Works, not lines, when a title has an internal newline", () => {
+    const heading = "5 Works have recitation due today:";
+    const entries = ["- Alpha", "- Beta\nwith a second line", "- Gamma", "- Delta", "- Epsilon"];
+    const message = [heading, ...entries].join("\n");
+    // A byte budget that fits only the heading and the first (single-line) entry.
+    const maxBytes = new TextEncoder().encode(
+      [heading, "- Alpha", "- (+4 more not shown)"].join("\n")
+    ).length;
 
-    const bounded = boundNtfyMessage(message, 40);
+    const bounded = boundNtfyMessage(message, maxBytes);
 
-    expect(new TextEncoder().encode(bounded).length).toBeLessThanOrEqual(40);
+    expect(bounded).toContain("- (+4 more not shown)");
+    expect(bounded).not.toContain("- (+5 more not shown)");
   });
 });

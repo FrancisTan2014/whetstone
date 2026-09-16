@@ -41,33 +41,42 @@ function byteLength(text: string): number {
   return textEncoder.encode(text).length;
 }
 
-// Bounds `message` to ntfy's plain-text limit by dropping trailing lines (the least important ones,
-// since the heading with the due count and the earliest titles come first) and replacing them with a
-// single line stating how many were omitted, so the notification still shows a correct due count and
-// as many titles as fit rather than silently becoming a file attachment.
+// Bounds `message` to ntfy's plain-text limit by dropping trailing due-Work entries (the least
+// important ones, since the heading with the due count and the earliest titles come first) and
+// replacing them with a single line stating how many Works were omitted, so the notification still
+// shows a correct due count and as many titles as fit rather than silently becoming a file attachment.
+//
+// `message` is the heading line followed by one `- <title>` entry per due Work (see
+// `dueRecitationNotification.ts`'s `composeMessage`). A Work title may itself contain internal
+// newlines, so entries are split on a lookahead for a line starting with `- ` rather than on every
+// `\n` — otherwise a multiline title would be miscounted as several omitted Works.
 export function boundNtfyMessage(message: string, maxBytes: number = MAX_NTFY_BODY_BYTES): string {
   if (byteLength(message) <= maxBytes) {
     return message;
   }
 
-  const lines = message.split("\n");
+  const [heading, ...rest] = message.split("\n");
+  const entries = rest.join("\n").split(/\n(?=- )/);
   const kept: string[] = [];
 
-  for (let index = 0; index < lines.length; index += 1) {
-    const omittedCount = lines.length - index - 1;
-    const candidate = [...kept, lines[index], `- (+${omittedCount} more not shown)`].join("\n");
+  for (let index = 0; index < entries.length; index += 1) {
+    const omittedCount = entries.length - index - 1;
+    const candidate = [
+      heading,
+      ...kept,
+      entries[index],
+      `- (+${omittedCount} more not shown)`
+    ].join("\n");
 
     if (byteLength(candidate) > maxBytes) {
       break;
     }
 
-    kept.push(lines[index] as string);
+    kept.push(entries[index] as string);
   }
 
-  const omittedCount = lines.length - kept.length;
-  return omittedCount === 0
-    ? kept.join("\n")
-    : [...kept, `- (+${omittedCount} more not shown)`].join("\n");
+  const omittedCount = entries.length - kept.length;
+  return [heading, ...kept, `- (+${omittedCount} more not shown)`].join("\n");
 }
 
 // Adapts the runtime's global fetch to NtfyFetchLike; read lazily so tests can stub it.
