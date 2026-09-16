@@ -834,7 +834,8 @@ try {
       config.dingTalkWebhookUrl !== undefined
         ? createDingTalkClient(config.dingTalkWebhookUrl)
         : undefined;
-    const ntfy = config.ntfyTopicUrl !== undefined ? createNtfyClient(config.ntfyTopicUrl) : undefined;
+    const ntfy =
+      config.ntfyTopicUrl !== undefined ? createNtfyClient(config.ntfyTopicUrl) : undefined;
     let lastNotifiedDayKey = await getLastNotifiedDayKey(db, DEFAULT_USER_ID);
     let cachedTimeZone: string | undefined;
     let dueRecitationChecking = false;

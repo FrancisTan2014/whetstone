@@ -9,9 +9,7 @@ export type NtfyError =
   | Readonly<{ kind: "timeout" }>
   | Readonly<{ kind: "http"; status: number }>;
 
-export type NtfySendResult =
-  | Readonly<{ ok: true }>
-  | Readonly<{ error: NtfyError; ok: false }>;
+export type NtfySendResult = Readonly<{ ok: true }> | Readonly<{ error: NtfyError; ok: false }>;
 
 // The minimal response surface the client reads; the global `fetch` Response satisfies it.
 export type NtfyFetchResponse = Readonly<{ ok: boolean; status: number }>;
@@ -31,6 +29,46 @@ export type NtfyClient = Readonly<{
 }>;
 
 const DEFAULT_TIMEOUT_MS = 10_000;
+
+// ntfy treats a body over 4096 UTF-8 bytes as a file attachment rather than notification text (it
+// still returns 200), so an oversized due-list would silently lose its reminder text while Whetstone
+// marks the day notified. Leave headroom under ntfy's own limit for the "omitted" line this module adds.
+const MAX_NTFY_BODY_BYTES = 4096;
+
+const textEncoder = new TextEncoder();
+
+function byteLength(text: string): number {
+  return textEncoder.encode(text).length;
+}
+
+// Bounds `message` to ntfy's plain-text limit by dropping trailing lines (the least important ones,
+// since the heading with the due count and the earliest titles come first) and replacing them with a
+// single line stating how many were omitted, so the notification still shows a correct due count and
+// as many titles as fit rather than silently becoming a file attachment.
+export function boundNtfyMessage(message: string, maxBytes: number = MAX_NTFY_BODY_BYTES): string {
+  if (byteLength(message) <= maxBytes) {
+    return message;
+  }
+
+  const lines = message.split("\n");
+  const kept: string[] = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const omittedCount = lines.length - index - 1;
+    const candidate = [...kept, lines[index], `- (+${omittedCount} more not shown)`].join("\n");
+
+    if (byteLength(candidate) > maxBytes) {
+      break;
+    }
+
+    kept.push(lines[index] as string);
+  }
+
+  const omittedCount = lines.length - kept.length;
+  return omittedCount === 0
+    ? kept.join("\n")
+    : [...kept, `- (+${omittedCount} more not shown)`].join("\n");
+}
 
 // Adapts the runtime's global fetch to NtfyFetchLike; read lazily so tests can stub it.
 const defaultFetch: NtfyFetchLike = (url, init) => fetch(url, init);
@@ -59,7 +97,7 @@ export function createNtfyClient(
 
     try {
       const response = await fetchFn(topicUrl, {
-        body: message,
+        body: boundNtfyMessage(message),
         headers: { "content-type": "text/plain; charset=utf-8" },
         method: "POST",
         signal: controller.signal

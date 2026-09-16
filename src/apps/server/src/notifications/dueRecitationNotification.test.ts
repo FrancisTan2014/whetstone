@@ -268,6 +268,10 @@ describe("sendDueRecitationNotificationIfNeeded", () => {
     );
 
     expect(result).toEqual({ notifiedDayKey: undefined });
-    expect(log).not.toHaveBeenCalledWith("info", "due_recitation_notification_sent", expect.anything());
+    expect(log).not.toHaveBeenCalledWith(
+      "info",
+      "due_recitation_notification_sent",
+      expect.anything()
+    );
   });
 });
