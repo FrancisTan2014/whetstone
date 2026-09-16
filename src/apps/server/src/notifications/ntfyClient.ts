@@ -25,7 +25,10 @@ export type NtfyFetchLike = (
 ) => Promise<NtfyFetchResponse>;
 
 export type NtfyClient = Readonly<{
-  send: (message: string) => Promise<NtfySendResult>;
+  // Takes the heading and due-Work titles as structured data, not a pre-composed string, so bounding
+  // an oversized due-list can drop whole Works by their real record boundaries (#936 review: a title's
+  // own text — e.g. an internal newline or a "- " continuation — must never be misread as a boundary).
+  send: (heading: string, workTitles: readonly string[]) => Promise<NtfySendResult>;
 }>;
 
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -41,30 +44,29 @@ function byteLength(text: string): number {
   return textEncoder.encode(text).length;
 }
 
-// Bounds `message` to ntfy's plain-text limit by dropping trailing due-Work entries (the least
-// important ones, since the heading with the due count and the earliest titles come first) and
-// replacing them with a single line stating how many Works were omitted, so the notification still
-// shows a correct due count and as many titles as fit rather than silently becoming a file attachment.
-//
-// `message` is the heading line followed by one `- <title>` entry per due Work (see
-// `dueRecitationNotification.ts`'s `composeMessage`). A Work title may itself contain internal
-// newlines, so entries are split on a lookahead for a line starting with `- ` rather than on every
-// `\n` — otherwise a multiline title would be miscounted as several omitted Works.
-export function boundNtfyMessage(message: string, maxBytes: number = MAX_NTFY_BODY_BYTES): string {
-  if (byteLength(message) <= maxBytes) {
-    return message;
+// Composes and bounds the ntfy body from structured heading + title data, so an oversized due-list is
+// truncated by real Work-record boundaries rather than by re-parsing display text. A Work title may
+// contain arbitrary text — including internal newlines or a leading "- " — none of which is a record
+// separator, so composition (join by `- ` markers) and truncation happen together here instead of
+// splitting an already-composed message back apart.
+export function composeNtfyBody(
+  heading: string,
+  workTitles: readonly string[],
+  maxBytes: number = MAX_NTFY_BODY_BYTES
+): string {
+  const full = [heading, ...workTitles.map((title) => `- ${title}`)].join("\n");
+  if (byteLength(full) <= maxBytes) {
+    return full;
   }
 
-  const [heading, ...rest] = message.split("\n");
-  const entries = rest.join("\n").split(/\n(?=- )/);
   const kept: string[] = [];
 
-  for (let index = 0; index < entries.length; index += 1) {
-    const omittedCount = entries.length - index - 1;
+  for (let index = 0; index < workTitles.length; index += 1) {
+    const omittedCount = workTitles.length - index - 1;
     const candidate = [
       heading,
-      ...kept,
-      entries[index],
+      ...kept.map((title) => `- ${title}`),
+      `- ${workTitles[index]}`,
       `- (+${omittedCount} more not shown)`
     ].join("\n");
 
@@ -72,11 +74,15 @@ export function boundNtfyMessage(message: string, maxBytes: number = MAX_NTFY_BO
       break;
     }
 
-    kept.push(entries[index] as string);
+    kept.push(workTitles[index] as string);
   }
 
-  const omittedCount = entries.length - kept.length;
-  return [heading, ...kept, `- (+${omittedCount} more not shown)`].join("\n");
+  const omittedCount = workTitles.length - kept.length;
+  return [
+    heading,
+    ...kept.map((title) => `- ${title}`),
+    `- (+${omittedCount} more not shown)`
+  ].join("\n");
 }
 
 // Adapts the runtime's global fetch to NtfyFetchLike; read lazily so tests can stub it.
@@ -100,13 +106,13 @@ export function createNtfyClient(
   fetchFn: NtfyFetchLike = defaultFetch,
   timeoutMs: number = DEFAULT_TIMEOUT_MS
 ): NtfyClient {
-  async function send(message: string): Promise<NtfySendResult> {
+  async function send(heading: string, workTitles: readonly string[]): Promise<NtfySendResult> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
       const response = await fetchFn(topicUrl, {
-        body: boundNtfyMessage(message),
+        body: composeNtfyBody(heading, workTitles),
         headers: { "content-type": "text/plain; charset=utf-8" },
         method: "POST",
         signal: controller.signal

@@ -187,7 +187,7 @@ describe("sendDueRecitationNotificationIfNeeded", () => {
     );
 
     expect(ntfySend).toHaveBeenCalledTimes(1);
-    expect(ntfySend.mock.calls[0]?.[0]).toContain("The Analects");
+    expect(ntfySend).toHaveBeenCalledWith("1 Work has recitation due today:", ["The Analects"]);
     expect(result).toEqual({ notifiedDayKey: "2026-09-15" });
     expect(log).toHaveBeenCalledWith("info", "due_recitation_notification_sent", { dueCount: 1 });
   });

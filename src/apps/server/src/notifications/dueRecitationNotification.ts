@@ -18,11 +18,13 @@ export type DueRecitationNotificationDependencies = Readonly<{
 
 export type DueRecitationNotificationResult = Readonly<{ notifiedDayKey: string | undefined }>;
 
-function composeMessage(dueWorkTitles: readonly string[]): string {
-  const heading =
-    dueWorkTitles.length === 1
-      ? "1 Work has recitation due today:"
-      : `${dueWorkTitles.length} Works have recitation due today:`;
+function composeHeading(dueWorkCount: number): string {
+  return dueWorkCount === 1
+    ? "1 Work has recitation due today:"
+    : `${dueWorkCount} Works have recitation due today:`;
+}
+
+function composeMessage(heading: string, dueWorkTitles: readonly string[]): string {
   return [heading, ...dueWorkTitles.map((title) => `- ${title}`)].join("\n");
 }
 
@@ -54,7 +56,8 @@ export async function sendDueRecitationNotificationIfNeeded(
   }
 
   const dueWorkTitles = overview.works.filter((work) => work.isDue).map((work) => work.workTitle);
-  const message = composeMessage(dueWorkTitles);
+  const heading = composeHeading(overview.dueCount);
+  const message = composeMessage(heading, dueWorkTitles);
 
   // Fan out to every configured channel independently (#936): a channel's failure never withholds the
   // send attempt on another configured channel. The day is recorded notified as soon as at least one
@@ -76,7 +79,10 @@ export async function sendDueRecitationNotificationIfNeeded(
     }
   }
   if (ntfy !== undefined) {
-    const result = await ntfy.send(message);
+    // Pass structured heading/titles rather than the pre-composed `message`: ntfy bounds an oversized
+    // due-list by dropping whole Works (#936 review), which requires the real title boundaries, not a
+    // re-parse of DingTalk's already-composed display text.
+    const result = await ntfy.send(heading, dueWorkTitles);
     if (result.ok) {
       anySucceeded = true;
     } else {
