@@ -93,6 +93,11 @@ export type ServerConfig = Readonly<{
   host: string;
   imageResourcesDir: string;
   logLevel: ServerLogLevel;
+  // The ntfy (https://ntfy.sh) topic URL for the daily due-recitation forward's free iPhone push channel
+  // (#936), independent of and additional to the DingTalk webhook above. An unauthenticated public
+  // topic URL is guessable, so it is still treated as a secret and never logged. Absent means this
+  // channel is off: no send to it is ever attempted (the interval still runs if DingTalk is configured).
+  ntfyTopicUrl: string | undefined;
   pdfOcrBinary: string;
   // The Tesseract binary the OCR toolchain inspector (#745) lists installed trained-data packs from, so
   // the bounded OCR adapter can fail with a named language-pack error before spawning. Env-overridable.
@@ -137,6 +142,8 @@ const defaultServerConfig: ServerConfig = {
   host: "127.0.0.1",
   imageResourcesDir: "./.data/images",
   logLevel: "info",
+  // Off by default: no ntfy topic configured means no ntfy send is ever attempted.
+  ntfyTopicUrl: undefined,
   pdfOcrBinary: "ocrmypdf",
   pdfTesseractBinary: "tesseract",
   // Recoverable PDF import stages (#721): transient per-attempt staged bytes, SEPARATE from immutable
@@ -196,6 +203,7 @@ export function readServerConfig(
     host: env.HOST ?? defaultServerConfig.host,
     imageResourcesDir: env.IMAGE_RESOURCES_DIR ?? defaultServerConfig.imageResourcesDir,
     logLevel,
+    ntfyTopicUrl: parseNtfyTopicUrl(env.NTFY_TOPIC_URL),
     pdfOcrBinary: env.PDF_OCR_BINARY ?? defaultServerConfig.pdfOcrBinary,
     pdfTesseractBinary: env.PDF_TESSERACT_BINARY ?? defaultServerConfig.pdfTesseractBinary,
     pdfImportStageDir: env.PDF_IMPORT_STAGE_DIR ?? defaultServerConfig.pdfImportStageDir,
@@ -268,6 +276,13 @@ function parseEpubUploadLimit(rawLimit: string | undefined): number {
 // webhook: only `??` on `undefined`/`null` would let an accidental `DINGTALK_WEBHOOK_URL=""` pass the
 // `!== undefined` gate that enables the background interval, silently scheduling permanently-failing sends.
 function parseDingTalkWebhookUrl(rawUrl: string | undefined): string | undefined {
+  const trimmed = rawUrl?.trim();
+  return trimmed === undefined || trimmed === "" ? undefined : trimmed;
+}
+
+// An empty/blank NTFY_TOPIC_URL is treated as unset (channel off), not as a configured-but-broken
+// topic, for the same reason as DINGTALK_WEBHOOK_URL above.
+function parseNtfyTopicUrl(rawUrl: string | undefined): string | undefined {
   const trimmed = rawUrl?.trim();
   return trimmed === undefined || trimmed === "" ? undefined : trimmed;
 }

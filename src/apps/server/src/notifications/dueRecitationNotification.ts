@@ -2,9 +2,15 @@ import { localDayKey } from "@whetstone/domain";
 import type { RecitationOverviewDto } from "@whetstone/contracts";
 
 import type { DingTalkClient } from "./dingTalkClient.js";
+import type { NtfyClient } from "./ntfyClient.js";
 
 export type DueRecitationNotificationDependencies = Readonly<{
-  dingTalk: DingTalkClient;
+  // Both channels are optional and independent (#936): either, both, or (with the interval simply not
+  // scheduled) neither may be configured. Each configured channel is sent to regardless of whether the
+  // other succeeds or fails, so a broken DingTalk webhook never silently suppresses the ntfy push to a
+  // phone, and vice versa.
+  dingTalk: DingTalkClient | undefined;
+  ntfy: NtfyClient | undefined;
   loadRecitationOverview: (userId: string, now: Date) => Promise<RecitationOverviewDto>;
   log: (level: "info" | "warn", event: string, fields: Record<string, unknown>) => void;
   now: () => Date;
@@ -12,27 +18,30 @@ export type DueRecitationNotificationDependencies = Readonly<{
 
 export type DueRecitationNotificationResult = Readonly<{ notifiedDayKey: string | undefined }>;
 
-function composeMessage(dueWorkTitles: readonly string[]): string {
-  const heading =
-    dueWorkTitles.length === 1
-      ? "1 Work has recitation due today:"
-      : `${dueWorkTitles.length} Works have recitation due today:`;
+function composeHeading(dueWorkCount: number): string {
+  return dueWorkCount === 1
+    ? "1 Work has recitation due today:"
+    : `${dueWorkCount} Works have recitation due today:`;
+}
+
+function composeMessage(heading: string, dueWorkTitles: readonly string[]): string {
   return [heading, ...dueWorkTitles.map((title) => `- ${title}`)].join("\n");
 }
 
-// The daily due-recitation forward (#933): a deterministic, best-effort forward of state Whetstone
-// already computes (`loadRecitationOverview`'s due count/Works), never a new scheduling or grading
-// capability. Sends at most once per learner local day — `lastNotifiedDayKey` is the caller's
-// in-memory record of the last day a send succeeded; a day already notified is a no-op (no query, no
-// send). A failed send leaves `notifiedDayKey` unset so the next check retries rather than silently
-// marking the day "done" (PRODUCT.md: never fabricate a due-complete state).
+// The daily due-recitation forward (#933, plus the ntfy iPhone push channel added by #936): a
+// deterministic, best-effort forward of state Whetstone already computes (`loadRecitationOverview`'s
+// due count/Works), never a new scheduling or grading capability. Sends at most once per learner local
+// day — `lastNotifiedDayKey` is the caller's in-memory record of the last day at least one configured
+// channel's send succeeded; a day already notified is a no-op (no query, no send). Only when every
+// configured channel's send fails does `notifiedDayKey` stay unset, so the next check retries rather
+// than silently marking the day "done" (PRODUCT.md: never fabricate a due-complete state).
 export async function sendDueRecitationNotificationIfNeeded(
   dependencies: DueRecitationNotificationDependencies,
   userId: string,
   timeZone: string,
   lastNotifiedDayKey: string | undefined
 ): Promise<DueRecitationNotificationResult> {
-  const { dingTalk, loadRecitationOverview, log, now } = dependencies;
+  const { dingTalk, ntfy, loadRecitationOverview, log, now } = dependencies;
   const nowInstant = now();
   const todayKey = localDayKey(nowInstant, timeZone);
 
@@ -47,13 +56,45 @@ export async function sendDueRecitationNotificationIfNeeded(
   }
 
   const dueWorkTitles = overview.works.filter((work) => work.isDue).map((work) => work.workTitle);
-  const result = await dingTalk.send(composeMessage(dueWorkTitles));
+  const heading = composeHeading(overview.dueCount);
+  const message = composeMessage(heading, dueWorkTitles);
 
-  if (!result.ok) {
-    log("warn", "due_recitation_notification_failed", {
-      dueCount: overview.dueCount,
-      error: result.error
-    });
+  // Fan out to every configured channel independently (#936): a channel's failure never withholds the
+  // send attempt on another configured channel. The day is recorded notified as soon as at least one
+  // configured channel succeeds — a learner who receives the nudge on their phone (or in the shared
+  // DingTalk group) has been notified for the day even if a second, differently-configured channel is
+  // down, and a later fix to that channel is not owed a re-send of today's already-delivered nudge. Only
+  // when every configured channel fails does the day stay unnotified so the next poll retries all of them.
+  let anySucceeded = false;
+  if (dingTalk !== undefined) {
+    const result = await dingTalk.send(message);
+    if (result.ok) {
+      anySucceeded = true;
+    } else {
+      log("warn", "due_recitation_notification_failed", {
+        channel: "dingTalk",
+        dueCount: overview.dueCount,
+        error: result.error
+      });
+    }
+  }
+  if (ntfy !== undefined) {
+    // Pass structured heading/titles rather than the pre-composed `message`: ntfy bounds an oversized
+    // due-list by dropping whole Works (#936 review), which requires the real title boundaries, not a
+    // re-parse of DingTalk's already-composed display text.
+    const result = await ntfy.send(heading, dueWorkTitles);
+    if (result.ok) {
+      anySucceeded = true;
+    } else {
+      log("warn", "due_recitation_notification_failed", {
+        channel: "ntfy",
+        dueCount: overview.dueCount,
+        error: result.error
+      });
+    }
+  }
+
+  if (!anySucceeded) {
     return { notifiedDayKey: lastNotifiedDayKey };
   }
 
