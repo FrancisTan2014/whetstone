@@ -846,11 +846,11 @@
 
   .workOutlinePanel {
     position: sticky;
-    inset-block-start: 1rem;
+    inset-block-start: calc(var(--editor-frame-header-size, 0px) + 1rem);
     inset-inline-start: auto;
     z-index: auto;
     inline-size: auto;
-    max-block-size: calc(100vh - 2rem);
+    max-block-size: calc(100vh - var(--editor-frame-header-size, 0px) - 2rem);
     padding: 0;
     border-inline-end: none;
     background: transparent;
@@ -962,6 +962,48 @@
 }
 
 /*
+ * The Work editor header (#940): sticky to the app's scroll container so the save status and Save stay in
+ * reach down a long Work. A NEGATIVE sticky offset equal to the 44px Library link + gap lets exactly that
+ * link scroll away while the title row (title + action slot) pins at the top — no layout shift, no scroll
+ * listener. The pinned row is opaque with a hairline; its title stays on one line and truncates, and the
+ * action slot wraps beneath it only when the two cannot share a line. Targets keep their 44px size.
+ */
+.editorFrameHeader {
+  position: sticky;
+  top: calc(-44px - 0.5rem);
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+
+.editorFrameTitleRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  padding-block: 0.25rem 0.5rem;
+}
+
+.editorFrameTitle {
+  flex: 1 1 12rem;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 1.75rem;
+  line-height: 2.125rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Keep a caret or scrolled-to block clear of the pinned title row and toolbar. */
+main:has(.editorFrame) {
+  scroll-padding-top: 8rem;
+}
+
+/*
  * The Work editor's persistent formatting toolbar (#720, #791): ONE sticky row attached to the top of the
  * editor paper, never wrapping — it scrolls horizontally when the controls exceed the width so every target
  * keeps its full 44px size. Its rounded top corners and paper background make it read as part of the sheet;
@@ -970,7 +1012,8 @@
  */
 .editorToolbar {
   position: sticky;
-  inset-block-start: 0;
+  /* Just below the sticky Work editor header (#940), which publishes its height on the frame. */
+  inset-block-start: var(--editor-frame-header-size, 0px);
   z-index: 20;
   display: flex;
   flex-wrap: nowrap;

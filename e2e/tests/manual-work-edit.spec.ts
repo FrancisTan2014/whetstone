@@ -114,3 +114,48 @@ for (const theme of ["day", "night"] as const) {
     });
   }
 }
+
+// The pinned editor header (#940): at the bottom of a long Work the title row — status + Save — stays at the
+// top of the viewport, clear of the formatting toolbar, so the learner saves without scrolling back up.
+for (const [size, viewport] of [
+  ["desktop", DESKTOP],
+  ["narrow", NARROW]
+] as const) {
+  test(`${size}: Save stays pinned and usable at the bottom of a long Work`, async ({
+    page,
+    setup
+  }) => {
+    await page.setViewportSize({ height: viewport.height, width: viewport.width });
+    const title = `Long manual ${size}`;
+    const workEntryId = await createManualWork(page, setup, title);
+    await page.goto(`${setup.baseURL}#/library/works/${encodeURIComponent(workEntryId)}/edit`);
+
+    const editor = page.getByRole("textbox", { name: `Edit ${title}` });
+    await expect(editor).toBeVisible();
+    await editor.click();
+    for (let line = 1; line <= 60; line += 1) {
+      await page.keyboard.type(`Paragraph ${line}`);
+      await page.keyboard.press("Enter");
+    }
+    await page.keyboard.type("The very last line");
+    await editor.getByText("The very last line").scrollIntoViewIfNeeded();
+    await expect(page.getByRole("status")).toHaveText("Unsaved changes");
+
+    const titleRow = page.getByRole("heading", { level: 1, name: title });
+    const save = page.getByRole("button", { name: "Save" });
+    await expect(titleRow).toBeInViewport();
+    await expect(save).toBeInViewport();
+    const headerBox = await titleRow.boundingBox();
+    const toolbarBox = await page
+      .getByRole("toolbar", { exact: true, name: "Formatting" })
+      .boundingBox();
+    expect(headerBox?.y ?? Infinity).toBeLessThan(80);
+    expect(toolbarBox?.y ?? -Infinity).toBeGreaterThanOrEqual(
+      (headerBox?.y ?? 0) + (headerBox?.height ?? 0)
+    );
+
+    await save.click();
+    await expect(page.getByRole("status")).toHaveText("Saved");
+    await expect(editor.getByText("The very last line")).toBeInViewport();
+  });
+}

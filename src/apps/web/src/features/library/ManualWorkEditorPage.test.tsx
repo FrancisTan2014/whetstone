@@ -236,6 +236,45 @@ describe("ManualWorkEditorPage", () => {
     expect(screen.getByRole("button", { name: "Save" })).toBeDefined();
   });
 
+  it("pins the title row with Save and publishes its height for the toolbar to stick beneath (#940)", async () => {
+    const observed: Element[] = [];
+    let resize: () => void = () => {};
+    const disconnect = vi.fn();
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(callback: () => void) {
+          resize = callback;
+        }
+        observe(target: Element): void {
+          observed.push(target);
+        }
+        disconnect = disconnect;
+        unobserve(): void {}
+      }
+    );
+    const height = vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(52);
+
+    await renderReadyEditor();
+
+    const heading = screen.getByRole("heading", { name: "A Tale of Two Cities" });
+    const titleRow = heading.parentElement as HTMLElement;
+    const frame = heading.closest("section") as HTMLElement;
+    // Save lives in the pinned row, beside the title, not in the part of the header that scrolls away.
+    expect(titleRow.contains(screen.getByRole("button", { name: "Save" }))).toBe(true);
+    expect(observed).toContain(titleRow);
+    expect(frame.style.getPropertyValue("--editor-frame-header-size")).toBe("52px");
+
+    height.mockReturnValue(96);
+    resize();
+    expect(frame.style.getPropertyValue("--editor-frame-header-size")).toBe("96px");
+
+    cleanup();
+    expect(disconnect).toHaveBeenCalled();
+    height.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
   it("stays owner-scoped: exposes no administrative Open in Reader action", async () => {
     // The manual page shares the editor with the imported-correction page, but only the administrative
     // correction surface injects an "Open in Reader" action. The owner-scoped manual editor must never
