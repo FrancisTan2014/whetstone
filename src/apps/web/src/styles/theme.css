@@ -27,6 +27,9 @@
   --color-text: oklch(0.26 0.012 75);
   --color-text-muted: #6b6459;
   --color-text-muted: oklch(0.53 0.018 80);
+  /* Long-form reading body text (#938). Day matches --color-text; Night is dimmer than the UI's
+     near-white so a full page of prose does not glare (still well above WCAG AAA on the paper). */
+  --color-reading-text: var(--color-text);
   --color-border: #e3dfd4;
   --color-border: oklch(0.9 0.01 90);
   /* Reader figure surface (#556): a subtle light, rounded, padded card the figure image sits on, so a
@@ -121,6 +124,8 @@
   --color-text: oklch(0.92 0.01 90);
   --color-text-muted: #a39b8b;
   --color-text-muted: oklch(0.7 0.02 85);
+  --color-reading-text: #cdc6b6;
+  --color-reading-text: oklch(0.82 0.018 85);
   --color-border: #34312a;
   --color-border: oklch(0.34 0.01 85);
   /* Reader figure surface (#556) — deliberately the SAME near-white card in Night as in Day, so a
@@ -185,7 +190,7 @@
  */
 :root {
   --reading-measure: 37rem;
-  --reading-leading: 1.7;
+  --reading-leading: 1.8;
   --reading-leading-cjk: 1.9;
   --reading-size: 1.125rem;
 
@@ -1509,7 +1514,7 @@
  * (#153: Day reader text must read as dark serif on the cream paper, not a stray light color).
  */
 .reader {
-  color: var(--color-text);
+  color: var(--color-reading-text);
 }
 
 .reader :where(p, ul, ol, pre, blockquote, table, h1, h2, h3, h4, h5, h6) {
@@ -1526,6 +1531,18 @@
    beats an inherited value regardless of the specificity that set it — pinning body text at 17px. */
 .reader p {
   font-size: 1em;
+}
+
+/* Book-like setting (#938): justify body prose with language-aware hyphenation (the surface carries
+   the work's `lang`) so the right edge is even instead of deeply ragged, and let the browser balance
+   the whole paragraph's breaks (`text-wrap: pretty`, ignored where unsupported). Justifying without
+   hyphenation opens rivers of space, so the two always travel together. Headings, code, tables, and
+   captions keep their own alignment. */
+.reader :where(p, li) {
+  text-align: justify;
+  hyphens: auto;
+  -webkit-hyphens: auto;
+  text-wrap: pretty;
 }
 
 .reader ul {

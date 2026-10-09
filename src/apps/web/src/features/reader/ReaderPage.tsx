@@ -1433,7 +1433,7 @@ function renderViewing(
           onSizeChange={chrome.onSizeChange}
           onToggleNotes={tools.onToggleNotes}
           onToggleToc={tools.onToggleToc}
-          progress={workProgress(activeUnitIndex, units.length, chrome.scroll.progress)}
+          progress={workProgress(units, activeUnitIndex, chrome.scroll.progress)}
           size={chrome.size}
           title={chrome.title}
           tocOpen={tools.tocOpen}

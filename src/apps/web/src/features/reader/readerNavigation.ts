@@ -46,21 +46,26 @@ export function unitTocLabel(unit: ReaderUnitMeta, index: number): string {
   return unit.title ?? `Section ${index + 1}`;
 }
 
-// Work-level reading progress (0..1): how far the current unit sits in the work plus the
-// scroll fraction within it, so the progress bar reflects place in the whole work rather
-// than just the loaded chapter.
+// Work-level reading progress (0..1): the share of the work's blocks before the current unit plus
+// the scroll fraction through the current unit's own blocks. Weighting by block count (#938) keeps
+// a run of tiny front-matter units (cover, title page, copyright, dedication) from counting as much
+// as a full chapter, which made the bar read as half-done on the first page of chapter one.
 export function workProgress(
+  units: ReadonlyArray<Pick<ReaderUnitMeta, "blockCount">>,
   activeUnitIndex: number,
-  unitCount: number,
   withinUnitFraction: number
 ): number {
-  if (unitCount <= 0) {
+  const weights = units.map((unit) => Math.max(unit.blockCount, 0));
+  const total = weights.reduce((sum, weight) => sum + weight, 0);
+
+  if (total === 0) {
     return 0;
   }
 
   const within = Math.min(Math.max(withinUnitFraction, 0), 1);
+  const before = weights.slice(0, activeUnitIndex).reduce((sum, weight) => sum + weight, 0);
 
-  return Math.min(1, (activeUnitIndex + within) / unitCount);
+  return Math.min(1, (before + within * (weights[activeUnitIndex] ?? 0)) / total);
 }
 
 // Where selecting a nav-derived TOC entry (#379) takes the reader, decided purely so the dispatch

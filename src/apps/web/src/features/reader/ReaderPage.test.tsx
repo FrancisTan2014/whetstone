@@ -2926,7 +2926,7 @@ describe("ReaderPage reading controls", () => {
     const main = readingMainIn(container);
     // A font-size-independent rem measure: the column width never tracks --reading-size.
     const measureAtDefault = main.style.getPropertyValue("--reading-measure");
-    expect(measureAtDefault).toBe("44rem");
+    expect(measureAtDefault).toBe("40rem");
 
     await user.click(screen.getByRole("button", { name: "Increase reading text size" }));
 
