@@ -4,7 +4,7 @@ import { readingMeasureRem } from "./readingMeasure";
 
 describe("readingMeasureRem", () => {
   it("returns the Latin measure for English in a font-size-independent rem unit", () => {
-    expect(readingMeasureRem("en")).toBe("44rem");
+    expect(readingMeasureRem("en")).toBe("40rem");
   });
 
   it("returns the wider CJK measure for Simplified and Traditional Chinese", () => {

@@ -95,19 +95,24 @@ describe("unitTocLabel", () => {
 });
 
 describe("workProgress", () => {
-  it("is zero for a work with no units", () => {
-    expect(workProgress(0, 0, 0.5)).toBe(0);
+  const units = (...blockCounts: number[]) => blockCounts.map((blockCount) => ({ blockCount }));
+
+  it("is zero for a work with no units or no blocks", () => {
+    expect(workProgress([], 0, 0.5)).toBe(0);
+    expect(workProgress(units(0, 0), 1, 0.5)).toBe(0);
   });
 
-  it("combines the unit position with the within-unit scroll fraction", () => {
-    expect(workProgress(0, 2, 0)).toBe(0);
-    expect(workProgress(0, 2, 0.5)).toBe(0.25);
-    expect(workProgress(1, 2, 0)).toBe(0.5);
+  it("weights each unit by its block count, not one share per unit", () => {
+    // Four one-block front-matter units then a 96-block chapter: opening the chapter is 4% in, not 80%.
+    const book = units(1, 1, 1, 1, 96);
+    expect(workProgress(book, 4, 0)).toBe(0.04);
+    expect(workProgress(book, 4, 0.5)).toBe(0.52);
+    expect(workProgress(book, 4, 1)).toBe(1);
   });
 
   it("clamps the within-unit fraction and the overall result", () => {
-    expect(workProgress(1, 2, -1)).toBe(0.5);
-    expect(workProgress(1, 2, 5)).toBe(1);
+    expect(workProgress(units(2, 2), 1, -1)).toBe(0.5);
+    expect(workProgress(units(2, 2), 1, 5)).toBe(1);
   });
 });
 
