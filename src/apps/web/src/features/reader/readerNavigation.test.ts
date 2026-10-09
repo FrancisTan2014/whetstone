@@ -114,6 +114,10 @@ describe("workProgress", () => {
     expect(workProgress(units(2, 2), 1, -1)).toBe(0.5);
     expect(workProgress(units(2, 2), 1, 5)).toBe(1);
   });
+
+  it("counts every unit as read when the active index is past the last unit", () => {
+    expect(workProgress(units(2, 2), 2, 0.5)).toBe(1);
+  });
 });
 
 const tocStructure: ReaderStructure = {
