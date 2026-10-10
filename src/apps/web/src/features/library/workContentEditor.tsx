@@ -121,6 +121,11 @@ export function useUnsavedGuard(active: boolean): void {
 // single primary-action slot (the save status + Save, and an optional leading "Open in Reader") that sits
 // beside the title on desktop and wraps below it on a phone. Shared by the page-level loading/error arms so
 // every state uses the same calm frame.
+//
+// The title row is sticky to the app's scroll container (#940) so the save status and Save stay in reach
+// at the bottom of a long Work. Only the Library link above it scrolls away (a negative sticky offset), so
+// pinning causes no layout shift and needs no scroll listener. The row's measured height is published as
+// `--editor-frame-header-size` so the formatting toolbar and Outline stick just below it, not under it.
 export function EditorFrame({
   children,
   primaryAction,
@@ -131,14 +136,33 @@ export function EditorFrame({
   title?: string;
 }>): React.JSX.Element {
   const headingId = useId();
+  // Publish the pinned title row's geometry on the frame whenever the header resizes (a wrapped title or
+  // action slot on a phone, a longer status message): its height, so the toolbar and Outline stick just
+  // beneath it, and its offset within the header, so the sticky header scrolls exactly the Library link
+  // away. A ref callback that returns a cleanup is never called with null (React 19), so the row is always
+  // mounted here; the cleanup disconnects on unmount.
+  const observeTitleRow = useCallback((titleRow: HTMLDivElement) => {
+    // The row always renders inside its header and `.editorFrame` section, whose subtree reads the variables.
+    const header = titleRow.parentElement as HTMLElement;
+    const frame = titleRow.closest(".editorFrame") as HTMLElement;
+    const publish = (): void => {
+      frame.style.setProperty("--editor-frame-header-size", `${titleRow.offsetHeight}px`);
+      frame.style.setProperty("--editor-frame-pin-offset", `${-titleRow.offsetTop}px`);
+    };
+    publish();
+    const observer = new ResizeObserver(publish);
+    observer.observe(header);
+    observer.observe(titleRow);
+    return () => observer.disconnect();
+  }, []);
 
   return (
     <section
       aria-labelledby={headingId}
-      className="mx-auto w-full max-w-[88rem] px-4 pt-6 pb-6 md:px-6 md:pt-8 md:pb-8"
+      className="editorFrame mx-auto w-full max-w-[88rem] px-4 pt-6 pb-6 md:px-6 md:pt-8 md:pb-8"
     >
       <div className="flex flex-col gap-6">
-        <header className="flex flex-col gap-2">
+        <header className="editorFrameHeader">
           <Link
             className="inline-flex min-h-[44px] w-fit items-center gap-1 text-sm font-medium text-text-muted hover:text-text"
             to="/library"
@@ -146,11 +170,8 @@ export function EditorFrame({
             <ArrowLeft aria-hidden size={20} strokeWidth={1.75} />
             Library
           </Link>
-          <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
-            <h1
-              className="text-[1.75rem] leading-[2.125rem] font-semibold text-text"
-              id={headingId}
-            >
+          <div className="editorFrameTitleRow" ref={observeTitleRow}>
+            <h1 className="editorFrameTitle font-semibold text-text" id={headingId} title={title}>
               {title}
             </h1>
             {primaryAction === undefined ? null : <div className="shrink-0">{primaryAction}</div>}

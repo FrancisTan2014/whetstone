@@ -114,3 +114,55 @@ for (const theme of ["day", "night"] as const) {
     });
   }
 }
+
+// The pinned editor header (#940): at the bottom of a long Work the title row — status + Save — stays at the
+// top of the viewport, clear of the formatting toolbar, so the learner saves without scrolling back up.
+for (const [size, viewport] of [
+  ["desktop", DESKTOP],
+  ["narrow", NARROW]
+] as const) {
+  test(`${size}: Save stays pinned and usable at the bottom of a long Work`, async ({
+    page,
+    setup
+  }) => {
+    await page.setViewportSize({ height: viewport.height, width: viewport.width });
+    const title = `Long manual ${size}`;
+    const workEntryId = await createManualWork(page, setup, title);
+    await page.goto(`${setup.baseURL}#/library/works/${encodeURIComponent(workEntryId)}/edit`);
+
+    const editor = page.getByRole("textbox", { name: `Edit ${title}` });
+    await expect(editor).toBeVisible();
+    await editor.click();
+    for (let line = 1; line <= 60; line += 1) {
+      await page.keyboard.type(`Paragraph ${line}`);
+      await page.keyboard.press("Enter");
+    }
+    await page.keyboard.type("The very last line");
+    await editor.getByText("The very last line").scrollIntoViewIfNeeded();
+    await expect(page.getByRole("status")).toHaveText("Unsaved changes");
+
+    const titleRow = page.getByRole("heading", { level: 1, name: title });
+    const save = page.getByRole("button", { name: "Save" });
+    await expect(titleRow).toBeInViewport();
+    await expect(save).toBeInViewport();
+    const headerBox = await titleRow.boundingBox();
+    const toolbarBox = await page
+      .getByRole("toolbar", { exact: true, name: "Formatting" })
+      .boundingBox();
+    expect(headerBox?.y ?? Infinity).toBeLessThan(80);
+    expect(toolbarBox?.y ?? -Infinity).toBeGreaterThanOrEqual(
+      (headerBox?.y ?? 0) + (headerBox?.height ?? 0)
+    );
+
+    // Saving must not move the learner: the line being edited stays where it was on screen. The pinned
+    // Save regains focus after a save; scroll-padding that covered it once scrolled the document ~450px
+    // back up (#941 review). A few pixels of drift is the status label changing width at the page bottom.
+    const lastLine = editor.getByText("The very last line");
+    const before = (await lastLine.boundingBox())?.y ?? 0;
+    await save.click();
+    await expect(page.getByRole("status")).toHaveText("Saved");
+    const after = (await lastLine.boundingBox())?.y ?? Infinity;
+    expect(Math.abs(after - before)).toBeLessThan(40);
+    await expect(editor.getByText("The very last line")).toBeInViewport();
+  });
+}
