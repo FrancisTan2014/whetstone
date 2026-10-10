@@ -136,17 +136,22 @@ export function EditorFrame({
   title?: string;
 }>): React.JSX.Element {
   const headingId = useId();
-  // Publish the pinned title row's height on the frame whenever it resizes (a wrapped action slot on a
-  // phone, a longer status message). A ref callback that returns a cleanup is never called with null
-  // (React 19), so the row is always mounted here; the cleanup disconnects on unmount.
+  // Publish the pinned title row's geometry on the frame whenever the header resizes (a wrapped title or
+  // action slot on a phone, a longer status message): its height, so the toolbar and Outline stick just
+  // beneath it, and its offset within the header, so the sticky header scrolls exactly the Library link
+  // away. A ref callback that returns a cleanup is never called with null (React 19), so the row is always
+  // mounted here; the cleanup disconnects on unmount.
   const observeTitleRow = useCallback((titleRow: HTMLDivElement) => {
-    // The row always renders inside its `.editorFrame` section, whose subtree reads the variable.
+    // The row always renders inside its header and `.editorFrame` section, whose subtree reads the variables.
+    const header = titleRow.parentElement as HTMLElement;
     const frame = titleRow.closest(".editorFrame") as HTMLElement;
     const publish = (): void => {
       frame.style.setProperty("--editor-frame-header-size", `${titleRow.offsetHeight}px`);
+      frame.style.setProperty("--editor-frame-pin-offset", `${-titleRow.offsetTop}px`);
     };
     publish();
     const observer = new ResizeObserver(publish);
+    observer.observe(header);
     observer.observe(titleRow);
     return () => observer.disconnect();
   }, []);

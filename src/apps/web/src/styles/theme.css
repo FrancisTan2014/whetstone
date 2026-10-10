@@ -963,14 +963,16 @@
 
 /*
  * The Work editor header (#940): sticky to the app's scroll container so the save status and Save stay in
- * reach down a long Work. A NEGATIVE sticky offset equal to the 44px Library link + gap lets exactly that
- * link scroll away while the title row (title + action slot) pins at the top — no layout shift, no scroll
- * listener. The pinned row is opaque with a hairline; its title stays on one line and truncates, and the
- * action slot wraps beneath it only when the two cannot share a line. Targets keep their 44px size.
+ * reach down a long Work. A NEGATIVE sticky offset — the measured distance from the header's top to the
+ * title row, published by EditorFrame — lets exactly the Library link scroll away while the title row pins
+ * at the top: no layout shift, no scroll listener. The pinned row is opaque with a hairline. On a phone the
+ * title wraps so a touch reader sees all of it; from 48rem it stays on one line, truncating with a tooltip.
+ * No scroll-padding: the pinned Save regains focus after a save, and padding that covers it would scroll
+ * the document up to "reveal" an already-visible button (#941 review).
  */
 .editorFrameHeader {
   position: sticky;
-  top: calc(-44px - 0.5rem);
+  top: var(--editor-frame-pin-offset, 0px);
   z-index: 25;
   display: flex;
   flex-direction: column;
@@ -991,16 +993,16 @@
 .editorFrameTitle {
   flex: 1 1 12rem;
   min-width: 0;
-  overflow: hidden;
   font-size: 1.75rem;
   line-height: 2.125rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-/* Keep a caret or scrolled-to block clear of the pinned title row and toolbar. */
-main:has(.editorFrame) {
-  scroll-padding-top: 8rem;
+@media (min-width: 48rem) {
+  .editorFrameTitle {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 
 /*

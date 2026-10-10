@@ -154,8 +154,15 @@ for (const [size, viewport] of [
       (headerBox?.y ?? 0) + (headerBox?.height ?? 0)
     );
 
+    // Saving must not move the learner: the line being edited stays where it was on screen. The pinned
+    // Save regains focus after a save; scroll-padding that covered it once scrolled the document ~450px
+    // back up (#941 review). A few pixels of drift is the status label changing width at the page bottom.
+    const lastLine = editor.getByText("The very last line");
+    const before = (await lastLine.boundingBox())?.y ?? 0;
     await save.click();
     await expect(page.getByRole("status")).toHaveText("Saved");
+    const after = (await lastLine.boundingBox())?.y ?? Infinity;
+    expect(Math.abs(after - before)).toBeLessThan(40);
     await expect(editor.getByText("The very last line")).toBeInViewport();
   });
 }
