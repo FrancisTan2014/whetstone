@@ -420,6 +420,58 @@ describe("RichContentEditor presentation", () => {
     expect(screen.queryByRole("toolbar", { name: "Formatting" })).toBeNull();
   });
 });
+
+describe("RichContentEditor pinned caret scrolling", () => {
+  let originalRootScrollTop: number;
+
+  beforeEach(() => {
+    originalRootScrollTop = document.documentElement.scrollTop;
+    document.documentElement.scrollTop = 0;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    document.documentElement.scrollTop = originalRootScrollTop;
+  });
+
+  it.each([
+    { overflowY: "auto", caretTop: 50, expectedScrollTop: 164 },
+    { overflowY: "scroll", caretTop: 50, expectedScrollTop: 164 },
+    { overflowY: "visible", caretTop: 50, expectedScrollTop: 164 },
+    { overflowY: "auto", caretTop: 136, expectedScrollTop: 250 },
+    { overflowY: "auto", caretTop: 180, expectedScrollTop: 250 }
+  ])(
+    "keeps the caret clear without overscrolling ($overflowY, caret at $caretTop)",
+    async ({ overflowY, caretTop, expectedScrollTop }) => {
+      const { container, onChange, textbox } = await renderReady({
+        document: textDocument("Passage"),
+        presentation: "work",
+        showToolbar: true
+      });
+      container.style.overflowY = overflowY;
+      const scroller = overflowY === "visible" ? document.documentElement : container;
+      scroller.scrollTop = 250;
+      const toolbar = screen.getByRole("toolbar", { name: "Formatting" });
+      vi.spyOn(toolbar, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 60, 300, 60));
+      const caretBounds = vi
+        .spyOn(Range.prototype, "getBoundingClientRect")
+        .mockImplementation(() => new DOMRect(0, caretTop + 250 - scroller.scrollTop, 1, 20));
+
+      await placeCaretInBlock(textbox, 0);
+
+      await waitFor(() => {
+        expect(caretBounds).toHaveBeenCalled();
+        expect(scroller.scrollTop).toBe(expectedScrollTop);
+      });
+      if (scroller !== document.documentElement) {
+        expect(document.documentElement.scrollTop).toBe(0);
+      }
+      expect(textbox.textContent).toBe("Passage");
+      expect(onChange).not.toHaveBeenCalled();
+    }
+  );
+});
+
 describe("RichContentEditor contextual formatting", () => {
   it("reveals the contextual toolbar beside a real selection and applies a mark", async () => {
     const { onChange, textbox, user } = await renderReady({ document: textDocument("Format me") });

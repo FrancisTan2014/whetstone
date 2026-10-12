@@ -7,7 +7,7 @@
   {
     "name": "web app CSS (brotli)",
     "path": "src/apps/web/dist/assets/*.css",
-    "limit": "12 kB"
+    "limit": "12.5 kB"
   },
   {
     "name": "Explain meanings feature chunk (brotli)",

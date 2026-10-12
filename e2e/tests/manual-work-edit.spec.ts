@@ -114,3 +114,126 @@ for (const theme of ["day", "night"] as const) {
     });
   }
 }
+
+// The pinned editor header (#940): at the bottom of a long Work the title row — status + Save — stays at the
+// top of the viewport, clear of the formatting toolbar, so the learner saves without scrolling back up.
+for (const [size, viewport] of [
+  ["desktop", DESKTOP],
+  ["narrow", NARROW]
+] as const) {
+  test(`${size}: Save stays pinned and usable at the bottom of a long Work`, async ({
+    page,
+    setup
+  }) => {
+    await page.setViewportSize({ height: viewport.height, width: viewport.width });
+    const title = `Long manual ${size}`;
+    const workEntryId = await createManualWork(page, setup, title);
+    await page.goto(`${setup.baseURL}#/library/works/${encodeURIComponent(workEntryId)}/edit`);
+
+    const editor = page.getByRole("textbox", { name: `Edit ${title}` });
+    await expect(editor).toBeVisible();
+    await editor.click();
+    for (let line = 1; line <= 60; line += 1) {
+      await page.keyboard.type(`Paragraph ${line}`);
+      await page.keyboard.press("Enter");
+    }
+    await page.keyboard.type("The very last line");
+    await editor.getByText("The very last line").scrollIntoViewIfNeeded();
+    await expect(page.getByRole("status")).toHaveText("Unsaved changes");
+
+    const titleRow = page.getByRole("heading", { level: 1, name: title });
+    const save = page.getByRole("button", { name: "Save" });
+    await expect(titleRow).toBeInViewport();
+    await expect(save).toBeInViewport();
+    const headerBox = await titleRow.boundingBox();
+    const toolbarBox = await page
+      .getByRole("toolbar", { exact: true, name: "Formatting" })
+      .boundingBox();
+    expect(headerBox?.y ?? Infinity).toBeLessThan(80);
+    expect(toolbarBox?.y ?? -Infinity).toBeGreaterThanOrEqual(
+      (headerBox?.y ?? 0) + (headerBox?.height ?? 0)
+    );
+
+    // Saving must not move the learner: the line being edited stays where it was on screen. The pinned
+    // Save regains focus after a save; scroll-padding that covered it once scrolled the document ~450px
+    // back up (#941 review). A few pixels of drift is the status label changing width at the page bottom.
+    const lastLine = editor.getByText("The very last line");
+    const before = (await lastLine.boundingBox())?.y ?? 0;
+    await save.click();
+    await expect(page.getByRole("status")).toHaveText("Saved");
+    const after = (await lastLine.boundingBox())?.y ?? Infinity;
+    expect(Math.abs(after - before)).toBeLessThan(40);
+    await expect(editor.getByText("The very last line")).toBeInViewport();
+    // Moving the caret back up must keep the active line below the pinned title row and toolbar, never
+    // behind them where the learner would type into hidden text (#941 review).
+    await editor.getByText("The very last line").click();
+    for (let step = 0; step < 30; step += 1) {
+      await page.keyboard.press("ArrowUp");
+    }
+    const pinnedToolbarBox = await page
+      .getByRole("toolbar", { exact: true, name: "Formatting" })
+      .boundingBox();
+    const pinnedBottom = (pinnedToolbarBox?.y ?? Infinity) + (pinnedToolbarBox?.height ?? 0);
+    // Polled: the editor re-clears the caret on the frame after the browser's own arrow-key scroll.
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const selection = window.getSelection();
+          return selection === null || selection.rangeCount === 0
+            ? -Infinity
+            : (selection.getRangeAt(0).getClientRects()[0]?.top ?? -Infinity);
+        })
+      )
+      .toBeGreaterThanOrEqual(pinnedBottom);
+  });
+}
+
+// A long title stays on one line in the pinned row at every width (#941 review): unbounded wrapping once
+// grew the row past a small phone's whole scroll container, hiding the document and the toolbar.
+test("smallest phone: a long title keeps the pinned row to one line", async ({ page, setup }) => {
+  await page.setViewportSize({ height: 568, width: 320 });
+  const title = `Long title ${"word ".repeat(36)}`.trim().slice(0, 191);
+  const workEntryId = await createManualWork(page, setup, title);
+  await page.goto(`${setup.baseURL}#/library/works/${encodeURIComponent(workEntryId)}/edit`);
+
+  const heading = page.getByRole("heading", { level: 1, name: title });
+  await expect(heading).toBeVisible();
+  expect((await heading.boundingBox())?.height ?? Infinity).toBeLessThan(40);
+  await expect(page.getByRole("toolbar", { exact: true, name: "Formatting" })).toBeInViewport();
+  await expect(page.getByRole("textbox", { name: `Edit ${title}` })).toBeInViewport();
+});
+// A failed or conflicting save keeps its retry in reach on the smallest phone (#941 review): the long
+// status message wraps beside the button instead of widening the pinned row past the viewport.
+for (const [outcome, status, label] of [
+  ["failure", 500, "Save"],
+  ["conflict", 409, "Save again"]
+] as const) {
+  test(`smallest phone: a save ${outcome} keeps its retry on screen`, async ({ page, setup }) => {
+    test.info().annotations.push({ description: `${status} PUT`, type: "expected-http" });
+    await page.setViewportSize({ height: 568, width: 320 });
+    const title = `Retry ${outcome}`;
+    const workEntryId = await createManualWork(page, setup, title);
+    await page.route("**/api/manual-works/*/units/*/content", async (route) => {
+      if (route.request().method() === "PUT") {
+        await route.fulfill({ status });
+        return;
+      }
+      await route.fallback();
+    });
+    await page.goto(`${setup.baseURL}#/library/works/${encodeURIComponent(workEntryId)}/edit`);
+
+    const editor = page.getByRole("textbox", { name: `Edit ${title}` });
+    await editor.click();
+    await page.keyboard.type("Edits that will not save");
+    await page.getByRole("button", { exact: true, name: "Save" }).click();
+    await expect(page.getByRole("alert")).toBeVisible();
+
+    const retry = page.getByRole("button", { exact: true, name: label });
+    const box = await retry.boundingBox();
+    expect(box?.x ?? -1).toBeGreaterThanOrEqual(0);
+    expect((box?.x ?? Infinity) + (box?.width ?? 0)).toBeLessThanOrEqual(320);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+      320
+    );
+  });
+}

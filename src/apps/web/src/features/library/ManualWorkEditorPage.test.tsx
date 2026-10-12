@@ -236,6 +236,52 @@ describe("ManualWorkEditorPage", () => {
     expect(screen.getByRole("button", { name: "Save" })).toBeDefined();
   });
 
+  it("pins the title row with Save and publishes its geometry for the sticky offsets (#940)", async () => {
+    const observed: Element[] = [];
+    let resize: () => void = () => {};
+    const disconnect = vi.fn();
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(callback: () => void) {
+          resize = callback;
+        }
+        observe(target: Element): void {
+          observed.push(target);
+        }
+        disconnect = disconnect;
+        unobserve(): void {}
+      }
+    );
+    const height = vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(52);
+    const top = vi.spyOn(HTMLElement.prototype, "offsetTop", "get").mockReturnValue(52);
+
+    await renderReadyEditor();
+
+    const heading = screen.getByRole("heading", { name: "A Tale of Two Cities" });
+    const titleRow = heading.parentElement as HTMLElement;
+    const frame = heading.closest("section") as HTMLElement;
+    // Save lives in the pinned row, beside the title, not in the part of the header that scrolls away.
+    expect(titleRow.contains(screen.getByRole("button", { name: "Save" }))).toBe(true);
+    // Both the row and its header are observed, so a wrapped title or a resized Library link re-measures.
+    expect(observed).toEqual(expect.arrayContaining([titleRow, titleRow.parentElement]));
+    expect(frame.style.getPropertyValue("--editor-frame-header-size")).toBe("52px");
+    // The header pins at minus the row's offset, so exactly the Library link scrolls away.
+    expect(frame.style.getPropertyValue("--editor-frame-pin-offset")).toBe("-52px");
+
+    height.mockReturnValue(96);
+    top.mockReturnValue(60);
+    resize();
+    expect(frame.style.getPropertyValue("--editor-frame-header-size")).toBe("96px");
+    expect(frame.style.getPropertyValue("--editor-frame-pin-offset")).toBe("-60px");
+
+    cleanup();
+    expect(disconnect).toHaveBeenCalled();
+    height.mockRestore();
+    top.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
   it("stays owner-scoped: exposes no administrative Open in Reader action", async () => {
     // The manual page shares the editor with the imported-correction page, but only the administrative
     // correction surface injects an "Open in Reader" action. The owner-scoped manual editor must never
