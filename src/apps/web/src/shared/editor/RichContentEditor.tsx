@@ -244,7 +244,9 @@ export function RichContentEditor({
   // Only the Work editor's persistent toolbar is pinned chrome; other surfaces keep the default scroll.
   const pinnedToolbar = (view: EditorView): HTMLElement | null =>
     showToolbar
-      ? (view.dom.closest(`.${editorClassNames.root}`)?.querySelector<HTMLElement>(".editorToolbar") ?? null)
+      ? (view.dom
+          .closest(`.${editorClassNames.root}`)
+          ?.querySelector<HTMLElement>(".editorToolbar") ?? null)
       : null;
   const editor = useEditor({
     content: initialDocument,

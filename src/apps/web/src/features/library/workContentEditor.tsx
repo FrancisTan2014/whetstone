@@ -174,7 +174,9 @@ export function EditorFrame({
             <h1 className="editorFrameTitle font-semibold text-text" id={headingId} title={title}>
               {title}
             </h1>
-            {primaryAction === undefined ? null : <div className="min-w-0 max-w-full">{primaryAction}</div>}
+            {primaryAction === undefined ? null : (
+              <div className="min-w-0 max-w-full">{primaryAction}</div>
+            )}
           </div>
         </header>
         {children}
