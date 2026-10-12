@@ -23,14 +23,22 @@ export const test = base.extend<{ setup: SetupData }>({
   setup: async ({}, use) => {
     await use(readSetup());
   },
-  page: async ({ page }, use) => {
+  page: async ({ page }, use, testInfo) => {
     const appOrigin = new URL(readSetup().baseURL).origin;
     const violations: string[] = [];
 
     page.on("console", (message) => {
       const type = message.type();
       const text = message.text();
-      if (type === "error" || hydrationPattern.test(text)) {
+      // The browser's own log line for a declared expected response (see the response guard below).
+      const expectedLoad = testInfo.annotations.some(
+        (annotation) =>
+          annotation.type === "expected-http" &&
+          text.startsWith(
+            `Failed to load resource: the server responded with a status of ${annotation.description?.split(" ")[0]} `
+          )
+      );
+      if ((type === "error" && !expectedLoad) || hydrationPattern.test(text)) {
         violations.push(`console.${type}: ${text}`);
       }
     });
@@ -39,8 +47,19 @@ export const test = base.extend<{ setup: SetupData }>({
     });
     page.on("response", (response) => {
       const url = new URL(response.url());
-      if (response.status() >= 400 && url.origin === appOrigin && url.pathname !== "/favicon.ico") {
-        violations.push(`http ${response.status()} ${response.request().method()} ${url.pathname}`);
+      // A test that drives a failure path on purpose declares it: an `expected-http` annotation of exactly
+      // `<status> <METHOD>` (e.g. `409 PUT`) exempts only that response.
+      const signature = `${response.status()} ${response.request().method()}`;
+      const expected = testInfo.annotations.some(
+        (annotation) => annotation.type === "expected-http" && annotation.description === signature
+      );
+      if (
+        response.status() >= 400 &&
+        url.origin === appOrigin &&
+        url.pathname !== "/favicon.ico" &&
+        !expected
+      ) {
+        violations.push(`http ${signature} ${url.pathname}`);
       }
     });
 

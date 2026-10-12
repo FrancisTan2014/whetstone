@@ -202,3 +202,38 @@ test("smallest phone: a long title keeps the pinned row to one line", async ({ p
   await expect(page.getByRole("toolbar", { exact: true, name: "Formatting" })).toBeInViewport();
   await expect(page.getByRole("textbox", { name: `Edit ${title}` })).toBeInViewport();
 });
+// A failed or conflicting save keeps its retry in reach on the smallest phone (#941 review): the long
+// status message wraps beside the button instead of widening the pinned row past the viewport.
+for (const [outcome, status, label] of [
+  ["failure", 500, "Save"],
+  ["conflict", 409, "Save again"]
+] as const) {
+  test(`smallest phone: a save ${outcome} keeps its retry on screen`, async ({ page, setup }) => {
+    test.info().annotations.push({ description: `${status} PUT`, type: "expected-http" });
+    await page.setViewportSize({ height: 568, width: 320 });
+    const title = `Retry ${outcome}`;
+    const workEntryId = await createManualWork(page, setup, title);
+    await page.route("**/api/manual-works/*/units/*/content", async (route) => {
+      if (route.request().method() === "PUT") {
+        await route.fulfill({ status });
+        return;
+      }
+      await route.fallback();
+    });
+    await page.goto(`${setup.baseURL}#/library/works/${encodeURIComponent(workEntryId)}/edit`);
+
+    const editor = page.getByRole("textbox", { name: `Edit ${title}` });
+    await editor.click();
+    await page.keyboard.type("Edits that will not save");
+    await page.getByRole("button", { exact: true, name: "Save" }).click();
+    await expect(page.getByRole("alert")).toBeVisible();
+
+    const retry = page.getByRole("button", { exact: true, name: label });
+    const box = await retry.boundingBox();
+    expect(box?.x ?? -1).toBeGreaterThanOrEqual(0);
+    expect((box?.x ?? Infinity) + (box?.width ?? 0)).toBeLessThanOrEqual(320);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+      320
+    );
+  });
+}

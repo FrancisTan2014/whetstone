@@ -174,7 +174,7 @@ export function EditorFrame({
             <h1 className="editorFrameTitle font-semibold text-text" id={headingId} title={title}>
               {title}
             </h1>
-            {primaryAction === undefined ? null : <div className="shrink-0">{primaryAction}</div>}
+            {primaryAction === undefined ? null : <div className="min-w-0 max-w-full">{primaryAction}</div>}
           </div>
         </header>
         {children}
@@ -471,10 +471,11 @@ export function WorkContentEditor<W extends WorkEditorWork>({
   const header = (
     <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
       {leadingAction}
-      <div className="flex flex-shrink-0 items-center gap-3">
+      {/* The status shrinks and wraps; Save keeps its size, so a long failure message never pushes it off a phone. */}
+      <div className="flex min-w-0 items-center gap-3">
         <p
           aria-live="polite"
-          className={`text-sm ${manualEditorSaveStatusClassNames[status]}`}
+          className={`min-w-0 text-sm ${manualEditorSaveStatusClassNames[status]}`}
           role={
             status === "conflict" || status === "error" || status === "validation-error"
               ? "alert"
@@ -484,6 +485,7 @@ export function WorkContentEditor<W extends WorkEditorWork>({
           {manualEditorSaveStatusLabels[status]}
         </p>
         <Button
+          className="shrink-0"
           onClick={() => {
             void runSave(draft);
           }}
