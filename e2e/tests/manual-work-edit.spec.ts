@@ -164,5 +164,41 @@ for (const [size, viewport] of [
     const after = (await lastLine.boundingBox())?.y ?? Infinity;
     expect(Math.abs(after - before)).toBeLessThan(40);
     await expect(editor.getByText("The very last line")).toBeInViewport();
+    // Moving the caret back up must keep the active line below the pinned title row and toolbar, never
+    // behind them where the learner would type into hidden text (#941 review).
+    await editor.getByText("The very last line").click();
+    for (let step = 0; step < 30; step += 1) {
+      await page.keyboard.press("ArrowUp");
+    }
+    const pinnedToolbarBox = await page
+      .getByRole("toolbar", { exact: true, name: "Formatting" })
+      .boundingBox();
+    const pinnedBottom = (pinnedToolbarBox?.y ?? Infinity) + (pinnedToolbarBox?.height ?? 0);
+    // Polled: the editor re-clears the caret on the frame after the browser's own arrow-key scroll.
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const selection = window.getSelection();
+          return selection === null || selection.rangeCount === 0
+            ? -Infinity
+            : (selection.getRangeAt(0).getClientRects()[0]?.top ?? -Infinity);
+        })
+      )
+      .toBeGreaterThanOrEqual(pinnedBottom);
   });
 }
+
+// A long title stays on one line in the pinned row at every width (#941 review): unbounded wrapping once
+// grew the row past a small phone's whole scroll container, hiding the document and the toolbar.
+test("smallest phone: a long title keeps the pinned row to one line", async ({ page, setup }) => {
+  await page.setViewportSize({ height: 568, width: 320 });
+  const title = `Long title ${"word ".repeat(36)}`.trim().slice(0, 191);
+  const workEntryId = await createManualWork(page, setup, title);
+  await page.goto(`${setup.baseURL}#/library/works/${encodeURIComponent(workEntryId)}/edit`);
+
+  const heading = page.getByRole("heading", { level: 1, name: title });
+  await expect(heading).toBeVisible();
+  expect((await heading.boundingBox())?.height ?? Infinity).toBeLessThan(40);
+  await expect(page.getByRole("toolbar", { exact: true, name: "Formatting" })).toBeInViewport();
+  await expect(page.getByRole("textbox", { name: `Edit ${title}` })).toBeInViewport();
+});

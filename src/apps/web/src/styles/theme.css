@@ -965,10 +965,11 @@
  * The Work editor header (#940): sticky to the app's scroll container so the save status and Save stay in
  * reach down a long Work. A NEGATIVE sticky offset — the measured distance from the header's top to the
  * title row, published by EditorFrame — lets exactly the Library link scroll away while the title row pins
- * at the top: no layout shift, no scroll listener. The pinned row is opaque with a hairline. On a phone the
- * title wraps so a touch reader sees all of it; from 48rem it stays on one line, truncating with a tooltip.
- * No scroll-padding: the pinned Save regains focus after a save, and padding that covers it would scroll
- * the document up to "reveal" an already-visible button (#941 review).
+ * at the top: no layout shift, no scroll listener. The pinned row is opaque with a hairline. The title stays
+ * on one line at every width, truncating with a tooltip, so a long title can never grow the pinned row over
+ * the document (#941 review). No scroll-padding: the pinned Save regains focus after a save, and padding
+ * that covers it would scroll the document up to "reveal" an already-visible button (#941 review); the
+ * editor keeps its caret clear of the pinned chrome itself (RichContentEditor's handleScrollToSelection).
  */
 .editorFrameHeader {
   position: sticky;
@@ -993,16 +994,11 @@
 .editorFrameTitle {
   flex: 1 1 12rem;
   min-width: 0;
+  overflow: hidden;
   font-size: 1.75rem;
   line-height: 2.125rem;
-}
-
-@media (min-width: 48rem) {
-  .editorFrameTitle {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /*

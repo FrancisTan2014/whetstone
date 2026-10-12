@@ -1,5 +1,6 @@
 import type { Editor, Extensions } from "@tiptap/core";
 import type { EditorState } from "@tiptap/pm/state";
+import type { EditorView } from "@tiptap/pm/view";
 import { Placeholder } from "@tiptap/extensions/placeholder";
 import { UndoRedo } from "@tiptap/extensions/undo-redo";
 import { EditorContent, useEditor } from "@tiptap/react";
@@ -86,6 +87,40 @@ export interface RichContentEditorProps {
   // the content, spanning the editor shell — the Library manual-Work editor's always-visible affordance
   // (#720). Defaults to false, so the authoring/note surfaces keep their contextual-only chrome unchanged.
   readonly showToolbar?: boolean;
+}
+
+// Room kept between a caret and the pinned chrome above it, so the active line is never flush against it.
+const CARET_CLEARANCE_PX = 16;
+
+function scrollContainerOf(element: HTMLElement): Element {
+  for (let node = element.parentElement; node !== null; node = node.parentElement) {
+    const { overflowY } = getComputedStyle(node);
+    if (overflowY === "auto" || overflowY === "scroll") {
+      return node;
+    }
+  }
+  return document.documentElement;
+}
+
+// The Work editor pins its title row and formatting toolbar to the top of the scroll container (#940), but
+// ProseMirror's own caret scrolling only knows the container's edge, so moving up through a long Work would
+// park the active line behind that opaque chrome (#941 review). When the caret would end above the pinned
+// toolbar's bottom edge, scroll just enough to show it beneath; everything else keeps ProseMirror's default.
+// It runs both from ProseMirror's scroll hook (typing, commands) and after every selection change, because a
+// plain arrow key moves the caret natively and the browser, not ProseMirror, scrolls it into view.
+// Scroll-padding is deliberately not used: it also applies to focus scrolling and moved the pinned Save.
+function scrollCaretClearOfPinnedChrome(view: EditorView, toolbar: HTMLElement | null): boolean {
+  if (toolbar === null) {
+    return false;
+  }
+  const caretTop = view.coordsAtPos(view.state.selection.head).top;
+  const chromeBottom = toolbar.getBoundingClientRect().bottom;
+  if (caretTop >= chromeBottom + CARET_CLEARANCE_PX) {
+    return false;
+  }
+  const delta = caretTop - chromeBottom - CARET_CLEARANCE_PX;
+  scrollContainerOf(view.dom).scrollTop += delta;
+  return true;
 }
 
 function snapshot(editor: Editor): DocumentNodeJSON {
@@ -206,6 +241,11 @@ export function RichContentEditor({
     (props) => visibility.shouldShow(props as unknown as FormattingMenuSelection),
     [visibility]
   );
+  // Only the Work editor's persistent toolbar is pinned chrome; other surfaces keep the default scroll.
+  const pinnedToolbar = (view: EditorView): HTMLElement | null =>
+    showToolbar
+      ? (view.dom.closest(`.${editorClassNames.root}`)?.querySelector<HTMLElement>(".editorToolbar") ?? null)
+      : null;
   const editor = useEditor({
     content: initialDocument,
     editable,
@@ -234,10 +274,18 @@ export function RichContentEditor({
         event.preventDefault();
         onSave(validateEditorDocument(view.state.doc.toJSON()));
         return true;
-      }
+      },
+      handleScrollToSelection: (view) => scrollCaretClearOfPinnedChrome(view, pinnedToolbar(view))
     },
     extensions: editorExtensions,
     immediatelyRender: false,
+    onSelectionUpdate: ({ editor: updatedEditor }) => {
+      const { view } = updatedEditor;
+      if (view.hasFocus()) {
+        // After the browser's own caret scroll for a native arrow move has settled.
+        requestAnimationFrame(() => scrollCaretClearOfPinnedChrome(view, pinnedToolbar(view)));
+      }
+    },
     onUpdate: ({ editor: updatedEditor }) => {
       onChange(snapshot(updatedEditor));
     },
